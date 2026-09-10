@@ -27,8 +27,6 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
   onClose,
   onNotify,
 }) => {
-  if (!isOpen || !project) return null
-
   const [content, setContent] = useState('')
   const [lastUpdated, setLastUpdated] = useState<string | undefined>(undefined)
   const [exists, setExists] = useState(false)
@@ -38,8 +36,10 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
   const [copied, setCopied] = useState(false)
 
   useEffect(() => {
-    loadMemory()
-  }, [project.path])
+    if (isOpen && project) loadMemory()
+  }, [isOpen, project?.path])
+
+  if (!isOpen || !project) return null
 
   const loadMemory = async () => {
     setIsLoading(true)
@@ -64,7 +64,7 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
       if (res?.success) {
         setExists(true)
         setLastUpdated(new Date().toISOString())
-        onNotify('Memória da IA salva e sincronizada em CONTEXT.md!', 'success')
+        onNotify('Memória da IA salva em .devorbit/memory.md (sem sobrescrever CONTEXT.md)!', 'success')
       } else {
         onNotify(res?.message || 'Falha ao salvar memória', 'error')
       }

@@ -94,7 +94,7 @@ async function detectTechs(dirPath: string): Promise<TechStack[]> {
   return techs
 }
 
-export async function scanDirectoryForProjects(rootDir: string): Promise<Project[]> {
+export async function scanDirectoryForProjects(rootDir: string, refreshRemote = false): Promise<Project[]> {
   const projects: Project[] = []
 
   try {
@@ -107,10 +107,14 @@ export async function scanDirectoryForProjects(rootDir: string): Promise<Project
       const projectPath = path.join(rootDir, entry.name)
 
       try {
-        const stats = await fs.stat(projectPath)
+        const realRoot = await fs.realpath(rootDir)
+        const realProjectPath = await fs.realpath(projectPath)
+        const relative = path.relative(realRoot, realProjectPath)
+        if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) continue
+        const stats = await fs.stat(realProjectPath)
         if (!stats.isDirectory()) continue
-        const hasGit = await isGitRepository(projectPath)
-        const techs = await detectTechs(projectPath)
+        const hasGit = await isGitRepository(realProjectPath)
+        const techs = await detectTechs(realProjectPath)
 
         // If in a dedicated projects folder or has git or has tech manifest, consider it a project
         const isProjectFolder =
@@ -119,12 +123,12 @@ export async function scanDirectoryForProjects(rootDir: string): Promise<Project
           techs.length > 0
 
         if (isProjectFolder) {
-          const git = await getGitStatus(projectPath)
+          const git = await getGitStatus(realProjectPath, refreshRemote)
 
           projects.push({
-            id: Buffer.from(projectPath).toString('base64'),
+            id: Buffer.from(realProjectPath).toString('base64'),
             name: entry.name,
-            path: projectPath,
+            path: realProjectPath,
             parentDir: path.basename(rootDir),
             lastModified: stats.mtimeMs,
             techs,
@@ -143,12 +147,12 @@ export async function scanDirectoryForProjects(rootDir: string): Promise<Project
   return projects
 }
 
-export async function scanAllProjects(rootDirs: string[]): Promise<Project[]> {
+export async function scanAllProjects(rootDirs: string[], refreshRemote = false): Promise<Project[]> {
   const allProjects: Project[] = []
   const seenPaths = new Set<string>()
 
   for (const rootDir of rootDirs) {
-    const found = await scanDirectoryForProjects(rootDir)
+    const found = await scanDirectoryForProjects(rootDir, refreshRemote)
     for (const p of found) {
       const normalized = p.path.toLowerCase()
       if (!seenPaths.has(normalized)) {

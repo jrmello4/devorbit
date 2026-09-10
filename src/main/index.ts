@@ -1,6 +1,7 @@
 import electron, { type BrowserWindow as BrowserWindowType } from 'electron'
 const { app, BrowserWindow, ipcMain, dialog } = electron
 import path from 'node:path'
+import fs from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { loadConfig, saveConfig } from './config'
 import { scanAllProjects } from './scanner'
@@ -39,6 +40,24 @@ process.env.VITE_PUBLIC = process.env.VITE_DEV_SERVER_URL
 
 let mainWindow: BrowserWindowType | null = null
 
+async function validateProjectPath(input: unknown): Promise<string> {
+  if (typeof input !== 'string' || !input.trim() || input.includes('\0')) {
+    throw new Error('Caminho de projeto inválido.')
+  }
+  const candidate = await fs.realpath(path.resolve(input))
+  const config = await loadConfig()
+  const allowed = (await Promise.all(config.projectDirs.map(async (root) => {
+    try {
+      const relative = path.relative(await fs.realpath(root), candidate)
+      return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative)
+    } catch { return false }
+  }))).some(Boolean)
+  if (!allowed) throw new Error('O projeto não pertence a uma pasta monitorada.')
+  const stat = await fs.stat(candidate)
+  if (!stat.isDirectory()) throw new Error('O caminho do projeto não é uma pasta.')
+  return candidate
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
@@ -51,7 +70,7 @@ function createWindow() {
     title: 'DevOrbit',
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.cjs'),
-      sandbox: false,
+      sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
     },
@@ -116,25 +135,25 @@ function setupIpcHandlers() {
   // Atualizar projetos forçando novo scan
   ipcMain.handle('devorbit:refreshProjects', async () => {
     const config = await loadConfig()
-    return await scanAllProjects(config.projectDirs)
+    return await scanAllProjects(config.projectDirs, true)
   })
 
   // Sincronizar um projeto com Git (Pull)
   ipcMain.handle('devorbit:syncGit', async (_event, projectPath: string): Promise<SyncResult> => {
-    return await syncGit(projectPath)
+    return await syncGit(await validateProjectPath(projectPath))
   })
 
   // Subir alterações para o GitHub (Commit & Push)
   ipcMain.handle(
     'devorbit:pushGit',
     async (_event, projectPath: string, commitMessage?: string): Promise<SyncResult> => {
-      return await pushGit(projectPath, commitMessage)
+      return await pushGit(await validateProjectPath(projectPath), commitMessage)
     }
   )
 
   // Obter arquivos alterados recentemente
   ipcMain.handle('devorbit:getGitChanges', async (_event, projectPath: string): Promise<string[]> => {
-    return await getGitChangesSummary(projectPath)
+    return await getGitChangesSummary(await validateProjectPath(projectPath))
   })
 
   // Sincronizar todos os projetos
@@ -156,13 +175,16 @@ function setupIpcHandlers() {
   ipcMain.handle(
     'devorbit:launchTool',
     async (_event, tool: any, projectPath: string, options?: any) => {
-      return await launchTool(tool, projectPath, options)
+      const safePath = tool === 'chrome' || tool === 'brave'
+        ? ''
+        : await validateProjectPath(projectPath)
+      return await launchTool(tool, safePath, options)
     }
   )
 
   // Copiar resumo de contexto
   ipcMain.handle('devorbit:copyProjectContext', async (_event, projectPath: string) => {
-    return await copyProjectContext(projectPath)
+    return await copyProjectContext(await validateProjectPath(projectPath))
   })
 
   // Configurações
@@ -171,6 +193,10 @@ function setupIpcHandlers() {
   })
 
   ipcMain.handle('devorbit:saveConfig', async (_event, updates: Partial<AppConfig>) => {
+    if (!updates || typeof updates !== 'object') throw new Error('Configuração inválida.')
+    if (updates.projectDirs && (!Array.isArray(updates.projectDirs) || updates.projectDirs.some((p) => typeof p !== 'string'))) {
+      throw new Error('Pastas de projeto inválidas.')
+    }
     return await saveConfig(updates)
   })
 
@@ -207,18 +233,21 @@ function setupIpcHandlers() {
 
   // AI Memory Handlers
   ipcMain.handle('devorbit:getProjectMemory', async (_event, projectPath: string) => {
-    return await getProjectMemory(projectPath)
+    return await getProjectMemory(await validateProjectPath(projectPath))
   })
 
   ipcMain.handle(
     'devorbit:saveProjectMemory',
     async (_event, projectPath: string, content: string) => {
-      return await saveProjectMemory(projectPath, content)
+      if (typeof content !== 'string' || content.length > 2_000_000) {
+        throw new Error('Conteúdo da memória inválido ou grande demais.')
+      }
+      return await saveProjectMemory(await validateProjectPath(projectPath), content)
     }
   )
 
   ipcMain.handle('devorbit:generateMemoryFromGit', async (_event, projectPath: string) => {
-    return await generateMemoryFromGit(projectPath)
+    return await generateMemoryFromGit(await validateProjectPath(projectPath))
   })
 
   // Usage Tracker Handlers

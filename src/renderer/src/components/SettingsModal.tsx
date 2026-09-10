@@ -33,13 +33,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   authStatus,
   onOpenAuthModal,
 }) => {
-  if (!isOpen || !config) return null
-
-  const [projectDirs, setProjectDirs] = useState<string[]>(config.projectDirs)
-  const [account1Name, setAccount1Name] = useState(config.chatGptAccount1Name)
-  const [account2Name, setAccount2Name] = useState(config.chatGptAccount2Name)
-  const [customPaths, setCustomPaths] = useState(config.customPaths)
+  const [projectDirs, setProjectDirs] = useState<string[]>([])
+  const [account1Name, setAccount1Name] = useState('')
+  const [account2Name, setAccount2Name] = useState('')
+  const [customPaths, setCustomPaths] = useState<AppConfig['customPaths']>({})
   const [isSaving, setIsSaving] = useState(false)
+
+  React.useEffect(() => {
+    if (config && isOpen) {
+      setProjectDirs(config.projectDirs)
+      setAccount1Name(config.chatGptAccount1Name)
+      setAccount2Name(config.chatGptAccount2Name)
+      setCustomPaths(config.customPaths)
+    }
+  }, [config, isOpen])
+
+  if (!isOpen || !config) return null
 
   const handleAddDirectory = async () => {
     try {

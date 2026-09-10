@@ -16,7 +16,7 @@ export async function isGitRepository(dirPath: string): Promise<boolean> {
   }
 }
 
-export async function getGitStatus(repoPath: string): Promise<GitStatus> {
+export async function getGitStatus(repoPath: string, refreshRemote = false): Promise<GitStatus> {
   const isRepo = await isGitRepository(repoPath)
   if (!isRepo) {
     return {
@@ -32,6 +32,17 @@ export async function getGitStatus(repoPath: string): Promise<GitStatus> {
   }
 
   try {
+    if (refreshRemote) {
+      try {
+        await execFileAsync('git', ['fetch', '--quiet', '--prune'], {
+          cwd: repoPath,
+          timeout: 15000,
+          windowsHide: true,
+        })
+      } catch {
+        // A network failure must not hide the local Git status.
+      }
+    }
     // Run git status with branch and porcelain flags
     const { stdout } = await execFileAsync('git', ['status', '--porcelain=v1', '-b'], {
       cwd: repoPath,
@@ -265,4 +276,3 @@ export async function pushGit(
     }
   }
 }
-

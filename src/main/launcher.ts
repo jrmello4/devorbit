@@ -1,4 +1,4 @@
-import { spawn, exec } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import electron from 'electron'
 const { clipboard, shell } = electron
 import path from 'node:path'
@@ -7,7 +7,26 @@ import fs from 'node:fs/promises'
 import { loadConfig } from './config'
 import { getGitStatus, getGitChangesSummary } from './git'
 import { getProjectMemory } from './memory'
-import { incrementUsage } from './usage'
+import { getUsageState, incrementUsage } from './usage'
+
+function spawnDetached(
+  command: string,
+  args: string[],
+  options: { cwd?: string; env?: NodeJS.ProcessEnv } = {}
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { ...options, detached: true, stdio: 'ignore', windowsHide: true })
+    child.once('error', reject)
+    child.once('spawn', () => { child.unref(); resolve() })
+  })
+}
+
+async function reserveUsage(target: 'account1' | 'account2' | 'antigravity'): Promise<boolean> {
+  const state = await getUsageState()
+  if (target !== 'antigravity' && state[target].used >= state[target].limit) return false
+  await incrementUsage(target)
+  return true
+}
 
 export async function launchTool(
   tool:
@@ -21,7 +40,7 @@ export async function launchTool(
     | 'terminal'
     | 'folder',
   projectPath: string,
-  options?: { account?: 'account1' | 'account2' }
+  options?: { account?: 'account1' | 'account2'; url?: string }
 ): Promise<{ success: boolean; message?: string; needsAuth?: boolean; account?: string }> {
   const config = await loadConfig()
   const custom = config.customPaths
@@ -30,12 +49,14 @@ export async function launchTool(
     switch (tool) {
       case 'codex-desktop': {
         const codexCmd = custom.codex || 'codex.cmd'
-        await incrementUsage(config.activeChatGptAccount || 'account1')
-        exec(`"${codexCmd}" app "${projectPath}"`, (err) => {
-          if (err) {
-            exec(`start shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App`)
-          }
-        })
+        if (!(await reserveUsage(config.activeChatGptAccount || 'account1'))) {
+          return { success: false, message: 'Limite de uso da conta ativa atingido.' }
+        }
+        try {
+          await spawnDetached(codexCmd, ['app', projectPath])
+        } catch {
+          await spawnDetached('explorer.exe', ['shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App'])
+        }
         return { success: true, message: 'OpenAI Codex Desktop aberto no projeto!' }
       }
 
@@ -67,18 +88,18 @@ export async function launchTool(
           }
         }
 
-        await incrementUsage(isAccount2 ? 'account2' : 'account1')
+        if (!(await reserveUsage(isAccount2 ? 'account2' : 'account1'))) {
+          return { success: false, message: `Limite de uso da ${accountLabel} atingido.` }
+        }
 
         const wtCmd = custom.wt || 'wt.exe'
         const codexCmd = custom.codex || 'codex.cmd'
-        const title = `Codex CLI - ${accountLabel}`
-        const innerCmd = `title ${title} && set CODEX_HOME=${codexHome} && echo ======================================================== && echo   OpenAI Codex CLI Conectado: ${accountLabel} && echo   Projeto: ${projectPath} && echo ======================================================== && cd /d "${projectPath}" && ${codexCmd}`
-
-        exec(`"${wtCmd}" -d "${projectPath}" cmd.exe /k "${innerCmd}"`, (err) => {
-          if (err) {
-            exec(`start cmd.exe /k "${innerCmd}"`)
-          }
-        })
+        const env = { ...process.env, CODEX_HOME: codexHome }
+        try {
+          await spawnDetached(wtCmd, ['-d', projectPath, 'cmd.exe', '/d', '/k', codexCmd], { env })
+        } catch {
+          await spawnDetached('cmd.exe', ['/d', '/k', codexCmd], { cwd: projectPath, env })
+        }
         return {
           success: true,
           message: `Codex CLI iniciado no terminal (${accountLabel})!`,
@@ -86,39 +107,32 @@ export async function launchTool(
       }
 
       case 'chrome': {
-        await incrementUsage('account1')
+        if (!(await reserveUsage('account1'))) return { success: false, message: 'Limite de uso da Conta 1 atingido.' }
         const chromePath =
           custom.chrome ||
           'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
-        spawn(chromePath, ['https://chatgpt.com'], {
-          detached: true,
-          stdio: 'ignore',
-        }).unref()
+        await spawnDetached(chromePath, [options?.url || 'https://chatgpt.com'])
         return { success: true, message: 'ChatGPT aberto no Google Chrome (Conta 1)!' }
       }
 
       case 'brave': {
-        await incrementUsage('account2')
+        if (!(await reserveUsage('account2'))) return { success: false, message: 'Limite de uso da Conta 2 atingido.' }
         const bravePath =
           custom.brave ||
           'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe'
-        spawn(bravePath, ['https://chatgpt.com'], {
-          detached: true,
-          stdio: 'ignore',
-        }).unref()
+        await spawnDetached(bravePath, [options?.url || 'https://chatgpt.com'])
         return { success: true, message: 'ChatGPT aberto no Brave (Conta 2)!' }
       }
 
       case 'agy': {
-        await incrementUsage('antigravity')
+        await reserveUsage('antigravity')
         const agyPath =
           custom.agy || 'C:\\Users\\adenilson.j\\AppData\\Local\\agy\\agy.exe'
-        const cmd = `wt.exe -d "${projectPath}" powershell.exe -NoExit -Command "cd '${projectPath}'; & '${agyPath}'"`
-        exec(cmd, (err) => {
-          if (err) {
-            exec(`start cmd.exe /k "cd /d \"${projectPath}\" && \"${agyPath}\""`)
-          }
-        })
+        try {
+          await spawnDetached('wt.exe', ['-d', projectPath, agyPath], { cwd: projectPath })
+        } catch {
+          await spawnDetached(agyPath, [], { cwd: projectPath })
+        }
         return { success: true, message: 'Antigravity CLI iniciado no terminal!' }
       }
 
@@ -126,32 +140,29 @@ export async function launchTool(
         const mimoPath =
           custom.mimo ||
           'C:\\Users\\adenilson.j\\AppData\\Local\\Programs\\Xiaomi MiMo AI\\Xiaomi MiMo AI.exe'
-        spawn(mimoPath, [projectPath], {
-          detached: true,
-          stdio: 'ignore',
-          cwd: projectPath,
-        }).unref()
+        await spawnDetached(mimoPath, [projectPath], { cwd: projectPath })
         return { success: true, message: 'Xiaomi MiMo AI aberto!' }
       }
 
       case 'vscode': {
         const codeCmd = custom.vscode || 'code.cmd'
-        exec(`"${codeCmd}" "${projectPath}"`, { windowsHide: true })
+        await spawnDetached(codeCmd, [projectPath])
         return { success: true, message: 'VS Code aberto no projeto!' }
       }
 
       case 'terminal': {
         const wtCmd = custom.wt || 'wt.exe'
-        exec(`"${wtCmd}" -d "${projectPath}"`, (err) => {
-          if (err) {
-            exec(`start powershell.exe -NoExit -Command "cd '${projectPath}'"`)
-          }
-        })
+        try {
+          await spawnDetached(wtCmd, ['-d', projectPath])
+        } catch {
+          await spawnDetached('powershell.exe', ['-NoExit'], { cwd: projectPath })
+        }
         return { success: true, message: 'Terminal aberto no diretório do projeto!' }
       }
 
       case 'folder': {
-        await shell.openPath(projectPath)
+        const openError = await shell.openPath(projectPath)
+        if (openError) throw new Error(openError)
         return { success: true, message: 'Pasta aberta no Windows Explorer!' }
       }
 

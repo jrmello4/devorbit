@@ -4,3 +4,4 @@ dist-electron
 .vite
 *.local
 .superpowers
+*.log

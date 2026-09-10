@@ -1,10 +1,10 @@
 import path from 'node:path'
 import fs from 'node:fs/promises'
-import { exec } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { getGitStatus, getGitChangesSummary } from './git'
 
-const execAsync = promisify(exec)
+const execAsync = promisify(execFile)
 
 export interface ProjectMemory {
   content: string
@@ -81,11 +81,11 @@ export async function saveProjectMemory(
     await fs.mkdir(memoryDir, { recursive: true })
     await fs.writeFile(memoryFile, content, 'utf-8')
 
-    // Também sincroniza em CONTEXT.md na raiz do projeto para o Codex/Gemini ler nativamente
+    // Cria CONTEXT.md apenas quando o projeto ainda não possui um arquivo próprio.
     try {
-      await fs.writeFile(rootContextFile, content, 'utf-8')
+      await fs.writeFile(rootContextFile, content, { encoding: 'utf-8', flag: 'wx' })
     } catch {
-      // Silencioso se não conseguir na raiz
+      // Já existe ou não é possível escrever na raiz.
     }
 
     return { success: true, message: 'Memória da IA salva com sucesso!' }
@@ -102,7 +102,7 @@ export async function generateMemoryFromGit(projectPath: string): Promise<string
   let recentCommits = ''
   if (git.isRepo) {
     try {
-      const { stdout } = await execAsync('git log -n 3 --oneline', {
+      const { stdout } = await execAsync('git', ['log', '-n', '3', '--oneline'], {
         cwd: projectPath,
       })
       recentCommits = stdout.trim()

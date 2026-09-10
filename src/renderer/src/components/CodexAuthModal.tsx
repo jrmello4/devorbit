@@ -29,8 +29,6 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
   onSuccess,
   config,
 }) => {
-  if (!isOpen) return null
-
   const isAccount2 = account === 'account2'
   const accountLabel = isAccount2
     ? config?.chatGptAccount2Name || 'Conta 2 (Brave)'
@@ -43,6 +41,7 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
   const [message, setMessage] = useState('')
 
   useEffect(() => {
+    if (!isOpen) return
     handleStartLogin()
 
     const unsubscribe = window.devorbit?.onCodexAuthProgress?.((progress) => {
@@ -65,7 +64,9 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
     return () => {
       unsubscribe?.()
     }
-  }, [account])
+  }, [account, isOpen])
+
+  if (!isOpen) return null
 
   const handleStartLogin = async () => {
     setStatus('starting')
@@ -88,7 +89,7 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
 
   const handleOpenBrowserAgain = () => {
     if (authUrl) {
-      window.devorbit?.launchTool(isAccount2 ? 'brave' : 'chrome', '')
+      window.devorbit?.launchTool(isAccount2 ? 'brave' : 'chrome', '', { url: authUrl })
     }
   }
 

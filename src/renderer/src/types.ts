@@ -110,7 +110,7 @@ export interface DevOrbitAPI {
       | 'terminal'
       | 'folder',
     projectPath: string,
-    options?: { account?: 'account1' | 'account2' }
+    options?: { account?: 'account1' | 'account2'; url?: string }
   ) => Promise<{ success: boolean; message?: string; needsAuth?: boolean; account?: string }>
   copyProjectContext: (projectPath: string) => Promise<{ success: boolean; context: string }>
   getConfig: () => Promise<AppConfig>
@@ -145,5 +145,4 @@ declare global {
     devorbit: DevOrbitAPI
   }
 }
-
 

@@ -33,8 +33,6 @@ export const UsageBar: React.FC<UsageBarProps> = ({
   onUpdateLimit,
   onSwitchAccount,
 }) => {
-  if (!usage) return null
-
   const [popoverOpen, setPopoverOpen] = useState(false)
   const [now, setNow] = useState(Date.now())
 
@@ -43,6 +41,8 @@ export const UsageBar: React.FC<UsageBarProps> = ({
     const timer = setInterval(() => setNow(Date.now()), 10000)
     return () => clearInterval(timer)
   }, [])
+
+  if (!usage) return null
 
   const getRemainingTime = (acc: AccountUsage) => {
     if (!acc.windowStart || acc.used === 0) return null

@@ -7,17 +7,17 @@ import type { AppConfig } from '../renderer/src/types'
 
 const defaultConfig: AppConfig = {
   projectDirs: [
-    'C:\\Users\\adenilson.j\\projects',
-    'C:\\Users\\adenilson.j\\Documents',
+    path.join(os.homedir(), 'projects'),
+    path.join(os.homedir(), 'Documents'),
   ],
   activeChatGptAccount: 'account1',
   chatGptAccount1Name: 'Conta 1 (Principal)',
   chatGptAccount2Name: 'Conta 2 (Codex / Backup)',
   customPaths: {
-    brave: 'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe',
-    chrome: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-    mimo: 'C:\\Users\\adenilson.j\\AppData\\Local\\Programs\\Xiaomi MiMo AI\\Xiaomi MiMo AI.exe',
-    agy: 'C:\\Users\\adenilson.j\\AppData\\Local\\agy\\agy.exe',
+    brave: path.join(process.env.ProgramFiles || 'C:\\Program Files', 'BraveSoftware', 'Brave-Browser', 'Application', 'brave.exe'),
+    chrome: path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+    mimo: path.join(os.homedir(), 'AppData', 'Local', 'Programs', 'Xiaomi MiMo AI', 'Xiaomi MiMo AI.exe'),
+    agy: path.join(os.homedir(), 'AppData', 'Local', 'agy', 'agy.exe'),
     codex: 'codex.cmd',
     vscode: 'code.cmd',
     wt: 'wt.exe',

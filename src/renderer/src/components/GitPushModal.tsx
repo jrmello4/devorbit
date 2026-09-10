@@ -26,14 +26,15 @@ export const GitPushModal: React.FC<GitPushModalProps> = ({
   onSuccess,
   onNotify,
 }) => {
-  if (!isOpen || !project) return null
 
-  const [commitMessage, setCommitMessage] = useState(
-    `feat: atualizações no ${project.name}`
-  )
+  const [commitMessage, setCommitMessage] = useState('')
   const [changedFiles, setChangedFiles] = useState<string[]>([])
   const [isLoadingFiles, setIsLoadingFiles] = useState(false)
   const [isPushing, setIsPushing] = useState(false)
+
+  useEffect(() => {
+    if (project && isOpen) setCommitMessage(`feat: atualizações no ${project.name}`)
+  }, [project, isOpen])
 
   // Carrega lista de arquivos modificados ao abrir
   useEffect(() => {
@@ -57,6 +58,8 @@ export const GitPushModal: React.FC<GitPushModalProps> = ({
       isMounted = false
     }
   }, [project])
+
+  if (!isOpen || !project) return null
 
   const handlePush = async () => {
     if (!project) return
