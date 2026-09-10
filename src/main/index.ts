@@ -4,7 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { loadConfig, saveConfig } from './config'
 import { scanAllProjects } from './scanner'
-import { syncGit } from './git'
+import { syncGit, pushGit, getGitChangesSummary } from './git'
 import { launchTool, copyProjectContext } from './launcher'
 import type { AppConfig, SyncResult } from '../renderer/src/types'
 
@@ -93,9 +93,22 @@ function setupIpcHandlers() {
     return await scanAllProjects(config.projectDirs)
   })
 
-  // Sincronizar um projeto com Git
+  // Sincronizar um projeto com Git (Pull)
   ipcMain.handle('devorbit:syncGit', async (_event, projectPath: string): Promise<SyncResult> => {
     return await syncGit(projectPath)
+  })
+
+  // Subir alterações para o GitHub (Commit & Push)
+  ipcMain.handle(
+    'devorbit:pushGit',
+    async (_event, projectPath: string, commitMessage?: string): Promise<SyncResult> => {
+      return await pushGit(projectPath, commitMessage)
+    }
+  )
+
+  // Obter arquivos alterados recentemente
+  ipcMain.handle('devorbit:getGitChanges', async (_event, projectPath: string): Promise<string[]> => {
+    return await getGitChangesSummary(projectPath)
   })
 
   // Sincronizar todos os projetos

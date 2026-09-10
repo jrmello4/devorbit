@@ -14,6 +14,7 @@ import {
   Sparkles,
   AlertCircle,
   FolderOpen,
+  UploadCloud,
 } from 'lucide-react'
 import type { Project, AppConfig } from '../types'
 
@@ -21,6 +22,7 @@ interface ProjectCardProps {
   project: Project
   config: AppConfig | null
   onSync: (projectPath: string) => Promise<void>
+  onOpenPushModal: (project: Project) => void
   onNotify: (message: string, type?: 'success' | 'error' | 'info') => void
 }
 
@@ -28,6 +30,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
   project,
   config,
   onSync,
+  onOpenPushModal,
   onNotify,
 }) => {
   const [isSyncing, setIsSyncing] = useState(false)
@@ -176,13 +179,14 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
 
       {/* Action Buttons Section */}
       <div className="pt-3 border-t border-slate-800/80 mt-2 space-y-2">
-        {/* Sync Git row if it is a git repo */}
+        {/* Sync & Push Git row if it is a git repo */}
         {git.isRepo && (
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center justify-between gap-1.5">
+            {/* Sync Git (Pull) */}
             <button
               onClick={handleSync}
               disabled={isSyncing}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+              className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                 needsPull
                   ? 'bg-sky-500/20 text-sky-200 border border-sky-500/40 hover:bg-sky-500/30 hover:border-sky-400 shadow-sm shadow-sky-500/20'
                   : 'bg-slate-900/90 text-slate-300 border border-slate-800 hover:border-slate-700 hover:text-white'
@@ -192,13 +196,29 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
               <RefreshCw
                 className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-sky-400' : ''}`}
               />
-              <span>{isSyncing ? 'Puxando do GitHub...' : needsPull ? 'Atualizar com GitHub (Pull)' : 'Sync Git (Pull)'}</span>
+              <span className="truncate">{isSyncing ? 'Puxando...' : needsPull ? 'Pull (Novo)' : 'Pull'}</span>
+            </button>
+
+            {/* Push to GitHub Button */}
+            <button
+              onClick={() => onOpenPushModal(project)}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                git.hasChanges || git.ahead > 0
+                  ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-500/40 hover:bg-emerald-500/30 hover:border-emerald-400 shadow-sm shadow-emerald-500/20'
+                  : 'bg-slate-900/90 text-slate-400 border border-slate-800 hover:border-slate-700 hover:text-slate-200'
+              }`}
+              title="Subir alterações locais para o GitHub (Commit & Push)"
+            >
+              <UploadCloud className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="truncate">
+                {git.hasChanges ? 'Subir (Push)' : git.ahead > 0 ? `Push (${git.ahead})` : 'Push'}
+              </span>
             </button>
 
             {/* Copy Context Button */}
             <button
               onClick={handleCopyContext}
-              className={`flex items-center gap-1 py-1.5 px-2.5 rounded-lg text-xs font-medium border transition-all ${
+              className={`flex items-center gap-1 py-1.5 px-2 rounded-lg text-xs font-medium border transition-all shrink-0 ${
                 copied
                   ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
                   : 'bg-slate-900/90 text-slate-400 border-slate-800 hover:text-slate-200 hover:border-slate-700'
@@ -208,12 +228,12 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
               {copied ? (
                 <>
                   <Check className="w-3.5 h-3.5 text-emerald-400" />
-                  <span className="text-[11px]">Copiado!</span>
+                  <span className="text-[10px]">Copiado</span>
                 </>
               ) : (
                 <>
                   <Copy className="w-3.5 h-3.5" />
-                  <span className="text-[11px]">Contexto</span>
+                  <span className="text-[10px]">Contexto</span>
                 </>
               )}
             </button>

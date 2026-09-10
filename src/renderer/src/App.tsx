@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { Header } from './components/Header'
 import { ProjectGrid } from './components/ProjectGrid'
 import { SettingsModal } from './components/SettingsModal'
+import { GitPushModal } from './components/GitPushModal'
 import type { Project, AppConfig } from './types'
 import { CheckCircle2, AlertCircle, Info, X } from 'lucide-react'
 
@@ -13,6 +14,7 @@ export const App: React.FC = () => {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [isSyncingAll, setIsSyncingAll] = useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const [pushProject, setPushProject] = useState<Project | null>(null)
   const [notification, setNotification] = useState<{
     message: string
     type: 'success' | 'error' | 'info'
@@ -169,8 +171,18 @@ export const App: React.FC = () => {
         config={config}
         search={search}
         onSync={handleSyncProject}
+        onOpenPushModal={setPushProject}
         onNotify={notify}
         isLoading={isLoading}
+      />
+
+      {/* Modal de Subir para o GitHub (Push) */}
+      <GitPushModal
+        isOpen={Boolean(pushProject)}
+        project={pushProject}
+        onClose={() => setPushProject(null)}
+        onSuccess={handleRefresh}
+        onNotify={notify}
       />
 
       {/* Modal de Configurações */}

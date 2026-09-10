@@ -52,6 +52,8 @@ export interface DevOrbitAPI {
   getProjects: () => Promise<Project[]>
   refreshProjects: () => Promise<Project[]>
   syncGit: (projectPath: string) => Promise<SyncResult>
+  pushGit: (projectPath: string, commitMessage?: string) => Promise<SyncResult>
+  getGitChanges: (projectPath: string) => Promise<string[]>
   syncAllGit: () => Promise<{ [projectPath: string]: SyncResult }>
   launchTool: (
     tool:

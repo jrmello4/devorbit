@@ -6,6 +6,10 @@ const api: DevOrbitAPI = {
   getProjects: () => ipcRenderer.invoke('devorbit:getProjects'),
   refreshProjects: () => ipcRenderer.invoke('devorbit:refreshProjects'),
   syncGit: (projectPath: string) => ipcRenderer.invoke('devorbit:syncGit', projectPath),
+  pushGit: (projectPath: string, commitMessage?: string) =>
+    ipcRenderer.invoke('devorbit:pushGit', projectPath, commitMessage),
+  getGitChanges: (projectPath: string) =>
+    ipcRenderer.invoke('devorbit:getGitChanges', projectPath),
   syncAllGit: () => ipcRenderer.invoke('devorbit:syncAllGit'),
   launchTool: (tool, projectPath, options) =>
     ipcRenderer.invoke('devorbit:launchTool', tool, projectPath, options),

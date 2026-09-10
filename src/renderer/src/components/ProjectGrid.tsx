@@ -14,6 +14,7 @@ interface ProjectGridProps {
   config: AppConfig | null
   search: string
   onSync: (projectPath: string) => Promise<void>
+  onOpenPushModal: (project: Project) => void
   onNotify: (message: string, type?: 'success' | 'error' | 'info') => void
   isLoading: boolean
 }
@@ -25,6 +26,7 @@ export const ProjectGrid: React.FC<ProjectGridProps> = ({
   config,
   search,
   onSync,
+  onOpenPushModal,
   onNotify,
   isLoading,
 }) => {
@@ -198,6 +200,7 @@ export const ProjectGrid: React.FC<ProjectGridProps> = ({
                 project={project}
                 config={config}
                 onSync={onSync}
+                onOpenPushModal={onOpenPushModal}
                 onNotify={onNotify}
               />
             ))}

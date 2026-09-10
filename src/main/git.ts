@@ -165,8 +165,104 @@ export async function getGitChangesSummary(repoPath: string): Promise<string[]> 
       .split(/\r?\n/)
       .map((l) => l.trim())
       .filter(Boolean)
-      .slice(0, 15)
+      .slice(0, 20)
   } catch {
     return []
   }
 }
+
+export async function pushGit(
+  repoPath: string,
+  commitMessage?: string
+): Promise<SyncResult> {
+  const isRepo = await isGitRepository(repoPath)
+  if (!isRepo) {
+    return {
+      success: false,
+      message: 'Esta pasta não é um repositório Git.',
+    }
+  }
+
+  try {
+    // 1. Se foi informada mensagem de commit, adiciona todos os arquivos e commita
+    if (commitMessage && commitMessage.trim()) {
+      await execFileAsync('git', ['add', '-A'], {
+        cwd: repoPath,
+        timeout: 15000,
+        windowsHide: true,
+      })
+
+      try {
+        await execFileAsync('git', ['commit', '-m', commitMessage.trim()], {
+          cwd: repoPath,
+          timeout: 15000,
+          windowsHide: true,
+        })
+      } catch (commitErr: any) {
+        const msg = (commitErr.stdout || commitErr.stderr || commitErr.message || '').toString().toLowerCase()
+        if (!msg.includes('nothing to commit') && !msg.includes('working tree clean')) {
+          return {
+            success: false,
+            message: `Erro ao criar commit: ${commitErr.stderr || commitErr.message}`,
+            output: commitErr.stderr || commitErr.stdout,
+          }
+        }
+      }
+    }
+
+    // 2. Executa git push
+    let pushOutput = ''
+    try {
+      const { stdout, stderr } = await execFileAsync('git', ['push'], {
+        cwd: repoPath,
+        timeout: 45000,
+        windowsHide: true,
+      })
+      pushOutput = (stdout + '\n' + stderr).trim()
+    } catch (pushErr: any) {
+      const errText = (pushErr.stderr || pushErr.stdout || pushErr.message || '').toString()
+
+      // Se a branch não tem upstream no remote, configura automaticamente
+      if (errText.includes('has no upstream branch') || errText.includes('--set-upstream')) {
+        const { stdout: branchName } = await execFileAsync(
+          'git',
+          ['rev-parse', '--abbrev-ref', 'HEAD'],
+          { cwd: repoPath, windowsHide: true }
+        )
+        const branch = branchName.trim()
+        const { stdout, stderr } = await execFileAsync(
+          'git',
+          ['push', '--set-upstream', 'origin', branch],
+          { cwd: repoPath, timeout: 45000, windowsHide: true }
+        )
+        pushOutput = (stdout + '\n' + stderr).trim()
+      } else if (errText.includes('fetch first') || errText.includes('Updates were rejected')) {
+        return {
+          success: false,
+          message:
+            'O GitHub possui novos commits! Faça "Sync Git (Pull)" antes de subir suas alterações.',
+          output: errText,
+        }
+      } else {
+        return {
+          success: false,
+          message: `Erro ao subir para o GitHub: ${errText}`,
+          output: errText,
+        }
+      }
+    }
+
+    return {
+      success: true,
+      message: 'Alterações enviadas com sucesso para o GitHub!',
+      output: pushOutput,
+    }
+  } catch (error: any) {
+    return {
+      success: false,
+      message: `Erro ao processar push: ${error.stderr || error.message || 'Falha no push'}`,
+      output: error.stderr || error.stdout,
+    }
+  }
+}
+
