@@ -15,8 +15,10 @@ const defaultConfig: AppConfig = {
   chatGptAccount2Name: 'Conta 2 (Codex / Backup)',
   customPaths: {
     brave: 'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe',
+    chrome: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
     mimo: 'C:\\Users\\adenilson.j\\AppData\\Local\\Programs\\Xiaomi MiMo AI\\Xiaomi MiMo AI.exe',
     agy: 'C:\\Users\\adenilson.j\\AppData\\Local\\agy\\agy.exe',
+    codex: 'codex.cmd',
     vscode: 'code.cmd',
     wt: 'wt.exe',
   },

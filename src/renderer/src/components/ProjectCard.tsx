@@ -44,7 +44,16 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
   }
 
   const handleLaunch = async (
-    tool: 'agy' | 'mimo' | 'brave' | 'vscode' | 'terminal' | 'folder'
+    tool:
+      | 'agy'
+      | 'mimo'
+      | 'brave'
+      | 'chrome'
+      | 'codex-desktop'
+      | 'codex-cli'
+      | 'vscode'
+      | 'terminal'
+      | 'folder'
   ) => {
     setLaunchingTool(tool)
     try {
@@ -211,61 +220,107 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
           </div>
         )}
 
-        {/* AI & IDE Quick Launch Grid */}
-        <div className="grid grid-cols-5 gap-1.5">
-          {/* Antigravity (Gemini CLI) */}
-          <button
-            onClick={() => handleLaunch('agy')}
-            disabled={launchingTool === 'agy'}
-            className="flex flex-col items-center justify-center p-2 rounded-xl bg-slate-900/80 border border-slate-800 hover:border-indigo-500/50 hover:bg-indigo-950/20 transition-all text-slate-300 hover:text-white group/btn cursor-pointer"
-            title="Abrir no Antigravity CLI (Gemini) no Windows Terminal"
-          >
-            <Sparkles className="w-4 h-4 text-indigo-400 group-hover/btn:scale-110 transition-transform mb-1" />
-            <span className="text-[10px] font-medium">Antigravity</span>
-          </button>
+        {/* Row 1: AI Assistants */}
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between text-[11px] text-slate-400 font-medium px-0.5">
+            <span>Assistentes IA</span>
+            <span className="text-[10px] text-slate-500">
+              Conta ativa: {config?.activeChatGptAccount === 'account2' ? 'Conta 2' : 'Conta 1'}
+            </span>
+          </div>
+          <div className="grid grid-cols-4 gap-1.5">
+            {/* Codex Desktop App */}
+            <button
+              onClick={() => handleLaunch('codex-desktop')}
+              disabled={launchingTool === 'codex-desktop'}
+              className="flex flex-col items-center justify-center p-2 rounded-xl bg-slate-900/90 border border-slate-800 hover:border-emerald-500/60 hover:bg-emerald-950/20 transition-all text-slate-300 hover:text-white group/btn cursor-pointer"
+              title="Abrir no aplicativo oficial OpenAI Codex Desktop"
+            >
+              <Bot className="w-4 h-4 text-emerald-400 group-hover/btn:scale-110 transition-transform mb-1" />
+              <span className="text-[10px] font-semibold">Codex App</span>
+            </button>
 
-          {/* Xiaomi MiMo AI */}
-          <button
-            onClick={() => handleLaunch('mimo')}
-            disabled={launchingTool === 'mimo'}
-            className="flex flex-col items-center justify-center p-2 rounded-xl bg-slate-900/80 border border-slate-800 hover:border-orange-500/50 hover:bg-orange-950/20 transition-all text-slate-300 hover:text-white group/btn cursor-pointer"
-            title="Abrir no Xiaomi MiMo AI"
-          >
-            <Bot className="w-4 h-4 text-orange-400 group-hover/btn:scale-110 transition-transform mb-1" />
-            <span className="text-[10px] font-medium">MiMo AI</span>
-          </button>
+            {/* Codex CLI (Multi-conta) */}
+            <button
+              onClick={() => handleLaunch('codex-cli')}
+              disabled={launchingTool === 'codex-cli'}
+              className="flex flex-col items-center justify-center p-2 rounded-xl bg-slate-900/90 border border-slate-800 hover:border-teal-500/60 hover:bg-teal-950/20 transition-all text-slate-300 hover:text-white group/btn cursor-pointer"
+              title={`Abrir Codex CLI no terminal já conectado com ${config?.activeChatGptAccount === 'account2' ? 'Conta 2 (Brave)' : 'Conta 1 (Chrome)'} sem precisar deslogar!`}
+            >
+              <Terminal className="w-4 h-4 text-teal-400 group-hover/btn:scale-110 transition-transform mb-1" />
+              <span className="text-[10px] font-semibold">
+                Codex {config?.activeChatGptAccount === 'account2' ? '#2' : '#1'}
+              </span>
+            </button>
 
-          {/* Brave (ChatGPT / Codex) */}
-          <button
-            onClick={() => handleLaunch('brave')}
-            disabled={launchingTool === 'brave'}
-            className="flex flex-col items-center justify-center p-2 rounded-xl bg-slate-900/80 border border-slate-800 hover:border-emerald-500/50 hover:bg-emerald-950/20 transition-all text-slate-300 hover:text-white group/btn cursor-pointer"
-            title={`Abrir ChatGPT/Codex no Brave (${config?.activeChatGptAccount === 'account2' ? 'Conta 2' : 'Conta 1'})`}
-          >
-            <Globe className="w-4 h-4 text-emerald-400 group-hover/btn:scale-110 transition-transform mb-1" />
-            <span className="text-[10px] font-medium">ChatGPT</span>
-          </button>
+            {/* Antigravity CLI (Gemini) */}
+            <button
+              onClick={() => handleLaunch('agy')}
+              disabled={launchingTool === 'agy'}
+              className="flex flex-col items-center justify-center p-2 rounded-xl bg-slate-900/90 border border-slate-800 hover:border-indigo-500/60 hover:bg-indigo-950/20 transition-all text-slate-300 hover:text-white group/btn cursor-pointer"
+              title="Abrir no Antigravity CLI (Gemini) no Windows Terminal"
+            >
+              <Sparkles className="w-4 h-4 text-indigo-400 group-hover/btn:scale-110 transition-transform mb-1" />
+              <span className="text-[10px] font-semibold">Antigravity</span>
+            </button>
 
+            {/* Xiaomi MiMo AI */}
+            <button
+              onClick={() => handleLaunch('mimo')}
+              disabled={launchingTool === 'mimo'}
+              className="flex flex-col items-center justify-center p-2 rounded-xl bg-slate-900/90 border border-slate-800 hover:border-orange-500/60 hover:bg-orange-950/20 transition-all text-slate-300 hover:text-white group/btn cursor-pointer"
+              title="Abrir no Xiaomi MiMo AI"
+            >
+              <Bot className="w-4 h-4 text-orange-400 group-hover/btn:scale-110 transition-transform mb-1" />
+              <span className="text-[10px] font-semibold">MiMo AI</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Row 2: IDEs & Browsers */}
+        <div className="grid grid-cols-4 gap-1.5 pt-1">
           {/* VS Code */}
           <button
             onClick={() => handleLaunch('vscode')}
             disabled={launchingTool === 'vscode'}
-            className="flex flex-col items-center justify-center p-2 rounded-xl bg-slate-900/80 border border-slate-800 hover:border-sky-500/50 hover:bg-sky-950/20 transition-all text-slate-300 hover:text-white group/btn cursor-pointer"
-            title="Abrir no Visual Studio Code"
+            className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-slate-900/60 border border-slate-800 hover:border-sky-500/40 text-slate-400 hover:text-sky-300 text-[11px] font-medium transition-all"
+            title="Abrir no VS Code"
           >
-            <Code2 className="w-4 h-4 text-sky-400 group-hover/btn:scale-110 transition-transform mb-1" />
-            <span className="text-[10px] font-medium">VS Code</span>
+            <Code2 className="w-3.5 h-3.5 text-sky-400" />
+            <span>VS Code</span>
           </button>
 
           {/* Terminal */}
           <button
             onClick={() => handleLaunch('terminal')}
             disabled={launchingTool === 'terminal'}
-            className="flex flex-col items-center justify-center p-2 rounded-xl bg-slate-900/80 border border-slate-800 hover:border-purple-500/50 hover:bg-purple-950/20 transition-all text-slate-300 hover:text-white group/btn cursor-pointer"
-            title="Abrir no Windows Terminal nesta pasta"
+            className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-slate-900/60 border border-slate-800 hover:border-purple-500/40 text-slate-400 hover:text-purple-300 text-[11px] font-medium transition-all"
+            title="Abrir terminal na pasta"
           >
-            <Terminal className="w-4 h-4 text-purple-400 group-hover/btn:scale-110 transition-transform mb-1" />
-            <span className="text-[10px] font-medium">Terminal</span>
+            <Terminal className="w-3.5 h-3.5 text-purple-400" />
+            <span>Terminal</span>
+          </button>
+
+          {/* Chrome (Conta 1) */}
+          <button
+            onClick={() => handleLaunch('chrome')}
+            disabled={launchingTool === 'chrome'}
+            className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-slate-900/60 border border-slate-800 hover:border-blue-500/40 text-slate-400 hover:text-blue-300 text-[11px] font-medium transition-all"
+            title="Abrir ChatGPT no Google Chrome (Conta 1)"
+          >
+            <Globe className="w-3.5 h-3.5 text-blue-400" />
+            <span>Chrome #1</span>
+          </button>
+
+          {/* Brave (Conta 2) */}
+          <button
+            onClick={() => handleLaunch('brave')}
+            disabled={launchingTool === 'brave'}
+            className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-slate-900/60 border border-slate-800 hover:border-amber-500/40 text-slate-400 hover:text-amber-300 text-[11px] font-medium transition-all"
+            title="Abrir ChatGPT no Brave (Conta 2)"
+          >
+            <Globe className="w-3.5 h-3.5 text-amber-400" />
+            <span>Brave #2</span>
           </button>
         </div>
       </div>

@@ -33,8 +33,10 @@ export interface AppConfig {
   chatGptAccount2Name: string
   customPaths: {
     brave?: string
+    chrome?: string
     mimo?: string
     agy?: string
+    codex?: string
     vscode?: string
     wt?: string
   }
@@ -52,7 +54,16 @@ export interface DevOrbitAPI {
   syncGit: (projectPath: string) => Promise<SyncResult>
   syncAllGit: () => Promise<{ [projectPath: string]: SyncResult }>
   launchTool: (
-    tool: 'agy' | 'mimo' | 'brave' | 'vscode' | 'terminal' | 'folder',
+    tool:
+      | 'agy'
+      | 'mimo'
+      | 'brave'
+      | 'chrome'
+      | 'codex-desktop'
+      | 'codex-cli'
+      | 'vscode'
+      | 'terminal'
+      | 'folder',
     projectPath: string,
     options?: { account?: 'account1' | 'account2' }
   ) => Promise<{ success: boolean; message?: string }>

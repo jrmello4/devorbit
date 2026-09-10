@@ -2,12 +2,22 @@ import { spawn, exec } from 'node:child_process'
 import electron from 'electron'
 const { clipboard, shell } = electron
 import path from 'node:path'
+import os from 'node:os'
 import fs from 'node:fs/promises'
 import { loadConfig } from './config'
 import { getGitStatus, getGitChangesSummary } from './git'
 
 export async function launchTool(
-  tool: 'agy' | 'mimo' | 'brave' | 'vscode' | 'terminal' | 'folder',
+  tool:
+    | 'agy'
+    | 'mimo'
+    | 'brave'
+    | 'chrome'
+    | 'codex-desktop'
+    | 'codex-cli'
+    | 'vscode'
+    | 'terminal'
+    | 'folder',
   projectPath: string,
   options?: { account?: 'account1' | 'account2' }
 ): Promise<{ success: boolean; message?: string }> {
@@ -16,13 +26,66 @@ export async function launchTool(
 
   try {
     switch (tool) {
+      case 'codex-desktop': {
+        const codexCmd = custom.codex || 'codex.cmd'
+        exec(`"${codexCmd}" app "${projectPath}"`, (err) => {
+          if (err) {
+            exec(`start shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App`)
+          }
+        })
+        return { success: true, message: 'OpenAI Codex Desktop aberto no projeto!' }
+      }
+
+      case 'codex-cli': {
+        const isAccount2 = options?.account === 'account2'
+        const codexHome = isAccount2
+          ? path.join(os.homedir(), '.codex-conta2')
+          : path.join(os.homedir(), '.codex-conta1')
+        const accountLabel = isAccount2
+          ? config.chatGptAccount2Name || 'Conta 2 (Brave)'
+          : config.chatGptAccount1Name || 'Conta 1 (Chrome)'
+        const cmd = `wt.exe -d "${projectPath}" powershell.exe -NoExit -Command "$env:CODEX_HOME = '${codexHome}'; Write-Host '>>> Codex conectado com: ${accountLabel} <<<' -ForegroundColor Cyan; cd '${projectPath}'; codex"`
+        exec(cmd, (err) => {
+          if (err) {
+            exec(
+              `start cmd.exe /k "set CODEX_HOME=${codexHome} && cd /d \"${projectPath}\" && codex"`
+            )
+          }
+        })
+        return {
+          success: true,
+          message: `Codex CLI iniciado no terminal (${accountLabel})!`,
+        }
+      }
+
+      case 'chrome': {
+        const chromePath =
+          custom.chrome ||
+          'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
+        spawn(chromePath, ['https://chatgpt.com'], {
+          detached: true,
+          stdio: 'ignore',
+        }).unref()
+        return { success: true, message: 'ChatGPT aberto no Google Chrome (Conta 1)!' }
+      }
+
+      case 'brave': {
+        const bravePath =
+          custom.brave ||
+          'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe'
+        spawn(bravePath, ['https://chatgpt.com'], {
+          detached: true,
+          stdio: 'ignore',
+        }).unref()
+        return { success: true, message: 'ChatGPT aberto no Brave (Conta 2)!' }
+      }
+
       case 'agy': {
-        const agyPath = custom.agy || 'C:\\Users\\adenilson.j\\AppData\\Local\\agy\\agy.exe'
-        // Abre o Windows Terminal no diretório do projeto executando o agy interativamente
+        const agyPath =
+          custom.agy || 'C:\\Users\\adenilson.j\\AppData\\Local\\agy\\agy.exe'
         const cmd = `wt.exe -d "${projectPath}" powershell.exe -NoExit -Command "cd '${projectPath}'; & '${agyPath}'"`
         exec(cmd, (err) => {
           if (err) {
-            // Fallback para cmd normal caso wt.exe falhe
             exec(`start cmd.exe /k "cd /d \"${projectPath}\" && \"${agyPath}\""`)
           }
         })
@@ -39,21 +102,6 @@ export async function launchTool(
           cwd: projectPath,
         }).unref()
         return { success: true, message: 'Xiaomi MiMo AI aberto!' }
-      }
-
-      case 'brave': {
-        const bravePath =
-          custom.brave ||
-          'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe'
-        const url = 'https://chatgpt.com'
-        spawn(bravePath, [url], {
-          detached: true,
-          stdio: 'ignore',
-        }).unref()
-        return {
-          success: true,
-          message: `ChatGPT aberto no Brave (${options?.account === 'account2' ? 'Conta 2 / Codex' : 'Conta 1'})!`,
-        }
       }
 
       case 'vscode': {

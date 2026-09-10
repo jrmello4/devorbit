@@ -1,4 +1,4 @@
-import electron from 'electron'
+import electron, { type BrowserWindow as BrowserWindowType } from 'electron'
 const { app, BrowserWindow, ipcMain, dialog } = electron
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -19,7 +19,7 @@ process.env.VITE_PUBLIC = process.env.VITE_DEV_SERVER_URL
   ? path.join(process.env.APP_ROOT, 'public')
   : RENDERER_DIST
 
-let mainWindow: BrowserWindow | null = null
+let mainWindow: BrowserWindowType | null = null
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -42,11 +42,14 @@ function createWindow() {
   mainWindow.show()
   mainWindow.focus()
 
-  mainWindow.webContents.on('did-fail-load', (_event, code, desc, url) => {
-    console.error('[Window Load Error]', code, desc, url)
-  })
+  mainWindow.webContents.on(
+    'did-fail-load',
+    (_event: any, code: any, desc: any, url: any) => {
+      console.error('[Window Load Error]', code, desc, url)
+    }
+  )
 
-  mainWindow.webContents.on('before-input-event', (_event, input) => {
+  mainWindow.webContents.on('before-input-event', (_event: any, input: any) => {
     if (input.key === 'F12') {
       mainWindow?.webContents.toggleDevTools()
     }
@@ -56,7 +59,7 @@ function createWindow() {
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL)
   } else {
-    mainWindow.loadFile(path.join(RENDERER_DIST, 'index.html')).catch((err) => {
+    mainWindow.loadFile(path.join(RENDERER_DIST, 'index.html')).catch((err: any) => {
       console.error('Failed to load file:', err)
     })
   }
