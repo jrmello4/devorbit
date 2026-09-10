@@ -15,6 +15,7 @@ import {
   AlertCircle,
   FolderOpen,
   UploadCloud,
+  Brain,
 } from 'lucide-react'
 import type { Project, AppConfig } from '../types'
 
@@ -24,6 +25,9 @@ interface ProjectCardProps {
   onSync: (projectPath: string) => Promise<void>
   onOpenPushModal: (project: Project) => void
   onNotify: (message: string, type?: 'success' | 'error' | 'info') => void
+  onOpenAuthModal?: (account: 'account1' | 'account2') => void
+  onOpenMemory?: (project: Project) => void
+  onUsageUpdate?: () => void
 }
 
 export const ProjectCard: React.FC<ProjectCardProps> = ({
@@ -32,6 +36,9 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
   onSync,
   onOpenPushModal,
   onNotify,
+  onOpenAuthModal,
+  onOpenMemory,
+  onUsageUpdate,
 }) => {
   const [isSyncing, setIsSyncing] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -65,8 +72,15 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
       })
       if (res?.success) {
         onNotify(res.message || 'Ferramenta iniciada!', 'success')
+        onUsageUpdate?.()
       } else {
-        onNotify(res?.message || 'Erro ao iniciar ferramenta.', 'error')
+        if (res?.needsAuth) {
+          onOpenAuthModal?.((res.account as any) || config?.activeChatGptAccount || 'account1')
+        }
+        onNotify(
+          res?.message || 'Erro ao iniciar ferramenta.',
+          res?.needsAuth ? 'info' : 'error'
+        )
       }
     } catch (err: any) {
       onNotify(`Erro: ${err.message}`, 'error')
@@ -81,6 +95,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
       if (res?.success) {
         setCopied(true)
         onNotify('Contexto do projeto copiado para a área de transferência!', 'success')
+        onUsageUpdate?.()
         setTimeout(() => setCopied(false), 2000)
       } else {
         onNotify(res?.context || 'Falha ao copiar contexto', 'error')
@@ -121,14 +136,23 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
             </p>
           </div>
 
-          {/* Quick folder open button */}
-          <button
-            onClick={() => handleLaunch('folder')}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 transition-colors shrink-0"
-            title="Abrir no Windows Explorer"
-          >
-            <FolderOpen className="w-4 h-4" />
-          </button>
+          {/* Quick buttons */}
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              onClick={() => onOpenMemory?.(project)}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-violet-300 hover:bg-violet-500/15 transition-colors cursor-pointer"
+              title="Abrir Memória de Sessão & Handoff (AI Memory)"
+            >
+              <Brain className="w-4 h-4 text-violet-400" />
+            </button>
+            <button
+              onClick={() => handleLaunch('folder')}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 transition-colors cursor-pointer"
+              title="Abrir no Windows Explorer"
+            >
+              <FolderOpen className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         {/* Tech Stack & Git Badges */}
@@ -218,7 +242,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
             {/* Copy Context Button */}
             <button
               onClick={handleCopyContext}
-              className={`flex items-center gap-1 py-1.5 px-2 rounded-lg text-xs font-medium border transition-all shrink-0 ${
+              className={`flex items-center gap-1 py-1.5 px-2 rounded-lg text-xs font-medium border transition-all shrink-0 cursor-pointer ${
                 copied
                   ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
                   : 'bg-slate-900/90 text-slate-400 border-slate-800 hover:text-slate-200 hover:border-slate-700'
@@ -236,6 +260,51 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                   <span className="text-[10px]">Contexto</span>
                 </>
               )}
+            </button>
+
+            {/* AI Memory Button */}
+            <button
+              onClick={() => onOpenMemory?.(project)}
+              className="flex items-center gap-1 py-1.5 px-2 rounded-lg text-xs font-medium border border-violet-500/30 bg-violet-500/10 text-violet-300 hover:bg-violet-500/20 hover:border-violet-500/50 transition-all shrink-0 cursor-pointer"
+              title="Abrir Memória de Sessão & Handoff (.devorbit/memory.md)"
+            >
+              <Brain className="w-3.5 h-3.5 text-violet-400" />
+              <span className="text-[10px]">Memória</span>
+            </button>
+          </div>
+        )}
+
+        {/* Action row for projects without Git */}
+        {!git.isRepo && (
+          <div className="flex items-center justify-end gap-1.5">
+            <button
+              onClick={handleCopyContext}
+              className={`flex items-center gap-1 py-1.5 px-2.5 rounded-lg text-xs font-medium border transition-all shrink-0 cursor-pointer ${
+                copied
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                  : 'bg-slate-900/90 text-slate-400 border-slate-800 hover:text-slate-200 hover:border-slate-700'
+              }`}
+              title="Copiar resumo do projeto formatado para o ChatGPT/Codex"
+            >
+              {copied ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="text-[10px]">Copiado</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5" />
+                  <span className="text-[10px]">Contexto</span>
+                </>
+              )}
+            </button>
+            <button
+              onClick={() => onOpenMemory?.(project)}
+              className="flex items-center gap-1 py-1.5 px-2.5 rounded-lg text-xs font-medium border border-violet-500/30 bg-violet-500/10 text-violet-300 hover:bg-violet-500/20 hover:border-violet-500/50 transition-all shrink-0 cursor-pointer"
+              title="Abrir Memória de Sessão & Handoff (.devorbit/memory.md)"
+            >
+              <Brain className="w-3.5 h-3.5 text-violet-400" />
+              <span className="text-[10px]">Memória</span>
             </button>
           </div>
         )}

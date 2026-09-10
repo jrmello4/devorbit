@@ -1,5 +1,5 @@
 @echo off
 title DevOrbit
 cd /d "%~dp0"
-start "" npx.cmd electron .
+start "" "%~dp0node_modules\electron\dist\electron.exe" .
 exit

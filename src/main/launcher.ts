@@ -6,6 +6,8 @@ import os from 'node:os'
 import fs from 'node:fs/promises'
 import { loadConfig } from './config'
 import { getGitStatus, getGitChangesSummary } from './git'
+import { getProjectMemory } from './memory'
+import { incrementUsage } from './usage'
 
 export async function launchTool(
   tool:
@@ -20,7 +22,7 @@ export async function launchTool(
     | 'folder',
   projectPath: string,
   options?: { account?: 'account1' | 'account2' }
-): Promise<{ success: boolean; message?: string }> {
+): Promise<{ success: boolean; message?: string; needsAuth?: boolean; account?: string }> {
   const config = await loadConfig()
   const custom = config.customPaths
 
@@ -28,6 +30,7 @@ export async function launchTool(
     switch (tool) {
       case 'codex-desktop': {
         const codexCmd = custom.codex || 'codex.cmd'
+        await incrementUsage(config.activeChatGptAccount || 'account1')
         exec(`"${codexCmd}" app "${projectPath}"`, (err) => {
           if (err) {
             exec(`start shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App`)
@@ -44,12 +47,36 @@ export async function launchTool(
         const accountLabel = isAccount2
           ? config.chatGptAccount2Name || 'Conta 2 (Brave)'
           : config.chatGptAccount1Name || 'Conta 1 (Chrome)'
-        const cmd = `wt.exe -d "${projectPath}" powershell.exe -NoExit -Command "$env:CODEX_HOME = '${codexHome}'; Write-Host '>>> Codex conectado com: ${accountLabel} <<<' -ForegroundColor Cyan; cd '${projectPath}'; codex"`
-        exec(cmd, (err) => {
+
+        // Checa se a conta está autenticada
+        const authPath = path.join(codexHome, 'auth.json')
+        let isAuthed = false
+        try {
+          const stat = await fs.stat(authPath)
+          isAuthed = stat.size > 50
+        } catch {
+          isAuthed = false
+        }
+
+        if (!isAuthed) {
+          return {
+            success: false,
+            needsAuth: true,
+            account: options?.account || 'account1',
+            message: `${accountLabel} ainda não está conectada! Clique no botão de login para conectar.`,
+          }
+        }
+
+        await incrementUsage(isAccount2 ? 'account2' : 'account1')
+
+        const wtCmd = custom.wt || 'wt.exe'
+        const codexCmd = custom.codex || 'codex.cmd'
+        const title = `Codex CLI - ${accountLabel}`
+        const innerCmd = `title ${title} && set CODEX_HOME=${codexHome} && echo ======================================================== && echo   OpenAI Codex CLI Conectado: ${accountLabel} && echo   Projeto: ${projectPath} && echo ======================================================== && cd /d "${projectPath}" && ${codexCmd}`
+
+        exec(`"${wtCmd}" -d "${projectPath}" cmd.exe /k "${innerCmd}"`, (err) => {
           if (err) {
-            exec(
-              `start cmd.exe /k "set CODEX_HOME=${codexHome} && cd /d \"${projectPath}\" && codex"`
-            )
+            exec(`start cmd.exe /k "${innerCmd}"`)
           }
         })
         return {
@@ -59,6 +86,7 @@ export async function launchTool(
       }
 
       case 'chrome': {
+        await incrementUsage('account1')
         const chromePath =
           custom.chrome ||
           'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
@@ -70,6 +98,7 @@ export async function launchTool(
       }
 
       case 'brave': {
+        await incrementUsage('account2')
         const bravePath =
           custom.brave ||
           'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe'
@@ -81,6 +110,7 @@ export async function launchTool(
       }
 
       case 'agy': {
+        await incrementUsage('antigravity')
         const agyPath =
           custom.agy || 'C:\\Users\\adenilson.j\\AppData\\Local\\agy\\agy.exe'
         const cmd = `wt.exe -d "${projectPath}" powershell.exe -NoExit -Command "cd '${projectPath}'; & '${agyPath}'"`
@@ -172,10 +202,23 @@ export async function copyProjectContext(
       }
     }
 
-    lines.push('\n---\n*Pronto para colar no ChatGPT, Codex ou Claude.*')
+    // Lê a Memória da IA (Handoff) se existir
+    const memory = await getProjectMemory(projectPath)
+    if (memory.exists && memory.content.trim()) {
+      lines.push(
+        `\n### 🧠 Memória da Sessão & Handoff (Onde paramos):`,
+        memory.content.trim()
+      )
+    }
+
+    lines.push('\n---\n*Pronto para colar no ChatGPT, Codex ou Claude. Continue o raciocínio a partir do handoff acima.*')
 
     const contextText = lines.join('\n')
     clipboard.writeText(contextText)
+
+    // Incrementa o contador de uso da conta ativa
+    const config = await loadConfig()
+    await incrementUsage(config.activeChatGptAccount || 'account1')
 
     return { success: true, context: contextText }
   } catch (error: any) {

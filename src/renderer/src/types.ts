@@ -48,6 +48,49 @@ export interface SyncResult {
   output?: string
 }
 
+export interface CodexAccountStatus {
+  account1: {
+    connected: boolean
+    label: string
+    path: string
+  }
+  account2: {
+    connected: boolean
+    label: string
+    path: string
+  }
+}
+
+export interface CodexAuthProgress {
+  account: 'account1' | 'account2'
+  status: 'idle' | 'starting' | 'code_generated' | 'success' | 'error' | 'cancelled'
+  code?: string
+  verificationUrl?: string
+  message?: string
+}
+
+export interface ProjectMemory {
+  content: string
+  lastUpdated?: string
+  exists: boolean
+  path: string
+}
+
+export interface AccountUsage {
+  used: number
+  limit: number
+  windowStart?: number
+  windowDurationHours: number
+}
+
+export interface UsageTrackerState {
+  account1: AccountUsage
+  account2: AccountUsage
+  antigravity: {
+    sessionCount: number
+  }
+}
+
 export interface DevOrbitAPI {
   getProjects: () => Promise<Project[]>
   refreshProjects: () => Promise<Project[]>
@@ -68,12 +111,33 @@ export interface DevOrbitAPI {
       | 'folder',
     projectPath: string,
     options?: { account?: 'account1' | 'account2' }
-  ) => Promise<{ success: boolean; message?: string }>
+  ) => Promise<{ success: boolean; message?: string; needsAuth?: boolean; account?: string }>
   copyProjectContext: (projectPath: string) => Promise<{ success: boolean; context: string }>
   getConfig: () => Promise<AppConfig>
   saveConfig: (config: Partial<AppConfig>) => Promise<AppConfig>
   selectDirectory: () => Promise<string | null>
   windowControl: (action: 'minimize' | 'maximize' | 'close') => void
+  getCodexAuthStatus: () => Promise<CodexAccountStatus>
+  startCodexLogin: (account: 'account1' | 'account2') => Promise<{ success: boolean }>
+  cancelCodexLogin: () => Promise<{ success: boolean }>
+  onCodexAuthProgress: (callback: (progress: CodexAuthProgress) => void) => () => void
+  getProjectMemory: (projectPath: string) => Promise<ProjectMemory>
+  saveProjectMemory: (
+    projectPath: string,
+    content: string
+  ) => Promise<{ success: boolean; message?: string }>
+  generateMemoryFromGit: (projectPath: string) => Promise<string>
+  getUsageState: () => Promise<UsageTrackerState>
+  incrementUsage: (
+    target: 'account1' | 'account2' | 'antigravity'
+  ) => Promise<UsageTrackerState>
+  decrementUsage: (target: 'account1' | 'account2') => Promise<UsageTrackerState>
+  resetUsage: (target: 'account1' | 'account2') => Promise<UsageTrackerState>
+  updateUsageLimits: (
+    account: 'account1' | 'account2',
+    limit: number,
+    windowHours?: number
+  ) => Promise<UsageTrackerState>
 }
 
 declare global {
@@ -81,3 +145,5 @@ declare global {
     devorbit: DevOrbitAPI
   }
 }
+
+

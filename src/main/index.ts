@@ -6,6 +6,24 @@ import { loadConfig, saveConfig } from './config'
 import { scanAllProjects } from './scanner'
 import { syncGit, pushGit, getGitChangesSummary } from './git'
 import { launchTool, copyProjectContext } from './launcher'
+import {
+  checkCodexAuthStatus,
+  startCodexDeviceLogin,
+  cancelCodexLogin,
+  type CodexAuthProgress,
+} from './codex-auth'
+import {
+  getProjectMemory,
+  saveProjectMemory,
+  generateMemoryFromGit,
+} from './memory'
+import {
+  getUsageState,
+  incrementUsage,
+  decrementUsage,
+  resetUsageWindow,
+  updateUsageLimits,
+} from './usage'
 import type { AppConfig, SyncResult } from '../renderer/src/types'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -48,6 +66,14 @@ function createWindow() {
       console.error('[Window Load Error]', code, desc, url)
     }
   )
+
+  mainWindow.webContents.on('console-message', (_event: any, level: any, message: any, line: any, sourceId: any) => {
+    console.log(`[Renderer Console Level ${level}] ${message} (${sourceId}:${line})`)
+  })
+
+  mainWindow.webContents.on('render-process-gone', (_event: any, details: any) => {
+    console.error('[Renderer Gone]', details)
+  })
 
   mainWindow.webContents.on('before-input-event', (_event: any, input: any) => {
     if (input.key === 'F12') {
@@ -158,6 +184,80 @@ function setupIpcHandlers() {
     if (result.canceled || result.filePaths.length === 0) return null
     return result.filePaths[0]
   })
+
+  // Status e Autenticação do Codex Multi-Conta
+  ipcMain.handle('devorbit:getCodexAuthStatus', async () => {
+    return await checkCodexAuthStatus()
+  })
+
+  ipcMain.handle(
+    'devorbit:startCodexLogin',
+    async (_event, account: 'account1' | 'account2') => {
+      startCodexDeviceLogin(account, (progress: CodexAuthProgress) => {
+        mainWindow?.webContents.send('devorbit:codexAuthProgress', progress)
+      })
+      return { success: true }
+    }
+  )
+
+  ipcMain.handle('devorbit:cancelCodexLogin', async () => {
+    cancelCodexLogin()
+    return { success: true }
+  })
+
+  // AI Memory Handlers
+  ipcMain.handle('devorbit:getProjectMemory', async (_event, projectPath: string) => {
+    return await getProjectMemory(projectPath)
+  })
+
+  ipcMain.handle(
+    'devorbit:saveProjectMemory',
+    async (_event, projectPath: string, content: string) => {
+      return await saveProjectMemory(projectPath, content)
+    }
+  )
+
+  ipcMain.handle('devorbit:generateMemoryFromGit', async (_event, projectPath: string) => {
+    return await generateMemoryFromGit(projectPath)
+  })
+
+  // Usage Tracker Handlers
+  ipcMain.handle('devorbit:getUsageState', async () => {
+    return await getUsageState()
+  })
+
+  ipcMain.handle(
+    'devorbit:incrementUsage',
+    async (_event, target: 'account1' | 'account2' | 'antigravity') => {
+      return await incrementUsage(target)
+    }
+  )
+
+  ipcMain.handle(
+    'devorbit:decrementUsage',
+    async (_event, target: 'account1' | 'account2') => {
+      return await decrementUsage(target)
+    }
+  )
+
+  ipcMain.handle(
+    'devorbit:resetUsage',
+    async (_event, target: 'account1' | 'account2') => {
+      return await resetUsageWindow(target)
+    }
+  )
+
+  ipcMain.handle(
+    'devorbit:updateUsageLimits',
+    async (
+      _event,
+      account: 'account1' | 'account2',
+      limit: number,
+      windowHours?: number
+    ) => {
+      return await updateUsageLimits(account, limit, windowHours)
+    }
+  )
 
   // Controles de janela (minimizar, maximizar, fechar)
   ipcMain.on('devorbit:windowControl', (_event, action: 'minimize' | 'maximize' | 'close') => {

@@ -101,13 +101,14 @@ export async function scanDirectoryForProjects(rootDir: string): Promise<Project
     const entries = await fs.readdir(rootDir, { withFileTypes: true })
 
     for (const entry of entries) {
-      if (!entry.isDirectory()) continue
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue
       if (entry.name.startsWith('.') || IGNORED_DIRS.has(entry.name)) continue
 
       const projectPath = path.join(rootDir, entry.name)
 
       try {
         const stats = await fs.stat(projectPath)
+        if (!stats.isDirectory()) continue
         const hasGit = await isGitRepository(projectPath)
         const techs = await detectTechs(projectPath)
 

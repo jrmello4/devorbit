@@ -20,6 +20,28 @@ const api: DevOrbitAPI = {
   selectDirectory: () => ipcRenderer.invoke('devorbit:selectDirectory'),
   windowControl: (action: 'minimize' | 'maximize' | 'close') =>
     ipcRenderer.send('devorbit:windowControl', action),
+  getCodexAuthStatus: () => ipcRenderer.invoke('devorbit:getCodexAuthStatus'),
+  startCodexLogin: (account) => ipcRenderer.invoke('devorbit:startCodexLogin', account),
+  cancelCodexLogin: () => ipcRenderer.invoke('devorbit:cancelCodexLogin'),
+  onCodexAuthProgress: (callback) => {
+    const handler = (_event: any, progress: any) => callback(progress)
+    ipcRenderer.on('devorbit:codexAuthProgress', handler)
+    return () => {
+      ipcRenderer.removeListener('devorbit:codexAuthProgress', handler)
+    }
+  },
+  getProjectMemory: (projectPath) =>
+    ipcRenderer.invoke('devorbit:getProjectMemory', projectPath),
+  saveProjectMemory: (projectPath, content) =>
+    ipcRenderer.invoke('devorbit:saveProjectMemory', projectPath, content),
+  generateMemoryFromGit: (projectPath) =>
+    ipcRenderer.invoke('devorbit:generateMemoryFromGit', projectPath),
+  getUsageState: () => ipcRenderer.invoke('devorbit:getUsageState'),
+  incrementUsage: (target) => ipcRenderer.invoke('devorbit:incrementUsage', target),
+  decrementUsage: (target) => ipcRenderer.invoke('devorbit:decrementUsage', target),
+  resetUsage: (target) => ipcRenderer.invoke('devorbit:resetUsage', target),
+  updateUsageLimits: (account, limit, windowHours) =>
+    ipcRenderer.invoke('devorbit:updateUsageLimits', account, limit, windowHours),
 }
 
 contextBridge.exposeInMainWorld('devorbit', api)

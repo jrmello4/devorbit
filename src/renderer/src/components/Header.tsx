@@ -11,7 +11,7 @@ import {
   CheckCircle2,
   FolderGit2,
 } from 'lucide-react'
-import type { AppConfig } from '../types'
+import type { AppConfig, CodexAccountStatus } from '../types'
 
 interface HeaderProps {
   search: string
@@ -25,6 +25,8 @@ interface HeaderProps {
   isSyncingAll: boolean
   totalProjects: number
   gitProjectsCount: number
+  authStatus?: CodexAccountStatus | null
+  onOpenAuthModal?: (account: 'account1' | 'account2') => void
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -39,8 +41,13 @@ export const Header: React.FC<HeaderProps> = ({
   isSyncingAll,
   totalProjects,
   gitProjectsCount,
+  authStatus,
+  onOpenAuthModal,
 }) => {
   const isAccount1 = config?.activeChatGptAccount === 'account1'
+  const isCurrentAuthed = isAccount1
+    ? authStatus?.account1?.connected
+    : authStatus?.account2?.connected
 
   return (
     <header className="titlebar-drag select-none bg-[#0d121f]/90 backdrop-blur-md border-b border-slate-800/80 px-4 py-2.5 flex items-center justify-between sticky top-0 z-50">
@@ -100,24 +107,43 @@ export const Header: React.FC<HeaderProps> = ({
       {/* Right: Actions & Window Controls */}
       <div className="titlebar-no-drag flex items-center gap-2">
         {/* ChatGPT Account Switcher */}
-        <button
-          onClick={onToggleAccount}
-          title="Clique para alternar entre Conta 1 e Conta 2 do ChatGPT Plus no Brave"
-          className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-900/80 border border-slate-800 hover:border-slate-700 transition-all text-slate-300 hover:text-white"
-        >
-          <span className="text-slate-400">ChatGPT:</span>
-          <span
-            className={`px-2 py-0.5 rounded-md text-[11px] font-semibold transition-colors ${
-              isAccount1
-                ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
-                : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-            }`}
+        <div className="flex items-center gap-1">
+          <button
+            onClick={onToggleAccount}
+            title="Clique para alternar entre Conta 1 e Conta 2 do ChatGPT Plus"
+            className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-900/80 border border-slate-800 hover:border-slate-700 transition-all text-slate-300 hover:text-white cursor-pointer"
           >
-            {isAccount1
-              ? config?.chatGptAccount1Name || 'Conta 1'
-              : config?.chatGptAccount2Name || 'Conta 2 (Codex)'}
-          </span>
-        </button>
+            <span className="text-slate-400">Codex:</span>
+            <span
+              className={`flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-semibold transition-colors ${
+                isAccount1
+                  ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                  : 'bg-teal-500/20 text-teal-300 border border-teal-500/30'
+              }`}
+            >
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${
+                  isCurrentAuthed
+                    ? 'bg-emerald-400 shadow-sm shadow-emerald-400/50'
+                    : 'bg-amber-400 animate-pulse'
+                }`}
+              />
+              {isAccount1
+                ? config?.chatGptAccount1Name || 'Conta 1 (Chrome)'
+                : config?.chatGptAccount2Name || 'Conta 2 (Brave)'}
+            </span>
+          </button>
+
+          {!isCurrentAuthed && onOpenAuthModal && (
+            <button
+              onClick={() => onOpenAuthModal(isAccount1 ? 'account1' : 'account2')}
+              className="px-2 py-1.5 rounded-lg text-[11px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30 transition-all cursor-pointer"
+              title="Esta conta ainda não foi autenticada. Clique para conectar!"
+            >
+              Conectar
+            </button>
+          )}
+        </div>
 
         {/* Sync All Button */}
         <button

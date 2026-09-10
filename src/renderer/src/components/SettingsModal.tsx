@@ -12,7 +12,7 @@ import {
   Terminal,
   Code2,
 } from 'lucide-react'
-import type { AppConfig } from '../types'
+import type { AppConfig, CodexAccountStatus } from '../types'
 
 interface SettingsModalProps {
   isOpen: boolean
@@ -20,6 +20,8 @@ interface SettingsModalProps {
   config: AppConfig | null
   onSaveConfig: (updated: Partial<AppConfig>) => Promise<void>
   onNotify: (message: string, type?: 'success' | 'error' | 'info') => void
+  authStatus?: CodexAccountStatus | null
+  onOpenAuthModal?: (account: 'account1' | 'account2') => void
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -28,6 +30,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   config,
   onSaveConfig,
   onNotify,
+  authStatus,
+  onOpenAuthModal,
 }) => {
   if (!isOpen || !config) return null
 
@@ -159,6 +163,86 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   onChange={(e) => setAccount2Name(e.target.value)}
                   className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
                 />
+              </div>
+            </div>
+          </div>
+
+          {/* Status e Conexão das Contas OpenAI Codex */}
+          <div className="pt-4 border-t border-slate-800/80">
+            <label className="font-semibold text-slate-200 block mb-1">
+              Status & Conexão do OpenAI Codex (Multi-Conta)
+            </label>
+            <p className="text-xs text-slate-500 mb-3">
+              O Codex CLI isola credenciais por pasta sem exigir login/logout repetidos.
+            </p>
+
+            <div className="space-y-2.5">
+              {/* Conta 1 */}
+              <div className="flex items-center justify-between p-3 rounded-xl bg-slate-900/80 border border-slate-800">
+                <div className="flex items-center gap-2.5">
+                  <div
+                    className={`w-2.5 h-2.5 rounded-full ${
+                      authStatus?.account1?.connected
+                        ? 'bg-emerald-400'
+                        : 'bg-amber-400 animate-pulse'
+                    }`}
+                  />
+                  <div>
+                    <div className="text-xs font-semibold text-white">
+                      {account1Name || 'Conta 1'} (Chrome)
+                    </div>
+                    <div className="text-[11px] text-slate-500 font-mono">
+                      {authStatus?.account1?.connected
+                        ? 'Autenticada e pronta para uso'
+                        : 'Não autenticada'}
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => onOpenAuthModal?.('account1')}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-all cursor-pointer"
+                >
+                  {authStatus?.account1?.connected ? 'Reconectar' : 'Conectar Agora'}
+                </button>
+              </div>
+
+              {/* Conta 2 */}
+              <div className="flex items-center justify-between p-3 rounded-xl bg-slate-900/80 border border-slate-800">
+                <div className="flex items-center gap-2.5">
+                  <div
+                    className={`w-2.5 h-2.5 rounded-full ${
+                      authStatus?.account2?.connected
+                        ? 'bg-emerald-400'
+                        : 'bg-amber-400 animate-pulse'
+                    }`}
+                  />
+                  <div>
+                    <div className="text-xs font-semibold text-white">
+                      {account2Name || 'Conta 2'} (Brave)
+                    </div>
+                    <div className="text-[11px] text-slate-500 font-mono">
+                      {authStatus?.account2?.connected
+                        ? 'Autenticada e pronta para uso'
+                        : 'Não autenticada (Requer login inicial)'}
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => onOpenAuthModal?.('account2')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                    authStatus?.account2?.connected
+                      ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
+                      : 'bg-teal-500/20 text-teal-300 border border-teal-500/40 hover:bg-teal-500/30 shadow-sm shadow-teal-500/20'
+                  }`}
+                >
+                  {authStatus?.account2?.connected
+                    ? 'Reconectar'
+                    : 'Conectar no Brave Agora 🚀'}
+                </button>
               </div>
             </div>
           </div>

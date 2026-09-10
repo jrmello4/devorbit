@@ -17,6 +17,9 @@ interface ProjectGridProps {
   onOpenPushModal: (project: Project) => void
   onNotify: (message: string, type?: 'success' | 'error' | 'info') => void
   isLoading: boolean
+  onOpenAuthModal?: (account: 'account1' | 'account2') => void
+  onOpenMemory?: (project: Project) => void
+  onUsageUpdate?: () => void
 }
 
 type FilterType = 'all' | 'needs-pull' | 'modified' | 'no-git'
@@ -29,6 +32,9 @@ export const ProjectGrid: React.FC<ProjectGridProps> = ({
   onOpenPushModal,
   onNotify,
   isLoading,
+  onOpenAuthModal,
+  onOpenMemory,
+  onUsageUpdate,
 }) => {
   const [filterType, setFilterType] = useState<FilterType>('all')
   const [selectedTech, setSelectedTech] = useState<string | null>(null)
@@ -202,6 +208,9 @@ export const ProjectGrid: React.FC<ProjectGridProps> = ({
                 onSync={onSync}
                 onOpenPushModal={onOpenPushModal}
                 onNotify={onNotify}
+                onOpenAuthModal={onOpenAuthModal}
+                onOpenMemory={onOpenMemory}
+                onUsageUpdate={onUsageUpdate}
               />
             ))}
           </div>

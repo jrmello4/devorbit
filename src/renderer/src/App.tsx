@@ -3,12 +3,19 @@ import { Header } from './components/Header'
 import { ProjectGrid } from './components/ProjectGrid'
 import { SettingsModal } from './components/SettingsModal'
 import { GitPushModal } from './components/GitPushModal'
-import type { Project, AppConfig } from './types'
+import { CodexAuthModal } from './components/CodexAuthModal'
+import { UsageBar } from './components/UsageBar'
+import { AiMemoryModal } from './components/AiMemoryModal'
+import type { Project, AppConfig, CodexAccountStatus, UsageTrackerState } from './types'
 import { CheckCircle2, AlertCircle, Info, X } from 'lucide-react'
 
 export const App: React.FC = () => {
   const [projects, setProjects] = useState<Project[]>([])
   const [config, setConfig] = useState<AppConfig | null>(null)
+  const [authStatus, setAuthStatus] = useState<CodexAccountStatus | null>(null)
+  const [authModalAccount, setAuthModalAccount] = useState<'account1' | 'account2' | null>(null)
+  const [usageState, setUsageState] = useState<UsageTrackerState | null>(null)
+  const [activeMemoryProject, setActiveMemoryProject] = useState<Project | null>(null)
   const [search, setSearch] = useState('')
   const [isLoading, setIsLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -31,17 +38,49 @@ export const App: React.FC = () => {
   )
 
   // Load initial data
-  const loadData = useCallback(async () => {
+  const loadAuthStatus = useCallback(async () => {
     try {
       if (window.devorbit) {
-        const [loadedConfig, loadedProjects] = await Promise.all([
-          window.devorbit.getConfig(),
-          window.devorbit.getProjects(),
-        ])
-        setConfig(loadedConfig)
-        setProjects(loadedProjects)
+        const status = await window.devorbit.getCodexAuthStatus()
+        setAuthStatus(status)
       }
     } catch (err: any) {
+      console.error('Falha ao carregar status do Codex:', err)
+    }
+  }, [])
+
+  const loadUsage = useCallback(async () => {
+    try {
+      if (window.devorbit) {
+        const usage = await window.devorbit.getUsageState()
+        setUsageState(usage)
+      }
+    } catch (err: any) {
+      console.error('Falha ao carregar uso:', err)
+    }
+  }, [])
+
+  const loadData = useCallback(async () => {
+    console.log('[App] loadData called. window.devorbit available:', Boolean(window.devorbit))
+    try {
+      if (window.devorbit) {
+        console.log('[App] Calling Promise.all for config, projects, auth, usage...')
+        const [loadedConfig, loadedProjects, loadedAuth, loadedUsage] = await Promise.all([
+          window.devorbit.getConfig(),
+          window.devorbit.getProjects(),
+          window.devorbit.getCodexAuthStatus(),
+          window.devorbit.getUsageState(),
+        ])
+        console.log('[App] Loaded successfully! Projects count:', loadedProjects?.length)
+        setConfig(loadedConfig)
+        setProjects(loadedProjects)
+        setAuthStatus(loadedAuth)
+        setUsageState(loadedUsage)
+      } else {
+        console.warn('[App] window.devorbit is UNDEFINED! Preload failed or contextIsolation issue.')
+      }
+    } catch (err: any) {
+      console.error('[App] Error in loadData:', err)
       notify(`Erro ao carregar projetos: ${err.message}`, 'error')
     } finally {
       setIsLoading(false)
@@ -57,7 +96,11 @@ export const App: React.FC = () => {
     setIsRefreshing(true)
     try {
       if (window.devorbit) {
-        const refreshed = await window.devorbit.refreshProjects()
+        const [refreshed] = await Promise.all([
+          window.devorbit.refreshProjects(),
+          loadAuthStatus(),
+          loadUsage(),
+        ])
         setProjects(refreshed)
         notify('Lista de projetos atualizada!', 'success')
       }
@@ -65,6 +108,49 @@ export const App: React.FC = () => {
       notify(`Erro ao atualizar: ${err.message}`, 'error')
     } finally {
       setIsRefreshing(false)
+    }
+  }
+
+  // Ações da Barra de Uso (Cotas)
+  const handleIncrementUsage = async (target: 'account1' | 'account2' | 'antigravity') => {
+    if (!window.devorbit) return
+    try {
+      const updated = await window.devorbit.incrementUsage(target)
+      setUsageState(updated)
+    } catch (err: any) {
+      console.error(err)
+    }
+  }
+
+  const handleDecrementUsage = async (target: 'account1' | 'account2') => {
+    if (!window.devorbit) return
+    try {
+      const updated = await window.devorbit.decrementUsage(target)
+      setUsageState(updated)
+    } catch (err: any) {
+      console.error(err)
+    }
+  }
+
+  const handleResetUsage = async (target: 'account1' | 'account2') => {
+    if (!window.devorbit) return
+    try {
+      const updated = await window.devorbit.resetUsage(target)
+      setUsageState(updated)
+      notify(`Janela de uso de ${target === 'account1' ? 'Conta 1' : 'Conta 2'} zerada!`, 'success')
+    } catch (err: any) {
+      console.error(err)
+    }
+  }
+
+  const handleUpdateUsageLimit = async (account: 'account1' | 'account2', limit: number) => {
+    if (!window.devorbit) return
+    try {
+      const updated = await window.devorbit.updateUsageLimits(account, limit)
+      setUsageState(updated)
+      notify(`Limite de ${account === 'account1' ? 'Conta 1' : 'Conta 2'} atualizado para ${limit}!`, 'info')
+    } catch (err: any) {
+      console.error(err)
     }
   }
 
@@ -163,6 +249,19 @@ export const App: React.FC = () => {
         isSyncingAll={isSyncingAll}
         totalProjects={projects.length}
         gitProjectsCount={gitProjectsCount}
+        authStatus={authStatus}
+        onOpenAuthModal={(acc) => setAuthModalAccount(acc)}
+      />
+
+      {/* Barra de Monitoramento de Cotas & Smart Handoff (estilo Akita AI UsageBar) */}
+      <UsageBar
+        usage={usageState}
+        config={config}
+        onIncrement={handleIncrementUsage}
+        onDecrement={handleDecrementUsage}
+        onReset={handleResetUsage}
+        onUpdateLimit={handleUpdateUsageLimit}
+        onSwitchAccount={handleToggleAccount}
       />
 
       {/* Grid de Projetos */}
@@ -174,6 +273,17 @@ export const App: React.FC = () => {
         onOpenPushModal={setPushProject}
         onNotify={notify}
         isLoading={isLoading}
+        onOpenAuthModal={(acc) => setAuthModalAccount(acc)}
+        onOpenMemory={(project) => setActiveMemoryProject(project)}
+        onUsageUpdate={loadUsage}
+      />
+
+      {/* Modal de Memória da Sessão & Handoff (estilo Akita AI Memory) */}
+      <AiMemoryModal
+        isOpen={Boolean(activeMemoryProject)}
+        project={activeMemoryProject}
+        onClose={() => setActiveMemoryProject(null)}
+        onNotify={notify}
       />
 
       {/* Modal de Subir para o GitHub (Push) */}
@@ -192,7 +302,29 @@ export const App: React.FC = () => {
         config={config}
         onSaveConfig={handleSaveConfig}
         onNotify={notify}
+        authStatus={authStatus}
+        onOpenAuthModal={(acc) => setAuthModalAccount(acc)}
       />
+
+      {/* Modal de Conexão Assistida do OpenAI Codex */}
+      {authModalAccount && (
+        <CodexAuthModal
+          isOpen={Boolean(authModalAccount)}
+          account={authModalAccount}
+          onClose={() => setAuthModalAccount(null)}
+          onSuccess={() => {
+            loadAuthStatus()
+            notify(
+              `Conta ${
+                authModalAccount === 'account2' ? '2 (Brave)' : '1 (Chrome)'
+              } conectada com sucesso!`,
+              'success'
+            )
+            setAuthModalAccount(null)
+          }}
+          config={config}
+        />
+      )}
 
       {/* Toast Notification */}
       {notification && (
