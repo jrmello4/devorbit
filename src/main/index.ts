@@ -28,20 +28,22 @@ function createWindow() {
     minWidth: 960,
     minHeight: 600,
     frame: false, // Frameless para controle visual total estilo Linear/Raycast
-    show: false,
+    show: true,
     backgroundColor: '#090d16',
     title: 'DevOrbit',
     webPreferences: {
-      preload: path.join(__dirname, '../preload/index.js'),
+      preload: path.join(__dirname, '../preload/index.cjs'),
       sandbox: false,
       contextIsolation: true,
       nodeIntegration: false,
     },
   })
 
-  mainWindow.once('ready-to-show', () => {
-    mainWindow?.show()
-    mainWindow?.focus()
+  mainWindow.show()
+  mainWindow.focus()
+
+  mainWindow.webContents.on('did-fail-load', (_event, code, desc, url) => {
+    console.error('[Window Load Error]', code, desc, url)
   })
 
   mainWindow.webContents.on('before-input-event', (_event, input) => {
