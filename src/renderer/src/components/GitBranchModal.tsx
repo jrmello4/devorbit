@@ -70,19 +70,19 @@ export const GitBranchModal: React.FC<GitBranchModalProps> = ({
       isOpen={isOpen}
       titleId="git-branch-dialog-title"
       onClose={onClose}
-      className="w-full max-w-xl overflow-hidden rounded-2xl border border-slate-800 bg-[var(--color-bg-panel)] shadow-2xl"
+      className="w-full max-w-xl max-h-[calc(100dvh-48px)] overflow-y-auto rounded-[10px] border border-stone-200 bg-white shadow-[0_18px_42px_rgba(28,25,23,0.14)]"
     >
-      <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900/55 px-6 py-4">
+      <div className="flex items-center justify-between border-b border-stone-200 bg-stone-50 px-6 py-4">
         <div className="flex min-w-0 items-center gap-3">
-          <div className="rounded-xl border border-sky-400/30 bg-sky-500/15 p-2 text-sky-300">
+          <div className="rounded-[8px] border border-[#cbd8bf] bg-[#edf3e8] p-2 text-[#3e562f]">
             <GitBranch className="h-5 w-5" aria-hidden="true" />
           </div>
           <div className="min-w-0">
-            <h2 id="git-branch-dialog-title" className="truncate text-base font-bold text-white">
+            <h2 id="git-branch-dialog-title" className="truncate text-base font-bold text-stone-900">
               Trocar branch
             </h2>
-            <p className="truncate text-xs text-slate-400" title={project.path}>
-              {project.name} · atual: <span className="font-mono text-sky-300">{project.git.branch}</span>
+            <p className="truncate text-xs text-stone-600" title={project.path}>
+              {project.name} · atual: <span className="font-mono text-[#3e562f]">{project.git.branch}</span>
             </p>
           </div>
         </div>
@@ -90,15 +90,15 @@ export const GitBranchModal: React.FC<GitBranchModalProps> = ({
           type="button"
           onClick={onClose}
           aria-label="Fechar seletor de branch"
-          className="inline-flex min-h-9 min-w-9 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-800 hover:text-white"
+          className="inline-flex min-h-9 min-w-9 items-center justify-center rounded-lg text-stone-500 transition-colors hover:bg-stone-100 hover:text-stone-900"
         >
           <X className="h-4 w-4" aria-hidden="true" />
         </button>
       </div>
 
-      <div className="space-y-4 p-6">
-        <div className="flex items-start gap-2 rounded-xl border border-amber-400/25 bg-amber-500/10 px-3.5 py-3 text-xs leading-5 text-amber-100">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" aria-hidden="true" />
+      <div className="space-y-4 p-6 text-stone-900">
+        <div className="flex items-start gap-2 rounded-[8px] border border-amber-200 bg-amber-50 px-3.5 py-3 text-xs leading-5 text-amber-800">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" aria-hidden="true" />
           <span>
             A troca é bloqueada quando há arquivos locais alterados. Faça commit ou stash antes; depois de trocar, use o botão <strong>Pull</strong> do card para atualizar a branch escolhida.
           </span>
@@ -106,14 +106,14 @@ export const GitBranchModal: React.FC<GitBranchModalProps> = ({
 
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Branches locais</p>
-            <p className="mt-1 text-xs text-slate-500">A branch atual fica marcada e não precisa ser trocada.</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-stone-600">Branches locais</p>
+            <p className="mt-1 text-xs text-stone-600">A branch atual fica marcada e não precisa ser trocada.</p>
           </div>
           <button
             type="button"
             onClick={() => void loadBranches(true)}
             disabled={isLoading || Boolean(switchingBranch)}
-            className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900/80 px-2.5 text-xs font-semibold text-slate-300 transition-colors hover:border-sky-400/50 hover:text-white disabled:cursor-wait disabled:opacity-60"
+            className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-stone-300 bg-stone-100 px-2.5 text-xs font-semibold text-stone-700 transition-colors hover:border-[#9eb28f] hover:text-stone-900 disabled:cursor-wait disabled:opacity-60"
             title="Buscar novas branches no remote"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? 'motion-safe:animate-spin' : ''}`} aria-hidden="true" />
@@ -121,14 +121,14 @@ export const GitBranchModal: React.FC<GitBranchModalProps> = ({
           </button>
         </div>
 
-        <div className="max-h-64 space-y-1.5 overflow-y-auto rounded-xl border border-slate-800 bg-slate-950/45 p-2">
+        <div className="max-h-64 space-y-1.5 overflow-y-auto rounded-[8px] border border-stone-200 bg-stone-50 p-2">
           {isLoading && branches.length === 0 ? (
-            <div className="flex items-center justify-center gap-2 py-8 text-xs text-slate-400">
-              <RefreshCw className="h-4 w-4 motion-safe:animate-spin text-sky-300" aria-hidden="true" />
+            <div className="flex items-center justify-center gap-2 py-8 text-xs text-stone-600">
+              <RefreshCw className="h-4 w-4 motion-safe:animate-spin text-[#3e562f]" aria-hidden="true" />
               Lendo branches…
             </div>
           ) : localBranches.length === 0 ? (
-            <p className="py-8 text-center text-xs text-slate-500">Nenhuma branch local encontrada.</p>
+            <p className="py-8 text-center text-xs text-stone-600">Nenhuma branch local encontrada.</p>
           ) : (
             localBranches.map((branch) => (
               <button
@@ -136,13 +136,13 @@ export const GitBranchModal: React.FC<GitBranchModalProps> = ({
                 type="button"
                 onClick={() => void handleSwitch(branch)}
                 disabled={branch.isCurrent || Boolean(switchingBranch)}
-                className="flex min-h-10 w-full items-center justify-between gap-3 rounded-lg px-3 text-left text-sm transition-colors hover:bg-sky-500/10 disabled:cursor-default disabled:opacity-70"
+                className="flex min-h-10 w-full items-center justify-between gap-3 rounded-lg px-3 text-left text-sm transition-colors hover:bg-[#edf3e8] disabled:cursor-default disabled:opacity-70"
               >
                 <span className="flex min-w-0 items-center gap-2">
-                  {branch.isCurrent ? <Check className="h-3.5 w-3.5 shrink-0 text-emerald-300" aria-hidden="true" /> : <GitBranch className="h-3.5 w-3.5 shrink-0 text-slate-500" aria-hidden="true" />}
-                  <span className={`truncate font-mono text-xs ${branch.isCurrent ? 'text-emerald-200' : 'text-slate-200'}`}>{branch.name}</span>
+                  {branch.isCurrent ? <Check className="h-3.5 w-3.5 shrink-0 text-emerald-700" aria-hidden="true" /> : <GitBranch className="h-3.5 w-3.5 shrink-0 text-stone-500" aria-hidden="true" />}
+                  <span className={`truncate font-mono text-xs ${branch.isCurrent ? 'text-emerald-700' : 'text-stone-800'}`}>{branch.name}</span>
                 </span>
-                <span className="shrink-0 text-[10px] text-slate-500">
+                <span className="shrink-0 text-[10px] text-stone-600">
                   {switchingBranch === branch.name ? 'Trocando…' : branch.isCurrent ? 'atual' : branch.upstream ? `→ ${branch.upstream}` : 'trocar'}
                 </span>
               </button>
@@ -152,21 +152,21 @@ export const GitBranchModal: React.FC<GitBranchModalProps> = ({
 
         {remoteBranches.length > 0 && (
           <div>
-            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Branches remotas</p>
-            <div className="max-h-36 space-y-1.5 overflow-y-auto rounded-xl border border-slate-800 bg-slate-950/30 p-2">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-stone-600">Branches remotas</p>
+            <div className="max-h-36 space-y-1.5 overflow-y-auto rounded-[8px] border border-stone-200 bg-stone-50 p-2">
               {remoteBranches.map((branch) => (
                 <button
                   key={`remote-${branch.name}`}
                   type="button"
                   onClick={() => void handleSwitch(branch)}
                   disabled={Boolean(switchingBranch)}
-                  className="flex min-h-9 w-full items-center justify-between gap-3 rounded-lg px-3 text-left transition-colors hover:bg-sky-500/10 disabled:cursor-wait disabled:opacity-60"
+                  className="flex min-h-9 w-full items-center justify-between gap-3 rounded-lg px-3 text-left transition-colors hover:bg-[#edf3e8] disabled:cursor-wait disabled:opacity-60"
                 >
                   <span className="flex min-w-0 items-center gap-2">
-                    <GitBranch className="h-3.5 w-3.5 shrink-0 text-sky-400" aria-hidden="true" />
-                    <span className="truncate font-mono text-xs text-sky-200">{branch.name}</span>
+                    <GitBranch className="h-3.5 w-3.5 shrink-0 text-[#3e562f]" aria-hidden="true" />
+                    <span className="truncate font-mono text-xs text-[#3e562f]">{branch.name}</span>
                   </span>
-                  <span className="shrink-0 text-[10px] text-slate-500">{switchingBranch === branch.name ? 'Criando…' : 'usar'}</span>
+                  <span className="shrink-0 text-[10px] text-stone-600">{switchingBranch === branch.name ? 'Criando…' : 'usar'}</span>
                 </button>
               ))}
             </div>

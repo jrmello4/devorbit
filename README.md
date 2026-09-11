@@ -137,3 +137,9 @@ O workflow do GitHub Actions executa em `windows-latest` uma instalação limpa
 com `npm ci` e verifica typecheck, testes, lint e build. O lockfile deve ser
 atualizado junto com qualquer mudança de dependência usando npm; o CI não
 aceita uma árvore de dependências gerada manualmente.
+
+## Interface desktop
+
+O workspace usa tema claro, sem azul, com navegação recolhível, lista de projetos e painel de detalhes. **Contas e uso** reúne as cotas reais e os controles de estimativas locais. A janela não tem rolagem global; conteúdo extenso rola dentro dos painéis.
+
+A organização espacial, os tokens, a tipografia e os critérios de contraste estão em [DESIGN.md](DESIGN.md). `Ctrl+,` abre Configurações.

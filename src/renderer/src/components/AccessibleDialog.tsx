@@ -91,7 +91,11 @@ export const AccessibleDialog: React.FC<AccessibleDialogProps> = ({
       inertSiblings.forEach(({ element, inert }) => {
         element.inert = inert
       })
-      if (previousFocus && document.contains(previousFocus)) previousFocus.focus()
+      // React removes the active element after effect cleanup. Restoring in
+      // the next frame keeps the origin focused after the dialog has left DOM.
+      window.requestAnimationFrame(() => {
+        if (previousFocus && document.contains(previousFocus)) previousFocus.focus()
+      })
     }
   }, [isOpen])
 
@@ -100,7 +104,7 @@ export const AccessibleDialog: React.FC<AccessibleDialogProps> = ({
   return (
     <div
       ref={overlayRef}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 p-4"
       data-dialog-overlay="true"
     >
       <div
@@ -109,7 +113,7 @@ export const AccessibleDialog: React.FC<AccessibleDialogProps> = ({
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className={`overscroll-contain ${className}`}
+        className={`overscroll-contain text-[13px] max-h-[calc(100dvh-48px)] ${className}`}
       >
         {children}
       </div>

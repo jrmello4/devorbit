@@ -17,7 +17,7 @@ import type {
   RealUsageState,
   SyncResult,
 } from './types'
-import { CheckCircle2, AlertCircle, Info, X } from 'lucide-react'
+import { CheckCircle2, AlertCircle, Info, X, FolderKanban, ChartNoAxesCombined, Settings, ArrowRightLeft, GitPullRequest, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 
 export const App: React.FC = () => {
   const [projects, setProjects] = useState<Project[]>([])
@@ -29,6 +29,8 @@ export const App: React.FC = () => {
   const [activeMemoryProject, setActiveMemoryProject] = useState<Project | null>(null)
   const [activeBranchProject, setActiveBranchProject] = useState<Project | null>(null)
   const [search, setSearch] = useState('')
+  const [workspaceView, setWorkspaceView] = useState<'projects' | 'usage'>('projects')
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -39,11 +41,28 @@ export const App: React.FC = () => {
   const [isSwitchingAccount, setIsSwitchingAccount] = useState(false)
   const [isRefreshingRealUsage, setIsRefreshingRealUsage] = useState(false)
   const accountSwitchInFlightRef = useRef(false)
+  const commandPaletteOriginRef = useRef<HTMLElement | null>(null)
   const [notification, setNotification] = useState<{
     message: string
     type: 'success' | 'error' | 'info'
   } | null>(null)
   const notificationTimerRef = useRef<number | null>(null)
+
+  const openCommandPalette = useCallback(() => {
+    commandPaletteOriginRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null
+    setIsCommandPaletteOpen(true)
+  }, [])
+
+  const closeCommandPalette = useCallback(() => {
+    setIsCommandPaletteOpen(false)
+    window.requestAnimationFrame(() => {
+      const origin = commandPaletteOriginRef.current
+      if (origin && document.contains(origin)) origin.focus()
+      commandPaletteOriginRef.current = null
+    })
+  }, [])
 
   const notify = useCallback(
     (message: string, type: 'success' | 'error' | 'info' = 'info') => {
@@ -361,7 +380,11 @@ export const App: React.FC = () => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault()
         if (isSettingsOpen || authModalAccount || pushProject || gitInitProject || activeMemoryProject || activeBranchProject) return
-        setIsCommandPaletteOpen(true)
+        openCommandPalette()
+      } else if ((e.ctrlKey || e.metaKey) && e.key === ',') {
+        e.preventDefault()
+        if (authModalAccount || pushProject || gitInitProject || activeMemoryProject || activeBranchProject || isCommandPaletteOpen) return
+        setIsSettingsOpen(true)
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'r') {
         e.preventDefault()
         handleRefresh()
@@ -369,32 +392,30 @@ export const App: React.FC = () => {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [activeBranchProject, activeMemoryProject, authModalAccount, gitInitProject, isSettingsOpen, pushProject])
+  }, [activeBranchProject, activeMemoryProject, authModalAccount, gitInitProject, isSettingsOpen, isCommandPaletteOpen, openCommandPalette, pushProject])
 
   const gitProjectsCount = projects.filter((p) => p.git.isRepo).length
 
   return (
-    <div className="relative isolate flex h-screen w-screen flex-col overflow-hidden bg-transparent font-sans text-slate-100 antialiased">
-      {/* Header com barra de título e controles */}
-      <Header
-        search={search}
-        setSearch={setSearch}
-        onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
-        onRefresh={handleRefresh}
-        onSyncAll={handleSyncAll}
-        onOpenSettings={() => setIsSettingsOpen(true)}
-        config={config}
-        onToggleAccount={handleToggleAccount}
-        isSwitchingAccount={isSwitchingAccount}
-        isRefreshing={isRefreshing}
-        isSyncingAll={isSyncingAll}
-        totalProjects={projects.length}
-        gitProjectsCount={gitProjectsCount}
-        authStatus={authStatus}
-        onOpenAuthModal={(acc) => setAuthModalAccount(acc)}
-      />
-
-      {/* Barra de Monitoramento de Cotas & Smart Handoff (estilo Akita AI UsageBar) */}
+    <div className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
+      <Header search={search} setSearch={(value) => {setSearch(value); setWorkspaceView('projects')}}
+        onOpenCommandPalette={openCommandPalette} onRefresh={handleRefresh} isRefreshing={isRefreshing}/>
+      <div className="app-body">
+      <aside className="workspace-sidebar" aria-label="Navegação principal">
+        <div className="sidebar-heading"><span>Área de trabalho</span><button className="icon-button" onClick={() => setSidebarCollapsed(!sidebarCollapsed)} aria-label={sidebarCollapsed ? 'Expandir navegação' : 'Recolher navegação'}>{sidebarCollapsed ? <PanelLeftOpen size={15}/> : <PanelLeftClose size={15}/>}</button></div>
+        <nav>
+          <button className={`nav-item ${workspaceView === 'projects' ? 'active' : ''}`} aria-current={workspaceView === 'projects' ? 'page' : undefined} title="Projetos" onClick={() => setWorkspaceView('projects')}><FolderKanban size={17}/><span>Projetos</span><small>{projects.length}</small></button>
+          <button className={`nav-item ${workspaceView === 'usage' ? 'active' : ''}`} aria-current={workspaceView === 'usage' ? 'page' : undefined} title="Contas e uso" onClick={() => setWorkspaceView('usage')}><ChartNoAxesCombined size={17}/><span>Contas e uso</span></button>
+        </nav>
+        <div className="sidebar-tools"><span className="sidebar-label">Workspace</span><button className="nav-item" title="Sincronizar todos os repositórios" onClick={handleSyncAll} disabled={isSyncingAll}><GitPullRequest size={17}/><span>{isSyncingAll ? 'Sincronizando…' : 'Sincronizar Git'}</span></button><button className="nav-item" title="Configurações" onClick={() => setIsSettingsOpen(true)}><Settings size={17}/><span>Configurações</span></button></div>
+        <div className="sidebar-bottom">
+          <div className="sidebar-account"><span className="account-avatar">{config?.activeChatGptAccount === 'account2' ? 'C2' : 'C1'}</span><div><strong title={config?.activeChatGptAccount === 'account2' ? config.chatGptAccount2Name : config?.chatGptAccount1Name}>{config?.activeChatGptAccount === 'account2' ? config.chatGptAccount2Name || 'Conta 2' : config?.chatGptAccount1Name || 'Conta 1'}</strong><span>{authStatus?.[config?.activeChatGptAccount || 'account1']?.connected ? 'Codex conectado' : 'Codex não conectado'}</span></div></div>
+          <button className="nav-item" title="Alternar conta do ChatGPT" onClick={handleToggleAccount} disabled={isSwitchingAccount}><ArrowRightLeft size={16}/><span>{isSwitchingAccount ? 'Alternando…' : 'Alternar conta'}</span></button>
+          {!authStatus?.[config?.activeChatGptAccount || 'account1']?.connected && <button className="sidebar-connect" title="Conectar Codex" onClick={() => setAuthModalAccount(config?.activeChatGptAccount || 'account1')}>Conectar Codex</button>}
+        </div>
+      </aside>
+      <div id="main" tabIndex={-1} className="workspace-content">
+      <div className="view-panel" hidden={workspaceView !== 'usage'}>
       <UsageBar
         usage={usageState}
         config={config}
@@ -409,6 +430,8 @@ export const App: React.FC = () => {
         isRefreshingRealUsage={isRefreshingRealUsage}
       />
 
+      </div>
+      <div className="view-panel" hidden={workspaceView !== 'projects'}>
       {/* Grid de Projetos */}
       <ProjectGrid
         projects={projects}
@@ -426,12 +449,16 @@ export const App: React.FC = () => {
         onOpenSettings={() => setIsSettingsOpen(true)}
       />
 
+      </div>
+      </div>
+      </div>
+      <footer className="app-statusbar"><span><span className={`status-dot ${isLoading ? 'loading' : ''}`}/>{isLoading ? 'Carregando workspace' : `${projects.length} projetos · ${gitProjectsCount} repositórios`}</span><span>Dados locais <span aria-hidden="true">·</span> <kbd>Ctrl K</kbd> Ações rápidas <span aria-hidden="true">·</span> <kbd>Ctrl R</kbd> Atualizar</span></footer>
       <CommandPalette
         isOpen={isCommandPaletteOpen}
-        onClose={() => setIsCommandPaletteOpen(false)}
+        onClose={closeCommandPalette}
         projects={projects}
         search={search}
-        onSearchChange={setSearch}
+        onSearchChange={(value) => {setSearch(value); setWorkspaceView('projects')}}
         onRefresh={handleRefresh}
         onSyncAll={handleSyncAll}
         onOpenSettings={() => setIsSettingsOpen(true)}
@@ -525,30 +552,30 @@ export const App: React.FC = () => {
       </div>
       {notification && (
         <div
-          className={`fixed bottom-5 end-5 z-50 flex max-w-[min(28rem,calc(100vw-2rem))] items-center gap-2.5 rounded-2xl border px-4 py-3 text-sm shadow-2xl backdrop-blur-md motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-3 motion-safe:duration-200 ${
+          className={`app-toast fixed bottom-10 end-5 z-50 flex max-w-[min(28rem,calc(100vw-2rem))] items-center gap-2.5 rounded-lg border px-4 py-3 text-sm shadow-lg ${
             notification.type === 'success'
-              ? 'border-emerald-400/25 bg-emerald-950/80'
+              ? 'border-emerald-700/30 bg-white'
               : notification.type === 'error'
-                ? 'border-rose-400/30 bg-rose-950/85'
-                : 'border-indigo-300/25 bg-slate-950/90'
+                ? 'border-red-700/30 bg-white'
+                : 'border-stone-300 bg-white'
           }`}
           role="group"
           aria-label="Notificação"
         >
           {notification.type === 'success' && (
-            <CheckCircle2 aria-hidden="true" className="w-4 h-4 text-emerald-400 shrink-0" />
+            <CheckCircle2 aria-hidden="true" className="w-4 h-4 text-emerald-800 shrink-0" />
           )}
           {notification.type === 'error' && (
-            <AlertCircle aria-hidden="true" className="w-4 h-4 text-rose-400 shrink-0" />
+            <AlertCircle aria-hidden="true" className="w-4 h-4 text-red-800 shrink-0" />
           )}
           {notification.type === 'info' && (
-            <Info aria-hidden="true" className="w-4 h-4 text-indigo-400 shrink-0" />
+            <Info aria-hidden="true" className="w-4 h-4 text-stone-700 shrink-0" />
           )}
-          <span className="text-pretty font-medium text-slate-100">{notification.message}</span>
+          <span className="text-pretty font-medium text-stone-800">{notification.message}</span>
           <button
             onClick={() => setNotification(null)}
             aria-label="Fechar notificação"
-            className="ms-2 inline-flex min-h-8 min-w-8 items-center justify-center rounded-lg text-slate-400 transition-[color,background-color] hover:bg-white/10 hover:text-slate-100"
+            className="ms-2 inline-flex min-h-8 min-w-8 items-center justify-center rounded-lg text-stone-600 transition-[color,background-color] hover:bg-stone-100 hover:text-stone-900"
           >
             <X aria-hidden="true" className="w-3.5 h-3.5" />
           </button>
@@ -559,3 +586,7 @@ export const App: React.FC = () => {
 }
 
 export default App
+
+
+
+

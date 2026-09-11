@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-11T14:00:00.000Z",
+  "title": "DevOrbit — Interface desktop",
+  "extensions": {
+    "colorMeta": {
+      "page": { "role": "neutral", "displayName": "Warm Workspace", "canonical": "#f5f5f2", "tonalRamp": ["#242923", "#3f463d", "#62695f", "#a2a79f", "#d9dcd5", "#eceee7", "#f5f5f2", "#fcfcfa"] },
+      "panel": { "role": "neutral", "displayName": "Paper Panel", "canonical": "#ffffff", "tonalRamp": ["#2b302b", "#515851", "#767d75", "#a2a9a1", "#d4d8d2", "#eceee9", "#f7f7f5", "#ffffff"] },
+      "accent": { "role": "primary", "displayName": "Functional Olive", "canonical": "#49643b", "tonalRamp": ["#1f2d1a", "#304426", "#3e562f", "#49643b", "#647d55", "#91a984", "#c7d6bc", "#edf3e8"] },
+      "warning": { "role": "tertiary", "displayName": "Warm Amber", "canonical": "#9a702b", "tonalRamp": ["#35250e", "#5b4219", "#7a581f", "#9a702b", "#b58a42", "#d5b976", "#eee0c0", "#fbf6e9"] },
+      "error": { "role": "tertiary", "displayName": "Grounded Red", "canonical": "#b14941", "tonalRamp": ["#3d1d1a", "#632d28", "#863830", "#b14941", "#ca6e66", "#dfa39d", "#f1d1ce", "#fbf1f0"] }
+    },
+    "typographyMeta": {
+      "body": { "displayName": "Workspace Body", "purpose": "Dense desktop operation and readable project metadata." },
+      "heading": { "displayName": "Operational Heading", "purpose": "Project names, panel titles and action hierarchy." },
+      "technical": { "displayName": "Technical Detail", "purpose": "Paths, branches and numerical data only." }
+    },
+    "shadows": [{ "name": "dialog", "value": "0 18px 42px rgba(28,25,23,0.14)", "purpose": "Reserved for protected-focus dialogs." }],
+    "motion": [{ "name": "standard", "value": "180ms ease-out", "purpose": "Small state changes such as disclosure and loading indicators." }],
+    "breakpoints": [{ "name": "compact-desktop", "value": "1150px" }, { "name": "narrow-panel", "value": "850px" }, { "name": "narrow-content", "value": "520px" }]
+  },
+  "components": [
+    { "name": "Primary Action", "kind": "button", "refersTo": "button-primary", "description": "The strongest action in a project or quota workflow.", "html": "<button class=\"ds-primary\">Atualizar quotas</button>", "css": ".ds-primary { border: 1px solid #3e562f; border-radius: 5px; background: #3e562f; color: #fff; padding: 7px 12px; font: 600 12px Segoe UI, system-ui, sans-serif; } .ds-primary:hover { background: #304426; } .ds-primary:focus-visible { outline: 2px solid #49643b; outline-offset: 2px; }" },
+    { "name": "Project Row", "kind": "nav", "refersTo": "project-row", "description": "Full-width selectable master-list item with project context and Git state.", "html": "<button class=\"ds-row\"><strong>Projeto selecionado</strong><span>branch principal</span></button>", "css": ".ds-row { display: grid; width: 100%; gap: 3px; border: 1px solid #d1dbc5; border-radius: 6px; background: #e7ecdf; color: #242923; padding: 12px 10px; text-align: left; font: 12px Segoe UI, system-ui, sans-serif; } .ds-row span { color: #62695f; font: 10px Consolas, monospace; } .ds-row:hover { background: #eceee7; } .ds-row:focus-visible { outline: 2px solid #49643b; outline-offset: 2px; }" },
+    { "name": "Compact Input", "kind": "input", "refersTo": "input-search", "description": "Single-line workspace search with an olive focus treatment.", "html": "<input class=\"ds-input\" placeholder=\"Buscar projeto\">", "css": ".ds-input { width: 100%; border: 1px solid #d9dcd5; border-radius: 6px; background: #f1f2ed; color: #242923; padding: 8px 10px; font: 12px Segoe UI, system-ui, sans-serif; } .ds-input::placeholder { color: #62695f; } .ds-input:focus { border-color: #49643b; outline: 2px solid #49643b; outline-offset: 2px; }" },
+    { "name": "Status Chip", "kind": "chip", "refersTo": "status-chip", "description": "Small contextual state marker for active account and Git state.", "html": "<span class=\"ds-chip\">Conta ativa</span>", "css": ".ds-chip { display: inline-block; border: 1px solid #c6d1ba; border-radius: 3px; background: #edf3e8; color: #4c623e; padding: 2px 5px; font: 650 10px Segoe UI, system-ui, sans-serif; }" }
+  ],
+  "narrative": {
+    "northStar": "The Calm Operations Desk",
+    "overview": "DevOrbit is a calm, corporate desktop workspace for rapidly locating local projects and acting on their Git and assistant context. Warm neutral surfaces keep long sessions legible while functional olive identifies the current choice and the action that moves work forward.",
+    "keyCharacteristics": ["Three-panel desktop workspace", "Warm neutral surfaces", "Olive reserved for functional emphasis", "Compact operational density", "Internal scrolling only"],
+    "rules": [{ "name": "One Functional Accent", "body": "Use olive for focus, selected state and the primary action; do not introduce blue as a competing accent.", "section": "colors" }, { "name": "Flat By Default", "body": "Use borders and tonal layers for structure. Reserve shadows for dialogs that require protected focus.", "section": "elevation" }],
+    "dos": ["Do preserve the 52px titlebar, 28px statusbar and internal panel scrolling.", "Do use Segoe UI for interface copy and monospace only for paths, branches and data.", "Do expose state through copy and icons as well as color."],
+    "donts": ["Don't add gradients, glass effects or blue accents.", "Don't introduce global page scrolling in the desktop workspace.", "Don't use shadowed cards as routine layout containers."]
+  }
+}

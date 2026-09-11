@@ -171,16 +171,16 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       onClose={onClose}
       className="w-full max-w-xl"
     >
-      <div className="surface-panel overflow-hidden rounded-2xl">
-        <div className="flex items-center gap-3 border-b border-[var(--color-border-subtle)]/70 px-4 py-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-500/15 text-indigo-200 ring-1 ring-indigo-400/25">
+      <div className="surface-panel overflow-hidden rounded-[8px] shadow-[0_18px_42px_rgba(28,25,23,0.14)]">
+        <div className="flex items-center gap-3 border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-toolbar)] px-4 py-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[6px] border border-[#cbd8bf] bg-[#edf3e8] text-[#3e562f]">
             <CommandIcon className="h-4 w-4" aria-hidden="true" />
           </div>
           <div className="min-w-0 flex-1">
-            <h2 id="command-palette-title" className="text-sm font-semibold text-white">Ações rápidas</h2>
+            <h2 id="command-palette-title" className="text-sm font-semibold text-[var(--text-primary)]">Ações rápidas</h2>
             <p className="text-xs text-[var(--color-text-muted)]">Pesquise um projeto ou execute uma ação</p>
           </div>
-          <kbd className="hidden rounded-md border border-[var(--color-border-subtle)] bg-slate-950/50 px-2 py-1 text-[10px] font-semibold text-slate-500 sm:inline-flex">Esc</kbd>
+          <kbd className="hidden rounded-[4px] border border-[var(--color-border-subtle)] bg-white px-2 py-1 text-[10px] font-semibold text-[var(--color-text-muted)] sm:inline-flex">Esc</kbd>
         </div>
 
         <div className="relative border-b border-[var(--color-border-subtle)]/55">
@@ -202,7 +202,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
             aria-controls="command-palette-list"
             aria-expanded="true"
             aria-activedescendant={items[highlightedIndex] ? `command-item-${items[highlightedIndex].id}` : undefined}
-            className="w-full bg-transparent py-4 ps-11 pe-4 text-base text-slate-100 outline-none placeholder:text-slate-500 sm:text-sm"
+            className="w-full bg-transparent py-4 ps-11 pe-4 text-base text-[var(--text-primary)] outline-none placeholder:text-[var(--color-text-muted)] sm:text-sm"
           />
         </div>
 
@@ -214,12 +214,12 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         >
           {items.length === 0 ? (
             <div className="px-4 py-10 text-center">
-              <p className="text-sm font-semibold text-slate-200">Nenhum resultado</p>
+              <p className="text-sm font-semibold text-[var(--text-primary)]">Nenhum resultado</p>
               <p className="mt-1 text-xs text-[var(--color-text-muted)]">Tente outro termo ou limpe a busca.</p>
             </div>
           ) : (
             <>
-              <p className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+              <p className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
                 {query.trim() ? 'Resultados' : 'Sugestões'}
               </p>
               {items.map((item, index) => {
@@ -235,11 +235,11 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                     onMouseEnter={() => setHighlightedIndex(index)}
                     onClick={() => selectItem(item)}
                     title={item.description}
-                    className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-start transition-[background-color,color] ${
-                      isHighlighted ? 'bg-indigo-500/15 text-white' : 'text-slate-300 hover:bg-white/[0.04]'
+                    className={`flex w-full items-center gap-3 rounded-[6px] px-3 py-2.5 text-start transition-[background-color,color] ${
+                      isHighlighted ? 'bg-[#e7ecdf] text-[#242923]' : 'text-[#3f4939] hover:bg-[#eceee7]'
                     }`}
                   >
-                    <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${isHighlighted ? 'bg-indigo-500/20 text-indigo-200' : 'bg-slate-950/45 text-slate-500'}`}>
+                    <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[5px] border ${isHighlighted ? 'border-[#c6d1ba] bg-[#edf3e8] text-[#3e562f]' : 'border-[#d9dcd5] bg-white text-[#62695f]'}`}>
                       <Icon className="h-4 w-4" aria-hidden="true" />
                     </span>
                     <span className="min-w-0 flex-1">
@@ -247,7 +247,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                       <span className="mt-0.5 block truncate text-xs text-[var(--color-text-muted)]">{item.description}</span>
                     </span>
                     {item.shortcut && (
-                      <kbd className="hidden shrink-0 rounded-md border border-[var(--color-border-subtle)] bg-slate-950/45 px-2 py-1 text-[10px] font-semibold text-slate-500 sm:inline-flex">{item.shortcut}</kbd>
+                      <kbd className="hidden shrink-0 rounded-[4px] border border-[var(--color-border-subtle)] bg-white px-2 py-1 text-[10px] font-semibold text-[var(--color-text-muted)] sm:inline-flex">{item.shortcut}</kbd>
                     )}
                   </button>
                 )
@@ -256,9 +256,9 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
           )}
         </div>
 
-        <div className="flex items-center justify-between border-t border-[var(--color-border-subtle)]/55 px-4 py-2.5 text-[10px] text-slate-500">
+        <div className="flex items-center justify-between border-t border-[var(--color-border-subtle)] px-4 py-2.5 text-[10px] text-[var(--color-text-muted)]">
           <span>Use ↑ ↓ para navegar</span>
-          <span className="flex items-center gap-1"><kbd className="rounded border border-slate-700/70 px-1">↵</kbd> executar</span>
+          <span className="flex items-center gap-1"><kbd className="rounded border border-[var(--color-border-subtle)] bg-white px-1">↵</kbd> executar</span>
         </div>
       </div>
     </AccessibleDialog>

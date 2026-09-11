@@ -33,6 +33,61 @@ function spawnDetached(
   })
 }
 
+async function findInstalledCodexCommand(): Promise<string | null> {
+  const binDirectory = path.join(
+    process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
+    'OpenAI',
+    'Codex',
+    'bin'
+  )
+
+  try {
+    const entries = await fs.readdir(binDirectory, { withFileTypes: true })
+    const candidates = await Promise.all(
+      entries
+        .filter((entry) => entry.isDirectory())
+        .map(async (entry) => {
+          const executable = path.join(binDirectory, entry.name, 'codex.exe')
+          try {
+            const stats = await fs.stat(executable)
+            return stats.isFile() ? { executable, modifiedAt: stats.mtimeMs } : null
+          } catch {
+            return null
+          }
+        })
+    )
+    return candidates
+      .filter((candidate): candidate is { executable: string; modifiedAt: number } => candidate !== null)
+      .sort((left, right) => right.modifiedAt - left.modifiedAt)[0]?.executable || null
+  } catch {
+    return null
+  }
+}
+
+async function resolveCodexCommand(configuredCommand?: string): Promise<string> {
+  // The bundled Codex executable survives shell PATH changes and is preferred
+  // over the legacy codex.cmd default when it is present.
+  const installedCommand = await findInstalledCodexCommand()
+  return installedCommand || configuredCommand || 'codex.cmd'
+}
+
+async function openCmdSession(
+  terminalCommand: string,
+  projectPath: string,
+  command: string,
+  env?: NodeJS.ProcessEnv
+): Promise<void> {
+  try {
+    await spawnDetached(
+      terminalCommand,
+      ['-d', projectPath, 'cmd.exe', '/d', '/k', command],
+      { env }
+    )
+  } catch {
+    await spawnDetached('cmd.exe', ['/d', '/k', command], { cwd: projectPath, env })
+  }
+}
+
 async function reserveUsage(target: UsageTarget): Promise<boolean> {
   return tryReserveUsage(target)
 }
@@ -73,7 +128,7 @@ export async function launchTool(
   try {
     switch (tool) {
       case 'codex-desktop': {
-        const codexCmd = custom.codex || 'codex.cmd'
+        const codexCmd = await resolveCodexCommand(custom.codex)
         const usageTarget = config.activeChatGptAccount === 'account2' ? 'account2' : 'account1'
         if (!(await reserveUsage(usageTarget))) {
           return { success: false, message: 'Limite de uso da conta ativa atingido.' }
@@ -117,14 +172,10 @@ export async function launchTool(
         }
 
         const wtCmd = custom.wt || 'wt.exe'
-        const codexCmd = custom.codex || 'codex.cmd'
+        const codexCmd = await resolveCodexCommand(custom.codex)
         const env = { ...process.env, CODEX_HOME: codexHome }
         try {
-          try {
-            await spawnDetached(wtCmd, ['-d', projectPath, 'cmd.exe', '/d', '/k', codexCmd], { env })
-          } catch {
-            await spawnDetached('cmd.exe', ['/d', '/k', codexCmd], { cwd: projectPath, env })
-          }
+          await openCmdSession(wtCmd, projectPath, codexCmd, env)
         } catch (error) {
           await rollbackUsage(usageTarget)
           throw error
@@ -176,17 +227,21 @@ export async function launchTool(
       }
 
       case 'agy': {
-        const usageTarget = 'antigravity'
-        // Antigravity is intentionally unlimited; keep the session counter for visibility.
-        await reserveUsage(usageTarget)
         const agyPath =
           custom.agy || path.join(os.homedir(), 'AppData', 'Local', 'agy', 'agy.exe')
         try {
-          try {
-            await spawnDetached('wt.exe', ['-d', projectPath, agyPath], { cwd: projectPath })
-          } catch {
-            await spawnDetached(agyPath, [], { cwd: projectPath })
+          await fs.access(agyPath)
+        } catch {
+          return {
+            success: false,
+            message: `Antigravity não foi encontrado em ${agyPath}. Atualize o caminho em Configurações.`,
           }
+        }
+        const usageTarget = 'antigravity'
+        // Antigravity is intentionally unlimited; keep the session counter for visibility.
+        await reserveUsage(usageTarget)
+        try {
+          await openCmdSession(custom.wt || 'wt.exe', projectPath, agyPath)
         } catch (error) {
           await rollbackUsage(usageTarget)
           throw error

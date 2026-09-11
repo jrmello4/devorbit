@@ -77,13 +77,13 @@ async function validateProjectPath(input: unknown): Promise<string> {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1200,
+    width: 1366,
     height: 800,
     minWidth: 960,
     minHeight: 600,
     frame: false, // Frameless para controle visual total estilo Linear/Raycast
     show: true,
-    backgroundColor: '#090d16',
+    backgroundColor: '#f5f5f2',
     title: 'DevOrbit',
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.cjs'),
@@ -432,3 +432,4 @@ function setupIpcHandlers() {
     } else if (safeAction === 'close') mainWindow.close()
   })
 }
+

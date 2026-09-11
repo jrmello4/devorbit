@@ -97,47 +97,47 @@ export const GitPushModal: React.FC<GitPushModalProps> = ({
       isOpen={isOpen}
       titleId="git-push-dialog-title"
       onClose={handleDialogClose}
-      className="w-full max-w-lg bg-[var(--color-bg-panel)] border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95 motion-safe:duration-150"
+      className="w-full max-w-lg bg-white border border-stone-200 rounded-[10px] shadow-[0_18px_42px_rgba(28,25,23,0.14)] overflow-hidden flex flex-col max-h-[calc(100dvh-48px)] motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95 motion-safe:duration-150"
     >
         {/* Modal Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-900/50">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-stone-200 bg-stone-50">
           <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-xl bg-sky-500/20 text-sky-400 border border-sky-500/30">
+            <div className="p-2 rounded-[8px] bg-[#edf3e8] text-[#3e562f] border border-[#cbd8bf]">
               <UploadCloud className="w-5 h-5" />
             </div>
             <div>
-                <h2 id="git-push-dialog-title" className="text-base font-bold text-white flex items-center gap-2">
+                <h2 id="git-push-dialog-title" className="text-base font-bold text-stone-900 flex items-center gap-2">
                 Subir para o GitHub
-                <span className="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono flex items-center gap-1">
-                  <GitBranch className="w-3 h-3 text-slate-400" />
+                <span className="text-xs px-2 py-0.5 rounded-full bg-stone-100 text-stone-700 font-mono flex items-center gap-1 border border-stone-200">
+                  <GitBranch className="w-3 h-3 text-stone-500" />
                   {git.branch}
                 </span>
               </h2>
-              <p className="text-xs text-slate-400 truncate max-w-xs" title={project.name}>{project.name}</p>
+              <p className="text-xs text-stone-600 truncate max-w-xs" title={project.name}>{project.name}</p>
             </div>
           </div>
           <button
             onClick={handleDialogClose}
             disabled={isPushing}
             aria-label="Fechar envio para o GitHub"
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            className="p-1.5 rounded-lg text-stone-500 hover:text-stone-900 hover:bg-stone-100 transition-colors"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Modal Body */}
-        <div className="p-6 overflow-y-auto space-y-4 flex-1 text-sm">
+        <div className="p-6 overflow-y-auto space-y-4 flex-1 min-h-0 text-sm text-stone-900">
           {/* Status summary */}
           <div className="flex flex-wrap gap-2">
             {git.ahead > 0 && (
-              <span className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+              <span className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200">
                 <ArrowUpCircle className="w-3.5 h-3.5" />
                 {git.ahead} commit(s) local pronto(s) para push
               </span>
             )}
             {git.hasChanges && (
-              <span className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-300 border border-amber-500/30">
+              <span className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-200">
                 <AlertCircle className="w-3.5 h-3.5" />
                 {git.modifiedCount + git.untrackedCount} arquivo(s) com alterações locais
               </span>
@@ -147,7 +147,7 @@ export const GitPushModal: React.FC<GitPushModalProps> = ({
           {/* Commit Message Input (se houver alterações locais) */}
           {git.hasChanges && (
             <div>
-              <label htmlFor="git-commit-message" className="font-semibold text-slate-200 block mb-1.5 text-xs">
+              <label htmlFor="git-commit-message" className="font-semibold text-stone-800 block mb-1.5 text-xs">
                 Mensagem do Commit:
               </label>
               <input
@@ -159,10 +159,10 @@ export const GitPushModal: React.FC<GitPushModalProps> = ({
                 placeholder="Ex: feat: adiciona nova funcionalidade"
                 disabled={isPushing}
                 aria-describedby="git-commit-message-help"
-                className="w-full bg-slate-900 border border-slate-700/80 rounded-xl px-3.5 py-2 text-sm text-slate-200 placeholder-slate-500 focus:border-sky-500 focus:ring-1 focus:ring-sky-500/50 focus:outline-none transition-[border-color,box-shadow]"
+                className="w-full bg-white border border-stone-300 rounded-[8px] px-3.5 py-2 text-sm text-stone-900 placeholder-stone-500 focus:border-[#3e562f] focus:ring-1 focus:ring-[#3e562f]/30 focus:outline-none transition-[border-color,box-shadow]"
                 autoFocus
               />
-              <p id="git-commit-message-help" className="text-xs text-slate-400 mt-1">
+              <p id="git-commit-message-help" className="text-xs text-stone-600 mt-1">
                 Todas as alterações locais serão adicionadas (`git add -A`) e commitadas automaticamente antes do envio.
               </p>
             </div>
@@ -171,26 +171,26 @@ export const GitPushModal: React.FC<GitPushModalProps> = ({
           {/* Changed Files List */}
           {git.hasChanges && (
             <div>
-              <label className="font-semibold text-slate-300 block mb-1.5 text-xs flex items-center gap-1.5">
-                <FileCode className="w-3.5 h-3.5 text-slate-400" />
+              <label className="font-semibold text-stone-700 block mb-1.5 text-xs flex items-center gap-1.5">
+                <FileCode className="w-3.5 h-3.5 text-stone-500" />
                 Arquivos a serem enviados:
               </label>
-              <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-2.5 max-h-36 overflow-y-auto space-y-1 font-mono text-xs">
+              <div className="bg-stone-50 border border-stone-200 rounded-[8px] p-2.5 max-h-36 overflow-y-auto space-y-1 font-mono text-xs">
                 {isLoadingFiles ? (
-                  <p className="text-slate-400 text-xs py-1 text-center">
+                  <p className="text-stone-600 text-xs py-1 text-center">
                     Listando alterações...
                   </p>
                 ) : changedFiles.length === 0 ? (
-                  <p className="text-slate-400 text-xs py-1 text-center">
+                  <p className="text-stone-600 text-xs py-1 text-center">
                     Nenhum arquivo listado.
                   </p>
                 ) : (
                   changedFiles.map((file, idx) => (
                     <div
                       key={idx}
-                      className="flex items-center gap-2 text-slate-300 py-0.5 px-1 rounded hover:bg-slate-900 truncate"
+                      className="flex items-center gap-2 text-stone-700 py-0.5 px-1 rounded hover:bg-stone-100 truncate"
                     >
-                      <span className="text-sky-400 text-[10px] font-bold">●</span>
+                      <span className="text-[#3e562f] text-[10px] font-bold">●</span>
                       <span className="truncate" title={file}>{file}</span>
                     </div>
                   ))
@@ -200,25 +200,25 @@ export const GitPushModal: React.FC<GitPushModalProps> = ({
           )}
 
           {!git.hasChanges && git.ahead > 0 && (
-            <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800 text-xs text-slate-300">
+            <div className="p-3 rounded-[8px] bg-stone-50 border border-stone-200 text-xs text-stone-700">
               Você já possui commits criados localmente prontos para subir. Clique no botão abaixo para enviar ao GitHub.
             </div>
           )}
         </div>
 
         {/* Modal Footer */}
-        <div className="flex items-center justify-end gap-2 px-6 py-3 border-t border-slate-800 bg-slate-900/50">
+        <div className="flex items-center justify-end gap-2 px-6 py-3 border-t border-stone-200 bg-stone-50">
           <button
             onClick={handleDialogClose}
             disabled={isPushing}
-            className="px-4 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+            className="px-4 py-1.5 rounded-lg text-xs font-semibold text-stone-600 hover:text-stone-900 hover:bg-stone-100 transition-colors"
           >
             Cancelar
           </button>
           <button
             onClick={handlePush}
             disabled={isPushing}
-            className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold bg-sky-600 text-white hover:bg-sky-500 shadow-md shadow-sky-500/20 disabled:opacity-50 transition-[background-color,color,box-shadow,opacity] cursor-pointer"
+            className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold bg-[#3e562f] text-white hover:bg-[#334827] disabled:opacity-50 transition-[background-color,color,opacity] cursor-pointer"
           >
             {isPushing ? (
               <>

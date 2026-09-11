@@ -171,17 +171,17 @@ export const GitInitModal: React.FC<GitInitModalProps> = ({
       isOpen={isOpen}
       titleId="git-init-dialog-title"
       onClose={handleClose}
-      className="w-full max-w-xl bg-[var(--color-bg-panel)] border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[88vh] motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95 motion-safe:duration-150"
+      className="w-full max-w-xl bg-white border border-stone-200 rounded-[10px] shadow-[0_18px_42px_rgba(28,25,23,0.14)] overflow-hidden flex flex-col max-h-[calc(100dvh-48px)] motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95 motion-safe:duration-150"
     >
       <form onSubmit={handleSubmit} className="flex min-h-0 flex-col">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-900/50">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-stone-200 bg-stone-50">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="p-2 rounded-xl bg-orange-500/20 text-orange-300 border border-orange-500/30">
+            <div className="p-2 rounded-[8px] bg-[#edf3e8] text-[#3e562f] border border-[#cbd8bf]">
               <GitBranch className="w-5 h-5" aria-hidden="true" />
             </div>
             <div className="min-w-0">
-              <h2 id="git-init-dialog-title" className="text-base font-bold text-white">Adicionar Git ao projeto</h2>
-              <p className="text-xs text-slate-400 truncate" title={project.name}>{project.name}</p>
+              <h2 id="git-init-dialog-title" className="text-base font-bold text-stone-900">Adicionar Git ao projeto</h2>
+              <p className="text-xs text-stone-600 truncate" title={project.name}>{project.name}</p>
             </div>
           </div>
           <button
@@ -189,41 +189,41 @@ export const GitInitModal: React.FC<GitInitModalProps> = ({
             onClick={handleClose}
             disabled={isInitializing}
             aria-label="Fechar inicialização do Git"
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            className="p-1.5 rounded-lg text-stone-500 hover:text-stone-900 hover:bg-stone-100 transition-colors"
           >
             <X className="w-4 h-4" aria-hidden="true" />
           </button>
         </div>
 
-        <div className="p-6 overflow-y-auto space-y-4 flex-1 text-sm" aria-describedby={descriptionId}>
-          <p id={descriptionId} className="text-slate-300 text-xs leading-relaxed">
+        <div className="p-6 overflow-y-auto space-y-4 flex-1 min-h-0 text-sm text-stone-900" aria-describedby={descriptionId}>
+          <p id={descriptionId} className="text-stone-700 text-xs leading-relaxed">
             O DevOrbit criará um repositório novo nesta pasta sem apagar ou substituir arquivos existentes.
             Revise a prévia abaixo antes de escolher o primeiro commit.
           </p>
 
-          <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3" aria-live="polite" aria-busy={isLoadingPreview}>
-            <div className="flex items-center gap-2 text-xs font-semibold text-slate-200">
-              {isLoadingPreview ? <Loader2 className="h-4 w-4 text-sky-400 motion-safe:animate-spin" aria-hidden="true" /> : preview?.canInitialize ? <CheckCircle2 className="h-4 w-4 text-emerald-400" aria-hidden="true" /> : <AlertCircle className="h-4 w-4 text-amber-400" aria-hidden="true" />}
+          <div className="rounded-[8px] border border-stone-200 bg-stone-50 p-3" aria-live="polite" aria-busy={isLoadingPreview}>
+            <div className="flex items-center gap-2 text-xs font-semibold text-stone-800">
+              {isLoadingPreview ? <Loader2 className="h-4 w-4 text-[#3e562f] motion-safe:animate-spin" aria-hidden="true" /> : preview?.canInitialize ? <CheckCircle2 className="h-4 w-4 text-emerald-700" aria-hidden="true" /> : <AlertCircle className="h-4 w-4 text-amber-700" aria-hidden="true" />}
               <span>{isLoadingPreview ? 'Analisando arquivos...' : preview?.message || 'A prévia ainda não está disponível.'}</span>
             </div>
             {preview && !isLoadingPreview && (
               <>
-                <div className="mt-2 flex items-center gap-2 text-xs text-slate-400">
+                <div className="mt-2 flex items-center gap-2 text-xs text-stone-600">
                   <FileCode className="h-3.5 w-3.5" aria-hidden="true" />
                   <span>{preview.fileCount} arquivo(s) encontrado(s)</span>
                   <span aria-hidden="true">·</span>
                   <span>branch {branch.trim() || 'main'}</span>
                 </div>
                 {preview.truncated && (
-                  <p className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-xs leading-relaxed text-amber-200">
+                  <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs leading-relaxed text-amber-800">
                     A prévia foi limitada porque há muitos arquivos ou uma pasta não pôde ser lida.
                     O commit inicial fica bloqueado até que a lista completa possa ser revisada.
                   </p>
                 )}
                 {preview.files.length > 0 && (
-                  <div className="mt-2 max-h-28 overflow-y-auto rounded-lg border border-slate-800 bg-slate-900/70 p-2 font-mono text-[11px] text-slate-300" aria-label="Prévia de arquivos">
+                  <div className="mt-2 max-h-28 overflow-y-auto rounded-lg border border-stone-200 bg-white p-2 font-mono text-[11px] text-stone-700" aria-label="Prévia de arquivos">
                     {preview.files.map((file) => <div key={file} className="truncate py-0.5" title={file}>{file}</div>)}
-                    {preview.truncated && <div className="pt-1 text-amber-200">… prévia incompleta; commit bloqueado</div>}
+                    {preview.truncated && <div className="pt-1 text-amber-800">… prévia incompleta; commit bloqueado</div>}
                   </div>
                 )}
               </>
@@ -232,41 +232,41 @@ export const GitInitModal: React.FC<GitInitModalProps> = ({
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
-              <label htmlFor="git-init-branch" className="mb-1.5 block text-xs font-semibold text-slate-200">Branch inicial</label>
-              <input id="git-init-branch" name="branch" value={branch} onChange={(event) => setBranch(event.target.value)} disabled={isInitializing} className="w-full rounded-xl border border-slate-700/80 bg-slate-900 px-3.5 py-2 text-sm text-slate-200 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500/50" />
+              <label htmlFor="git-init-branch" className="mb-1.5 block text-xs font-semibold text-stone-800">Branch inicial</label>
+              <input id="git-init-branch" name="branch" value={branch} onChange={(event) => setBranch(event.target.value)} disabled={isInitializing} className="w-full rounded-[8px] border border-stone-300 bg-white px-3.5 py-2 text-sm text-stone-900 focus:border-[#3e562f] focus:outline-none focus:ring-1 focus:ring-[#3e562f]/30" />
             </div>
             <div>
-              <label htmlFor="git-init-remote" className="mb-1.5 block text-xs font-semibold text-slate-200">Remote HTTPS <span className="font-normal text-slate-400">(opcional)</span></label>
-              <input id="git-init-remote" name="remoteUrl" type="url" value={remoteUrl} onChange={(event) => setRemoteUrl(event.target.value)} placeholder="https://github.com/usuario/projeto.git" disabled={isInitializing} className="w-full rounded-xl border border-slate-700/80 bg-slate-900 px-3.5 py-2 text-sm text-slate-200 placeholder-slate-500 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500/50" />
+              <label htmlFor="git-init-remote" className="mb-1.5 block text-xs font-semibold text-stone-800">Remote HTTPS <span className="font-normal text-stone-600">(opcional)</span></label>
+              <input id="git-init-remote" name="remoteUrl" type="url" value={remoteUrl} onChange={(event) => setRemoteUrl(event.target.value)} placeholder="https://github.com/usuario/projeto.git" disabled={isInitializing} className="w-full rounded-[8px] border border-stone-300 bg-white px-3.5 py-2 text-sm text-stone-900 placeholder-stone-500 focus:border-[#3e562f] focus:outline-none focus:ring-1 focus:ring-[#3e562f]/30" />
             </div>
           </div>
 
-          <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-slate-800 bg-slate-900/50 p-3">
-            <input type="checkbox" checked={initialCommit} onChange={(event) => setInitialCommit(event.target.checked)} disabled={isInitializing || isLoadingPreview || Boolean(preview?.truncated)} className="mt-0.5 h-4 w-4 accent-sky-500" />
-            <span><span className="block text-xs font-semibold text-slate-200">Criar primeiro commit</span><span className="mt-0.5 block text-xs text-slate-400">Todos os arquivos não ignorados poderão ser adicionados com <code>git add -A</code>.</span></span>
+          <label className="flex cursor-pointer items-start gap-2.5 rounded-[8px] border border-stone-200 bg-stone-50 p-3">
+            <input type="checkbox" checked={initialCommit} onChange={(event) => setInitialCommit(event.target.checked)} disabled={isInitializing || isLoadingPreview || Boolean(preview?.truncated)} className="mt-0.5 h-4 w-4 accent-[#3e562f]" />
+            <span><span className="block text-xs font-semibold text-stone-800">Criar primeiro commit</span><span className="mt-0.5 block text-xs text-stone-600">Todos os arquivos não ignorados poderão ser adicionados com <code>git add -A</code>.</span></span>
           </label>
 
           {initialCommit && (
-            <div className="space-y-3 rounded-xl border border-sky-500/20 bg-sky-500/5 p-3">
+            <div className="space-y-3 rounded-[8px] border border-[#cbd8bf] bg-[#f4f7f1] p-3">
               <div>
-                <label htmlFor="git-init-commit-message" className="mb-1.5 block text-xs font-semibold text-slate-200">Mensagem do commit</label>
-                <input id="git-init-commit-message" name="commitMessage" value={commitMessage} onChange={(event) => setCommitMessage(event.target.value)} disabled={isInitializing} className="w-full rounded-xl border border-slate-700/80 bg-slate-900 px-3.5 py-2 text-sm text-slate-200 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500/50" />
+                <label htmlFor="git-init-commit-message" className="mb-1.5 block text-xs font-semibold text-stone-800">Mensagem do commit</label>
+                <input id="git-init-commit-message" name="commitMessage" value={commitMessage} onChange={(event) => setCommitMessage(event.target.value)} disabled={isInitializing} className="w-full rounded-[8px] border border-stone-300 bg-white px-3.5 py-2 text-sm text-stone-900 focus:border-[#3e562f] focus:outline-none focus:ring-1 focus:ring-[#3e562f]/30" />
               </div>
               <label className="flex cursor-pointer items-start gap-2.5">
-                <input type="checkbox" checked={confirmAllFiles} onChange={(event) => setConfirmAllFiles(event.target.checked)} disabled={isInitializing} className="mt-0.5 h-4 w-4 accent-sky-500" />
-                <span className="text-xs text-slate-300">Confirmo que revisei a prévia e aceito que todos os arquivos não ignorados sejam incluídos no commit.</span>
+                <input type="checkbox" checked={confirmAllFiles} onChange={(event) => setConfirmAllFiles(event.target.checked)} disabled={isInitializing} className="mt-0.5 h-4 w-4 accent-[#3e562f]" />
+                <span className="text-xs text-stone-700">Confirmo que revisei a prévia e aceito que todos os arquivos não ignorados sejam incluídos no commit.</span>
               </label>
               <label className={`flex cursor-pointer items-start gap-2.5 ${remoteUrl.trim() ? '' : 'opacity-60'}`}>
-                <input type="checkbox" checked={push} onChange={(event) => setPush(event.target.checked)} disabled={isInitializing || !remoteUrl.trim()} className="mt-0.5 h-4 w-4 accent-sky-500" />
-                <span><span className="block text-xs font-semibold text-slate-200">Enviar para o remote após o commit</span><span className="mt-0.5 block text-xs text-slate-400">O push nunca usa force. Um remote com histórico será recusado.</span></span>
+                <input type="checkbox" checked={push} onChange={(event) => setPush(event.target.checked)} disabled={isInitializing || !remoteUrl.trim()} className="mt-0.5 h-4 w-4 accent-[#3e562f]" />
+                <span><span className="block text-xs font-semibold text-stone-800">Enviar para o remote após o commit</span><span className="mt-0.5 block text-xs text-stone-600">O push nunca usa force. Um remote com histórico será recusado.</span></span>
               </label>
             </div>
           )}
         </div>
 
-        <div className="flex items-center justify-end gap-2 border-t border-slate-800 bg-slate-900/50 px-6 py-3">
-          <button type="button" onClick={handleClose} disabled={isInitializing} className="rounded-lg px-4 py-1.5 text-xs font-semibold text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors">Cancelar</button>
-          <button type="submit" disabled={!canSubmit} className="flex items-center gap-1.5 rounded-lg bg-orange-600 px-4 py-1.5 text-xs font-semibold text-white shadow-md shadow-orange-500/20 transition-[background-color,color,box-shadow,opacity] hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-50">
+        <div className="flex items-center justify-end gap-2 border-t border-stone-200 bg-stone-50 px-6 py-3">
+          <button type="button" onClick={handleClose} disabled={isInitializing} className="rounded-lg px-4 py-1.5 text-xs font-semibold text-stone-600 hover:bg-stone-100 hover:text-stone-900 transition-colors">Cancelar</button>
+          <button type="submit" disabled={!canSubmit} className="flex items-center gap-1.5 rounded-lg bg-[#3e562f] px-4 py-1.5 text-xs font-semibold text-white transition-[background-color,color,opacity] hover:bg-[#334827] disabled:cursor-not-allowed disabled:opacity-50">
             {isInitializing ? <><Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin" aria-hidden="true" /> Processando...</> : push ? <><UploadCloud className="h-3.5 w-3.5" aria-hidden="true" /> Criar e enviar</> : initialCommit ? <><GitCommit className="h-3.5 w-3.5" aria-hidden="true" /> Criar e commitar</> : <><GitBranch className="h-3.5 w-3.5" aria-hidden="true" /> Criar repositório</>}
           </button>
         </div>

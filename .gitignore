@@ -6,3 +6,5 @@ release
 *.local
 .superpowers
 *.log
+
+artifacts/ui/
