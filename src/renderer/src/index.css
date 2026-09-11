@@ -1,9 +1,45 @@
 @import "tailwindcss";
 
+@theme {
+  --color-bg-page: #090d16;
+  --color-bg-header: #0d121f;
+  --color-bg-toolbar: #0b0f1d;
+  --color-bg-panel: #0e1322;
+  --color-bg-popover: #0f1424;
+  --color-bg-card-start: #111624;
+  --color-bg-card-end: #0c101a;
+  --color-focus-ring: #a5b4fc;
+}
+
 @layer base {
   * {
     box-sizing: border-box;
   }
+
+  :focus-visible {
+    outline: 2px solid var(--color-focus-ring);
+    outline-offset: 2px;
+  }
+
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+.skip-link {
+  position: absolute;
+  inset-inline-start: -9999px;
+  top: 16px;
+  z-index: 100;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--color-bg-panel);
+  color: white;
+}
+
+.skip-link:focus-visible {
+  inset-inline-start: 16px;
 }
 
 /* Custom scrollbars */
@@ -21,8 +57,27 @@
   border-radius: 9999px;
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(99, 102, 241, 0.6);
+@media (hover: hover) {
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(99, 102, 241, 0.6);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@media (forced-colors: active) {
+  :focus-visible {
+    outline-color: Highlight;
+  }
 }
 
 /* Electron window drag regions */

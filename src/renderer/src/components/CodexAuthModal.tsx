@@ -13,6 +13,7 @@ import {
   ShieldCheck,
 } from 'lucide-react'
 import type { AppConfig, CodexAuthProgress } from '../types'
+import { AccessibleDialog } from './AccessibleDialog'
 
 interface CodexAuthModalProps {
   isOpen: boolean
@@ -99,8 +100,12 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
-      <div className="w-full max-w-lg bg-[#0e1322] border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200">
+    <AccessibleDialog
+      isOpen={isOpen}
+      titleId="codex-auth-dialog-title"
+      onClose={handleCancel}
+      className="w-full max-w-lg bg-[var(--color-bg-panel)] border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95 motion-safe:duration-200"
+    >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-900/50">
           <div className="flex items-center gap-2.5">
@@ -108,7 +113,7 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
               <Bot className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-white">
+              <h2 id="codex-auth-dialog-title" className="text-base font-bold text-white">
                 Conectar OpenAI Codex
               </h2>
               <p className="text-xs text-slate-400">
@@ -118,6 +123,7 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
           </div>
           <button
             onClick={handleCancel}
+            aria-label="Cancelar conexão do Codex"
             className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
           >
             <X className="w-4 h-4" />
@@ -130,7 +136,7 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
           {status === 'success' ? (
             <div className="py-8 flex flex-col items-center justify-center text-center space-y-3">
               <div className="w-16 h-16 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shadow-lg shadow-emerald-500/20">
-                <CheckCircle2 className="w-8 h-8 animate-bounce" />
+                <CheckCircle2 className="w-8 h-8 motion-safe:animate-bounce" />
               </div>
               <h3 className="text-lg font-bold text-white">
                 {accountLabel} Conectada com Sucesso!
@@ -149,7 +155,7 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
               <p className="text-xs text-red-400/90 max-w-sm">{message}</p>
               <button
                 onClick={handleStartLogin}
-                className="mt-2 flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition-all cursor-pointer"
+                className="mt-2 flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition-[background-color,color] cursor-pointer"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
                 Tentar Novamente
@@ -169,7 +175,7 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
                       Abrindo autorização no {browserName}
                     </p>
                     <p className="text-slate-400">
-                      Disparamos a página de login oficial da OpenAI no seu navegador <strong>{browserName}</strong> onde sua conta ({isAccount2 ? 'mello@adenilsonjunior.com.br' : 'Conta 1'}) está ativa.
+                      Disparamos a página oficial de login da OpenAI no seu navegador <strong>{browserName}</strong>, onde a conta selecionada está ativa.
                     </p>
                   </div>
                 </div>
@@ -199,7 +205,7 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
                   <button
                     onClick={handleCopyUrl}
                     disabled={!authUrl}
-                    className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium transition-all cursor-pointer disabled:opacity-50"
+                    className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium transition-[background-color,color,border-color,opacity] cursor-pointer disabled:opacity-50"
                   >
                     {copied ? (
                       <>
@@ -216,7 +222,8 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
 
                   <button
                     onClick={handleOpenBrowserAgain}
-                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-teal-600/20 hover:bg-teal-600/30 text-teal-300 border border-teal-500/40 text-xs font-semibold transition-all cursor-pointer"
+                    disabled={!authUrl}
+                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-teal-600/20 hover:bg-teal-600/30 text-teal-300 border border-teal-500/40 text-xs font-semibold transition-[background-color,border-color,color] cursor-pointer disabled:opacity-50"
                   >
                     <span>Reabrir {browserName}</span>
                     <ExternalLink className="w-3 h-3" />
@@ -230,7 +237,7 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
 
               {/* Loading Status */}
               <div className="flex items-center justify-center gap-2.5 text-xs text-slate-400 py-1">
-                <Loader2 className="w-4 h-4 animate-spin text-teal-400" />
+                <Loader2 className="w-4 h-4 motion-safe:animate-spin text-teal-400" />
                 <span>Aguardando você clicar em Continuar na aba do {browserName}...</span>
               </div>
             </>
@@ -246,7 +253,6 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
             {status === 'success' ? 'Fechar' : 'Cancelar'}
           </button>
         </div>
-      </div>
-    </div>
+    </AccessibleDialog>
   )
 }

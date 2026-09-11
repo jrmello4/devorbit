@@ -24,6 +24,31 @@ const IGNORED_DIRS = new Set([
   'System Volume Information',
 ])
 
+const SCAN_CONCURRENCY = 4
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  mapper: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  if (items.length === 0) return []
+
+  const results = new Array<R>(items.length)
+  let nextIndex = 0
+  const workerCount = Math.min(Math.max(1, Math.floor(limit)), items.length)
+
+  const worker = async (): Promise<void> => {
+    while (true) {
+      const index = nextIndex++
+      if (index >= items.length) return
+      results[index] = await mapper(items[index], index)
+    }
+  }
+
+  await Promise.all(Array.from({ length: workerCount }, () => worker()))
+  return results
+}
+
 async function detectTechs(dirPath: string): Promise<TechStack[]> {
   const techs: TechStack[] = []
 
@@ -95,56 +120,66 @@ async function detectTechs(dirPath: string): Promise<TechStack[]> {
 }
 
 export async function scanDirectoryForProjects(rootDir: string, refreshRemote = false): Promise<Project[]> {
-  const projects: Project[] = []
-
   try {
-    const entries = await fs.readdir(rootDir, { withFileTypes: true })
+    // Resolve the configured root once. Apart from avoiding repeated I/O, this
+    // keeps containment checks consistent when the configured path is a link.
+    const realRoot = await fs.realpath(rootDir)
+    const entries = await fs.readdir(realRoot, { withFileTypes: true })
+    const candidateEntries = entries.filter(
+      (entry) =>
+        (entry.isDirectory() || entry.isSymbolicLink()) &&
+        !entry.name.startsWith('.') &&
+        !IGNORED_DIRS.has(entry.name)
+    )
 
-    for (const entry of entries) {
-      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue
-      if (entry.name.startsWith('.') || IGNORED_DIRS.has(entry.name)) continue
+    const inspected = await mapWithConcurrency(
+      candidateEntries,
+      SCAN_CONCURRENCY,
+      async (entry): Promise<Project | null> => {
+        try {
+          const projectPath = path.join(realRoot, entry.name)
+          const realProjectPath = await fs.realpath(projectPath)
+          const relative = path.relative(realRoot, realProjectPath)
+          if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return null
+          const stats = await fs.stat(realProjectPath)
+          if (!stats.isDirectory()) return null
+          const hasGit = await isGitRepository(realProjectPath)
+          const techs = await detectTechs(realProjectPath)
 
-      const projectPath = path.join(rootDir, entry.name)
+          // If in a dedicated projects folder or has git or has tech manifest, consider it a project
+          const isProjectFolder =
+            rootDir.toLowerCase().endsWith('projects') ||
+            hasGit ||
+            techs.length > 0
 
-      try {
-        const realRoot = await fs.realpath(rootDir)
-        const realProjectPath = await fs.realpath(projectPath)
-        const relative = path.relative(realRoot, realProjectPath)
-        if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) continue
-        const stats = await fs.stat(realProjectPath)
-        if (!stats.isDirectory()) continue
-        const hasGit = await isGitRepository(realProjectPath)
-        const techs = await detectTechs(realProjectPath)
+          if (isProjectFolder) {
+            const git = await getGitStatus(realProjectPath, refreshRemote)
 
-        // If in a dedicated projects folder or has git or has tech manifest, consider it a project
-        const isProjectFolder =
-          rootDir.toLowerCase().endsWith('projects') ||
-          hasGit ||
-          techs.length > 0
+            return {
+              id: Buffer.from(realProjectPath).toString('base64'),
+              name: entry.name,
+              path: realProjectPath,
+              parentDir: path.basename(rootDir),
+              lastModified: stats.mtimeMs,
+              techs,
+              git,
+            }
+          }
 
-        if (isProjectFolder) {
-          const git = await getGitStatus(realProjectPath, refreshRemote)
-
-          projects.push({
-            id: Buffer.from(realProjectPath).toString('base64'),
-            name: entry.name,
-            path: realProjectPath,
-            parentDir: path.basename(rootDir),
-            lastModified: stats.mtimeMs,
-            techs,
-            git,
-          })
+          return null
+        } catch {
+          // Skip unreadable or broken-link directories without aborting the
+          // remaining scan workers.
+          return null
         }
-      } catch (err) {
-        // Skip unreadable directories
-        continue
       }
-    }
+    )
+
+    return inspected.filter((project): project is Project => project !== null)
   } catch (error) {
     console.error(`Erro ao ler diretório ${rootDir}:`, error)
+    return []
   }
-
-  return projects
 }
 
 export async function scanAllProjects(rootDirs: string[], refreshRemote = false): Promise<Project[]> {

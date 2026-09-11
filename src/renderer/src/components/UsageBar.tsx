@@ -65,7 +65,7 @@ export const UsageBar: React.FC<UsageBarProps> = ({
     colorClass: string
   ) => {
     const acc = usage[accountKey]
-    const percent = Math.min(100, Math.round((acc.used / acc.limit) * 100))
+    const percent = acc.limit > 0 ? Math.min(100, Math.round((acc.used / acc.limit) * 100)) : 0
     const isWarning = percent >= 75 && percent < 100
     const isCritical = percent >= 100
     const remaining = getRemainingTime(acc)
@@ -75,7 +75,7 @@ export const UsageBar: React.FC<UsageBarProps> = ({
 
     return (
       <div
-        className={`flex items-center gap-2 px-2.5 py-1 rounded-xl border transition-all text-xs ${
+          className={`flex items-center gap-2 px-2.5 py-1 rounded-xl border transition-[border-color,box-shadow,background-color] text-xs ${
           isActive
             ? 'bg-slate-900/95 border-indigo-500/50 shadow-sm shadow-indigo-500/10'
             : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
@@ -84,9 +84,16 @@ export const UsageBar: React.FC<UsageBarProps> = ({
         <span className="font-semibold text-slate-300 shrink-0">{name}:</span>
 
         {/* Barra de Progresso Cápsula */}
-        <div className="w-16 sm:w-20 h-2 rounded-full bg-slate-800 overflow-hidden relative border border-slate-700/50">
+        <div
+          className="w-16 sm:w-20 h-2 rounded-full bg-slate-800 overflow-hidden relative border border-slate-700/50"
+          role="progressbar"
+          aria-label={`${name} — uso da cota`}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={percent}
+        >
           <div
-            className={`h-full rounded-full transition-all duration-300 ${
+            className={`h-full rounded-full transition-[width,background-color,box-shadow] duration-300 ${
               isCritical
                 ? 'bg-red-500 shadow-sm shadow-red-500/50'
                 : isWarning
@@ -108,7 +115,7 @@ export const UsageBar: React.FC<UsageBarProps> = ({
 
         {remaining && (
           <span className="hidden md:inline-flex items-center gap-1 text-[10px] text-slate-400 font-mono">
-            <Clock className="w-2.5 h-2.5 text-slate-500" />
+            <Clock className="w-2.5 h-2.5 text-slate-400" />
             {remaining}
           </span>
         )}
@@ -118,16 +125,16 @@ export const UsageBar: React.FC<UsageBarProps> = ({
           <button
             type="button"
             onClick={() => onDecrement(accountKey)}
-            className="p-0.5 rounded text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition-colors cursor-pointer"
-            title="Decrementar uso"
+            aria-label={`Diminuir uso de ${name}`}
+            className="min-w-6 min-h-6 p-0.5 rounded text-slate-400 hover:text-slate-300 hover:bg-slate-800 transition-[color,background-color] cursor-pointer"
           >
             <Minus className="w-2.5 h-2.5" />
           </button>
           <button
             type="button"
             onClick={() => onIncrement(accountKey)}
-            className="p-0.5 rounded text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition-colors cursor-pointer"
-            title="Incrementar uso"
+            aria-label={`Aumentar uso de ${name}`}
+            className="min-w-6 min-h-6 p-0.5 rounded text-slate-400 hover:text-slate-300 hover:bg-slate-800 transition-[color,background-color] cursor-pointer"
           >
             <Plus className="w-2.5 h-2.5" />
           </button>
@@ -142,7 +149,7 @@ export const UsageBar: React.FC<UsageBarProps> = ({
   const showHandoffAlert = activePercent >= 80
 
   return (
-    <div className="titlebar-no-drag px-4 py-1.5 bg-[#0b0f1d] border-b border-slate-800/60 flex flex-wrap items-center justify-between gap-2 select-none">
+    <div className="titlebar-no-drag px-4 py-1.5 bg-[var(--color-bg-toolbar)] border-b border-slate-800/60 flex flex-wrap items-center justify-between gap-2">
       {/* Esquerda: Medidores de Quota */}
       <div className="flex items-center gap-2 overflow-x-auto py-0.5">
         <span className="text-[11px] font-semibold text-slate-400 flex items-center gap-1 mr-1 shrink-0">
@@ -162,7 +169,7 @@ export const UsageBar: React.FC<UsageBarProps> = ({
 
         {/* Antigravity Badge */}
         <div className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-900/60 border border-slate-800 text-xs text-slate-300">
-          <Sparkles className="w-3.5 h-3.5 text-indigo-400 animate-pulse" />
+          <Sparkles className="w-3.5 h-3.5 text-indigo-400 motion-safe:animate-pulse" />
           <span className="font-semibold text-slate-200">Antigravity:</span>
           <span className="text-[10px] text-emerald-400 font-medium">Livre (Gemini)</span>
         </div>
@@ -171,7 +178,7 @@ export const UsageBar: React.FC<UsageBarProps> = ({
       {/* Direita: Alerta de Troca Inteligente & Configuração rápida */}
       <div className="flex items-center gap-2">
         {showHandoffAlert && (
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-300 text-xs font-semibold animate-pulse">
+          <div role="status" className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-300 text-xs font-semibold motion-safe:animate-pulse">
             <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
             <span className="hidden sm:inline">
               {activePercent >= 100 ? 'Limite Atingido!' : 'Limite Próximo!'}
@@ -193,19 +200,22 @@ export const UsageBar: React.FC<UsageBarProps> = ({
         <div className="relative">
           <button
             onClick={() => setPopoverOpen(!popoverOpen)}
-            className="p-1 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
-            title="Configurar limites de uso e reset manual"
+            aria-expanded={popoverOpen}
+            aria-controls="usage-settings-popover"
+            aria-label="Configurar limites de uso e reset manual"
+            className="min-w-8 min-h-8 p-1 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-[color,background-color]"
           >
             <Settings2 className="w-3.5 h-3.5" />
           </button>
 
           {popoverOpen && (
-            <div className="absolute right-0 top-7 w-64 p-3 bg-[#0f1424] border border-slate-700 rounded-xl shadow-2xl z-50 text-xs space-y-3">
+            <div id="usage-settings-popover" className="absolute end-0 top-7 w-64 p-3 bg-[var(--color-bg-popover)] border border-slate-700 rounded-xl shadow-2xl z-50 text-xs space-y-3">
               <div className="flex items-center justify-between border-b border-slate-800 pb-2">
                 <span className="font-bold text-white">Configurar Cotas IA</span>
                 <button
                   onClick={() => setPopoverOpen(false)}
-                  className="text-slate-400 hover:text-white"
+                  aria-label="Fechar configurações de quota"
+                  className="min-w-6 min-h-6 flex items-center justify-center text-slate-400 hover:text-white"
                 >
                   <ChevronDown className="w-3.5 h-3.5" />
                 </button>
@@ -240,8 +250,10 @@ export const UsageBar: React.FC<UsageBarProps> = ({
                   Limite por Janela (mensagens / 3h):
                 </span>
                 <div className="flex items-center gap-2">
-                  <span className="text-[11px] text-slate-400">C1:</span>
+                  <label htmlFor="usage-limit-account-1" className="text-[11px] text-slate-400">C1:</label>
                   <input
+                    id="usage-limit-account-1"
+                    name="usage-limit-account-1"
                     type="number"
                     min="5"
                     max="200"
@@ -251,8 +263,10 @@ export const UsageBar: React.FC<UsageBarProps> = ({
                     }
                     className="w-16 bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-xs text-white"
                   />
-                  <span className="text-[11px] text-slate-400">C2:</span>
+                  <label htmlFor="usage-limit-account-2" className="text-[11px] text-slate-400">C2:</label>
                   <input
+                    id="usage-limit-account-2"
+                    name="usage-limit-account-2"
                     type="number"
                     min="5"
                     max="200"

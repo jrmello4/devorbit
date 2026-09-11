@@ -2,7 +2,7 @@
 
 **Data:** 2026-09-10  
 **Status:** Especificação Aprovada  
-**Autor:** Antigravity & Adenilson  
+**Autor:** Equipe DevOrbit
 
 ---
 
@@ -50,7 +50,7 @@ graph TD
         BraveApp["brave.exe (ChatGPT / Codex)"]
         VSCodeApp["code.cmd"]
         WinTerminal["wt.exe"]
-        FileSystem["C:\\Users\\adenilson.j\\projects & Documents"]
+        FileSystem["%USERPROFILE%\\projects & Documents"]
     end
 
     UI --> Bridge
@@ -71,8 +71,8 @@ graph TD
 
 ### 3.1 Varredura de Projetos (Project Scanner)
 - **Diretórios Raiz Padrão**:
-  - `C:\Users\adenilson.j\projects`
-  - `C:\Users\adenilson.j\Documents`
+  - `%USERPROFILE%\projects`
+  - `%USERPROFILE%\Documents`
   - Suporte a adicionar/remover pastas personalizadas a qualquer momento.
 - **Detecção de Tipo de Projeto & Tecnologias**:
   - `package.json` -> Node.js / React / Next / Vite
@@ -98,9 +98,9 @@ Para cada repositório detectado, o DevOrbit executa em background:
 
 | Ferramenta | Caminho / Comando Detectado | Ação ao Clicar |
 | :--- | :--- | :--- |
-| **Antigravity** | `C:\Users\adenilson.j\AppData\Local\agy\agy.exe` | Abre o terminal interativo do Antigravity CLI com o diretório do projeto como workspace. |
-| **MiMo AI** | `C:\Users\adenilson.j\AppData\Local\Programs\Xiaomi MiMo AI\Xiaomi MiMo AI.exe` | Executa o aplicativo Xiaomi MiMo AI. |
-| **Brave (ChatGPT / Codex)** | `C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe` | Abre o Brave diretamente no ChatGPT/Codex com atalhos para alternar entre Conta 1 e Conta 2. |
+| **Antigravity** | `%LOCALAPPDATA%\agy\agy.exe` | Abre o terminal interativo do Antigravity CLI com o diretório do projeto como workspace. |
+| **MiMo AI** | `%LOCALAPPDATA%\Programs\Xiaomi MiMo AI\Xiaomi MiMo AI.exe` | Executa o aplicativo Xiaomi MiMo AI. |
+| **Brave (ChatGPT / Codex)** | `%ProgramFiles%\BraveSoftware\Brave-Browser\Application\brave.exe` | Abre o Brave diretamente no ChatGPT/Codex com atalhos para alternar entre Conta 1 e Conta 2. |
 | **VS Code** | `code.cmd` | Executa `code "<caminho_do_projeto>"`. |
 | **Windows Terminal** | `wt.exe` | Executa `wt.exe -d "<caminho_do_projeto>"`. |
 | **Copiar Contexto** | Clipboard API do Electron | Gera e copia um resumo técnico do projeto formatado para IA (Stack, Branch, Arquivos alterados). |
@@ -116,7 +116,7 @@ Para cada repositório detectado, o DevOrbit executa em background:
 ## 4. Estrutura de Arquivos do Projeto
 
 ```
-gallant-darwin/
+devorbit/
 ├── src/
 │   ├── main/
 │   │   ├── index.ts             # Entrypoint do processo principal Electron
@@ -154,7 +154,7 @@ gallant-darwin/
 ## 5. Plano de Verificação e Qualidade
 
 1. **Varredura e Detecção**:
-   - Validar que projetos em `C:\Users\adenilson.j\projects` (ex: `sgad-app`, `JogoBaseball`, `java`) são listados instantaneamente com seus status Git reais.
+   - Validar que projetos em `%USERPROFILE%\projects` são listados instantaneamente com seus status Git reais.
 2. **Execução de Ferramentas**:
    - Testar o clique de abertura para Antigravity (`agy.exe`), Xiaomi MiMo AI, VS Code, Windows Terminal e Brave.
 3. **Sincronização Git**:

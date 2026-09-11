@@ -6,6 +6,16 @@ import type { GitStatus, SyncResult } from '../renderer/src/types'
 
 const execFileAsync = promisify(execFile)
 
+// Git operations are process-bound and can mutate the same working tree. Keep
+// syncs for one repository serialized even when the renderer fires multiple
+// requests (for example, a manual sync while "Sync all" is still running).
+const syncLocks = new Map<string, Promise<SyncResult>>()
+
+function getSyncLockKey(repoPath: string): string {
+  const normalized = path.normalize(path.resolve(repoPath))
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized
+}
+
 export async function isGitRepository(dirPath: string): Promise<boolean> {
   try {
     const gitDir = path.join(dirPath, '.git')
@@ -124,7 +134,7 @@ export async function getGitStatus(repoPath: string, refreshRemote = false): Pro
   }
 }
 
-export async function syncGit(repoPath: string): Promise<SyncResult> {
+async function syncGitUnlocked(repoPath: string): Promise<SyncResult> {
   const isRepo = await isGitRepository(repoPath)
   if (!isRepo) {
     return {
@@ -134,8 +144,30 @@ export async function syncGit(repoPath: string): Promise<SyncResult> {
   }
 
   try {
-    // Executa git pull
-    const { stdout, stderr } = await execFileAsync('git', ['pull'], {
+    // Never merge or overwrite local work as a side effect of a sync action.
+    // Porcelain output includes staged, unstaged and untracked changes.
+    const { stdout: statusOutput } = await execFileAsync(
+      'git',
+      ['status', '--porcelain=v1'],
+      {
+        cwd: repoPath,
+        timeout: 8000,
+        windowsHide: true,
+      }
+    )
+
+    const localChanges = statusOutput.trim()
+    if (localChanges) {
+      return {
+        success: false,
+        message:
+          'Sincronização recusada: existem alterações locais. Faça commit ou stash antes do pull.',
+        output: localChanges.slice(0, 4000),
+      }
+    }
+
+    // --ff-only guarantees that sync never creates an implicit merge commit.
+    const { stdout, stderr } = await execFileAsync('git', ['pull', '--ff-only'], {
       cwd: repoPath,
       timeout: 30000,
       windowsHide: true,
@@ -143,7 +175,11 @@ export async function syncGit(repoPath: string): Promise<SyncResult> {
 
     const output = (stdout + '\n' + stderr).trim()
 
-    if (output.includes('Already up to date.') || output.includes('Já atualizado.')) {
+    if (
+      output.includes('Already up to date.') ||
+      output.includes('Already up-to-date.') ||
+      output.includes('Já atualizado.')
+    ) {
       return {
         success: true,
         message: 'O projeto já está com a versão mais recente do GitHub!',
@@ -161,6 +197,33 @@ export async function syncGit(repoPath: string): Promise<SyncResult> {
       success: false,
       message: `Erro ao sincronizar: ${error.stderr || error.message || 'Falha no git pull'}`,
       output: error.stderr || error.stdout,
+    }
+  }
+}
+
+export async function syncGit(repoPath: string): Promise<SyncResult> {
+  let lockKey: string
+  try {
+    lockKey = getSyncLockKey(repoPath)
+  } catch {
+    return {
+      success: false,
+      message: 'Caminho de repositório inválido.',
+    }
+  }
+
+  const previous = syncLocks.get(lockKey)
+  const current = (previous ?? Promise.resolve())
+    .catch(() => undefined)
+    .then(() => syncGitUnlocked(repoPath))
+
+  syncLocks.set(lockKey, current)
+
+  try {
+    return await current
+  } finally {
+    if (syncLocks.get(lockKey) === current) {
+      syncLocks.delete(lockKey)
     }
   }
 }

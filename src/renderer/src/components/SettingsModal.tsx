@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useRef, useState } from 'react'
 import {
   X,
   FolderPlus,
@@ -13,9 +13,11 @@ import {
   Code2,
 } from 'lucide-react'
 import type { AppConfig, CodexAccountStatus } from '../types'
+import { AccessibleDialog } from './AccessibleDialog'
 
 interface SettingsModalProps {
   isOpen: boolean
+  suspended?: boolean
   onClose: () => void
   config: AppConfig | null
   onSaveConfig: (updated: Partial<AppConfig>) => Promise<void>
@@ -26,6 +28,7 @@ interface SettingsModalProps {
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
+  suspended = false,
   onClose,
   config,
   onSaveConfig,
@@ -38,23 +41,41 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [account2Name, setAccount2Name] = useState('')
   const [customPaths, setCustomPaths] = useState<AppConfig['customPaths']>({})
   const [isSaving, setIsSaving] = useState(false)
+  const [isDirty, setIsDirty] = useState(false)
+  const initializedConfigRef = useRef<AppConfig | null>(null)
 
   React.useEffect(() => {
-    if (config && isOpen) {
+    if (!isOpen) {
+      initializedConfigRef.current = null
+      return
+    }
+
+    if (config && !suspended && initializedConfigRef.current !== config) {
       setProjectDirs(config.projectDirs)
       setAccount1Name(config.chatGptAccount1Name)
       setAccount2Name(config.chatGptAccount2Name)
       setCustomPaths(config.customPaths)
+      setIsDirty(false)
+      initializedConfigRef.current = config
     }
-  }, [config, isOpen])
+  }, [config, isOpen, suspended])
 
   if (!isOpen || !config) return null
+
+  const handleClose = () => {
+    if (isDirty && !isSaving) {
+      const shouldDiscard = window.confirm('Descartar as alterações não salvas?')
+      if (!shouldDiscard) return
+    }
+    onClose()
+  }
 
   const handleAddDirectory = async () => {
     try {
       const selected = await window.devorbit?.selectDirectory()
       if (selected && !projectDirs.includes(selected)) {
         setProjectDirs([...projectDirs, selected])
+        setIsDirty(true)
       }
     } catch (err: any) {
       onNotify(`Erro ao selecionar pasta: ${err.message}`, 'error')
@@ -63,6 +84,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const handleRemoveDirectory = (dirToRemove: string) => {
     setProjectDirs(projectDirs.filter((d) => d !== dirToRemove))
+    setIsDirty(true)
   }
 
   const handleSave = async () => {
@@ -74,6 +96,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         chatGptAccount2Name: account2Name,
         customPaths,
       })
+      setIsDirty(false)
       onNotify('Configurações salvas com sucesso!', 'success')
       onClose()
     } catch (err: any) {
@@ -84,8 +107,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-      <div className="w-full max-w-2xl bg-[#0e1322] border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
+    <AccessibleDialog
+      isOpen={isOpen && !suspended}
+      titleId="settings-dialog-title"
+      onClose={handleClose}
+      className="w-full max-w-2xl bg-[var(--color-bg-panel)] border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]"
+    >
         {/* Modal Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-900/50">
           <div className="flex items-center gap-2.5">
@@ -93,12 +120,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <Settings className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-white">Configurações do DevOrbit</h2>
+              <h2 id="settings-dialog-title" className="text-base font-bold text-white">Configurações do DevOrbit</h2>
               <p className="text-xs text-slate-400">Pastas monitoradas, contas e executáveis</p>
             </div>
           </div>
           <button
-            onClick={onClose}
+            onClick={handleClose}
+            aria-label="Fechar configurações"
             className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
           >
             <X className="w-4 h-4" />
@@ -110,19 +138,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {/* Pastas de Projetos */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <label className="font-semibold text-slate-200 flex items-center gap-2">
+              <h3 className="font-semibold text-slate-200 flex items-center gap-2">
                 <Folder className="w-4 h-4 text-indigo-400" />
                 Pastas de Projetos Monitoradas
-              </label>
+              </h3>
               <button
                 onClick={handleAddDirectory}
-                className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold bg-indigo-600/20 text-indigo-300 border border-indigo-500/40 hover:bg-indigo-600/30 transition-all cursor-pointer"
+                className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold bg-indigo-600/20 text-indigo-300 border border-indigo-500/40 hover:bg-indigo-600/30 transition-[background-color,border-color,color] cursor-pointer"
               >
                 <FolderPlus className="w-3.5 h-3.5" />
                 Adicionar Pasta
               </button>
             </div>
-            <p className="text-xs text-slate-500 mb-3">
+            <p className="text-xs text-slate-400 mb-3">
               O DevOrbit varrerá as pastas abaixo em busca de repositórios Git e projetos.
             </p>
 
@@ -132,11 +160,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   key={dir}
                   className="flex items-center justify-between px-3.5 py-2.5 rounded-xl bg-slate-900/80 border border-slate-800 text-xs"
                 >
-                  <span className="font-mono text-slate-300 truncate mr-2">{dir}</span>
+                  <span className="font-mono text-slate-300 truncate me-2" title={dir}>{dir}</span>
                   <button
                     onClick={() => handleRemoveDirectory(dir)}
-                    className="p-1 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors shrink-0"
-                    title="Remover pasta"
+                    aria-label={`Remover pasta ${dir}`}
+                    className="min-w-6 min-h-6 p-1 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors shrink-0"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
@@ -147,29 +175,39 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           {/* Nomes das Contas ChatGPT */}
           <div className="pt-4 border-t border-slate-800/80">
-            <label className="font-semibold text-slate-200 block mb-1">
-              Contas do ChatGPT Plus (Brave)
-            </label>
-            <p className="text-xs text-slate-500 mb-3">
+              <h3 className="font-semibold text-slate-200 block mb-1">
+                Contas do ChatGPT Plus (Brave)
+              </h3>
+            <p className="text-xs text-slate-400 mb-3">
               Personalize o nome dos dois atalhos para facilitar a alternância no header.
             </p>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <span className="text-xs text-slate-400 block mb-1">Conta 1:</span>
+                <label htmlFor="chatgpt-account-1" className="text-xs text-slate-400 block mb-1">Conta 1:</label>
                 <input
+                  id="chatgpt-account-1"
+                  name="chatgpt-account-1"
                   type="text"
                   value={account1Name}
-                  onChange={(e) => setAccount1Name(e.target.value)}
+                  onChange={(e) => {
+                    setAccount1Name(e.target.value)
+                    setIsDirty(true)
+                  }}
                   className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
                 />
               </div>
               <div>
-                <span className="text-xs text-slate-400 block mb-1">Conta 2:</span>
+                <label htmlFor="chatgpt-account-2" className="text-xs text-slate-400 block mb-1">Conta 2:</label>
                 <input
+                  id="chatgpt-account-2"
+                  name="chatgpt-account-2"
                   type="text"
                   value={account2Name}
-                  onChange={(e) => setAccount2Name(e.target.value)}
+                  onChange={(e) => {
+                    setAccount2Name(e.target.value)
+                    setIsDirty(true)
+                  }}
                   className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
                 />
               </div>
@@ -178,10 +216,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           {/* Status e Conexão das Contas OpenAI Codex */}
           <div className="pt-4 border-t border-slate-800/80">
-            <label className="font-semibold text-slate-200 block mb-1">
-              Status & Conexão do OpenAI Codex (Multi-Conta)
-            </label>
-            <p className="text-xs text-slate-500 mb-3">
+              <h3 className="font-semibold text-slate-200 block mb-1">
+                Status & Conexão do OpenAI Codex (Multi-Conta)
+              </h3>
+            <p className="text-xs text-slate-400 mb-3">
               O Codex CLI isola credenciais por pasta sem exigir login/logout repetidos.
             </p>
 
@@ -193,14 +231,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     className={`w-2.5 h-2.5 rounded-full ${
                       authStatus?.account1?.connected
                         ? 'bg-emerald-400'
-                        : 'bg-amber-400 animate-pulse'
+                        : 'bg-amber-400 motion-safe:animate-pulse'
                     }`}
                   />
                   <div>
                     <div className="text-xs font-semibold text-white">
                       {account1Name || 'Conta 1'} (Chrome)
                     </div>
-                    <div className="text-[11px] text-slate-500 font-mono">
+                    <div className="text-xs text-slate-400 font-mono">
                       {authStatus?.account1?.connected
                         ? 'Autenticada e pronta para uso'
                         : 'Não autenticada'}
@@ -211,7 +249,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <button
                   type="button"
                   onClick={() => onOpenAuthModal?.('account1')}
-                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-all cursor-pointer"
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-[background-color,border-color,color] cursor-pointer"
                 >
                   {authStatus?.account1?.connected ? 'Reconectar' : 'Conectar Agora'}
                 </button>
@@ -224,14 +262,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     className={`w-2.5 h-2.5 rounded-full ${
                       authStatus?.account2?.connected
                         ? 'bg-emerald-400'
-                        : 'bg-amber-400 animate-pulse'
+                        : 'bg-amber-400 motion-safe:animate-pulse'
                     }`}
                   />
                   <div>
                     <div className="text-xs font-semibold text-white">
                       {account2Name || 'Conta 2'} (Brave)
                     </div>
-                    <div className="text-[11px] text-slate-500 font-mono">
+                    <div className="text-xs text-slate-400 font-mono">
                       {authStatus?.account2?.connected
                         ? 'Autenticada e pronta para uso'
                         : 'Não autenticada (Requer login inicial)'}
@@ -242,7 +280,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <button
                   type="button"
                   onClick={() => onOpenAuthModal?.('account2')}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-[background-color,border-color,color,box-shadow] cursor-pointer ${
                     authStatus?.account2?.connected
                       ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
                       : 'bg-teal-500/20 text-teal-300 border border-teal-500/40 hover:bg-teal-500/30 shadow-sm shadow-teal-500/20'
@@ -258,10 +296,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           {/* Caminhos Detectados das Ferramentas */}
           <div className="pt-4 border-t border-slate-800/80">
-            <label className="font-semibold text-slate-200 block mb-1">
-              Executáveis e Ferramentas Detectadas
-            </label>
-            <p className="text-xs text-slate-500 mb-3">
+              <h3 className="font-semibold text-slate-200 block mb-1">
+                Executáveis e Ferramentas Detectadas
+              </h3>
+            <p className="text-xs text-slate-400 mb-3">
               Caminhos do sistema configurados para lançamento direto com 1 clique.
             </p>
 
@@ -270,35 +308,35 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <span className="flex items-center gap-2 text-slate-300 font-medium">
                   <Sparkles className="w-3.5 h-3.5 text-indigo-400" /> Antigravity CLI
                 </span>
-                <span className="font-mono text-slate-500 truncate max-w-xs">{customPaths.agy}</span>
+                <span className="font-mono text-slate-400 truncate max-w-xs" title={customPaths.agy || 'Não detectado'}>{customPaths.agy || 'Não detectado'}</span>
               </div>
 
               <div className="flex items-center justify-between p-2 rounded-lg bg-slate-900/60 border border-slate-800">
                 <span className="flex items-center gap-2 text-slate-300 font-medium">
                   <Bot className="w-3.5 h-3.5 text-orange-400" /> Xiaomi MiMo AI
                 </span>
-                <span className="font-mono text-slate-500 truncate max-w-xs">{customPaths.mimo}</span>
+                <span className="font-mono text-slate-400 truncate max-w-xs" title={customPaths.mimo || 'Não detectado'}>{customPaths.mimo || 'Não detectado'}</span>
               </div>
 
               <div className="flex items-center justify-between p-2 rounded-lg bg-slate-900/60 border border-slate-800">
                 <span className="flex items-center gap-2 text-slate-300 font-medium">
                   <Globe className="w-3.5 h-3.5 text-emerald-400" /> Navegador Brave
                 </span>
-                <span className="font-mono text-slate-500 truncate max-w-xs">{customPaths.brave}</span>
+                <span className="font-mono text-slate-400 truncate max-w-xs" title={customPaths.brave || 'Não detectado'}>{customPaths.brave || 'Não detectado'}</span>
               </div>
 
               <div className="flex items-center justify-between p-2 rounded-lg bg-slate-900/60 border border-slate-800">
                 <span className="flex items-center gap-2 text-slate-300 font-medium">
                   <Code2 className="w-3.5 h-3.5 text-sky-400" /> Visual Studio Code
                 </span>
-                <span className="font-mono text-slate-500 truncate max-w-xs">{customPaths.vscode}</span>
+                <span className="font-mono text-slate-400 truncate max-w-xs" title={customPaths.vscode || 'Não detectado'}>{customPaths.vscode || 'Não detectado'}</span>
               </div>
 
               <div className="flex items-center justify-between p-2 rounded-lg bg-slate-900/60 border border-slate-800">
                 <span className="flex items-center gap-2 text-slate-300 font-medium">
                   <Terminal className="w-3.5 h-3.5 text-purple-400" /> Windows Terminal
                 </span>
-                <span className="font-mono text-slate-500 truncate max-w-xs">{customPaths.wt}</span>
+                <span className="font-mono text-slate-400 truncate max-w-xs" title={customPaths.wt || 'Não detectado'}>{customPaths.wt || 'Não detectado'}</span>
               </div>
             </div>
           </div>
@@ -307,7 +345,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         {/* Modal Footer */}
         <div className="flex items-center justify-end gap-2 px-6 py-3 border-t border-slate-800 bg-slate-900/50">
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="px-4 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
           >
             Cancelar
@@ -315,13 +353,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <button
             onClick={handleSave}
             disabled={isSaving}
-            className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 text-white hover:bg-indigo-500 shadow-sm shadow-indigo-500/30 transition-all cursor-pointer"
+            className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 text-white hover:bg-indigo-500 shadow-sm shadow-indigo-500/30 transition-[background-color,color,box-shadow,opacity] cursor-pointer"
           >
             <Check className="w-3.5 h-3.5" />
             <span>{isSaving ? 'Salvando...' : 'Salvar Alterações'}</span>
           </button>
         </div>
-      </div>
-    </div>
+    </AccessibleDialog>
   )
 }

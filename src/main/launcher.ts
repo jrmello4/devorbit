@@ -7,7 +7,11 @@ import fs from 'node:fs/promises'
 import { loadConfig } from './config'
 import { getGitStatus, getGitChangesSummary } from './git'
 import { getProjectMemory } from './memory'
-import { getUsageState, incrementUsage } from './usage'
+import {
+  releaseUsageReservation,
+  tryReserveUsage,
+  type UsageTarget,
+} from './usage'
 
 function spawnDetached(
   command: string,
@@ -21,11 +25,24 @@ function spawnDetached(
   })
 }
 
-async function reserveUsage(target: 'account1' | 'account2' | 'antigravity'): Promise<boolean> {
-  const state = await getUsageState()
-  if (target !== 'antigravity' && state[target].used >= state[target].limit) return false
-  await incrementUsage(target)
-  return true
+async function reserveUsage(target: UsageTarget): Promise<boolean> {
+  return tryReserveUsage(target)
+}
+
+async function rollbackUsage(target: UsageTarget): Promise<void> {
+  await releaseUsageReservation(target)
+}
+
+function redactProjectPath(content: string, projectPath: string): string {
+  const variants = new Set([projectPath, projectPath.replaceAll('\\', '/')])
+  let redacted = content
+
+  for (const variant of variants) {
+    const escaped = variant.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    redacted = redacted.replace(new RegExp(escaped, 'gi'), '[caminho local omitido]')
+  }
+
+  return redacted
 }
 
 export async function launchTool(
@@ -49,13 +66,19 @@ export async function launchTool(
     switch (tool) {
       case 'codex-desktop': {
         const codexCmd = custom.codex || 'codex.cmd'
-        if (!(await reserveUsage(config.activeChatGptAccount || 'account1'))) {
+        const usageTarget = config.activeChatGptAccount === 'account2' ? 'account2' : 'account1'
+        if (!(await reserveUsage(usageTarget))) {
           return { success: false, message: 'Limite de uso da conta ativa atingido.' }
         }
         try {
-          await spawnDetached(codexCmd, ['app', projectPath])
-        } catch {
-          await spawnDetached('explorer.exe', ['shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App'])
+          try {
+            await spawnDetached(codexCmd, ['app', projectPath])
+          } catch {
+            await spawnDetached('explorer.exe', ['shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App'])
+          }
+        } catch (error) {
+          await rollbackUsage(usageTarget)
+          throw error
         }
         return { success: true, message: 'OpenAI Codex Desktop aberto no projeto!' }
       }
@@ -88,7 +111,8 @@ export async function launchTool(
           }
         }
 
-        if (!(await reserveUsage(isAccount2 ? 'account2' : 'account1'))) {
+        const usageTarget = isAccount2 ? 'account2' : 'account1'
+        if (!(await reserveUsage(usageTarget))) {
           return { success: false, message: `Limite de uso da ${accountLabel} atingido.` }
         }
 
@@ -96,9 +120,14 @@ export async function launchTool(
         const codexCmd = custom.codex || 'codex.cmd'
         const env = { ...process.env, CODEX_HOME: codexHome }
         try {
-          await spawnDetached(wtCmd, ['-d', projectPath, 'cmd.exe', '/d', '/k', codexCmd], { env })
-        } catch {
-          await spawnDetached('cmd.exe', ['/d', '/k', codexCmd], { cwd: projectPath, env })
+          try {
+            await spawnDetached(wtCmd, ['-d', projectPath, 'cmd.exe', '/d', '/k', codexCmd], { env })
+          } catch {
+            await spawnDetached('cmd.exe', ['/d', '/k', codexCmd], { cwd: projectPath, env })
+          }
+        } catch (error) {
+          await rollbackUsage(usageTarget)
+          throw error
         }
         return {
           success: true,
@@ -107,31 +136,50 @@ export async function launchTool(
       }
 
       case 'chrome': {
-        if (!(await reserveUsage('account1'))) return { success: false, message: 'Limite de uso da Conta 1 atingido.' }
+        const usageTarget = 'account1'
+        if (!(await reserveUsage(usageTarget))) return { success: false, message: 'Limite de uso da Conta 1 atingido.' }
         const chromePath =
           custom.chrome ||
           'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
-        await spawnDetached(chromePath, [options?.url || 'https://chatgpt.com'])
+        try {
+          await spawnDetached(chromePath, [options?.url || 'https://chatgpt.com'])
+        } catch (error) {
+          await rollbackUsage(usageTarget)
+          throw error
+        }
         return { success: true, message: 'ChatGPT aberto no Google Chrome (Conta 1)!' }
       }
 
       case 'brave': {
-        if (!(await reserveUsage('account2'))) return { success: false, message: 'Limite de uso da Conta 2 atingido.' }
+        const usageTarget = 'account2'
+        if (!(await reserveUsage(usageTarget))) return { success: false, message: 'Limite de uso da Conta 2 atingido.' }
         const bravePath =
           custom.brave ||
           'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe'
-        await spawnDetached(bravePath, [options?.url || 'https://chatgpt.com'])
+        try {
+          await spawnDetached(bravePath, [options?.url || 'https://chatgpt.com'])
+        } catch (error) {
+          await rollbackUsage(usageTarget)
+          throw error
+        }
         return { success: true, message: 'ChatGPT aberto no Brave (Conta 2)!' }
       }
 
       case 'agy': {
-        await reserveUsage('antigravity')
+        const usageTarget = 'antigravity'
+        // Antigravity is intentionally unlimited; keep the session counter for visibility.
+        await reserveUsage(usageTarget)
         const agyPath =
-          custom.agy || 'C:\\Users\\adenilson.j\\AppData\\Local\\agy\\agy.exe'
+          custom.agy || path.join(os.homedir(), 'AppData', 'Local', 'agy', 'agy.exe')
         try {
-          await spawnDetached('wt.exe', ['-d', projectPath, agyPath], { cwd: projectPath })
-        } catch {
-          await spawnDetached(agyPath, [], { cwd: projectPath })
+          try {
+            await spawnDetached('wt.exe', ['-d', projectPath, agyPath], { cwd: projectPath })
+          } catch {
+            await spawnDetached(agyPath, [], { cwd: projectPath })
+          }
+        } catch (error) {
+          await rollbackUsage(usageTarget)
+          throw error
         }
         return { success: true, message: 'Antigravity CLI iniciado no terminal!' }
       }
@@ -139,7 +187,7 @@ export async function launchTool(
       case 'mimo': {
         const mimoPath =
           custom.mimo ||
-          'C:\\Users\\adenilson.j\\AppData\\Local\\Programs\\Xiaomi MiMo AI\\Xiaomi MiMo AI.exe'
+          path.join(os.homedir(), 'AppData', 'Local', 'Programs', 'Xiaomi MiMo AI', 'Xiaomi MiMo AI.exe')
         await spawnDetached(mimoPath, [projectPath], { cwd: projectPath })
         return { success: true, message: 'Xiaomi MiMo AI aberto!' }
       }
@@ -197,7 +245,6 @@ export async function copyProjectContext(
 
     const lines: string[] = [
       `# 📂 Contexto do Projeto: ${projectName}`,
-      `- **Caminho Local:** \`${projectPath}\``,
     ]
 
     if (description) {
@@ -218,7 +265,7 @@ export async function copyProjectContext(
     if (memory.exists && memory.content.trim()) {
       lines.push(
         `\n### 🧠 Memória da Sessão & Handoff (Onde paramos):`,
-        memory.content.trim()
+        redactProjectPath(memory.content.trim(), projectPath)
       )
     }
 
@@ -226,10 +273,6 @@ export async function copyProjectContext(
 
     const contextText = lines.join('\n')
     clipboard.writeText(contextText)
-
-    // Incrementa o contador de uso da conta ativa
-    const config = await loadConfig()
-    await incrementUsage(config.activeChatGptAccount || 'account1')
 
     return { success: true, context: contextText }
   } catch (error: any) {

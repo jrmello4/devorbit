@@ -74,6 +74,9 @@ export interface ProjectMemory {
   lastUpdated?: string
   exists: boolean
   path: string
+  stale?: boolean | 'unknown'
+  sourceCommit?: string
+  generatedAt?: string
 }
 
 export interface AccountUsage {
@@ -145,4 +148,3 @@ declare global {
     devorbit: DevOrbitAPI
   }
 }
-

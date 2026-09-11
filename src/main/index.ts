@@ -2,7 +2,7 @@ import electron, { type BrowserWindow as BrowserWindowType } from 'electron'
 const { app, BrowserWindow, ipcMain, dialog } = electron
 import path from 'node:path'
 import fs from 'node:fs/promises'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { loadConfig, saveConfig } from './config'
 import { scanAllProjects } from './scanner'
 import { syncGit, pushGit, getGitChangesSummary } from './git'
@@ -26,6 +26,20 @@ import {
   updateUsageLimits,
 } from './usage'
 import type { AppConfig, SyncResult } from '../renderer/src/types'
+import {
+  assertTrustedIpcSender,
+  canonicalizeExistingDirectory,
+  validateCodexAccount,
+  validateConfigUpdates,
+  validateFiniteNumber,
+  validateLaunchOptions,
+  validateLaunchTool,
+  validateProjectDirs,
+  validateUsageTarget,
+  validateWindowAction,
+  isTrustedRendererUrl,
+  type IpcSenderLike,
+} from './validation'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -33,28 +47,27 @@ process.env.APP_ROOT = path.join(__dirname, '../..')
 
 export const MAIN_DIST = path.join(process.env.APP_ROOT, 'dist-electron')
 export const RENDERER_DIST = path.join(process.env.APP_ROOT, 'dist')
+const PRODUCTION_RENDERER_URL = pathToFileURL(path.join(RENDERER_DIST, 'index.html')).href
 
 process.env.VITE_PUBLIC = process.env.VITE_DEV_SERVER_URL
   ? path.join(process.env.APP_ROOT, 'public')
   : RENDERER_DIST
 
 let mainWindow: BrowserWindowType | null = null
+const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL)
+const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
 async function validateProjectPath(input: unknown): Promise<string> {
-  if (typeof input !== 'string' || !input.trim() || input.includes('\0')) {
-    throw new Error('Caminho de projeto inválido.')
-  }
-  const candidate = await fs.realpath(path.resolve(input))
+  const candidate = await canonicalizeExistingDirectory(input, 'Caminho de projeto')
   const config = await loadConfig()
   const allowed = (await Promise.all(config.projectDirs.map(async (root) => {
     try {
-      const relative = path.relative(await fs.realpath(root), candidate)
+      const canonicalRoot = await canonicalizeExistingDirectory(root, 'Pasta monitorada')
+      const relative = path.relative(canonicalRoot, candidate)
       return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative)
     } catch { return false }
   }))).some(Boolean)
   if (!allowed) throw new Error('O projeto não pertence a uma pasta monitorada.')
-  const stat = await fs.stat(candidate)
-  if (!stat.isDirectory()) throw new Error('O caminho do projeto não é uma pasta.')
   return candidate
 }
 
@@ -79,6 +92,17 @@ function createWindow() {
   mainWindow.show()
   mainWindow.focus()
 
+  // The renderer is always local (file:// in production or the Vite origin in
+  // development). Do not allow links or navigations to turn this privileged
+  // window into a general-purpose remote page.
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (!isTrustedRendererUrl(url, PRODUCTION_RENDERER_URL)) event.preventDefault()
+  })
+  mainWindow.webContents.on('will-attach-webview', (event) => {
+    event.preventDefault()
+  })
+
   mainWindow.webContents.on(
     'did-fail-load',
     (_event: any, code: any, desc: any, url: any) => {
@@ -95,14 +119,15 @@ function createWindow() {
   })
 
   mainWindow.webContents.on('before-input-event', (_event: any, input: any) => {
-    if (input.key === 'F12') {
+    if (isDevelopment && input.key === 'F12') {
       mainWindow?.webContents.toggleDevTools()
     }
   })
 
   // Gerenciamento de eventos de janela
-  if (process.env.VITE_DEV_SERVER_URL) {
-    mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL)
+  const devServerUrl = process.env.VITE_DEV_SERVER_URL
+  if (isDevelopment && devServerUrl && isTrustedRendererUrl(devServerUrl, PRODUCTION_RENDERER_URL)) {
+    mainWindow.loadURL(devServerUrl)
   } else {
     mainWindow.loadFile(path.join(RENDERER_DIST, 'index.html')).catch((err: any) => {
       console.error('Failed to load file:', err)
@@ -110,14 +135,25 @@ function createWindow() {
   }
 }
 
-app.whenReady().then(async () => {
-  setupIpcHandlers()
-  createWindow()
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+if (!hasSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow) return
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
   })
-})
+
+  app.whenReady().then(async () => {
+    setupIpcHandlers()
+    createWindow()
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    })
+  })
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
@@ -125,83 +161,134 @@ app.on('window-all-closed', () => {
   }
 })
 
+function registerIpcHandler(
+  channel: string,
+  handler: (event: IpcSenderLike, ...args: any[]) => unknown,
+): void {
+  ipcMain.handle(channel, async (event, ...args) => {
+    assertTrustedIpcSender(event, PRODUCTION_RENDERER_URL)
+    return await handler(event, ...args)
+  })
+}
+
+function registerIpcListener(
+  channel: string,
+  handler: (event: IpcSenderLike, ...args: any[]) => unknown,
+): void {
+  ipcMain.on(channel, (event, ...args) => {
+    try {
+      assertTrustedIpcSender(event, PRODUCTION_RENDERER_URL)
+      void handler(event, ...args)
+    } catch (error) {
+      console.warn(`IPC bloqueado no canal ${channel}:`, error)
+    }
+  })
+}
+
 function setupIpcHandlers() {
   // Obter lista de projetos
-  ipcMain.handle('devorbit:getProjects', async () => {
+  registerIpcHandler('devorbit:getProjects', async () => {
     const config = await loadConfig()
     return await scanAllProjects(config.projectDirs)
   })
 
   // Atualizar projetos forçando novo scan
-  ipcMain.handle('devorbit:refreshProjects', async () => {
+  registerIpcHandler('devorbit:refreshProjects', async () => {
     const config = await loadConfig()
     return await scanAllProjects(config.projectDirs, true)
   })
 
   // Sincronizar um projeto com Git (Pull)
-  ipcMain.handle('devorbit:syncGit', async (_event, projectPath: string): Promise<SyncResult> => {
+  registerIpcHandler('devorbit:syncGit', async (_event, projectPath: string): Promise<SyncResult> => {
     return await syncGit(await validateProjectPath(projectPath))
   })
 
   // Subir alterações para o GitHub (Commit & Push)
-  ipcMain.handle(
+  registerIpcHandler(
     'devorbit:pushGit',
     async (_event, projectPath: string, commitMessage?: string): Promise<SyncResult> => {
+      if (commitMessage !== undefined && typeof commitMessage !== 'string') {
+        throw new Error('Mensagem de commit inválida.')
+      }
       return await pushGit(await validateProjectPath(projectPath), commitMessage)
     }
   )
 
   // Obter arquivos alterados recentemente
-  ipcMain.handle('devorbit:getGitChanges', async (_event, projectPath: string): Promise<string[]> => {
+  registerIpcHandler('devorbit:getGitChanges', async (_event, projectPath: string): Promise<string[]> => {
     return await getGitChangesSummary(await validateProjectPath(projectPath))
   })
 
   // Sincronizar todos os projetos
-  ipcMain.handle('devorbit:syncAllGit', async (): Promise<{ [path: string]: SyncResult }> => {
+  registerIpcHandler('devorbit:syncAllGit', async (): Promise<{ [path: string]: SyncResult }> => {
     const config = await loadConfig()
     const projects = await scanAllProjects(config.projectDirs)
-    const results: { [path: string]: SyncResult } = {}
+    const repositories = projects.filter((project) => project.git.isRepo)
+    const orderedResults = new Array<[string, SyncResult]>(repositories.length)
+    const concurrency = Math.min(4, repositories.length)
+    let nextIndex = 0
 
-    for (const project of projects) {
-      if (project.git.isRepo) {
-        results[project.path] = await syncGit(project.path)
+    const worker = async (): Promise<void> => {
+      while (true) {
+        const index = nextIndex++
+        if (index >= repositories.length) return
+
+        const project = repositories[index]
+        try {
+          orderedResults[index] = [project.path, await syncGit(project.path)]
+        } catch (error: unknown) {
+          // Keep the batch useful even if an unexpected error escapes a single
+          // repository operation. The renderer can then report partial failure.
+          const message = error instanceof Error ? error.message : String(error)
+          orderedResults[index] = [project.path, {
+            success: false,
+            message: `Erro ao sincronizar: ${message}`,
+          }]
+        }
       }
+    }
+
+    if (concurrency > 0) {
+      await Promise.all(Array.from({ length: concurrency }, () => worker()))
+    }
+
+    const results: { [path: string]: SyncResult } = {}
+    for (const [projectPath, result] of orderedResults) {
+      results[projectPath] = result
     }
 
     return results
   })
 
   // Lançar ferramentas
-  ipcMain.handle(
+  registerIpcHandler(
     'devorbit:launchTool',
     async (_event, tool: any, projectPath: string, options?: any) => {
-      const safePath = tool === 'chrome' || tool === 'brave'
+      const safeTool = validateLaunchTool(tool)
+      const safeOptions = validateLaunchOptions(options)
+      const safePath = safeTool === 'chrome' || safeTool === 'brave'
         ? ''
         : await validateProjectPath(projectPath)
-      return await launchTool(tool, safePath, options)
+      return await launchTool(safeTool, safePath, safeOptions)
     }
   )
 
   // Copiar resumo de contexto
-  ipcMain.handle('devorbit:copyProjectContext', async (_event, projectPath: string) => {
+  registerIpcHandler('devorbit:copyProjectContext', async (_event, projectPath: string) => {
     return await copyProjectContext(await validateProjectPath(projectPath))
   })
 
   // Configurações
-  ipcMain.handle('devorbit:getConfig', async () => {
+  registerIpcHandler('devorbit:getConfig', async () => {
     return await loadConfig()
   })
 
-  ipcMain.handle('devorbit:saveConfig', async (_event, updates: Partial<AppConfig>) => {
-    if (!updates || typeof updates !== 'object') throw new Error('Configuração inválida.')
-    if (updates.projectDirs && (!Array.isArray(updates.projectDirs) || updates.projectDirs.some((p) => typeof p !== 'string'))) {
-      throw new Error('Pastas de projeto inválidas.')
-    }
-    return await saveConfig(updates)
+  registerIpcHandler('devorbit:saveConfig', async (_event, updates: Partial<AppConfig>) => {
+    return await saveConfig(await validateConfigUpdates(updates))
   })
 
   // Seletor de pasta no Windows
-  ipcMain.handle('devorbit:selectDirectory', async () => {
+  registerIpcHandler('devorbit:selectDirectory', async () => {
     if (!mainWindow) return null
     const result = await dialog.showOpenDialog(mainWindow, {
       properties: ['openDirectory'],
@@ -212,31 +299,32 @@ function setupIpcHandlers() {
   })
 
   // Status e Autenticação do Codex Multi-Conta
-  ipcMain.handle('devorbit:getCodexAuthStatus', async () => {
+  registerIpcHandler('devorbit:getCodexAuthStatus', async () => {
     return await checkCodexAuthStatus()
   })
 
-  ipcMain.handle(
+  registerIpcHandler(
     'devorbit:startCodexLogin',
     async (_event, account: 'account1' | 'account2') => {
-      startCodexDeviceLogin(account, (progress: CodexAuthProgress) => {
+      const safeAccount = validateCodexAccount(account)
+      startCodexDeviceLogin(safeAccount, (progress: CodexAuthProgress) => {
         mainWindow?.webContents.send('devorbit:codexAuthProgress', progress)
       })
       return { success: true }
     }
   )
 
-  ipcMain.handle('devorbit:cancelCodexLogin', async () => {
+  registerIpcHandler('devorbit:cancelCodexLogin', async () => {
     cancelCodexLogin()
     return { success: true }
   })
 
   // AI Memory Handlers
-  ipcMain.handle('devorbit:getProjectMemory', async (_event, projectPath: string) => {
+  registerIpcHandler('devorbit:getProjectMemory', async (_event, projectPath: string) => {
     return await getProjectMemory(await validateProjectPath(projectPath))
   })
 
-  ipcMain.handle(
+  registerIpcHandler(
     'devorbit:saveProjectMemory',
     async (_event, projectPath: string, content: string) => {
       if (typeof content !== 'string' || content.length > 2_000_000) {
@@ -246,37 +334,39 @@ function setupIpcHandlers() {
     }
   )
 
-  ipcMain.handle('devorbit:generateMemoryFromGit', async (_event, projectPath: string) => {
+  registerIpcHandler('devorbit:generateMemoryFromGit', async (_event, projectPath: string) => {
     return await generateMemoryFromGit(await validateProjectPath(projectPath))
   })
 
   // Usage Tracker Handlers
-  ipcMain.handle('devorbit:getUsageState', async () => {
+  registerIpcHandler('devorbit:getUsageState', async () => {
     return await getUsageState()
   })
 
-  ipcMain.handle(
+  registerIpcHandler(
     'devorbit:incrementUsage',
     async (_event, target: 'account1' | 'account2' | 'antigravity') => {
-      return await incrementUsage(target)
+      return await incrementUsage(validateUsageTarget(target))
     }
   )
 
-  ipcMain.handle(
+  registerIpcHandler(
     'devorbit:decrementUsage',
     async (_event, target: 'account1' | 'account2') => {
-      return await decrementUsage(target)
+      const account = validateCodexAccount(target)
+      return await decrementUsage(account)
     }
   )
 
-  ipcMain.handle(
+  registerIpcHandler(
     'devorbit:resetUsage',
     async (_event, target: 'account1' | 'account2') => {
-      return await resetUsageWindow(target)
+      const account = validateCodexAccount(target)
+      return await resetUsageWindow(account)
     }
   )
 
-  ipcMain.handle(
+  registerIpcHandler(
     'devorbit:updateUsageLimits',
     async (
       _event,
@@ -284,17 +374,23 @@ function setupIpcHandlers() {
       limit: number,
       windowHours?: number
     ) => {
-      return await updateUsageLimits(account, limit, windowHours)
+      const safeAccount = validateCodexAccount(account)
+      const safeLimit = validateFiniteNumber(limit, 'Limite de uso', { minimum: 1, integer: true })
+      const safeWindowHours = windowHours === undefined
+        ? undefined
+        : validateFiniteNumber(windowHours, 'Janela de uso', { minimum: 1 })
+      return await updateUsageLimits(safeAccount, safeLimit, safeWindowHours)
     }
   )
 
   // Controles de janela (minimizar, maximizar, fechar)
-  ipcMain.on('devorbit:windowControl', (_event, action: 'minimize' | 'maximize' | 'close') => {
+  registerIpcListener('devorbit:windowControl', (_event, action: 'minimize' | 'maximize' | 'close') => {
     if (!mainWindow) return
-    if (action === 'minimize') mainWindow.minimize()
-    else if (action === 'maximize') {
+    const safeAction = validateWindowAction(action)
+    if (safeAction === 'minimize') mainWindow.minimize()
+    else if (safeAction === 'maximize') {
       if (mainWindow.isMaximized()) mainWindow.unmaximize()
       else mainWindow.maximize()
-    } else if (action === 'close') mainWindow.close()
+    } else if (safeAction === 'close') mainWindow.close()
   })
 }

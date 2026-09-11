@@ -111,7 +111,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
 
   return (
     <div
-      className={`group relative rounded-2xl bg-gradient-to-b from-[#111624] to-[#0c101a] border transition-all duration-200 hover:shadow-xl hover:shadow-indigo-500/5 ${
+      className={`group relative min-w-0 rounded-2xl bg-gradient-to-b from-[var(--color-bg-card-start)] to-[var(--color-bg-card-end)] border transition-[border-color,box-shadow] duration-200 hover:shadow-xl hover:shadow-indigo-500/5 ${
         needsPull
           ? 'border-sky-500/50 hover:border-sky-400/80 shadow-sky-500/10'
           : hasLocalChanges
@@ -124,14 +124,14 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
         <div className="flex items-start justify-between gap-2 mb-2">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
-              <h3 className="font-semibold text-white text-base truncate group-hover:text-indigo-300 transition-colors">
+              <h3 className="font-semibold text-white text-base truncate group-hover:text-indigo-300 transition-colors" title={project.name}>
                 {project.name}
               </h3>
               <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700/60 shrink-0">
                 {project.parentDir}
               </span>
             </div>
-            <p className="text-xs text-slate-500 truncate mt-0.5" title={project.path}>
+            <p className="text-xs text-slate-400 truncate mt-0.5" title={project.path}>
               {project.path}
             </p>
           </div>
@@ -140,15 +140,15 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
           <div className="flex items-center gap-1 shrink-0">
             <button
               onClick={() => onOpenMemory?.(project)}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-violet-300 hover:bg-violet-500/15 transition-colors cursor-pointer"
-              title="Abrir Memória de Sessão & Handoff (AI Memory)"
+              aria-label={`Abrir memória de sessão e handoff de ${project.name}`}
+              className="min-w-8 min-h-8 p-1.5 rounded-lg text-slate-400 hover:text-violet-300 hover:bg-violet-500/15 transition-[color,background-color] cursor-pointer"
             >
               <Brain className="w-4 h-4 text-violet-400" />
             </button>
             <button
               onClick={() => handleLaunch('folder')}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 transition-colors cursor-pointer"
-              title="Abrir no Windows Explorer"
+              aria-label={`Abrir ${project.name} no Windows Explorer`}
+              className="min-w-8 min-h-8 p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 transition-[color,background-color] cursor-pointer"
             >
               <FolderOpen className="w-4 h-4" />
             </button>
@@ -174,13 +174,13 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
           {git.isRepo ? (
             <div className="flex items-center gap-1.5 ml-auto">
               <span className="flex items-center gap-1 text-[11px] text-slate-400 font-mono">
-                <GitBranch className="w-3 h-3 text-slate-500" />
+                <GitBranch className="w-3 h-3 text-slate-400" />
                 {git.branch}
               </span>
 
               {needsPull ? (
                 <span className="flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-md bg-sky-500/15 text-sky-300 border border-sky-500/30">
-                  <GitPullRequest className="w-3 h-3 text-sky-400 animate-pulse" />
+                  <GitPullRequest className="w-3 h-3 text-sky-400 motion-safe:animate-pulse" />
                   {git.behind} pull pendente
                 </span>
               ) : hasLocalChanges ? (
@@ -196,7 +196,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
               )}
             </div>
           ) : (
-            <span className="text-[10px] text-slate-500 ml-auto italic">Sem Git</span>
+            <span className="text-[10px] text-slate-400 ms-auto italic">Sem Git</span>
           )}
         </div>
       </div>
@@ -210,7 +210,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
             <button
               onClick={handleSync}
               disabled={isSyncing}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                className={`flex-1 min-w-0 flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-semibold transition-[color,background-color,border-color,box-shadow,opacity] cursor-pointer ${
                 needsPull
                   ? 'bg-sky-500/20 text-sky-200 border border-sky-500/40 hover:bg-sky-500/30 hover:border-sky-400 shadow-sm shadow-sky-500/20'
                   : 'bg-slate-900/90 text-slate-300 border border-slate-800 hover:border-slate-700 hover:text-white'
@@ -218,7 +218,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
               title="Executar git pull para puxar a versão mais recente do GitHub"
             >
               <RefreshCw
-                className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-sky-400' : ''}`}
+                className={`w-3.5 h-3.5 ${isSyncing ? 'motion-safe:animate-spin text-sky-400' : ''}`}
               />
               <span className="truncate">{isSyncing ? 'Puxando...' : needsPull ? 'Pull (Novo)' : 'Pull'}</span>
             </button>
@@ -226,7 +226,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
             {/* Push to GitHub Button */}
             <button
               onClick={() => onOpenPushModal(project)}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                className={`flex-1 min-w-0 flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-semibold transition-[color,background-color,border-color,box-shadow] cursor-pointer ${
                 git.hasChanges || git.ahead > 0
                   ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-500/40 hover:bg-emerald-500/30 hover:border-emerald-400 shadow-sm shadow-emerald-500/20'
                   : 'bg-slate-900/90 text-slate-400 border border-slate-800 hover:border-slate-700 hover:text-slate-200'
@@ -242,7 +242,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
             {/* Copy Context Button */}
             <button
               onClick={handleCopyContext}
-              className={`flex items-center gap-1 py-1.5 px-2 rounded-lg text-xs font-medium border transition-all shrink-0 cursor-pointer ${
+                  className={`flex items-center gap-1 py-1.5 px-2 rounded-lg text-xs font-medium border transition-[color,background-color,border-color] shrink-0 cursor-pointer ${
                 copied
                   ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
                   : 'bg-slate-900/90 text-slate-400 border-slate-800 hover:text-slate-200 hover:border-slate-700'
@@ -265,7 +265,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
             {/* AI Memory Button */}
             <button
               onClick={() => onOpenMemory?.(project)}
-              className="flex items-center gap-1 py-1.5 px-2 rounded-lg text-xs font-medium border border-violet-500/30 bg-violet-500/10 text-violet-300 hover:bg-violet-500/20 hover:border-violet-500/50 transition-all shrink-0 cursor-pointer"
+              className="flex items-center gap-1 py-1.5 px-2 rounded-lg text-xs font-medium border border-violet-500/30 bg-violet-500/10 text-violet-300 hover:bg-violet-500/20 hover:border-violet-500/50 transition-[color,background-color,border-color] shrink-0 cursor-pointer"
               title="Abrir Memória de Sessão & Handoff (.devorbit/memory.md)"
             >
               <Brain className="w-3.5 h-3.5 text-violet-400" />
@@ -279,7 +279,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
           <div className="flex items-center justify-end gap-1.5">
             <button
               onClick={handleCopyContext}
-              className={`flex items-center gap-1 py-1.5 px-2.5 rounded-lg text-xs font-medium border transition-all shrink-0 cursor-pointer ${
+              className={`flex items-center gap-1 py-1.5 px-2.5 rounded-lg text-xs font-medium border transition-[color,background-color,border-color] shrink-0 cursor-pointer ${
                 copied
                   ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
                   : 'bg-slate-900/90 text-slate-400 border-slate-800 hover:text-slate-200 hover:border-slate-700'
@@ -300,7 +300,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
             </button>
             <button
               onClick={() => onOpenMemory?.(project)}
-              className="flex items-center gap-1 py-1.5 px-2.5 rounded-lg text-xs font-medium border border-violet-500/30 bg-violet-500/10 text-violet-300 hover:bg-violet-500/20 hover:border-violet-500/50 transition-all shrink-0 cursor-pointer"
+              className="flex items-center gap-1 py-1.5 px-2.5 rounded-lg text-xs font-medium border border-violet-500/30 bg-violet-500/10 text-violet-300 hover:bg-violet-500/20 hover:border-violet-500/50 transition-[color,background-color,border-color] shrink-0 cursor-pointer"
               title="Abrir Memória de Sessão & Handoff (.devorbit/memory.md)"
             >
               <Brain className="w-3.5 h-3.5 text-violet-400" />
@@ -313,16 +313,16 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
         <div className="space-y-1.5">
           <div className="flex items-center justify-between text-[11px] text-slate-400 font-medium px-0.5">
             <span>Assistentes IA</span>
-            <span className="text-[10px] text-slate-500">
+            <span className="text-[10px] text-slate-400">
               Conta ativa: {config?.activeChatGptAccount === 'account2' ? 'Conta 2' : 'Conta 1'}
             </span>
           </div>
-          <div className="grid grid-cols-4 gap-1.5">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
             {/* Codex Desktop App */}
             <button
               onClick={() => handleLaunch('codex-desktop')}
               disabled={launchingTool === 'codex-desktop'}
-              className="flex flex-col items-center justify-center p-2 rounded-xl bg-slate-900/90 border border-slate-800 hover:border-emerald-500/60 hover:bg-emerald-950/20 transition-all text-slate-300 hover:text-white group/btn cursor-pointer"
+              className="min-w-0 min-h-10 flex flex-col items-center justify-center p-2 rounded-xl bg-slate-900/90 border border-slate-800 hover:border-emerald-500/60 hover:bg-emerald-950/20 transition-[color,background-color,border-color,transform] text-slate-300 hover:text-white group/btn cursor-pointer"
               title="Abrir no aplicativo oficial OpenAI Codex Desktop"
             >
               <Bot className="w-4 h-4 text-emerald-400 group-hover/btn:scale-110 transition-transform mb-1" />
@@ -333,7 +333,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
             <button
               onClick={() => handleLaunch('codex-cli')}
               disabled={launchingTool === 'codex-cli'}
-              className="flex flex-col items-center justify-center p-2 rounded-xl bg-slate-900/90 border border-slate-800 hover:border-teal-500/60 hover:bg-teal-950/20 transition-all text-slate-300 hover:text-white group/btn cursor-pointer"
+              className="min-w-0 min-h-10 flex flex-col items-center justify-center p-2 rounded-xl bg-slate-900/90 border border-slate-800 hover:border-teal-500/60 hover:bg-teal-950/20 transition-[color,background-color,border-color,transform] text-slate-300 hover:text-white group/btn cursor-pointer"
               title={`Abrir Codex CLI no terminal já conectado com ${config?.activeChatGptAccount === 'account2' ? 'Conta 2 (Brave)' : 'Conta 1 (Chrome)'} sem precisar deslogar!`}
             >
               <Terminal className="w-4 h-4 text-teal-400 group-hover/btn:scale-110 transition-transform mb-1" />
@@ -346,7 +346,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
             <button
               onClick={() => handleLaunch('agy')}
               disabled={launchingTool === 'agy'}
-              className="flex flex-col items-center justify-center p-2 rounded-xl bg-slate-900/90 border border-slate-800 hover:border-indigo-500/60 hover:bg-indigo-950/20 transition-all text-slate-300 hover:text-white group/btn cursor-pointer"
+              className="min-w-0 min-h-10 flex flex-col items-center justify-center p-2 rounded-xl bg-slate-900/90 border border-slate-800 hover:border-indigo-500/60 hover:bg-indigo-950/20 transition-[color,background-color,border-color,transform] text-slate-300 hover:text-white group/btn cursor-pointer"
               title="Abrir no Antigravity CLI (Gemini) no Windows Terminal"
             >
               <Sparkles className="w-4 h-4 text-indigo-400 group-hover/btn:scale-110 transition-transform mb-1" />
@@ -357,7 +357,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
             <button
               onClick={() => handleLaunch('mimo')}
               disabled={launchingTool === 'mimo'}
-              className="flex flex-col items-center justify-center p-2 rounded-xl bg-slate-900/90 border border-slate-800 hover:border-orange-500/60 hover:bg-orange-950/20 transition-all text-slate-300 hover:text-white group/btn cursor-pointer"
+              className="min-w-0 min-h-10 flex flex-col items-center justify-center p-2 rounded-xl bg-slate-900/90 border border-slate-800 hover:border-orange-500/60 hover:bg-orange-950/20 transition-[color,background-color,border-color,transform] text-slate-300 hover:text-white group/btn cursor-pointer"
               title="Abrir no Xiaomi MiMo AI"
             >
               <Bot className="w-4 h-4 text-orange-400 group-hover/btn:scale-110 transition-transform mb-1" />
@@ -367,12 +367,12 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
         </div>
 
         {/* Row 2: IDEs & Browsers */}
-        <div className="grid grid-cols-4 gap-1.5 pt-1">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 pt-1">
           {/* VS Code */}
           <button
             onClick={() => handleLaunch('vscode')}
             disabled={launchingTool === 'vscode'}
-            className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-slate-900/60 border border-slate-800 hover:border-sky-500/40 text-slate-400 hover:text-sky-300 text-[11px] font-medium transition-all"
+            className="min-w-0 min-h-8 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-slate-900/60 border border-slate-800 hover:border-sky-500/40 text-slate-400 hover:text-sky-300 text-[11px] font-medium transition-[color,background-color,border-color]"
             title="Abrir no VS Code"
           >
             <Code2 className="w-3.5 h-3.5 text-sky-400" />
@@ -383,7 +383,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
           <button
             onClick={() => handleLaunch('terminal')}
             disabled={launchingTool === 'terminal'}
-            className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-slate-900/60 border border-slate-800 hover:border-purple-500/40 text-slate-400 hover:text-purple-300 text-[11px] font-medium transition-all"
+            className="min-w-0 min-h-8 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-slate-900/60 border border-slate-800 hover:border-purple-500/40 text-slate-400 hover:text-purple-300 text-[11px] font-medium transition-[color,background-color,border-color]"
             title="Abrir terminal na pasta"
           >
             <Terminal className="w-3.5 h-3.5 text-purple-400" />
@@ -394,7 +394,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
           <button
             onClick={() => handleLaunch('chrome')}
             disabled={launchingTool === 'chrome'}
-            className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-slate-900/60 border border-slate-800 hover:border-blue-500/40 text-slate-400 hover:text-blue-300 text-[11px] font-medium transition-all"
+            className="min-w-0 min-h-8 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-slate-900/60 border border-slate-800 hover:border-blue-500/40 text-slate-400 hover:text-blue-300 text-[11px] font-medium transition-[color,background-color,border-color]"
             title="Abrir ChatGPT no Google Chrome (Conta 1)"
           >
             <Globe className="w-3.5 h-3.5 text-blue-400" />
@@ -405,7 +405,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
           <button
             onClick={() => handleLaunch('brave')}
             disabled={launchingTool === 'brave'}
-            className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-slate-900/60 border border-slate-800 hover:border-amber-500/40 text-slate-400 hover:text-amber-300 text-[11px] font-medium transition-all"
+            className="min-w-0 min-h-8 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-slate-900/60 border border-slate-800 hover:border-amber-500/40 text-slate-400 hover:text-amber-300 text-[11px] font-medium transition-[color,background-color,border-color]"
             title="Abrir ChatGPT no Brave (Conta 2)"
           >
             <Globe className="w-3.5 h-3.5 text-amber-400" />

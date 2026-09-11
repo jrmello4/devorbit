@@ -1,28 +1,24 @@
 # 🧠 AI Memory & Handoff — devorbit
 
-### 🎯 Objetivo Atual
-- Trabalhando na branch `master`.
-- Alterações recentes em andamento nos arquivos:
-  - `M .gitignore`
-  - `D electron-debug.log`
-  - `M index.html`
-  - `M package.json`
-  - `M src/main/config.ts`
+### 🎯 Objetivo atual
+- Evoluir o DevOrbit como hub desktop seguro para projetos, Git e ferramentas de IA.
+- Manter a interface acessível, o build reproduzível e as operações Git previsíveis.
 
-### 🧭 Onde Paramos (Handoff)
-- Status do Git: 16 arquivos modificados.
-- Últimos commits registrados:
-  - 773c898 feat: atualizações no devorbit
-  - 3164f3c feat: add Git Push button and commit modal for uploading local changes
-  - 03abd52 feat: add dedicated Codex App and multi-account Codex CLI launchers
+### 🧭 Onde paramos
+- O projeto usa Electron, React, TypeScript, Vite e Tailwind CSS.
+- A orquestração usa Astra como coordenador/revisor e Luna para execução.
+- A memória canônica editável fica em `.devorbit/memory.md`; `CONTEXT.md` é apenas fallback legado.
 
-### ⚠️ O que Falhou / Abordagens Descartadas
-- Registre aqui se algo não funcionou para a próxima IA não repetir o erro.
+### ⚠️ Cuidados conhecidos
+- Não compartilhar `node_modules` entre checkouts ou projetos.
+- Não registrar e-mails, tokens ou caminhos absolutos pessoais.
+- A sincronização Git deve recusar árvores sujas e usar apenas fast-forward.
 
-### 💡 Decisões Técnicas & Arquitetura
-- Projeto: `C:\Users\adenilson.j\projects\devorbit`
-- Mantenha as convenções de arquitetura já existentes no repositório.
+### 💡 Decisões técnicas
+- Validar dados IPC em runtime, além dos tipos TypeScript.
+- Limitar concorrência em varreduras e operações Git.
+- Preservar rascunhos do usuário e indicar quando a memória estiver desatualizada.
 
-### 📋 Próximos Passos
-- [ ] Testar e validar as alterações pendentes nos 16 arquivos modificados
-- [ ] Realizar commit e push para a branch `master`
+### 📋 Próximos passos
+- Executar typecheck, testes, lint, build e revisão independente antes de publicar.
+- Manter o CI e os testes de regressão atualizados com novas funcionalidades.

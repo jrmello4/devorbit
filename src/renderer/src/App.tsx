@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { Header } from './components/Header'
 import { ProjectGrid } from './components/ProjectGrid'
 import { SettingsModal } from './components/SettingsModal'
@@ -26,16 +26,33 @@ export const App: React.FC = () => {
     message: string
     type: 'success' | 'error' | 'info'
   } | null>(null)
+  const notificationTimerRef = useRef<number | null>(null)
 
   const notify = useCallback(
     (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+      if (notificationTimerRef.current) {
+        window.clearTimeout(notificationTimerRef.current)
+        notificationTimerRef.current = null
+      }
       setNotification({ message, type })
-      setTimeout(() => {
-        setNotification((current) => (current?.message === message ? null : current))
-      }, 4000)
+      // Errors remain visible until the user dismisses them so failures are not lost.
+      if (type !== 'error') {
+        notificationTimerRef.current = window.setTimeout(() => {
+          setNotification((current) =>
+            current?.message === message && current.type === type ? null : current
+          )
+          notificationTimerRef.current = null
+        }, 4000)
+      }
     },
     []
   )
+
+  useEffect(() => {
+    return () => {
+      if (notificationTimerRef.current) window.clearTimeout(notificationTimerRef.current)
+    }
+  }, [])
 
   // Load initial data
   const loadAuthStatus = useCallback(async () => {
@@ -178,8 +195,27 @@ export const App: React.FC = () => {
     setIsSyncingAll(true)
     try {
       const results = await window.devorbit.syncAllGit()
-      const total = Object.keys(results).length
-      notify(`Sincronização concluída em ${total} repositórios!`, 'success')
+      const entries = Object.values(results)
+      const total = entries.length
+      const failed = entries.filter((result) => !result.success).length
+      const succeeded = total - failed
+
+      if (total === 0) {
+        notify('Nenhum repositório Git encontrado para sincronizar.', 'info')
+      } else if (failed === 0) {
+        notify(
+          `Sincronização concluída com sucesso em ${succeeded} repositório(s)!`,
+          'success'
+        )
+      } else if (succeeded === 0) {
+        notify(`Falha ao sincronizar os ${failed} repositório(s).`, 'error')
+      } else {
+        notify(
+          `${succeeded} repositório(s) sincronizado(s); ${failed} falharam.`,
+          'error'
+        )
+      }
+
       const refreshed = await window.devorbit.getProjects()
       setProjects(refreshed)
     } catch (err: any) {
@@ -235,7 +271,7 @@ export const App: React.FC = () => {
   const gitProjectsCount = projects.filter((p) => p.git.isRepo).length
 
   return (
-    <div className="flex flex-col h-screen w-screen overflow-hidden bg-[#090d16] text-slate-100 antialiased font-sans">
+    <div className="flex flex-col h-screen w-screen overflow-hidden bg-[var(--color-bg-page)] text-slate-100 antialiased font-sans">
       {/* Header com barra de título e controles */}
       <Header
         search={search}
@@ -297,7 +333,10 @@ export const App: React.FC = () => {
 
       {/* Modal de Configurações */}
       <SettingsModal
+        // Keep the draft mounted but suspend its dialog while the auth dialog is open.
+        // This guarantees that only one modal owns Escape, focus and inert state.
         isOpen={isSettingsOpen}
+        suspended={Boolean(authModalAccount)}
         onClose={() => setIsSettingsOpen(false)}
         config={config}
         onSaveConfig={handleSaveConfig}
@@ -327,23 +366,34 @@ export const App: React.FC = () => {
       )}
 
       {/* Toast Notification */}
+      <div className="sr-only" aria-live="polite" aria-atomic="true">
+        {notification?.type !== 'error' ? notification?.message ?? '' : ''}
+      </div>
+      <div className="sr-only" role="alert" aria-atomic="true">
+        {notification?.type === 'error' ? notification.message : ''}
+      </div>
       {notification && (
-        <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2.5 px-4 py-3 rounded-xl bg-slate-900/95 border border-slate-700/80 shadow-2xl text-xs backdrop-blur-md animate-in fade-in slide-in-from-bottom-3 duration-200">
+        <div
+          className="fixed bottom-5 end-5 z-50 flex items-center gap-2.5 px-4 py-3 rounded-xl bg-slate-900/95 border border-slate-700/80 shadow-2xl text-xs backdrop-blur-md motion-safe:animate-in fade-in slide-in-from-bottom-3 duration-200"
+          role="group"
+          aria-label="Notificação"
+        >
           {notification.type === 'success' && (
-            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <CheckCircle2 aria-hidden="true" className="w-4 h-4 text-emerald-400 shrink-0" />
           )}
           {notification.type === 'error' && (
-            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+            <AlertCircle aria-hidden="true" className="w-4 h-4 text-rose-400 shrink-0" />
           )}
           {notification.type === 'info' && (
-            <Info className="w-4 h-4 text-indigo-400 shrink-0" />
+            <Info aria-hidden="true" className="w-4 h-4 text-indigo-400 shrink-0" />
           )}
           <span className="text-slate-200 font-medium">{notification.message}</span>
           <button
             onClick={() => setNotification(null)}
-            className="text-slate-500 hover:text-slate-300 ml-2"
+            aria-label="Fechar notificação"
+            className="min-w-6 min-h-6 inline-flex items-center justify-center rounded text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors ms-2"
           >
-            <X className="w-3.5 h-3.5" />
+            <X aria-hidden="true" className="w-3.5 h-3.5" />
           </button>
         </div>
       )}

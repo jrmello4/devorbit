@@ -26,5 +26,5 @@ Construção do aplicativo desktop **DevOrbit** para transformar a rotina de des
 
 ### Fase 4: Verificação e Testes
 - Execução em modo de desenvolvimento (`npm run dev`).
-- Teste real com as pastas `C:\Users\adenilson.j\projects` e `Documents`.
+- Teste real com as pastas de projetos escolhidas pelo usuário.
 - Teste de lançamento dos aplicativos e sincronização Git.
