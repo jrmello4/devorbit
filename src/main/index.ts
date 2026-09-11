@@ -27,6 +27,7 @@ import {
   updateUsageLimits,
 } from './usage'
 import { getRealUsage } from './usage-real'
+import { downloadUpdate, getUpdateState, initializeUpdater, installUpdate } from './updater'
 import type { AppConfig, SyncResult } from '../renderer/src/types'
 import {
   assertTrustedIpcSender,
@@ -152,6 +153,9 @@ if (!hasSingleInstanceLock) {
   app.whenReady().then(async () => {
     setupIpcHandlers()
     createWindow()
+    initializeUpdater((state) => {
+      mainWindow?.webContents.send('devorbit:updateStatus', state)
+    })
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -312,6 +316,13 @@ function setupIpcHandlers() {
   // Configurações
   registerIpcHandler('devorbit:getConfig', async () => {
     return await loadConfig()
+  })
+
+  registerIpcHandler('devorbit:getUpdateState', () => getUpdateState())
+  registerIpcHandler('devorbit:downloadUpdate', () => downloadUpdate())
+  registerIpcHandler('devorbit:installUpdate', () => {
+    installUpdate()
+    return { success: true }
   })
 
   registerIpcHandler('devorbit:saveConfig', async (_event, updates: Partial<AppConfig>) => {

@@ -257,6 +257,19 @@ const api = {
     record('getConfig')
     return copy(config)
   },
+  getUpdateState: async () => {
+    record('getUpdateState')
+    return { supported: false, status: 'unavailable' }
+  },
+  downloadUpdate: async () => {
+    record('downloadUpdate')
+    return { supported: false, status: 'unavailable' }
+  },
+  installUpdate: async () => {
+    record('installUpdate')
+    return { success: false }
+  },
+  onUpdateStatus: () => () => {},
   saveConfig: async (updates) => {
     record('saveConfig', updates)
     config = { ...config, ...copy(updates) }

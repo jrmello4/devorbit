@@ -9,6 +9,7 @@ import { AiMemoryModal } from './components/AiMemoryModal'
 import { GitInitModal } from './components/GitInitModal'
 import { GitBranchModal } from './components/GitBranchModal'
 import { CommandPalette } from './components/CommandPalette'
+import { UpdateModal } from './components/UpdateModal'
 import type {
   Project,
   AppConfig,
@@ -16,6 +17,7 @@ import type {
   UsageTrackerState,
   RealUsageState,
   SyncResult,
+  UpdateState,
 } from './types'
 import { CheckCircle2, AlertCircle, Info, X, FolderKanban, ChartNoAxesCombined, Settings, ArrowRightLeft, GitPullRequest, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 
@@ -40,6 +42,8 @@ export const App: React.FC = () => {
   const [gitInitProject, setGitInitProject] = useState<Project | null>(null)
   const [isSwitchingAccount, setIsSwitchingAccount] = useState(false)
   const [isRefreshingRealUsage, setIsRefreshingRealUsage] = useState(false)
+  const [updateState, setUpdateState] = useState<UpdateState | null>(null)
+  const [isUpdateDismissed, setIsUpdateDismissed] = useState(false)
   const accountSwitchInFlightRef = useRef(false)
   const commandPaletteOriginRef = useRef<HTMLElement | null>(null)
   const [notification, setNotification] = useState<{
@@ -89,6 +93,38 @@ export const App: React.FC = () => {
       if (notificationTimerRef.current) window.clearTimeout(notificationTimerRef.current)
     }
   }, [])
+
+  useEffect(() => {
+    if (!window.devorbit) return
+    let active = true
+    const receiveUpdateState = (state: UpdateState) => {
+      if (!active) return
+      setUpdateState(state)
+      if (state.status === 'available') setIsUpdateDismissed(false)
+      if (state.status === 'error') notify('Não foi possível verificar a atualização agora.', 'error')
+    }
+
+    void window.devorbit.getUpdateState().then(receiveUpdateState).catch(() => undefined)
+    const unsubscribe = window.devorbit.onUpdateStatus((state) => receiveUpdateState(state))
+    return () => {
+      active = false
+      unsubscribe()
+    }
+  }, [notify])
+
+  const handleDownloadUpdate = async () => {
+    if (!window.devorbit) return
+    try {
+      setUpdateState(await window.devorbit.downloadUpdate())
+    } catch {
+      notify('Não foi possível baixar a atualização.', 'error')
+    }
+  }
+
+  const handleInstallUpdate = async () => {
+    if (!window.devorbit) return
+    await window.devorbit.installUpdate()
+  }
 
   // Load initial data
   const loadAuthStatus = useCallback(async () => {
@@ -507,6 +543,25 @@ export const App: React.FC = () => {
         onInit={(projectPath, options) => window.devorbit.initGitRepository(projectPath, options)}
         onProjectUpdated={refreshProjectsQuietly}
         onNotify={notify}
+      />
+
+      <UpdateModal
+        state={updateState}
+        isOpen={Boolean(
+          updateState &&
+          !isUpdateDismissed &&
+          !isSettingsOpen &&
+          !authModalAccount &&
+          !pushProject &&
+          !gitInitProject &&
+          !activeMemoryProject &&
+          !activeBranchProject &&
+          !isCommandPaletteOpen &&
+          ['available', 'downloading', 'downloaded'].includes(updateState.status)
+        )}
+        onClose={() => setIsUpdateDismissed(true)}
+        onDownload={handleDownloadUpdate}
+        onInstall={handleInstallUpdate}
       />
 
       {/* Modal de Configurações */}

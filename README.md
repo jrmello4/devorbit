@@ -52,6 +52,14 @@ O empacotamento usa [electron-builder.json](electron-builder.json), gera um
 instalador NSIS e um executável portable x64 em `release/`. O diretório de
 saída é um artefato local e não deve ser versionado.
 
+Para instalar, baixe o arquivo `DevOrbit-...-x64.exe` da página **Releases**
+do GitHub e execute-o. A instalação permite escolher a pasta e cria atalhos
+no menu Iniciar e na área de trabalho. As versões instaladas pelo NSIS
+verificam atualizações ao abrir: quando houver uma publicação mais nova, o
+DevOrbit pede confirmação para baixar, reiniciar e concluir a atualização.
+O executável `portable` é útil para uso sem instalação, mas recebe atualizações
+manuais.
+
 `DevOrbit.bat` primeiro tenta abrir um executável portable ao lado do script ou
 em `release/win-unpacked`. Se estiver sendo usado a partir do checkout, ele
 exige as dependências instaladas e um build prévio; mensagens de erro indicam
@@ -134,9 +142,12 @@ relação à branch, commit e arquivos locais. O modal **Memória** oferece **At
 ## CI
 
 O workflow do GitHub Actions executa em `windows-latest` uma instalação limpa
-com `npm ci` e verifica typecheck, testes, lint e build. O lockfile deve ser
-atualizado junto com qualquer mudança de dependência usando npm; o CI não
-aceita uma árvore de dependências gerada manualmente.
+com `npm ci` e verifica typecheck, testes, lint e build. Depois de cada push
+aprovado na `main`, ele gera uma versão de publicação nova, cria um Release
+público com o instalador NSIS e os metadados de atualização, e o aplicativo
+instalado pode encontrá-la. O lockfile deve ser atualizado junto com qualquer
+mudança de dependência usando npm; o CI não aceita uma árvore de dependências
+gerada manualmente.
 
 ## Interface desktop
 

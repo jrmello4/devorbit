@@ -3,6 +3,13 @@
   "productName": "DevOrbit",
   "artifactName": "DevOrbit-${version}-${arch}.${ext}",
   "asar": true,
+  "electronUpdaterCompatibility": ">=2.16",
+  "publish": {
+    "provider": "github",
+    "owner": "jrmello4",
+    "repo": "devorbit",
+    "releaseType": "release"
+  },
   "directories": {
     "output": "release"
   },

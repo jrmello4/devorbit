@@ -56,6 +56,16 @@ export interface SyncResult {
   output?: string
 }
 
+export type UpdateStatus = 'unavailable' | 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error'
+
+export interface UpdateState {
+  supported: boolean
+  status: UpdateStatus
+  version?: string
+  progress?: number
+  message?: string
+}
+
 export interface GitInitPreview {
   path: string
   canInitialize: boolean
@@ -193,6 +203,10 @@ export interface DevOrbitAPI {
   ) => Promise<{ success: boolean; message?: string; needsAuth?: boolean; account?: string }>
   copyProjectContext: (projectPath: string) => Promise<{ success: boolean; context: string }>
   getConfig: () => Promise<AppConfig>
+  getUpdateState: () => Promise<UpdateState>
+  downloadUpdate: () => Promise<UpdateState>
+  installUpdate: () => Promise<{ success: boolean }>
+  onUpdateStatus: (callback: (state: UpdateState) => void) => () => void
   saveConfig: (config: Partial<AppConfig>) => Promise<AppConfig>
   selectDirectory: () => Promise<string | null>
   windowControl: (action: 'minimize' | 'maximize' | 'close') => void

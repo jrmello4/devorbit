@@ -24,6 +24,14 @@ const api: DevOrbitAPI = {
   copyProjectContext: (projectPath) =>
     ipcRenderer.invoke('devorbit:copyProjectContext', projectPath),
   getConfig: () => ipcRenderer.invoke('devorbit:getConfig'),
+  getUpdateState: () => ipcRenderer.invoke('devorbit:getUpdateState'),
+  downloadUpdate: () => ipcRenderer.invoke('devorbit:downloadUpdate'),
+  installUpdate: () => ipcRenderer.invoke('devorbit:installUpdate'),
+  onUpdateStatus: (callback) => {
+    const handler = (_event: any, state: any) => callback(state)
+    ipcRenderer.on('devorbit:updateStatus', handler)
+    return () => ipcRenderer.removeListener('devorbit:updateStatus', handler)
+  },
   saveConfig: (config: Partial<AppConfig>) => ipcRenderer.invoke('devorbit:saveConfig', config),
   selectDirectory: () => ipcRenderer.invoke('devorbit:selectDirectory'),
   windowControl: (action: 'minimize' | 'maximize' | 'close') =>
