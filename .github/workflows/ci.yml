@@ -60,7 +60,15 @@ jobs:
         run: npm ci
 
       - name: Definir versão da publicação
-        run: npm version 1.0.${{ github.run_number }} --no-git-tag-version --ignore-scripts
+        run: |
+          $version = "1.0.${{ github.run_number }}"
+          "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+          npm version $version --no-git-tag-version --ignore-scripts
+
+      - name: Criar release para a versão
+        run: gh release create "v$env:RELEASE_VERSION" --target "$env:GITHUB_SHA" --title "DevOrbit $env:RELEASE_VERSION" --notes "Atualização automática do DevOrbit."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Gerar e publicar instalador NSIS
         run: |
