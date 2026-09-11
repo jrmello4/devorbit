@@ -4,6 +4,7 @@ import {
   Command as CommandIcon,
   FolderSearch,
   GitPullRequest,
+  Download,
   RefreshCw,
   Search,
   Settings,
@@ -21,6 +22,7 @@ interface CommandPaletteProps {
   onRefresh: () => void
   onSyncAll: () => void
   onOpenSettings: () => void
+  onOpenClone?: () => void
   onToggleAccount: () => void | Promise<void>
   activeAccountLabel: string
   isRefreshing?: boolean
@@ -51,6 +53,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   onRefresh,
   onSyncAll,
   onOpenSettings,
+  onOpenClone,
   onToggleAccount,
   activeAccountLabel,
   isRefreshing = false,
@@ -84,6 +87,13 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         icon: GitPullRequest,
         onSelect: onSyncAll,
       },
+      ...(onOpenClone ? [{
+        id: 'clone',
+        label: 'Clonar repositório por link',
+        description: 'Colar URL HTTPS e baixar a main mais recente',
+        icon: Download,
+        onSelect: onOpenClone,
+      } as PaletteItem] : []),
       {
         id: 'settings',
         label: 'Abrir configurações',
@@ -129,6 +139,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     isRefreshing,
     isSyncingAll,
     isSwitchingAccount,
+    onOpenClone,
     onOpenSettings,
     onRefresh,
     onSearchChange,

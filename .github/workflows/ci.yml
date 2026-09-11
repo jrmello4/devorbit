@@ -70,9 +70,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Gerar e publicar instalador NSIS
+      - name: Gerar e publicar instalador NSIS e portable
         run: |
           npm run build
-          npx electron-builder --win nsis --publish always
+          npx electron-builder --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

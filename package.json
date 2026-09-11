@@ -12,6 +12,7 @@
   },
   "scripts": {
     "dev": "vite",
+    "electron:dev": "vite",
     "build": "tsc && vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",

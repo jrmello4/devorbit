@@ -5,7 +5,7 @@ import fs from 'node:fs/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { loadConfig, saveConfig } from './config'
 import { scanAllProjects } from './scanner'
-import { syncGit, getGitBranches, switchGitBranch, pushGit, getGitChangesSummary } from './git'
+import { syncGit, getGitBranches, switchGitBranch, pushGit, getGitChangesSummary, cloneGitRepository } from './git'
 import { getGitInitPreview, initGitRepository } from './git-init'
 import { launchTool, copyProjectContext } from './launcher'
 import {
@@ -39,6 +39,7 @@ import {
   validateLaunchTool,
   validateGitInitOptions,
   validateGitBranch,
+  validateCloneInput,
   validateProjectDirs,
   validateUsageTarget,
   validateWindowAction,
@@ -61,6 +62,21 @@ process.env.VITE_PUBLIC = process.env.VITE_DEV_SERVER_URL
 let mainWindow: BrowserWindowType | null = null
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL)
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
+
+async function validateCloneParent(input: unknown): Promise<string> {
+  const candidate = await canonicalizeExistingDirectory(input, 'Pasta de destino')
+  const config = await loadConfig()
+  const allowed = (await Promise.all(config.projectDirs.map(async (root) => {
+    try {
+      const canonicalRoot = await canonicalizeExistingDirectory(root, 'Pasta monitorada')
+      if (candidate === canonicalRoot) return true
+      const relative = path.relative(canonicalRoot, candidate)
+      return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative)
+    } catch { return false }
+  }))).some(Boolean)
+  if (!allowed) throw new Error('A pasta de destino não pertence a uma pasta monitorada.')
+  return candidate
+}
 
 async function validateProjectPath(input: unknown): Promise<string> {
   const candidate = await canonicalizeExistingDirectory(input, 'Caminho de projeto')
@@ -252,6 +268,12 @@ function setupIpcHandlers() {
       await validateProjectPath(projectPath),
       validateGitInitOptions(options),
     )
+  })
+
+  registerIpcHandler('devorbit:cloneGitRepository', async (_event, input?: unknown) => {
+    const parsed = validateCloneInput(input)
+    const safeParent = await validateCloneParent(parsed.parentDir)
+    return await cloneGitRepository({ ...parsed, parentDir: safeParent })
   })
 
   // Sincronizar todos os projetos

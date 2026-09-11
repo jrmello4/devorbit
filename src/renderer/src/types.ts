@@ -56,11 +56,24 @@ export interface SyncResult {
   output?: string
 }
 
+export interface GitCloneResult extends SyncResult {
+  path?: string
+}
+
+export interface GitCloneInput {
+  parentDir: string
+  folderName: string
+  remoteUrl: string
+}
+
 export type UpdateStatus = 'unavailable' | 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error'
+
+export type UpdateDistribution = 'installed' | 'portable' | 'dev'
 
 export interface UpdateState {
   supported: boolean
   status: UpdateStatus
+  distribution: UpdateDistribution
   version?: string
   progress?: number
   message?: string
@@ -187,6 +200,7 @@ export interface DevOrbitAPI {
   syncAllGit: () => Promise<{ [projectPath: string]: SyncResult }>
   getGitInitPreview: (projectPath: string, branch?: string) => Promise<GitInitPreview>
   initGitRepository: (projectPath: string, options?: GitInitOptions) => Promise<GitInitResult>
+  cloneGitRepository: (input: GitCloneInput) => Promise<GitCloneResult>
   launchTool: (
     tool:
       | 'agy'

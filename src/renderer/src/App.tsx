@@ -7,6 +7,7 @@ import { CodexAuthModal } from './components/CodexAuthModal'
 import { UsageBar } from './components/UsageBar'
 import { AiMemoryModal } from './components/AiMemoryModal'
 import { GitInitModal } from './components/GitInitModal'
+import { GitCloneModal } from './components/GitCloneModal'
 import { GitBranchModal } from './components/GitBranchModal'
 import { CommandPalette } from './components/CommandPalette'
 import { UpdateModal } from './components/UpdateModal'
@@ -40,6 +41,7 @@ export const App: React.FC = () => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [pushProject, setPushProject] = useState<Project | null>(null)
   const [gitInitProject, setGitInitProject] = useState<Project | null>(null)
+  const [isCloneOpen, setIsCloneOpen] = useState(false)
   const [isSwitchingAccount, setIsSwitchingAccount] = useState(false)
   const [isRefreshingRealUsage, setIsRefreshingRealUsage] = useState(false)
   const [updateState, setUpdateState] = useState<UpdateState | null>(null)
@@ -415,11 +417,11 @@ export const App: React.FC = () => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault()
-        if (isSettingsOpen || authModalAccount || pushProject || gitInitProject || activeMemoryProject || activeBranchProject) return
+        if (isSettingsOpen || authModalAccount || pushProject || gitInitProject || isCloneOpen || activeMemoryProject || activeBranchProject) return
         openCommandPalette()
       } else if ((e.ctrlKey || e.metaKey) && e.key === ',') {
         e.preventDefault()
-        if (authModalAccount || pushProject || gitInitProject || activeMemoryProject || activeBranchProject || isCommandPaletteOpen) return
+        if (authModalAccount || pushProject || gitInitProject || isCloneOpen || activeMemoryProject || activeBranchProject || isCommandPaletteOpen) return
         setIsSettingsOpen(true)
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'r') {
         e.preventDefault()
@@ -428,7 +430,7 @@ export const App: React.FC = () => {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [activeBranchProject, activeMemoryProject, authModalAccount, gitInitProject, isSettingsOpen, isCommandPaletteOpen, openCommandPalette, pushProject])
+  }, [activeBranchProject, activeMemoryProject, authModalAccount, gitInitProject, isCloneOpen, isSettingsOpen, isCommandPaletteOpen, openCommandPalette, pushProject])
 
   const gitProjectsCount = projects.filter((p) => p.git.isRepo).length
 
@@ -483,12 +485,13 @@ export const App: React.FC = () => {
         onOpenBranches={(project) => setActiveBranchProject(project)}
         onUsageUpdate={loadUsage}
         onOpenSettings={() => setIsSettingsOpen(true)}
+        onOpenClone={() => setIsCloneOpen(true)}
       />
 
       </div>
       </div>
       </div>
-      <footer className="app-statusbar"><span><span className={`status-dot ${isLoading ? 'loading' : ''}`}/>{isLoading ? 'Carregando workspace' : `${projects.length} projetos · ${gitProjectsCount} repositórios`}</span><span>Dados locais <span aria-hidden="true">·</span> <kbd>Ctrl K</kbd> Ações rápidas <span aria-hidden="true">·</span> <kbd>Ctrl R</kbd> Atualizar</span></footer>
+      <footer className="app-statusbar"><span><span className={`status-dot ${isLoading ? 'loading' : ''}`}/>{isLoading ? 'Carregando workspace' : `${projects.length} projetos · ${gitProjectsCount} repositórios`}{updateState?.distribution === 'portable' ? ' · portable (update manual)' : ''}</span><span>Dados locais <span aria-hidden="true">·</span> <kbd>Ctrl K</kbd> Ações rápidas <span aria-hidden="true">·</span> <kbd>Ctrl R</kbd> Atualizar</span></footer>
       <CommandPalette
         isOpen={isCommandPaletteOpen}
         onClose={closeCommandPalette}
@@ -498,6 +501,7 @@ export const App: React.FC = () => {
         onRefresh={handleRefresh}
         onSyncAll={handleSyncAll}
         onOpenSettings={() => setIsSettingsOpen(true)}
+        onOpenClone={() => setIsCloneOpen(true)}
         onToggleAccount={handleToggleAccount}
         activeAccountLabel={
           config?.activeChatGptAccount === 'account2'
@@ -545,6 +549,14 @@ export const App: React.FC = () => {
         onNotify={notify}
       />
 
+      <GitCloneModal
+        isOpen={isCloneOpen}
+        config={config}
+        onClose={() => setIsCloneOpen(false)}
+        onCloned={handleRefresh}
+        onNotify={notify}
+      />
+
       <UpdateModal
         state={updateState}
         isOpen={Boolean(
@@ -554,6 +566,7 @@ export const App: React.FC = () => {
           !authModalAccount &&
           !pushProject &&
           !gitInitProject &&
+          !isCloneOpen &&
           !activeMemoryProject &&
           !activeBranchProject &&
           !isCommandPaletteOpen &&

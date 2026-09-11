@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react'
-import { Folder, FolderX, GitBranch, SlidersHorizontal, ArrowDown, Circle, ArrowUpDown } from 'lucide-react'
+import { Folder, FolderX, GitBranch, GitPullRequest, SlidersHorizontal, ArrowDown, Circle, ArrowUpDown } from 'lucide-react'
 import { ProjectCard } from './ProjectCard'
 import type { Project, AppConfig } from '../types'
 interface ProjectGridProps {
@@ -16,9 +16,10 @@ interface ProjectGridProps {
   onOpenBranches?: (project: Project) => void
   onUsageUpdate?: () => void
   onOpenSettings?: () => void
+  onOpenClone?: () => void
 }
 export const ProjectGrid: React.FC<ProjectGridProps> = (props) => {
-  const { projects, config, search, isLoading, onOpenSettings } = props
+  const { projects, config, search, isLoading, onOpenSettings, onOpenClone } = props
   const [filter, setFilter] = useState('all')
   const [tech, setTech] = useState('')
   const [sort, setSort] = useState('name')
@@ -34,7 +35,7 @@ export const ProjectGrid: React.FC<ProjectGridProps> = (props) => {
   return (
     <main className="project-workspace" aria-busy={isLoading}>
       <section className="project-master" aria-label="Lista de projetos">
-        <div className="master-heading"><h1>Projetos</h1><span className="count-badge">{projects.length}</span></div>
+        <div className="master-heading"><h1>Projetos</h1><span className="count-badge">{projects.length}</span>{onOpenClone && <button className="icon-button" title="Clonar repositório por link" aria-label="Clonar repositório por link" onClick={onOpenClone}><GitPullRequest size={14} /></button>}</div>
         <div className="project-filters">
           <label><SlidersHorizontal size={14}/><span className="sr-only">Filtrar status Git</span><select value={filter} onChange={e => setFilter(e.target.value)}><option value="all">Todos os projetos</option><option value="pull">Pull pendente</option><option value="modified">Com alterações</option><option value="no-git">Sem Git</option></select></label>
           <div className="filter-secondary"><label><span className="sr-only">Filtrar tecnologia</span><select value={tech} onChange={e => setTech(e.target.value)}><option value="">Todas as tecnologias</option>{techs.map(([id,label]) => <option key={id} value={id}>{label}</option>)}</select></label><button className="icon-button" title={sort === 'name' ? 'Ordenar por modificação recente' : 'Ordenar por nome'} aria-label={sort === 'name' ? 'Ordenar por modificação recente' : 'Ordenar por nome'} onClick={() => setSort(sort === 'name' ? 'recent' : 'name')}><ArrowUpDown size={14}/></button></div>

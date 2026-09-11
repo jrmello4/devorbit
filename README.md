@@ -25,9 +25,17 @@ npm run build
 npm start
 ```
 
-Para desenvolvimento com recarregamento do renderer, use `npm run dev` em um
-terminal e o fluxo Electron configurado pelo Vite no outro, conforme o
-ambiente local.
+Para desenvolvimento com recarregamento, um único comando basta
+(`npm run dev` ou `npm run electron:dev`): o Vite serve o renderer e abre o
+Electron automaticamente.
+
+Se o PowerShell bloquear o `npm` (`execution of scripts is disabled`),
+rode via `cmd`:
+
+```powershell
+cmd /c "npm ci"
+cmd /c "npm run dev"
+```
 
 Se o build mencionar uma pasta de outro projeto, verifique a instalação antes
 de investigar o código:
@@ -52,18 +60,22 @@ O empacotamento usa [electron-builder.json](electron-builder.json), gera um
 instalador NSIS e um executável portable x64 em `release/`. O diretório de
 saída é um artefato local e não deve ser versionado.
 
-Para instalar, baixe o arquivo `DevOrbit-...-x64.exe` da página **Releases**
-do GitHub e execute-o. A instalação permite escolher a pasta e cria atalhos
-no menu Iniciar e na área de trabalho. As versões instaladas pelo NSIS
-verificam atualizações ao abrir: quando houver uma publicação mais nova, o
-DevOrbit pede confirmação para baixar, reiniciar e concluir a atualização.
-O executável `portable` é útil para uso sem instalação, mas recebe atualizações
-manuais.
+Na página **Releases** há dois artefatos:
 
-`DevOrbit.bat` primeiro tenta abrir um executável portable ao lado do script ou
-em `release/win-unpacked`. Se estiver sendo usado a partir do checkout, ele
-exige as dependências instaladas e um build prévio; mensagens de erro indicam
-o comando correto para reparar o ambiente.
+| Arquivo | Tipo | Auto-update |
+|---|---|---|
+| `DevOrbit-<versão>-x64.exe` | Instalador NSIS | Sim, o app avisa e instala ao reiniciar |
+| `DevOrbit-<versão>-portable.exe` | Portable, sem instalação | Não, baixe a nova versão manualmente |
+
+A barra de status indica `portable (update manual)` quando aplicável.
+O `DevOrbit-...-x64.exe` é o **instalador**: execute-o uma vez para instalar
+(atalhos no menu Iniciar e área de trabalho). Não confunda com o app.
+
+`DevOrbit.bat` procura nesta ordem: `DevOrbit.exe` ao lado do script,
+`DevOrbit-*-portable.exe` ao lado, `release/win-unpacked/DevOrbit.exe`,
+`release/DevOrbit-*-portable.exe`. Se achar um `DevOrbit-*-x64.exe` que não
+seja portable, ele avisa que é o instalador e oferece executá-lo. Sem nenhum
+executável, cai no modo checkout (`npm ci` + `npm run build`).
 
 ## Configuração e privacidade
 

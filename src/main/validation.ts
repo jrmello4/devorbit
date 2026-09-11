@@ -143,6 +143,41 @@ export function validateLaunchOptions(value: unknown): LaunchToolOptions | undef
   return options
 }
 
+export function validateFolderName(value: unknown): string {
+  if (typeof value !== 'string' || !value.trim() || value.trim().length > 100) {
+    throw new Error('Nome de pasta inválido.')
+  }
+  const normalized = value.trim()
+  if (
+    normalized === '.' ||
+    normalized === '..' ||
+    normalized.includes('/') ||
+    normalized.includes('\\') ||
+    normalized.startsWith('-') ||
+    normalized.startsWith('.') ||
+    normalized.endsWith('.') ||
+    normalized.includes('..') ||
+    Array.from(normalized).some((character) => character.charCodeAt(0) <= 0x20) ||
+    /[~^:?*[\]<>|"]/.test(normalized)
+  ) {
+    throw new Error('Nome de pasta inválido.')
+  }
+  return normalized
+}
+
+export function validateCloneInput(value: unknown): { parentDir: string; folderName: string; remoteUrl: string } {
+  if (!isRecord(value)) throw new Error('Dados de clonagem inválidos.')
+  const parentDir = value.parentDir
+  if (typeof parentDir !== 'string' || !parentDir.trim() || parentDir.length > MAX_PROJECT_DIR_LENGTH) {
+    throw new Error('Pasta de destino inválida.')
+  }
+  return {
+    parentDir: parentDir.trim(),
+    folderName: validateFolderName(value.folderName),
+    remoteUrl: validateHttpsUrl(value.remoteUrl),
+  }
+}
+
 export function validateGitBranch(value: unknown): string {
   const branch = value === undefined ? 'main' : value
   if (typeof branch !== 'string' || !branch.trim() || branch.length > 100) {

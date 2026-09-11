@@ -2,8 +2,8 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import path from 'node:path'
 import fs from 'node:fs/promises'
-import type { GitBranch, GitStatus, SyncResult } from '../renderer/src/types'
-import { validateGitBranch } from './validation'
+import type { GitBranch, GitCloneResult, GitStatus, SyncResult } from '../renderer/src/types'
+import { validateFolderName, validateGitBranch, validateHttpsUrl } from './validation'
 
 const execFileAsync = promisify(execFile)
 
@@ -11,6 +11,7 @@ const execFileAsync = promisify(execFile)
 // syncs for one repository serialized even when the renderer fires multiple
 // requests (for example, a manual sync while "Sync all" is still running).
 const mutationLocks = new Map<string, Promise<SyncResult>>()
+const cloneLocks = new Map<string, Promise<GitCloneResult>>()
 
 function getSyncLockKey(repoPath: string): string {
   const normalized = path.normalize(path.resolve(repoPath))
@@ -405,6 +406,99 @@ export async function switchGitBranch(repoPath: string, requestedBranch: string)
     return await current
   } finally {
     if (mutationLocks.get(lockKey) === current) mutationLocks.delete(lockKey)
+  }
+}
+
+export interface CloneGitOptions {
+  parentDir: string
+  folderName: string
+  remoteUrl: string
+}
+
+async function cloneGitUnlocked(options: CloneGitOptions): Promise<GitCloneResult> {
+  const safeParent = await (async () => {
+    try {
+      const canonical = await fs.realpath(path.resolve(options.parentDir.trim()))
+      const stats = await fs.stat(canonical)
+      if (!stats.isDirectory()) throw new Error('not-directory')
+      return canonical
+    } catch {
+      throw new Error('Pasta de destino não existe ou não é uma pasta.')
+    }
+  })()
+  const safeName = validateFolderName(options.folderName)
+  const safeUrl = validateHttpsUrl(options.remoteUrl)
+  const destPath = path.join(safeParent, safeName)
+
+  let destExists = false
+  let destEmpty = false
+  try {
+    const stats = await fs.stat(destPath)
+    if (!stats.isDirectory()) {
+      return { success: false, message: 'Já existe um arquivo com esse nome na pasta de destino.' }
+    }
+    destExists = true
+    if (await isGitRepository(destPath)) {
+      return { success: false, message: 'Esta pasta já é um repositório Git. Use Pull para atualizar com a main.', path: destPath }
+    }
+    const entries = await fs.readdir(destPath)
+    if (entries.length > 0) {
+      return { success: false, message: 'A pasta já existe e não está vazia. Escolha outro nome ou esvazie a pasta.' }
+    }
+    destEmpty = true
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT' && !(error instanceof Error && error.message.includes('não'))) {
+      throw error
+    }
+  }
+
+  try {
+    if (destExists && destEmpty) {
+      const { stdout, stderr } = await execFileAsync('git', ['clone', safeUrl, '.'], {
+        cwd: destPath,
+        timeout: 120000,
+        windowsHide: true,
+      })
+      const output = `${stdout || ''}\n${stderr || ''}`.trim()
+      return { success: true, message: 'Repositório clonado com a main mais recente!', output, path: destPath }
+    }
+    const { stdout, stderr } = await execFileAsync('git', ['clone', safeUrl, destPath], {
+      cwd: safeParent,
+      timeout: 120000,
+      windowsHide: true,
+    })
+    const output = `${stdout || ''}\n${stderr || ''}`.trim()
+    return { success: true, message: 'Repositório clonado com a main mais recente!', output, path: destPath }
+  } catch (error: unknown) {
+    const text = String((error as { stderr?: unknown; stdout?: unknown; message?: unknown })?.stderr || (error as { message?: unknown })?.message || '').trim()
+    await fs.rm(destPath, { recursive: true, force: true }).catch(() => undefined).then(async () => {
+      if (destExists && destEmpty) await fs.mkdir(destPath, { recursive: true }).catch(() => undefined)
+    })
+    if (/authentication|permission|not found|repository not found|invalid/i.test(text)) {
+      return { success: false, message: 'Não foi possível clonar: verifique o link e o acesso ao repositório.', output: text.slice(0, 4000) }
+    }
+    return { success: false, message: `Erro ao clonar: ${text || 'falha no git clone'}`, output: text.slice(0, 4000) }
+  }
+}
+
+export async function cloneGitRepository(options: CloneGitOptions): Promise<GitCloneResult> {
+  const key = (() => {
+    try {
+      const normalized = path.normalize(path.resolve(path.join(options.parentDir.trim(), options.folderName.trim())))
+      return process.platform === 'win32' ? normalized.toLowerCase() : normalized
+    } catch {
+      return `${options.parentDir}/${options.folderName}`
+    }
+  })()
+  const previous = cloneLocks.get(key)
+  const current = (previous ?? Promise.resolve({ success: true, message: '' } as GitCloneResult))
+    .catch(() => undefined)
+    .then(() => cloneGitUnlocked(options))
+  cloneLocks.set(key, current)
+  try {
+    return await current
+  } finally {
+    if (cloneLocks.get(key) === current) cloneLocks.delete(key)
   }
 }
 
