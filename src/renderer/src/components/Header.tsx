@@ -15,6 +15,7 @@ import type { AppConfig, CodexAccountStatus } from '../types'
 interface HeaderProps {
   search: string
   setSearch: (value: string) => void
+  onOpenCommandPalette?: () => void
   onRefresh: () => void
   onSyncAll: () => void
   onOpenSettings: () => void
@@ -32,6 +33,7 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({
   search,
   setSearch,
+  onOpenCommandPalette,
   onRefresh,
   onSyncAll,
   onOpenSettings,
@@ -106,6 +108,16 @@ export const Header: React.FC<HeaderProps> = ({
                className="absolute end-2 min-h-8 min-w-8 flex items-center justify-center rounded-lg p-1 text-slate-400 hover:bg-white/5 hover:text-slate-200"
             >
               <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+          {!search && onOpenCommandPalette && (
+            <button
+              type="button"
+              onClick={onOpenCommandPalette}
+              aria-label="Abrir ações rápidas"
+              className="absolute end-2 inline-flex min-h-8 items-center rounded-lg border border-[var(--color-border-subtle)]/70 bg-slate-950/45 px-2 text-[10px] font-semibold text-slate-500 transition-[color,background-color,border-color] hover:border-indigo-400/40 hover:bg-indigo-500/10 hover:text-indigo-200"
+            >
+              <kbd>Ctrl K</kbd>
             </button>
           )}
         </div>

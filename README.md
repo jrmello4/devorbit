@@ -65,6 +65,13 @@ salvos. O recurso **Copiar Contexto** pode incluir informações do projeto,
 como branch e arquivos alterados; revise o texto antes de compartilhá-lo com
 serviços externos.
 
+### Ações rápidas
+
+Use `Ctrl+K` (ou `Cmd+K`) para abrir a paleta de ações. Ela permite pesquisar
+projetos e executar rapidamente atualização, sincronização com o GitHub,
+configurações e troca de conta do ChatGPT. `Ctrl+R` (ou `Cmd+R`) atualiza a
+lista diretamente.
+
 Credenciais do Codex ficam separadas por conta em diretórios do usuário. Não
 adicione tokens, e-mails ou caminhos pessoais a este repositório, às
 especificações ou aos scripts de automação.

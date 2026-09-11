@@ -7,6 +7,7 @@ import { CodexAuthModal } from './components/CodexAuthModal'
 import { UsageBar } from './components/UsageBar'
 import { AiMemoryModal } from './components/AiMemoryModal'
 import { GitInitModal } from './components/GitInitModal'
+import { CommandPalette } from './components/CommandPalette'
 import type { Project, AppConfig, CodexAccountStatus, UsageTrackerState } from './types'
 import { CheckCircle2, AlertCircle, Info, X } from 'lucide-react'
 
@@ -18,6 +19,7 @@ export const App: React.FC = () => {
   const [usageState, setUsageState] = useState<UsageTrackerState | null>(null)
   const [activeMemoryProject, setActiveMemoryProject] = useState<Project | null>(null)
   const [search, setSearch] = useState('')
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [isSyncingAll, setIsSyncingAll] = useState(false)
@@ -294,8 +296,8 @@ export const App: React.FC = () => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault()
-        const searchInput = document.querySelector('input[type="text"]') as HTMLInputElement
-        searchInput?.focus()
+        if (isSettingsOpen || authModalAccount || pushProject || gitInitProject || activeMemoryProject) return
+        setIsCommandPaletteOpen(true)
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'r') {
         e.preventDefault()
         handleRefresh()
@@ -303,7 +305,7 @@ export const App: React.FC = () => {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [])
+  }, [activeMemoryProject, authModalAccount, gitInitProject, isSettingsOpen, pushProject])
 
   const gitProjectsCount = projects.filter((p) => p.git.isRepo).length
 
@@ -313,6 +315,7 @@ export const App: React.FC = () => {
       <Header
         search={search}
         setSearch={setSearch}
+        onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
         onRefresh={handleRefresh}
         onSyncAll={handleSyncAll}
         onOpenSettings={() => setIsSettingsOpen(true)}
@@ -353,6 +356,26 @@ export const App: React.FC = () => {
         onOpenMemory={(project) => setActiveMemoryProject(project)}
         onUsageUpdate={loadUsage}
         onOpenSettings={() => setIsSettingsOpen(true)}
+      />
+
+      <CommandPalette
+        isOpen={isCommandPaletteOpen}
+        onClose={() => setIsCommandPaletteOpen(false)}
+        projects={projects}
+        search={search}
+        onSearchChange={setSearch}
+        onRefresh={handleRefresh}
+        onSyncAll={handleSyncAll}
+        onOpenSettings={() => setIsSettingsOpen(true)}
+        onToggleAccount={handleToggleAccount}
+        activeAccountLabel={
+          config?.activeChatGptAccount === 'account2'
+            ? config.chatGptAccount2Name || 'Conta 2 (Brave)'
+            : config?.chatGptAccount1Name || 'Conta 1 (Chrome)'
+        }
+        isRefreshing={isRefreshing}
+        isSyncingAll={isSyncingAll}
+        isSwitchingAccount={isSwitchingAccount}
       />
 
       {/* Modal de Memória da Sessão & Handoff (estilo Akita AI Memory) */}
