@@ -11,6 +11,10 @@ const api: DevOrbitAPI = {
   getGitChanges: (projectPath: string) =>
     ipcRenderer.invoke('devorbit:getGitChanges', projectPath),
   syncAllGit: () => ipcRenderer.invoke('devorbit:syncAllGit'),
+  getGitInitPreview: (projectPath: string, branch?: string) =>
+    ipcRenderer.invoke('devorbit:getGitInitPreview', projectPath, branch),
+  initGitRepository: (projectPath, options) =>
+    ipcRenderer.invoke('devorbit:initGitRepository', projectPath, options),
   launchTool: (tool, projectPath, options) =>
     ipcRenderer.invoke('devorbit:launchTool', tool, projectPath, options),
   copyProjectContext: (projectPath) =>

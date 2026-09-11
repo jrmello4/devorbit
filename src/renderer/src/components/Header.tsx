@@ -20,7 +20,8 @@ interface HeaderProps {
   onSyncAll: () => void
   onOpenSettings: () => void
   config: AppConfig | null
-  onToggleAccount: () => void
+  onToggleAccount: () => void | Promise<void>
+  isSwitchingAccount?: boolean
   isRefreshing: boolean
   isSyncingAll: boolean
   totalProjects: number
@@ -37,6 +38,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenSettings,
   config,
   onToggleAccount,
+  isSwitchingAccount = false,
   isRefreshing,
   isSyncingAll,
   totalProjects,
@@ -115,11 +117,13 @@ export const Header: React.FC<HeaderProps> = ({
         {/* ChatGPT Account Switcher */}
         <div className="flex items-center gap-1">
           <button
-            onClick={onToggleAccount}
+            onClick={() => void onToggleAccount()}
+            disabled={isSwitchingAccount}
             aria-pressed={isAccount1}
+            aria-busy={isSwitchingAccount}
             aria-label={`Alternar conta do ChatGPT (atual: ${isAccount1 ? 'Conta 1' : 'Conta 2'})`}
             title="Clique para alternar entre Conta 1 e Conta 2 do ChatGPT Plus"
-            className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-900/80 border border-slate-800 hover:border-slate-700 transition-[color,border-color,background-color] text-slate-300 hover:text-white cursor-pointer"
+            className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-900/80 border border-slate-800 hover:border-slate-700 disabled:opacity-60 disabled:cursor-wait transition-[color,border-color,background-color,opacity] text-slate-300 hover:text-white cursor-pointer"
           >
             <span className="text-slate-400">Codex:</span>
             <span

@@ -48,6 +48,40 @@ export interface SyncResult {
   output?: string
 }
 
+export interface GitInitPreview {
+  path: string
+  canInitialize: boolean
+  isRepository: boolean
+  branch: string
+  fileCount: number
+  files: string[]
+  truncated: boolean
+  fingerprint: string
+  message: string
+}
+
+export interface GitInitOptions {
+  branch?: string
+  remoteUrl?: string
+  initialCommit?: boolean
+  commitMessage?: string
+  push?: boolean
+  confirmAllFiles?: boolean
+  previewFingerprint?: string
+}
+
+export interface GitInitResult {
+  success: boolean
+  initialized: boolean
+  commitCreated: boolean
+  pushed: boolean
+  branch: string
+  remoteUrl?: string
+  preview: GitInitPreview
+  message: string
+  output?: string
+}
+
 export interface CodexAccountStatus {
   account1: {
     connected: boolean
@@ -101,6 +135,8 @@ export interface DevOrbitAPI {
   pushGit: (projectPath: string, commitMessage?: string) => Promise<SyncResult>
   getGitChanges: (projectPath: string) => Promise<string[]>
   syncAllGit: () => Promise<{ [projectPath: string]: SyncResult }>
+  getGitInitPreview: (projectPath: string, branch?: string) => Promise<GitInitPreview>
+  initGitRepository: (projectPath: string, options?: GitInitOptions) => Promise<GitInitResult>
   launchTool: (
     tool:
       | 'agy'

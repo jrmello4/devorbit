@@ -212,6 +212,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 />
               </div>
             </div>
+            <div className="mt-3 rounded-xl border border-indigo-500/20 bg-indigo-500/5 px-3.5 py-3 text-xs text-slate-300">
+              Cada conta abre o ChatGPT em um perfil persistente e isolado do navegador. Na primeira abertura,
+              faça login nessa janela; as próximas alternâncias reutilizarão a mesma sessão sem misturar cookies.
+            </div>
           </div>
 
           {/* Status e Conexão das Contas OpenAI Codex */}

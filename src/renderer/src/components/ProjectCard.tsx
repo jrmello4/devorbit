@@ -24,6 +24,7 @@ interface ProjectCardProps {
   config: AppConfig | null
   onSync: (projectPath: string) => Promise<void>
   onOpenPushModal: (project: Project) => void
+  onOpenGitInit: (project: Project) => void
   onNotify: (message: string, type?: 'success' | 'error' | 'info') => void
   onOpenAuthModal?: (account: 'account1' | 'account2') => void
   onOpenMemory?: (project: Project) => void
@@ -35,6 +36,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
   config,
   onSync,
   onOpenPushModal,
+  onOpenGitInit,
   onNotify,
   onOpenAuthModal,
   onOpenMemory,
@@ -277,6 +279,14 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
         {/* Action row for projects without Git */}
         {!git.isRepo && (
           <div className="flex items-center justify-end gap-1.5">
+            <button
+              onClick={() => onOpenGitInit(project)}
+              className="flex items-center gap-1 py-1.5 px-2.5 rounded-lg text-xs font-semibold border border-orange-500/40 bg-orange-500/15 text-orange-200 hover:bg-orange-500/25 hover:border-orange-400 transition-[color,background-color,border-color] shrink-0 cursor-pointer"
+              title="Criar um repositório Git nesta pasta e, opcionalmente, vinculá-lo a um remote"
+            >
+              <GitBranch className="w-3.5 h-3.5 text-orange-300" aria-hidden="true" />
+              <span className="text-[10px]">Adicionar Git</span>
+            </button>
             <button
               onClick={handleCopyContext}
               className={`flex items-center gap-1 py-1.5 px-2.5 rounded-lg text-xs font-medium border transition-[color,background-color,border-color] shrink-0 cursor-pointer ${

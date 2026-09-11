@@ -22,6 +22,7 @@ interface UsageBarProps {
   onReset: (target: 'account1' | 'account2') => Promise<void>
   onUpdateLimit: (account: 'account1' | 'account2', limit: number) => Promise<void>
   onSwitchAccount: () => Promise<void>
+  isSwitchingAccount?: boolean
 }
 
 export const UsageBar: React.FC<UsageBarProps> = ({
@@ -32,6 +33,7 @@ export const UsageBar: React.FC<UsageBarProps> = ({
   onReset,
   onUpdateLimit,
   onSwitchAccount,
+  isSwitchingAccount = false,
 }) => {
   const [popoverOpen, setPopoverOpen] = useState(false)
   const [now, setNow] = useState(Date.now())
@@ -184,8 +186,10 @@ export const UsageBar: React.FC<UsageBarProps> = ({
               {activePercent >= 100 ? 'Limite Atingido!' : 'Limite Próximo!'}
             </span>
             <button
-              onClick={onSwitchAccount}
-              className="flex items-center gap-1 underline underline-offset-2 ml-1 text-amber-200 hover:text-white cursor-pointer"
+              onClick={() => void onSwitchAccount()}
+              disabled={isSwitchingAccount}
+              aria-busy={isSwitchingAccount}
+              className="flex items-center gap-1 underline underline-offset-2 ms-1 text-amber-200 hover:text-white disabled:opacity-60 disabled:cursor-wait cursor-pointer"
               title="Alternar para a outra conta imediatamente"
             >
               <ArrowRightLeft className="w-3 h-3" />

@@ -69,6 +69,29 @@ Credenciais do Codex ficam separadas por conta em diretórios do usuário. Não
 adicione tokens, e-mails ou caminhos pessoais a este repositório, às
 especificações ou aos scripts de automação.
 
+### Troca de contas do ChatGPT
+
+O botão de conta abre o ChatGPT em um perfil persistente e isolado para cada
+conta (`account1` e `account2`). Na primeira abertura de cada perfil, faça o
+login manualmente; depois disso, a sessão permanece separada e pode ser
+reutilizada sem misturar cookies. O DevOrbit não lê e-mails nem cookies do
+navegador para tentar adivinhar a identidade ativa. O Codex CLI também usa um
+`CODEX_HOME` separado por conta.
+O Codex Desktop continua usando a sessão gerenciada pelo próprio aplicativo,
+que não oferece isolamento de perfis por `CODEX_HOME`.
+
+### Adicionar Git a um projeto existente
+
+Projetos sem `.git` exibem o botão **Adicionar Git**. O fluxo mostra uma
+prévia dos arquivos, permite escolher a branch inicial e um remote HTTPS, e só
+faz `git add -A` depois da confirmação explícita. O commit inicial e o push
+são opcionais; nenhum push usa `--force`, e remotes que já possuem histórico
+são recusados para preservar os dados existentes. A confirmação fica vinculada
+à impressão digital da prévia e é invalidada se a lista de arquivos mudar.
+Se a criação do repositório ocorrer mas o commit ou push falhar, o card é
+atualizado para refletir o `.git` existente e a mensagem explica o próximo
+passo sem apagar o trabalho local.
+
 ## CI
 
 O workflow do GitHub Actions executa em `windows-latest` uma instalação limpa

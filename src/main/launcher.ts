@@ -8,6 +8,14 @@ import { loadConfig } from './config'
 import { getGitStatus, getGitChangesSummary } from './git'
 import { getProjectMemory } from './memory'
 import {
+  ensureAccountDirectories,
+  getAccountLabel,
+  getBrowserLaunchArgs,
+  hasValidCodexAuth,
+  shouldTrackBrowserUsage,
+  type AccountId,
+} from './account-profiles'
+import {
   releaseUsageReservation,
   tryReserveUsage,
   type UsageTarget,
@@ -84,34 +92,26 @@ export async function launchTool(
       }
 
       case 'codex-cli': {
-        const isAccount2 = options?.account === 'account2'
-        const codexHome = isAccount2
-          ? path.join(os.homedir(), '.codex-conta2')
-          : path.join(os.homedir(), '.codex-conta1')
-        const accountLabel = isAccount2
-          ? config.chatGptAccount2Name || 'Conta 2 (Brave)'
-          : config.chatGptAccount1Name || 'Conta 1 (Chrome)'
+        const account: AccountId = options?.account || 'account1'
+        const { codexHome } = await ensureAccountDirectories(account)
+        const accountLabel = getAccountLabel(account, {
+          account1: config.chatGptAccount1Name,
+          account2: config.chatGptAccount2Name,
+        })
 
         // Checa se a conta está autenticada
-        const authPath = path.join(codexHome, 'auth.json')
-        let isAuthed = false
-        try {
-          const stat = await fs.stat(authPath)
-          isAuthed = stat.size > 50
-        } catch {
-          isAuthed = false
-        }
+        const isAuthed = await hasValidCodexAuth(codexHome)
 
         if (!isAuthed) {
           return {
             success: false,
             needsAuth: true,
-            account: options?.account || 'account1',
+            account,
             message: `${accountLabel} ainda não está conectada! Clique no botão de login para conectar.`,
           }
         }
 
-        const usageTarget = isAccount2 ? 'account2' : 'account1'
+        const usageTarget = account
         if (!(await reserveUsage(usageTarget))) {
           return { success: false, message: `Limite de uso da ${accountLabel} atingido.` }
         }
@@ -136,33 +136,43 @@ export async function launchTool(
       }
 
       case 'chrome': {
-        const usageTarget = 'account1'
-        if (!(await reserveUsage(usageTarget))) return { success: false, message: 'Limite de uso da Conta 1 atingido.' }
+        const account: AccountId = 'account1'
+        const { browserProfile } = await ensureAccountDirectories(account)
+        const url = options?.url || 'https://chatgpt.com'
+        // Explicit URLs are navigation/auth/reopen actions initiated by the UI,
+        // not a new ChatGPT session. They must never consume the account quota.
+        const trackUsage = shouldTrackBrowserUsage(options?.url)
+        const usageTarget = account
+        if (trackUsage && !(await reserveUsage(usageTarget))) return { success: false, message: 'Limite de uso da Conta 1 atingido.' }
         const chromePath =
           custom.chrome ||
           'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
         try {
-          await spawnDetached(chromePath, [options?.url || 'https://chatgpt.com'])
+          await spawnDetached(chromePath, getBrowserLaunchArgs(browserProfile, url))
         } catch (error) {
-          await rollbackUsage(usageTarget)
+          if (trackUsage) await rollbackUsage(usageTarget)
           throw error
         }
-        return { success: true, message: 'ChatGPT aberto no Google Chrome (Conta 1)!' }
+        return { success: true, message: `ChatGPT aberto no Google Chrome (${getAccountLabel(account, { account1: config.chatGptAccount1Name })})!` }
       }
 
       case 'brave': {
-        const usageTarget = 'account2'
-        if (!(await reserveUsage(usageTarget))) return { success: false, message: 'Limite de uso da Conta 2 atingido.' }
+        const account: AccountId = 'account2'
+        const { browserProfile } = await ensureAccountDirectories(account)
+        const url = options?.url || 'https://chatgpt.com'
+        const trackUsage = shouldTrackBrowserUsage(options?.url)
+        const usageTarget = account
+        if (trackUsage && !(await reserveUsage(usageTarget))) return { success: false, message: 'Limite de uso da Conta 2 atingido.' }
         const bravePath =
           custom.brave ||
           'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe'
         try {
-          await spawnDetached(bravePath, [options?.url || 'https://chatgpt.com'])
+          await spawnDetached(bravePath, getBrowserLaunchArgs(browserProfile, url))
         } catch (error) {
-          await rollbackUsage(usageTarget)
+          if (trackUsage) await rollbackUsage(usageTarget)
           throw error
         }
-        return { success: true, message: 'ChatGPT aberto no Brave (Conta 2)!' }
+        return { success: true, message: `ChatGPT aberto no Brave (${getAccountLabel(account, { account2: config.chatGptAccount2Name })})!` }
       }
 
       case 'agy': {

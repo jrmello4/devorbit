@@ -43,6 +43,16 @@ export interface LaunchToolOptions {
   url?: string
 }
 
+export interface GitInitRequest {
+  branch?: string
+  remoteUrl?: string
+  initialCommit?: boolean
+  commitMessage?: string
+  push?: boolean
+  confirmAllFiles?: boolean
+  previewFingerprint?: string
+}
+
 export interface IpcSenderLike {
   senderFrame?: { url?: string } | null
   sender?: { getURL?: () => string }
@@ -129,6 +139,65 @@ export function validateLaunchOptions(value: unknown): LaunchToolOptions | undef
   }
   if ('url' in value && value.url !== undefined) {
     options.url = validateHttpsUrl(value.url)
+  }
+  return options
+}
+
+function validateGitBranch(value: unknown): string {
+  const branch = value === undefined ? 'main' : value
+  if (typeof branch !== 'string' || !branch.trim() || branch.length > 100) {
+    throw new Error('Nome de branch inválido.')
+  }
+  const normalized = branch.trim()
+  if (
+    normalized.startsWith('-') ||
+    normalized.startsWith('/') ||
+    normalized.endsWith('/') ||
+    normalized.startsWith('.') ||
+    normalized.endsWith('.') ||
+    normalized.includes('..') ||
+    Array.from(normalized).some((character) => character.charCodeAt(0) <= 0x20) ||
+    /[~^:?*[\\]/.test(normalized)
+  ) {
+    throw new Error('Nome de branch inválido.')
+  }
+  return normalized
+}
+
+export function validateGitInitOptions(value: unknown): GitInitRequest {
+  if (value === undefined || value === null) return {}
+  if (!isRecord(value)) throw new Error('Opções de inicialização Git inválidas.')
+
+  const options: GitInitRequest = {}
+  if ('branch' in value && value.branch !== undefined) {
+    options.branch = validateGitBranch(value.branch)
+  }
+  if ('remoteUrl' in value && value.remoteUrl !== undefined && value.remoteUrl !== null) {
+    if (typeof value.remoteUrl !== 'string' || value.remoteUrl.trim() === '') {
+      throw new Error('URL do remote inválida.')
+    }
+    options.remoteUrl = validateHttpsUrl(value.remoteUrl)
+  }
+  for (const key of ['initialCommit', 'push', 'confirmAllFiles'] as const) {
+    if (key in value && value[key] !== undefined) {
+      if (typeof value[key] !== 'boolean') throw new Error(`Opção ${key} inválida.`)
+      options[key] = value[key]
+    }
+  }
+  if ('commitMessage' in value && value.commitMessage !== undefined) {
+    if (typeof value.commitMessage !== 'string' || !value.commitMessage.trim() || value.commitMessage.length > 500) {
+      throw new Error('Mensagem do commit inválida.')
+    }
+    options.commitMessage = value.commitMessage.trim()
+  }
+  if ('previewFingerprint' in value && value.previewFingerprint !== undefined) {
+    if (
+      typeof value.previewFingerprint !== 'string' ||
+      !/^[a-f0-9]{64}$/i.test(value.previewFingerprint.trim())
+    ) {
+      throw new Error('Prévia de arquivos inválida.')
+    }
+    options.previewFingerprint = value.previewFingerprint.trim().toLowerCase()
   }
   return options
 }

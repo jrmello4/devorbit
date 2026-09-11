@@ -6,6 +6,7 @@ import { GitPushModal } from './components/GitPushModal'
 import { CodexAuthModal } from './components/CodexAuthModal'
 import { UsageBar } from './components/UsageBar'
 import { AiMemoryModal } from './components/AiMemoryModal'
+import { GitInitModal } from './components/GitInitModal'
 import type { Project, AppConfig, CodexAccountStatus, UsageTrackerState } from './types'
 import { CheckCircle2, AlertCircle, Info, X } from 'lucide-react'
 
@@ -22,6 +23,9 @@ export const App: React.FC = () => {
   const [isSyncingAll, setIsSyncingAll] = useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [pushProject, setPushProject] = useState<Project | null>(null)
+  const [gitInitProject, setGitInitProject] = useState<Project | null>(null)
+  const [isSwitchingAccount, setIsSwitchingAccount] = useState(false)
+  const accountSwitchInFlightRef = useRef(false)
   const [notification, setNotification] = useState<{
     message: string
     type: 'success' | 'error' | 'info'
@@ -128,6 +132,17 @@ export const App: React.FC = () => {
     }
   }
 
+  // Atualiza apenas o estado dos cards após uma operação Git parcial, sem
+  // substituir a mensagem de erro/sucesso específica do modal.
+  const refreshProjectsQuietly = async () => {
+    if (!window.devorbit) return
+    try {
+      setProjects(await window.devorbit.getProjects())
+    } catch (err) {
+      console.error('[App] Erro ao atualizar projetos após operação Git:', err)
+    }
+  }
+
   // Ações da Barra de Uso (Cotas)
   const handleIncrementUsage = async (target: 'account1' | 'account2' | 'antigravity') => {
     if (!window.devorbit) return
@@ -227,21 +242,43 @@ export const App: React.FC = () => {
 
   // Alternar conta do ChatGPT
   const handleToggleAccount = async () => {
-    if (!config || !window.devorbit) return
+    if (!config || !window.devorbit || accountSwitchInFlightRef.current) return
     const nextAccount =
       config.activeChatGptAccount === 'account1' ? 'account2' : 'account1'
-    const updated = await window.devorbit.saveConfig({
-      activeChatGptAccount: nextAccount,
-    })
-    setConfig(updated)
-    notify(
-      `ChatGPT alterado para: ${
-        nextAccount === 'account1'
-          ? updated.chatGptAccount1Name
-          : updated.chatGptAccount2Name
-      }`,
-      'info'
-    )
+    accountSwitchInFlightRef.current = true
+    setIsSwitchingAccount(true)
+    try {
+      // Open the dedicated browser profile first. If the browser cannot be
+      // started, keep the previous account active instead of creating a
+      // misleading partial switch.
+      const browser = nextAccount === 'account1' ? 'chrome' : 'brave'
+      const opened = await window.devorbit.launchTool(browser, '', {
+        account: nextAccount,
+        url: 'https://chatgpt.com',
+      })
+      if (!opened?.success) {
+        notify(opened?.message || 'Não foi possível abrir o perfil do ChatGPT.', 'error')
+        return
+      }
+
+      const updated = await window.devorbit.saveConfig({
+        activeChatGptAccount: nextAccount,
+      })
+      setConfig(updated)
+      notify(
+        `ChatGPT aberto em ${
+          nextAccount === 'account1'
+            ? updated.chatGptAccount1Name
+            : updated.chatGptAccount2Name
+        }. O perfil isolado foi mantido para a próxima troca.`,
+        'success'
+      )
+    } catch (err: any) {
+      notify(`Não foi possível alternar a conta: ${err.message || 'erro desconhecido'}`, 'error')
+    } finally {
+      accountSwitchInFlightRef.current = false
+      setIsSwitchingAccount(false)
+    }
   }
 
   // Salvar configurações vindas do modal
@@ -281,6 +318,7 @@ export const App: React.FC = () => {
         onOpenSettings={() => setIsSettingsOpen(true)}
         config={config}
         onToggleAccount={handleToggleAccount}
+        isSwitchingAccount={isSwitchingAccount}
         isRefreshing={isRefreshing}
         isSyncingAll={isSyncingAll}
         totalProjects={projects.length}
@@ -298,6 +336,7 @@ export const App: React.FC = () => {
         onReset={handleResetUsage}
         onUpdateLimit={handleUpdateUsageLimit}
         onSwitchAccount={handleToggleAccount}
+        isSwitchingAccount={isSwitchingAccount}
       />
 
       {/* Grid de Projetos */}
@@ -307,6 +346,7 @@ export const App: React.FC = () => {
         search={search}
         onSync={handleSyncProject}
         onOpenPushModal={setPushProject}
+        onOpenGitInit={(project) => setGitInitProject(project)}
         onNotify={notify}
         isLoading={isLoading}
         onOpenAuthModal={(acc) => setAuthModalAccount(acc)}
@@ -328,6 +368,16 @@ export const App: React.FC = () => {
         project={pushProject}
         onClose={() => setPushProject(null)}
         onSuccess={handleRefresh}
+        onNotify={notify}
+      />
+
+      <GitInitModal
+        isOpen={Boolean(gitInitProject)}
+        project={gitInitProject}
+        onClose={() => setGitInitProject(null)}
+        onPreview={(projectPath, branch) => window.devorbit.getGitInitPreview(projectPath, branch)}
+        onInit={(projectPath, options) => window.devorbit.initGitRepository(projectPath, options)}
+        onProjectUpdated={refreshProjectsQuietly}
         onNotify={notify}
       />
 

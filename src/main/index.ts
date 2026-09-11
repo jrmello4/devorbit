@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { loadConfig, saveConfig } from './config'
 import { scanAllProjects } from './scanner'
 import { syncGit, pushGit, getGitChangesSummary } from './git'
+import { getGitInitPreview, initGitRepository } from './git-init'
 import { launchTool, copyProjectContext } from './launcher'
 import {
   checkCodexAuthStatus,
@@ -34,6 +35,7 @@ import {
   validateFiniteNumber,
   validateLaunchOptions,
   validateLaunchTool,
+  validateGitInitOptions,
   validateProjectDirs,
   validateUsageTarget,
   validateWindowAction,
@@ -219,6 +221,18 @@ function setupIpcHandlers() {
     return await getGitChangesSummary(await validateProjectPath(projectPath))
   })
 
+  // Inicializar e vincular um projeto que ainda não possui Git
+  registerIpcHandler('devorbit:getGitInitPreview', async (_event, projectPath: string, branch?: string) => {
+    return await getGitInitPreview(await validateProjectPath(projectPath), branch)
+  })
+
+  registerIpcHandler('devorbit:initGitRepository', async (_event, projectPath: string, options?: unknown) => {
+    return await initGitRepository(
+      await validateProjectPath(projectPath),
+      validateGitInitOptions(options),
+    )
+  })
+
   // Sincronizar todos os projetos
   registerIpcHandler('devorbit:syncAllGit', async (): Promise<{ [path: string]: SyncResult }> => {
     const config = await loadConfig()
@@ -307,7 +321,7 @@ function setupIpcHandlers() {
     'devorbit:startCodexLogin',
     async (_event, account: 'account1' | 'account2') => {
       const safeAccount = validateCodexAccount(account)
-      startCodexDeviceLogin(safeAccount, (progress: CodexAuthProgress) => {
+      await startCodexDeviceLogin(safeAccount, (progress: CodexAuthProgress) => {
         mainWindow?.webContents.send('devorbit:codexAuthProgress', progress)
       })
       return { success: true }
@@ -315,7 +329,7 @@ function setupIpcHandlers() {
   )
 
   registerIpcHandler('devorbit:cancelCodexLogin', async () => {
-    cancelCodexLogin()
+    await cancelCodexLogin()
     return { success: true }
   })
 

@@ -5,6 +5,7 @@ import path from 'node:path'
 import {
   validateCodexAccount,
   validateFiniteNumber,
+  validateGitInitOptions,
   validateHttpsUrl,
   validateLaunchTool,
   validateProjectDirs,
@@ -47,6 +48,33 @@ describe('IPC input validation', () => {
     )
     expect(() => validateHttpsUrl('javascript:alert(1)')).toThrow('A URL deve usar HTTPS')
     expect(() => validateHttpsUrl('not a URL')).toThrow('URL inválida')
+  })
+
+  it('validates Git initialization options before they reach the main process', () => {
+    expect(validateGitInitOptions({
+      branch: 'feature/conta-segura',
+      remoteUrl: 'https://github.com/example/repo.git',
+      initialCommit: true,
+      commitMessage: 'chore: inicia projeto',
+      push: true,
+      confirmAllFiles: true,
+      previewFingerprint: 'A'.repeat(64),
+    })).toMatchObject({
+      branch: 'feature/conta-segura',
+      remoteUrl: 'https://github.com/example/repo.git',
+      initialCommit: true,
+      push: true,
+      confirmAllFiles: true,
+      previewFingerprint: 'a'.repeat(64),
+    })
+
+    expect(() => validateGitInitOptions({ branch: 'main && whoami' })).toThrow(
+      'Nome de branch inválido'
+    )
+    expect(() => validateGitInitOptions({ push: true })).not.toThrow()
+    expect(() => validateGitInitOptions({ commitMessage: '' })).toThrow(
+      'Mensagem do commit inválida'
+    )
   })
 
   it('rejects non-finite and out-of-range numeric values', () => {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import {
   X,
   Bot,
@@ -40,10 +40,15 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
   const [authUrl, setAuthUrl] = useState<string>('')
   const [copied, setCopied] = useState(false)
   const [message, setMessage] = useState('')
+  const successTimerRef = useRef<number | null>(null)
+  const onSuccessRef = useRef(onSuccess)
+
+  useEffect(() => {
+    onSuccessRef.current = onSuccess
+  }, [onSuccess])
 
   useEffect(() => {
     if (!isOpen) return
-    handleStartLogin()
 
     const unsubscribe = window.devorbit?.onCodexAuthProgress?.((progress) => {
       if (progress.account === account) {
@@ -55,15 +60,27 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
           setMessage(progress.message)
         }
         if (progress.status === 'success') {
-          setTimeout(() => {
-            onSuccess()
+          if (successTimerRef.current !== null) {
+            window.clearTimeout(successTimerRef.current)
+          }
+          successTimerRef.current = window.setTimeout(() => {
+            successTimerRef.current = null
+            onSuccessRef.current()
           }, 1800)
         }
       }
     })
 
+    // Register the progress listener before starting the process so fast
+    // startup/error events cannot be lost between the two calls.
+    void handleStartLogin()
+
     return () => {
       unsubscribe?.()
+      if (successTimerRef.current !== null) {
+        window.clearTimeout(successTimerRef.current)
+        successTimerRef.current = null
+      }
     }
   }, [account, isOpen])
 
@@ -90,7 +107,10 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
 
   const handleOpenBrowserAgain = () => {
     if (authUrl) {
-      window.devorbit?.launchTool(isAccount2 ? 'brave' : 'chrome', '', { url: authUrl })
+      window.devorbit?.launchTool(isAccount2 ? 'brave' : 'chrome', '', {
+        account,
+        url: authUrl,
+      })
     }
   }
 

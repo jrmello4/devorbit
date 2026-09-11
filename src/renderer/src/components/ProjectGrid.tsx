@@ -15,6 +15,7 @@ interface ProjectGridProps {
   search: string
   onSync: (projectPath: string) => Promise<void>
   onOpenPushModal: (project: Project) => void
+  onOpenGitInit: (project: Project) => void
   onNotify: (message: string, type?: 'success' | 'error' | 'info') => void
   isLoading: boolean
   onOpenAuthModal?: (account: 'account1' | 'account2') => void
@@ -30,6 +31,7 @@ export const ProjectGrid: React.FC<ProjectGridProps> = ({
   search,
   onSync,
   onOpenPushModal,
+  onOpenGitInit,
   onNotify,
   isLoading,
   onOpenAuthModal,
@@ -217,6 +219,7 @@ export const ProjectGrid: React.FC<ProjectGridProps> = ({
                 config={config}
                 onSync={onSync}
                 onOpenPushModal={onOpenPushModal}
+                onOpenGitInit={onOpenGitInit}
                 onNotify={onNotify}
                 onOpenAuthModal={onOpenAuthModal}
                 onOpenMemory={onOpenMemory}
