@@ -308,7 +308,7 @@ export const App: React.FC = () => {
   const gitProjectsCount = projects.filter((p) => p.git.isRepo).length
 
   return (
-    <div className="flex flex-col h-screen w-screen overflow-hidden bg-[var(--color-bg-page)] text-slate-100 antialiased font-sans">
+    <div className="relative isolate flex h-screen w-screen flex-col overflow-hidden bg-transparent font-sans text-slate-100 antialiased">
       {/* Header com barra de título e controles */}
       <Header
         search={search}
@@ -352,6 +352,7 @@ export const App: React.FC = () => {
         onOpenAuthModal={(acc) => setAuthModalAccount(acc)}
         onOpenMemory={(project) => setActiveMemoryProject(project)}
         onUsageUpdate={loadUsage}
+        onOpenSettings={() => setIsSettingsOpen(true)}
       />
 
       {/* Modal de Memória da Sessão & Handoff (estilo Akita AI Memory) */}
@@ -424,7 +425,13 @@ export const App: React.FC = () => {
       </div>
       {notification && (
         <div
-          className="fixed bottom-5 end-5 z-50 flex items-center gap-2.5 px-4 py-3 rounded-xl bg-slate-900/95 border border-slate-700/80 shadow-2xl text-xs backdrop-blur-md motion-safe:animate-in fade-in slide-in-from-bottom-3 duration-200"
+          className={`fixed bottom-5 end-5 z-50 flex max-w-[min(28rem,calc(100vw-2rem))] items-center gap-2.5 rounded-2xl border px-4 py-3 text-sm shadow-2xl backdrop-blur-md motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-3 motion-safe:duration-200 ${
+            notification.type === 'success'
+              ? 'border-emerald-400/25 bg-emerald-950/80'
+              : notification.type === 'error'
+                ? 'border-rose-400/30 bg-rose-950/85'
+                : 'border-indigo-300/25 bg-slate-950/90'
+          }`}
           role="group"
           aria-label="Notificação"
         >
@@ -437,11 +444,11 @@ export const App: React.FC = () => {
           {notification.type === 'info' && (
             <Info aria-hidden="true" className="w-4 h-4 text-indigo-400 shrink-0" />
           )}
-          <span className="text-slate-200 font-medium">{notification.message}</span>
+          <span className="text-pretty font-medium text-slate-100">{notification.message}</span>
           <button
             onClick={() => setNotification(null)}
             aria-label="Fechar notificação"
-            className="min-w-6 min-h-6 inline-flex items-center justify-center rounded text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors ms-2"
+            className="ms-2 inline-flex min-h-8 min-w-8 items-center justify-center rounded-lg text-slate-400 transition-[color,background-color] hover:bg-white/10 hover:text-slate-100"
           >
             <X aria-hidden="true" className="w-3.5 h-3.5" />
           </button>

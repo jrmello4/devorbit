@@ -8,7 +8,6 @@ import {
   X,
   Sparkles,
   GitPullRequest,
-  CheckCircle2,
   FolderGit2,
 } from 'lucide-react'
 import type { AppConfig, CodexAccountStatus } from '../types'
@@ -52,59 +51,59 @@ export const Header: React.FC<HeaderProps> = ({
     : authStatus?.account2?.connected
 
   return (
-    <header className="titlebar-drag bg-[var(--color-bg-header)]/90 backdrop-blur-md border-b border-slate-800/80 px-4 py-2.5 flex items-center justify-between sticky top-0 z-50">
+    <header className="titlebar-drag sticky top-0 z-50 flex min-h-16 items-center justify-between gap-3 border-b border-[var(--color-border-subtle)]/70 bg-[var(--color-bg-header)]/90 px-4 py-3 backdrop-blur-xl sm:px-5">
       {/* Left: Brand & Stats */}
-      <div className="flex items-center gap-4">
+      <div className="flex min-w-0 shrink-0 items-center gap-4">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-indigo-600 via-purple-600 to-pink-500 flex items-center justify-center shadow-lg shadow-indigo-500/20 ring-1 ring-white/20">
-            <Sparkles className="w-4 h-4 text-white" />
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[var(--color-accent-strong)] shadow-lg shadow-indigo-500/20 ring-1 ring-white/20">
+            <Sparkles className="h-4 w-4 text-white" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <span className="font-bold tracking-tight text-white text-base">
+              <span className="text-base font-bold tracking-tight text-white">
                 DevOrbit
               </span>
-              <span className="text-[10px] uppercase font-semibold tracking-wider px-1.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+              <span className="rounded-full border border-indigo-400/30 bg-indigo-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-indigo-200">
                 Hub
               </span>
             </div>
           </div>
         </div>
 
-        <div className="hidden lg:flex items-center gap-3 pl-2 border-l border-slate-800 text-xs text-slate-400">
+        <div className="hidden items-center gap-3 border-l border-[var(--color-border-subtle)] pl-3 text-xs text-[var(--color-text-muted)] lg:flex">
           <span className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 motion-safe:animate-pulse" aria-hidden="true" />
-            <span className="font-medium text-slate-300">{totalProjects}</span> projetos
+            <span className="h-2 w-2 rounded-full bg-emerald-400 motion-safe:animate-pulse" aria-hidden="true" />
+            <span className="tabular-nums font-semibold text-slate-200">{totalProjects}</span> projetos
           </span>
-          <span className="text-slate-400" aria-hidden="true">•</span>
+          <span className="text-slate-500" aria-hidden="true">•</span>
           <span className="flex items-center gap-1.5">
-            <FolderGit2 className="w-3.5 h-3.5 text-indigo-400" />
-            <span className="font-medium text-slate-300">{gitProjectsCount}</span> repositórios Git
+            <FolderGit2 className="h-3.5 w-3.5 text-indigo-300" />
+            <span className="tabular-nums font-semibold text-slate-200">{gitProjectsCount}</span> repositórios Git
           </span>
         </div>
       </div>
 
       {/* Middle: Search bar */}
-        <div className="titlebar-no-drag flex-1 max-w-md mx-4">
+        <div className="titlebar-no-drag min-w-0 max-w-xl flex-1 basis-44 px-1 sm:min-w-[9rem] sm:px-4">
           <div className="relative flex items-center">
             <label htmlFor="project-search" className="sr-only">Buscar projetos</label>
-            <Search className="w-4 h-4 text-slate-400 absolute start-3 pointer-events-none" />
+            <Search className="pointer-events-none absolute start-3 h-4 w-4 text-[var(--color-text-muted)]" />
             <input
               id="project-search"
               name="project-search"
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Buscar projeto por nome, pasta ou tecnologia... (Ctrl+K)"
+              placeholder="Buscar projetos... (Ctrl+K)"
               autoComplete="off"
               aria-keyshortcuts="Control+K Meta+K"
-              className="w-full bg-slate-900/90 text-sm text-slate-200 placeholder-slate-400 ps-9 pe-8 py-1.5 rounded-lg border border-slate-800 focus:border-indigo-500 focus-visible:ring-2 focus-visible:ring-indigo-400/70 focus-visible:outline-none transition-[border-color,box-shadow]"
+              className="w-full rounded-xl border border-[var(--color-border-subtle)]/90 bg-slate-950/55 py-2.5 ps-9 pe-9 text-base text-slate-100 placeholder:text-slate-500 shadow-inner shadow-black/10 transition-[border-color,box-shadow,background-color] focus:border-indigo-400/80 focus:bg-slate-950/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/30 sm:text-sm"
             />
           {search && (
              <button
                onClick={() => setSearch('')}
                aria-label="Limpar busca"
-               className="absolute end-2.5 min-w-6 min-h-6 flex items-center justify-center text-slate-400 hover:text-slate-200 p-0.5"
+               className="absolute end-2 min-h-8 min-w-8 flex items-center justify-center rounded-lg p-1 text-slate-400 hover:bg-white/5 hover:text-slate-200"
             >
               <X className="w-3.5 h-3.5" />
             </button>
@@ -113,9 +112,9 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
 
       {/* Right: Actions & Window Controls */}
-      <div className="titlebar-no-drag flex items-center gap-2">
+      <div className="titlebar-no-drag flex shrink-0 items-center gap-1.5 sm:gap-2">
         {/* ChatGPT Account Switcher */}
-        <div className="flex items-center gap-1">
+        <div className="flex min-w-0 items-center gap-1">
           <button
             onClick={() => void onToggleAccount()}
             disabled={isSwitchingAccount}
@@ -123,14 +122,14 @@ export const Header: React.FC<HeaderProps> = ({
             aria-busy={isSwitchingAccount}
             aria-label={`Alternar conta do ChatGPT (atual: ${isAccount1 ? 'Conta 1' : 'Conta 2'})`}
             title="Clique para alternar entre Conta 1 e Conta 2 do ChatGPT Plus"
-            className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-900/80 border border-slate-800 hover:border-slate-700 disabled:opacity-60 disabled:cursor-wait transition-[color,border-color,background-color,opacity] text-slate-300 hover:text-white cursor-pointer"
+            className="flex min-w-0 items-center gap-2 rounded-xl border border-[var(--color-border-subtle)]/90 bg-slate-950/55 px-2.5 py-2 text-xs font-semibold text-slate-300 transition-[color,border-color,background-color,opacity] hover:border-slate-600 hover:bg-slate-950/80 hover:text-white disabled:cursor-wait disabled:opacity-60 cursor-pointer"
           >
-            <span className="text-slate-400">Codex:</span>
+            <span className="hidden text-slate-500 xl:inline">Codex</span>
             <span
-              className={`flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-semibold transition-colors ${
+              className={`flex min-w-0 max-w-[7rem] items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px] font-semibold transition-colors sm:max-w-[9rem] ${
                 isAccount1
-                  ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
-                  : 'bg-teal-500/20 text-teal-300 border border-teal-500/30'
+                  ? 'border-indigo-400/30 bg-indigo-500/15 text-indigo-200'
+                  : 'border-teal-400/30 bg-teal-500/15 text-teal-200'
               }`}
             >
               <span
@@ -140,16 +139,16 @@ export const Header: React.FC<HeaderProps> = ({
                     : 'bg-amber-400 motion-safe:animate-pulse'
                 }`}
               />
-              {isAccount1
+              <span className="truncate">{isAccount1
                 ? config?.chatGptAccount1Name || 'Conta 1 (Chrome)'
-                : config?.chatGptAccount2Name || 'Conta 2 (Brave)'}
+                : config?.chatGptAccount2Name || 'Conta 2 (Brave)'}</span>
             </span>
           </button>
 
           {!isCurrentAuthed && onOpenAuthModal && (
             <button
               onClick={() => onOpenAuthModal(isAccount1 ? 'account1' : 'account2')}
-              className="px-2 py-1.5 rounded-lg text-[11px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30 transition-[background-color,border-color,color] cursor-pointer"
+              className="rounded-xl border border-amber-400/35 bg-amber-500/15 px-2.5 py-2 text-[11px] font-semibold text-amber-200 transition-[background-color,border-color,color] hover:border-amber-300/60 hover:bg-amber-500/25 cursor-pointer"
               title="Esta conta ainda não foi autenticada. Clique para conectar!"
             >
               Conectar
@@ -162,13 +161,13 @@ export const Header: React.FC<HeaderProps> = ({
           onClick={onSyncAll}
           disabled={isSyncingAll}
           aria-label={isSyncingAll ? 'Sincronizando todos os repositórios' : 'Sincronizar todos os repositórios com o GitHub'}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600/20 text-indigo-300 border border-indigo-500/30 hover:bg-indigo-600/30 hover:border-indigo-500/50 disabled:opacity-50 transition-[background-color,border-color,color,opacity] cursor-pointer"
+          className="flex min-h-10 items-center gap-1.5 rounded-xl border border-indigo-400/30 bg-indigo-500/15 px-3 text-xs font-semibold text-indigo-200 transition-[background-color,border-color,color,opacity] hover:border-indigo-300/60 hover:bg-indigo-500/25 disabled:opacity-50 cursor-pointer"
           title="Executar git pull em todos os repositórios com alterações no GitHub"
         >
           <GitPullRequest
-            className={`w-3.5 h-3.5 ${isSyncingAll ? 'motion-safe:animate-spin text-indigo-400' : ''}`}
+            className={`h-3.5 w-3.5 ${isSyncingAll ? 'motion-safe:animate-spin text-indigo-300' : 'text-indigo-300'}`}
           />
-          <span className="hidden sm:inline">
+          <span className="hidden lg:inline">
             {isSyncingAll ? 'Sincronizando...' : 'Sync GitHub'}
           </span>
         </button>
@@ -178,7 +177,7 @@ export const Header: React.FC<HeaderProps> = ({
             onClick={onRefresh}
             disabled={isRefreshing}
            aria-label="Recarregar projetos e verificar status do Git"
-           className="min-w-8 min-h-8 p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/60 border border-slate-800/80 transition-[color,background-color,border-color,opacity]"
+           className="min-h-10 min-w-10 rounded-xl border border-[var(--color-border-subtle)]/80 p-2 text-slate-400 transition-[color,background-color,border-color,opacity] hover:bg-white/5 hover:text-white"
         >
           <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'motion-safe:animate-spin' : ''}`} />
         </button>
@@ -187,33 +186,33 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             onClick={onOpenSettings}
            aria-label="Abrir configurações de pastas e caminhos"
-           className="min-w-8 min-h-8 p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/60 border border-slate-800/80 transition-[color,background-color,border-color]"
+           className="min-h-10 min-w-10 rounded-xl border border-[var(--color-border-subtle)]/80 p-2 text-slate-400 transition-[color,background-color,border-color] hover:bg-white/5 hover:text-white"
         >
           <Settings className="w-4 h-4" />
         </button>
 
-        <div className="w-[1px] h-4 bg-slate-800 mx-1" />
+        <div className="mx-1 h-5 w-px bg-[var(--color-border-subtle)]" />
 
         {/* Window controls */}
         <div className="flex items-center">
           <button
             onClick={() => window.devorbit?.windowControl('minimize')}
             aria-label="Minimizar janela"
-            className="min-w-8 min-h-8 p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition-[color,background-color]"
+            className="min-h-9 min-w-9 rounded-lg p-2 text-slate-400 transition-[color,background-color] hover:bg-white/5 hover:text-white"
           >
             <Minus className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={() => window.devorbit?.windowControl('maximize')}
             aria-label="Maximizar janela"
-            className="min-w-8 min-h-8 p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition-[color,background-color]"
+            className="min-h-9 min-w-9 rounded-lg p-2 text-slate-400 transition-[color,background-color] hover:bg-white/5 hover:text-white"
           >
             <Square className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={() => window.devorbit?.windowControl('close')}
             aria-label="Fechar janela"
-            className="min-w-8 min-h-8 p-1.5 text-slate-400 hover:text-white hover:bg-red-500/80 rounded transition-[color,background-color]"
+            className="min-h-9 min-w-9 rounded-lg p-2 text-slate-400 transition-[color,background-color] hover:bg-rose-500/80 hover:text-white"
           >
             <X className="w-3.5 h-3.5" />
           </button>

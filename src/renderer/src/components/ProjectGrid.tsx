@@ -1,10 +1,10 @@
 import React, { useState, useMemo } from 'react'
 import {
-  FolderGit2,
   GitPullRequest,
   AlertCircle,
   FolderX,
   Filter,
+  Settings,
 } from 'lucide-react'
 import { ProjectCard } from './ProjectCard'
 import type { Project, AppConfig } from '../types'
@@ -21,6 +21,7 @@ interface ProjectGridProps {
   onOpenAuthModal?: (account: 'account1' | 'account2') => void
   onOpenMemory?: (project: Project) => void
   onUsageUpdate?: () => void
+  onOpenSettings?: () => void
 }
 
 type FilterType = 'all' | 'needs-pull' | 'modified' | 'no-git'
@@ -37,6 +38,7 @@ export const ProjectGrid: React.FC<ProjectGridProps> = ({
   onOpenAuthModal,
   onOpenMemory,
   onUsageUpdate,
+  onOpenSettings,
 }) => {
   const [filterType, setFilterType] = useState<FilterType>('all')
   const [selectedTech, setSelectedTech] = useState<string | null>(null)
@@ -97,80 +99,97 @@ export const ProjectGrid: React.FC<ProjectGridProps> = ({
     return (
       <main id="main" className="flex-1 flex flex-col items-center justify-center p-12 text-slate-400" aria-busy="true">
         <h1 className="sr-only">Projetos</h1>
-        <div className="w-10 h-10 border-2 border-indigo-500/30 border-t-indigo-500 rounded-full motion-safe:animate-spin mb-4" aria-hidden="true" />
-        <p className="text-sm font-medium">Buscando repositórios e projetos...</p>
+        <div className="w-11 h-11 border-2 border-indigo-500/25 border-t-[var(--color-accent)] rounded-full motion-safe:animate-spin mb-4" aria-hidden="true" />
+        <p className="text-sm font-medium text-slate-200">Buscando seus projetos</p>
+        <p className="text-xs text-[var(--color-text-muted)] mt-1">Lendo pastas e status do Git...</p>
       </main>
     )
   }
 
   return (
     <main id="main" className="flex-1 flex flex-col min-h-0" aria-busy={isLoading}>
-      <h1 className="sr-only">Projetos</h1>
+      <div className="mx-auto w-full max-w-[1680px] px-5 pt-7 pb-5 sm:px-6 lg:px-8 lg:pt-8">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div className="min-w-0">
+            <h1 className="text-balance text-2xl font-semibold tracking-tight text-white sm:text-3xl">Seu workspace</h1>
+            <p className="text-pretty mt-1.5 max-w-2xl text-sm leading-6 text-[var(--color-text-muted)]">
+              Encontre um projeto, veja o estado do repositório e abra a ferramenta certa para continuar.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 rounded-xl border border-[var(--color-border-subtle)]/70 bg-slate-950/35 px-3 py-2 text-xs text-[var(--color-text-muted)]">
+            <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_0_3px_rgba(52,211,153,0.12)]" aria-hidden="true" />
+            <span className="tabular-nums font-semibold text-slate-200">{filteredProjects.length}</span>
+            <span>{filteredProjects.length === 1 ? 'projeto visível' : 'projetos visíveis'}</span>
+          </div>
+        </div>
+      </div>
+
       {/* Filter Tabs Bar */}
-      <div className="px-6 py-3 border-b border-slate-800/60 bg-[var(--color-bg-page)]/60 backdrop-blur-sm flex flex-wrap items-center justify-between gap-3">
+      <div className="border-y border-[var(--color-border-subtle)]/60 bg-[var(--color-bg-toolbar)]/70 px-5 py-3 backdrop-blur-sm sm:px-6 lg:px-8">
+        <div className="mx-auto flex w-full max-w-[1680px] flex-wrap items-center justify-between gap-3">
         {/* Main Status Tabs */}
-        <div className="flex items-center gap-1.5 p-1 bg-slate-900/90 rounded-xl border border-slate-800">
+        <div className="flex max-w-full items-center gap-1 overflow-x-auto rounded-xl border border-[var(--color-border-subtle)]/80 bg-slate-950/45 p-1">
           <button
             onClick={() => setFilterType('all')}
             aria-pressed={filterType === 'all'}
-            className={`px-3 py-1 rounded-lg text-xs font-medium transition-[color,background-color,border-color,box-shadow] ${
+            className={`min-h-9 shrink-0 cursor-pointer rounded-lg px-3 text-xs font-semibold transition-[color,background-color,border-color,box-shadow] ${
               filterType === 'all'
-                ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-500/30'
-                : 'text-slate-400 hover:text-slate-200'
+                ? 'bg-[var(--color-accent-strong)] text-white shadow-sm shadow-indigo-500/30'
+                : 'text-[var(--color-text-muted)] hover:bg-white/[0.04] hover:text-slate-100'
             }`}
           >
-            Todos ({counts.all})
+            Todos <span className="ms-1 text-[11px] opacity-70">{counts.all}</span>
           </button>
 
           <button
             onClick={() => setFilterType('needs-pull')}
             aria-pressed={filterType === 'needs-pull'}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition-[color,background-color,border-color,box-shadow] ${
+            className={`flex min-h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition-[color,background-color,border-color,box-shadow] ${
               filterType === 'needs-pull'
                 ? 'bg-sky-600 text-white shadow-sm shadow-sky-500/30'
-                : 'text-slate-400 hover:text-slate-200'
+                : 'text-[var(--color-text-muted)] hover:bg-white/[0.04] hover:text-slate-100'
             }`}
           >
-            <GitPullRequest className="w-3.5 h-3.5 text-sky-400" />
-            <span>Requerem Pull ({counts.needsPull})</span>
+            <GitPullRequest className={`h-3.5 w-3.5 ${filterType === 'needs-pull' ? 'text-sky-100' : 'text-sky-400'}`} />
+            <span>Requerem pull <span className="ms-1 text-[11px] opacity-70">{counts.needsPull}</span></span>
           </button>
 
           <button
             onClick={() => setFilterType('modified')}
             aria-pressed={filterType === 'modified'}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition-[color,background-color,border-color,box-shadow] ${
+            className={`flex min-h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition-[color,background-color,border-color,box-shadow] ${
               filterType === 'modified'
                 ? 'bg-amber-600 text-white shadow-sm shadow-amber-500/30'
-                : 'text-slate-400 hover:text-slate-200'
+                : 'text-[var(--color-text-muted)] hover:bg-white/[0.04] hover:text-slate-100'
             }`}
           >
-            <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
-            <span>Com Alterações ({counts.modified})</span>
+            <AlertCircle className={`h-3.5 w-3.5 ${filterType === 'modified' ? 'text-amber-100' : 'text-amber-400'}`} />
+            <span>Com alterações <span className="ms-1 text-[11px] opacity-70">{counts.modified}</span></span>
           </button>
 
           <button
             onClick={() => setFilterType('no-git')}
             aria-pressed={filterType === 'no-git'}
-            className={`px-3 py-1 rounded-lg text-xs font-medium transition-[color,background-color,border-color,box-shadow] ${
+            className={`min-h-9 shrink-0 cursor-pointer rounded-lg px-3 text-xs font-semibold transition-[color,background-color,border-color,box-shadow] ${
               filterType === 'no-git'
                 ? 'bg-slate-700 text-white'
-                : 'text-slate-400 hover:text-slate-200'
+                : 'text-[var(--color-text-muted)] hover:bg-white/[0.04] hover:text-slate-100'
             }`}
           >
-            Sem Git ({counts.noGit})
+            Sem Git <span className="ms-1 text-[11px] opacity-70">{counts.noGit}</span>
           </button>
         </div>
 
         {/* Tech Stack Pills Filter */}
         {allTechs.length > 0 && (
-          <div className="flex items-center gap-1.5 overflow-x-auto py-1">
-              <span className="text-xs text-slate-400 flex items-center gap-1 shrink-0">
-              <Filter className="w-3 h-3" /> Stack:
+          <div className="flex max-w-full items-center gap-1.5 overflow-x-auto py-1">
+              <span className="flex shrink-0 items-center gap-1 text-xs text-[var(--color-text-muted)]">
+              <Filter className="h-3.5 w-3.5" /> Stack
             </span>
             {selectedTech && (
               <button
                 onClick={() => setSelectedTech(null)}
-                className="min-h-6 text-[11px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 hover:text-white border border-slate-700"
+                className="min-h-8 shrink-0 rounded-full border border-[var(--color-border-subtle)] bg-slate-900/70 px-2.5 text-[11px] text-slate-300 hover:border-slate-600 hover:text-white"
               >
                 Limpar
               </button>
@@ -182,10 +201,10 @@ export const ProjectGrid: React.FC<ProjectGridProps> = ({
                   setSelectedTech(selectedTech === tech.id ? null : tech.id)
                 }
                 aria-pressed={selectedTech === tech.id}
-                className={`min-h-6 text-[11px] font-medium px-2 py-0.5 rounded-full border transition-[color,background-color,border-color] cursor-pointer ${
+                className={`min-h-8 shrink-0 rounded-full border px-2.5 text-[11px] font-semibold transition-[color,background-color,border-color] cursor-pointer ${
                   selectedTech === tech.id
-                    ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/50'
-                    : 'bg-slate-900/80 text-slate-400 border-slate-800 hover:border-slate-700 hover:text-slate-300'
+                    ? 'border-indigo-400/60 bg-indigo-500/20 text-indigo-200'
+                    : 'border-[var(--color-border-subtle)]/80 bg-slate-950/35 text-[var(--color-text-muted)] hover:border-slate-600 hover:text-slate-200'
                 }`}
               >
                 {tech.label}
@@ -193,25 +212,41 @@ export const ProjectGrid: React.FC<ProjectGridProps> = ({
             ))}
           </div>
         )}
+        </div>
       </div>
 
       {/* Projects Grid Container */}
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex-1 overflow-y-auto px-5 pb-8 pt-5 sm:px-6 lg:px-8 lg:pt-6">
+        <div className="mx-auto w-full max-w-[1680px]">
         <div className="sr-only" role="status" aria-live="polite">
           {filteredProjects.length} projeto(s) exibido(s)
         </div>
         {filteredProjects.length === 0 ? (
-          <div className="min-h-64 flex flex-col items-center justify-center text-slate-400 border border-dashed border-slate-800 rounded-2xl">
-            <FolderX className="w-10 h-10 text-slate-400 mb-3" aria-hidden="true" />
-            <p className="text-sm font-medium text-slate-400">
-              Nenhum projeto encontrado
+          <div className="surface-panel flex min-h-72 flex-col items-center justify-center rounded-2xl border-dashed px-6 py-12 text-center">
+            <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-500/10 text-indigo-300 ring-1 ring-indigo-400/20">
+              <FolderX className="h-6 w-6" aria-hidden="true" />
+            </div>
+            <p className="text-balance text-base font-semibold text-slate-100">
+              {projects.length === 0 ? 'Adicione suas pastas de trabalho' : 'Nenhum projeto nesta visão'}
             </p>
-            <p className="text-xs text-slate-400 mt-1 text-center">
-              Tente alterar os termos da busca ou ajustar os filtros acima.
+            <p className="text-pretty mt-1.5 max-w-md text-sm leading-6 text-[var(--color-text-muted)]">
+              {projects.length === 0
+                ? 'Escolha as pastas em Configurações para começar a acompanhar Git, ferramentas e contexto em um só lugar.'
+                : 'Tente limpar a busca ou ajustar os filtros acima para encontrar outro projeto.'}
             </p>
+            {projects.length === 0 && onOpenSettings && (
+              <button
+                type="button"
+                onClick={onOpenSettings}
+                className="mt-6 inline-flex min-h-10 items-center gap-2 rounded-xl bg-[var(--color-accent-strong)] px-4 text-sm font-semibold text-white shadow-lg shadow-indigo-500/20 transition-[background-color,box-shadow,transform] hover:bg-indigo-500 hover:shadow-indigo-500/30 active:translate-y-px"
+              >
+                <Settings className="h-4 w-4" aria-hidden="true" />
+                Abrir configurações
+              </button>
+            )}
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
             {filteredProjects.map((project) => (
               <ProjectCard
                 key={project.id}
@@ -228,6 +263,7 @@ export const ProjectGrid: React.FC<ProjectGridProps> = ({
             ))}
           </div>
         )}
+        </div>
       </div>
     </main>
   )

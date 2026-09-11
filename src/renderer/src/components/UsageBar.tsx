@@ -77,17 +77,21 @@ export const UsageBar: React.FC<UsageBarProps> = ({
 
     return (
       <div
-          className={`flex items-center gap-2 px-2.5 py-1 rounded-xl border transition-[border-color,box-shadow,background-color] text-xs ${
+          className={`flex min-h-11 items-center gap-2 rounded-xl border px-3 py-2 text-xs transition-[border-color,box-shadow,background-color] ${
           isActive
-            ? 'bg-slate-900/95 border-indigo-500/50 shadow-sm shadow-indigo-500/10'
-            : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
+            ? 'border-indigo-400/50 bg-indigo-500/[0.08] shadow-sm shadow-indigo-500/10'
+            : 'border-[var(--color-border-subtle)]/70 bg-slate-950/30 hover:border-slate-600'
         }`}
       >
-        <span className="font-semibold text-slate-300 shrink-0">{name}:</span>
+        <span className="flex shrink-0 items-center gap-1.5 font-semibold text-slate-200">
+          <span className={`h-1.5 w-1.5 rounded-full ${isActive ? 'bg-indigo-300' : 'bg-slate-600'}`} aria-hidden="true" />
+          {name}
+          {isActive && <span className="text-[10px] font-medium text-indigo-300">ativa</span>}
+        </span>
 
         {/* Barra de Progresso Cápsula */}
         <div
-          className="w-16 sm:w-20 h-2 rounded-full bg-slate-800 overflow-hidden relative border border-slate-700/50"
+          className="relative h-2 w-16 overflow-hidden rounded-full border border-slate-700/50 bg-slate-800 sm:w-20"
           role="progressbar"
           aria-label={`${name} — uso da cota`}
           aria-valuemin={0}
@@ -108,7 +112,7 @@ export const UsageBar: React.FC<UsageBarProps> = ({
 
         {/* Contagem e Timer */}
         <span
-          className={`font-mono text-[11px] font-bold ${
+          className={`tabular-nums font-mono text-[11px] font-bold ${
             isCritical ? 'text-red-400' : isWarning ? 'text-amber-300' : 'text-slate-200'
           }`}
         >
@@ -116,19 +120,19 @@ export const UsageBar: React.FC<UsageBarProps> = ({
         </span>
 
         {remaining && (
-          <span className="hidden md:inline-flex items-center gap-1 text-[10px] text-slate-400 font-mono">
-            <Clock className="w-2.5 h-2.5 text-slate-400" />
+          <span className="hidden items-center gap-1 font-mono text-[10px] text-[var(--color-text-muted)] md:inline-flex">
+            <Clock className="h-2.5 w-2.5 text-slate-500" />
             {remaining}
           </span>
         )}
 
         {/* Micro-controles + / - */}
-        <div className="flex items-center gap-0.5 ml-0.5">
+        <div className="ms-0.5 flex items-center gap-0.5">
           <button
             type="button"
             onClick={() => onDecrement(accountKey)}
             aria-label={`Diminuir uso de ${name}`}
-            className="min-w-6 min-h-6 p-0.5 rounded text-slate-400 hover:text-slate-300 hover:bg-slate-800 transition-[color,background-color] cursor-pointer"
+            className="min-h-8 min-w-8 rounded-lg p-1.5 text-slate-400 transition-[color,background-color] hover:bg-white/5 hover:text-slate-200 cursor-pointer"
           >
             <Minus className="w-2.5 h-2.5" />
           </button>
@@ -136,7 +140,7 @@ export const UsageBar: React.FC<UsageBarProps> = ({
             type="button"
             onClick={() => onIncrement(accountKey)}
             aria-label={`Aumentar uso de ${name}`}
-            className="min-w-6 min-h-6 p-0.5 rounded text-slate-400 hover:text-slate-300 hover:bg-slate-800 transition-[color,background-color] cursor-pointer"
+            className="min-h-8 min-w-8 rounded-lg p-1.5 text-slate-400 transition-[color,background-color] hover:bg-white/5 hover:text-slate-200 cursor-pointer"
           >
             <Plus className="w-2.5 h-2.5" />
           </button>
@@ -151,11 +155,12 @@ export const UsageBar: React.FC<UsageBarProps> = ({
   const showHandoffAlert = activePercent >= 80
 
   return (
-    <div className="titlebar-no-drag px-4 py-1.5 bg-[var(--color-bg-toolbar)] border-b border-slate-800/60 flex flex-wrap items-center justify-between gap-2">
+    <div className="titlebar-no-drag border-b border-[var(--color-border-subtle)]/55 bg-[var(--color-bg-toolbar)]/75 px-4 py-2.5 backdrop-blur-lg sm:px-5 lg:px-6">
+      <div className="mx-auto flex w-full max-w-[1680px] flex-wrap items-center justify-between gap-2.5">
       {/* Esquerda: Medidores de Quota */}
-      <div className="flex items-center gap-2 overflow-x-auto py-0.5">
-        <span className="text-[11px] font-semibold text-slate-400 flex items-center gap-1 mr-1 shrink-0">
-          <Zap className="w-3.5 h-3.5 text-amber-400" /> Quotas:
+      <div className="flex min-w-0 max-w-full items-center gap-2 overflow-x-auto py-0.5">
+        <span className="mr-1 flex shrink-0 items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+          <Zap className="h-3.5 w-3.5 text-amber-300" /> Quotas
         </span>
 
         {renderMeter(
@@ -170,18 +175,18 @@ export const UsageBar: React.FC<UsageBarProps> = ({
         )}
 
         {/* Antigravity Badge */}
-        <div className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-900/60 border border-slate-800 text-xs text-slate-300">
-          <Sparkles className="w-3.5 h-3.5 text-indigo-400 motion-safe:animate-pulse" />
-          <span className="font-semibold text-slate-200">Antigravity:</span>
-          <span className="text-[10px] text-emerald-400 font-medium">Livre (Gemini)</span>
+        <div className="hidden min-h-11 items-center gap-1.5 rounded-xl border border-[var(--color-border-subtle)]/70 bg-slate-950/25 px-3 text-xs text-slate-300 lg:flex">
+          <Sparkles className="h-3.5 w-3.5 text-indigo-300 motion-safe:animate-pulse" />
+          <span className="font-semibold text-slate-200">Antigravity</span>
+          <span className="text-[10px] font-medium text-emerald-300">Livre · Gemini</span>
         </div>
       </div>
 
       {/* Direita: Alerta de Troca Inteligente & Configuração rápida */}
       <div className="flex items-center gap-2">
         {showHandoffAlert && (
-          <div role="status" className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-300 text-xs font-semibold motion-safe:animate-pulse">
-            <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+          <div role="status" className="flex items-center gap-1.5 rounded-xl border border-amber-400/35 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-200 motion-safe:animate-pulse">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-300" />
             <span className="hidden sm:inline">
               {activePercent >= 100 ? 'Limite Atingido!' : 'Limite Próximo!'}
             </span>
@@ -189,7 +194,7 @@ export const UsageBar: React.FC<UsageBarProps> = ({
               onClick={() => void onSwitchAccount()}
               disabled={isSwitchingAccount}
               aria-busy={isSwitchingAccount}
-              className="flex items-center gap-1 underline underline-offset-2 ms-1 text-amber-200 hover:text-white disabled:opacity-60 disabled:cursor-wait cursor-pointer"
+              className="ms-1 flex items-center gap-1 underline underline-offset-2 text-amber-100 hover:text-white disabled:cursor-wait disabled:opacity-60 cursor-pointer"
               title="Alternar para a outra conta imediatamente"
             >
               <ArrowRightLeft className="w-3 h-3" />
@@ -207,19 +212,19 @@ export const UsageBar: React.FC<UsageBarProps> = ({
             aria-expanded={popoverOpen}
             aria-controls="usage-settings-popover"
             aria-label="Configurar limites de uso e reset manual"
-            className="min-w-8 min-h-8 p-1 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-[color,background-color]"
+            className="min-h-10 min-w-10 rounded-xl border border-[var(--color-border-subtle)]/60 p-2 text-slate-400 transition-[color,background-color] hover:bg-white/5 hover:text-slate-200"
           >
             <Settings2 className="w-3.5 h-3.5" />
           </button>
 
           {popoverOpen && (
-            <div id="usage-settings-popover" className="absolute end-0 top-7 w-64 p-3 bg-[var(--color-bg-popover)] border border-slate-700 rounded-xl shadow-2xl z-50 text-xs space-y-3">
-              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+            <div id="usage-settings-popover" className="surface-panel absolute end-0 top-12 z-50 w-72 space-y-3 rounded-2xl p-4 text-xs">
+              <div className="flex items-center justify-between border-b border-[var(--color-border-subtle)]/70 pb-3">
                 <span className="font-bold text-white">Configurar Cotas IA</span>
                 <button
                   onClick={() => setPopoverOpen(false)}
                   aria-label="Fechar configurações de quota"
-                  className="min-w-6 min-h-6 flex items-center justify-center text-slate-400 hover:text-white"
+                  className="flex min-h-8 min-w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-white/5 hover:text-white"
                 >
                   <ChevronDown className="w-3.5 h-3.5" />
                 </button>
@@ -231,7 +236,7 @@ export const UsageBar: React.FC<UsageBarProps> = ({
                   <span className="text-slate-300">Resetar Conta 1:</span>
                   <button
                     onClick={() => onReset('account1')}
-                    className="flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px]"
+                    className="flex items-center gap-1 rounded-lg bg-slate-800/80 px-2.5 py-1.5 text-[11px] text-slate-200 hover:bg-slate-700"
                   >
                     <RotateCcw className="w-2.5 h-2.5" /> Zerar
                   </button>
@@ -241,7 +246,7 @@ export const UsageBar: React.FC<UsageBarProps> = ({
                   <span className="text-slate-300">Resetar Conta 2:</span>
                   <button
                     onClick={() => onReset('account2')}
-                    className="flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px]"
+                    className="flex items-center gap-1 rounded-lg bg-slate-800/80 px-2.5 py-1.5 text-[11px] text-slate-200 hover:bg-slate-700"
                   >
                     <RotateCcw className="w-2.5 h-2.5" /> Zerar
                   </button>
@@ -249,7 +254,7 @@ export const UsageBar: React.FC<UsageBarProps> = ({
               </div>
 
               {/* Ajuste de Limite Máximo */}
-              <div className="border-t border-slate-800 pt-2 space-y-1.5">
+              <div className="space-y-1.5 border-t border-[var(--color-border-subtle)]/70 pt-3">
                 <span className="text-slate-400 text-[11px] block">
                   Limite por Janela (mensagens / 3h):
                 </span>
@@ -265,7 +270,7 @@ export const UsageBar: React.FC<UsageBarProps> = ({
                     onChange={(e) =>
                       onUpdateLimit('account1', parseInt(e.target.value) || 40)
                     }
-                    className="w-16 bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-xs text-white"
+                    className="w-16 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-base text-white sm:text-xs"
                   />
                   <label htmlFor="usage-limit-account-2" className="text-[11px] text-slate-400">C2:</label>
                   <input
@@ -278,13 +283,14 @@ export const UsageBar: React.FC<UsageBarProps> = ({
                     onChange={(e) =>
                       onUpdateLimit('account2', parseInt(e.target.value) || 40)
                     }
-                    className="w-16 bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-xs text-white"
+                    className="w-16 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-base text-white sm:text-xs"
                   />
                 </div>
               </div>
             </div>
           )}
         </div>
+      </div>
       </div>
     </div>
   )
