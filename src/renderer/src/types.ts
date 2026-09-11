@@ -34,6 +34,12 @@ export interface Project {
   git: GitStatus
 }
 
+export interface OtherDir {
+  name: string
+  path: string
+  parentDir: string
+}
+
 export interface AppConfig {
   projectDirs: string[]
   activeChatGptAccount: 'account1' | 'account2'
@@ -56,6 +62,12 @@ export interface SyncResult {
   output?: string
 }
 
+export interface SyncProgress {
+  path: string
+  done: number
+  total: number
+}
+
 export interface GitCloneResult extends SyncResult {
   path?: string
 }
@@ -64,6 +76,12 @@ export interface GitCloneInput {
   parentDir: string
   folderName: string
   remoteUrl: string
+}
+
+export interface ToolPathCheck {
+  path: string
+  ok: boolean
+  message: string
 }
 
 export type UpdateStatus = 'unavailable' | 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error'
@@ -118,11 +136,15 @@ export interface CodexAccountStatus {
     connected: boolean
     label: string
     path: string
+    browserOk: boolean
+    browserPath: string
   }
   account2: {
     connected: boolean
     label: string
     path: string
+    browserOk: boolean
+    browserPath: string
   }
 }
 
@@ -192,12 +214,16 @@ export interface UsageTrackerState {
 export interface DevOrbitAPI {
   getProjects: () => Promise<Project[]>
   refreshProjects: () => Promise<Project[]>
+  getOtherDirs: () => Promise<OtherDir[]>
   syncGit: (projectPath: string) => Promise<SyncResult>
   getGitBranches: (projectPath: string, refreshRemote?: boolean) => Promise<GitBranch[]>
   switchGitBranch: (projectPath: string, branch: string) => Promise<SyncResult>
+  stashSyncGit: (projectPath: string) => Promise<SyncResult>
+  stashSwitchGitBranch: (projectPath: string, branch: string) => Promise<SyncResult>
   pushGit: (projectPath: string, commitMessage?: string) => Promise<SyncResult>
   getGitChanges: (projectPath: string) => Promise<string[]>
   syncAllGit: () => Promise<{ [projectPath: string]: SyncResult }>
+  onSyncProgress: (callback: (progress: SyncProgress) => void) => () => void
   getGitInitPreview: (projectPath: string, branch?: string) => Promise<GitInitPreview>
   initGitRepository: (projectPath: string, options?: GitInitOptions) => Promise<GitInitResult>
   cloneGitRepository: (input: GitCloneInput) => Promise<GitCloneResult>
@@ -222,7 +248,10 @@ export interface DevOrbitAPI {
   installUpdate: () => Promise<{ success: boolean }>
   onUpdateStatus: (callback: (state: UpdateState) => void) => () => void
   saveConfig: (config: Partial<AppConfig>) => Promise<AppConfig>
+  exportConfig: () => Promise<SyncResult>
+  importConfig: () => Promise<SyncResult>
   selectDirectory: () => Promise<string | null>
+  testToolPath: (toolPath: string) => Promise<ToolPathCheck>
   windowControl: (action: 'minimize' | 'maximize' | 'close') => void
   getCodexAuthStatus: () => Promise<CodexAccountStatus>
   startCodexLogin: (account: 'account1' | 'account2') => Promise<{ success: boolean }>

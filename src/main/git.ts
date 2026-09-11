@@ -502,6 +502,137 @@ export async function cloneGitRepository(options: CloneGitOptions): Promise<GitC
   }
 }
 
+const STASH_MESSAGE = 'devorbit: guarda automática antes de sincronizar'
+
+async function runSerialized(key: string, task: () => Promise<SyncResult>): Promise<SyncResult> {
+  const previous = mutationLocks.get(key)
+  const current = (previous ?? Promise.resolve({ success: true, message: '' }))
+    .catch(() => undefined)
+    .then(task)
+  mutationLocks.set(key, current)
+  try {
+    return await current
+  } finally {
+    if (mutationLocks.get(key) === current) mutationLocks.delete(key)
+  }
+}
+
+async function stashPush(repoPath: string): Promise<void> {
+  await execFileAsync('git', ['stash', 'push', '-m', STASH_MESSAGE], {
+    cwd: repoPath,
+    timeout: 15000,
+    windowsHide: true,
+  })
+}
+
+async function stashPop(repoPath: string): Promise<void> {
+  await execFileAsync('git', ['stash', 'pop'], {
+    cwd: repoPath,
+    timeout: 15000,
+    windowsHide: true,
+  })
+}
+
+async function stashSyncUnlocked(repoPath: string): Promise<SyncResult> {
+  if (!await isGitRepository(repoPath)) {
+    return { success: false, message: 'Esta pasta não é um repositório Git.' }
+  }
+  const { stdout: statusOutput } = await execFileAsync('git', ['status', '--porcelain=v1'], {
+    cwd: repoPath,
+    timeout: 8000,
+    windowsHide: true,
+  })
+  if (!statusOutput.trim()) return syncGitUnlocked(repoPath)
+
+  try {
+    await stashPush(repoPath)
+  } catch (error: unknown) {
+    const text = String((error as { stderr?: unknown; message?: unknown })?.stderr || (error as { message?: unknown })?.message || '')
+    return { success: false, message: `Não foi possível guardar as alterações em stash: ${text.slice(0, 200) || 'falha no git stash'}`, output: text.slice(0, 4000) }
+  }
+
+  const syncResult = await syncGitUnlocked(repoPath)
+
+  try {
+    await stashPop(repoPath)
+  } catch (error: unknown) {
+    const text = String((error as { stderr?: unknown; stdout?: unknown })?.stderr || (error as { stdout?: unknown })?.stdout || '')
+    return {
+      success: false,
+      message: syncResult.success
+        ? 'Pull concluído, mas o retorno do stash conflitou. Seu trabalho está guardado no stash "devorbit": resolva com git stash pop no terminal.'
+        : `${syncResult.message} Suas alterações continuam guardadas no stash "devorbit".`,
+      output: [syncResult.output, text].filter(Boolean).join('\n').slice(0, 4000),
+    }
+  }
+
+  return syncResult.success
+    ? { ...syncResult, message: `${syncResult.message} Alterações locais restauradas do stash.` }
+    : syncResult
+}
+
+async function stashSwitchUnlocked(repoPath: string, requestedBranch: string): Promise<SyncResult> {
+  if (!await isGitRepository(repoPath)) {
+    return { success: false, message: 'Esta pasta não é um repositório Git.' }
+  }
+  const { stdout: statusOutput } = await execFileAsync('git', ['status', '--porcelain=v1'], {
+    cwd: repoPath,
+    timeout: 8000,
+    windowsHide: true,
+  })
+  if (!statusOutput.trim()) return switchGitBranchUnlocked(repoPath, requestedBranch)
+
+  try {
+    await stashPush(repoPath)
+  } catch (error: unknown) {
+    const text = String((error as { stderr?: unknown; message?: unknown })?.stderr || (error as { message?: unknown })?.message || '')
+    return { success: false, message: `Não foi possível guardar as alterações em stash: ${text.slice(0, 200) || 'falha no git stash'}`, output: text.slice(0, 4000) }
+  }
+
+  const switchResult = await switchGitBranchUnlocked(repoPath, requestedBranch)
+  if (!switchResult.success) {
+    try {
+      await stashPop(repoPath)
+      return { ...switchResult, message: `${switchResult.message} Suas alterações foram restauradas do stash.` }
+    } catch {
+      return { ...switchResult, message: `${switchResult.message} Suas alterações continuam guardadas no stash "devorbit".` }
+    }
+  }
+
+  try {
+    await stashPop(repoPath)
+  } catch {
+    return {
+      success: false,
+      message: `Branch trocada para ${requestedBranch}, mas o retorno do stash conflitou. Seu trabalho está guardado no stash "devorbit": resolva com git stash pop no terminal.`,
+      output: switchResult.output,
+    }
+  }
+
+  return { ...switchResult, message: `${switchResult.message} Alterações locais restauradas do stash.` }
+}
+
+export async function stashSyncGit(repoPath: string): Promise<SyncResult> {
+  let key: string
+  try {
+    key = getSyncLockKey(repoPath)
+  } catch {
+    return { success: false, message: 'Caminho de repositório inválido.' }
+  }
+  return runSerialized(key, () => stashSyncUnlocked(repoPath))
+}
+
+export async function stashSwitchGitBranch(repoPath: string, requestedBranch: string): Promise<SyncResult> {
+  const safeBranch = validateGitBranch(requestedBranch)
+  let key: string
+  try {
+    key = getSyncLockKey(repoPath)
+  } catch {
+    return { success: false, message: 'Caminho de repositório inválido.' }
+  }
+  return runSerialized(key, () => stashSwitchUnlocked(repoPath, safeBranch))
+}
+
 export async function getGitChangesSummary(repoPath: string): Promise<string[]> {
   try {
     const { stdout } = await execFileAsync('git', ['status', '--short'], {

@@ -168,13 +168,22 @@ const authStatus = {
     connected: true,
     label: 'Codex Primary Desktop Fixture',
     path: 'C:\\Fixture\\Codex\\account1',
+    browserOk: true,
+    browserPath: 'C:\\Fixture\\Chrome\\chrome.exe',
   },
   account2: {
     connected: false,
     label: 'Codex Secondary Desktop Fixture',
     path: 'C:\\Fixture\\Codex\\account2',
+    browserOk: false,
+    browserPath: 'C:\\Fixture\\Brave\\missing.exe',
   },
 }
+
+const otherDirs = [
+  { name: 'stray-notes', path: 'C:\\DevOrbit Fixture Workspace\\teams\\stray-notes', parentDir: 'teams' },
+  { name: 'empty-draft', path: 'C:\\DevOrbit Fixture Workspace\\teams\\empty-draft', parentDir: 'teams' },
+]
 
 const syncResult = (message = 'Fixture operation completed') => ({
   success: true,
@@ -195,6 +204,23 @@ const api = {
     record('syncGit', projectPath)
     return syncResult('Fixture sync')
   },
+  stashSyncGit: async (projectPath) => {
+    record('stashSyncGit', projectPath)
+    return syncResult('Fixture stash sync')
+  },
+  stashSwitchGitBranch: async (projectPath, branch) => {
+    record('stashSwitchGitBranch', projectPath, branch)
+    return syncResult('Fixture stash switch')
+  },
+  cloneGitRepository: async (input) => {
+    record('cloneGitRepository', input)
+    return { ...syncResult('Fixture clone'), path: `C:\\DevOrbit Fixture Workspace\\teams\\${input?.folderName || 'cloned'}` }
+  },
+  getOtherDirs: async () => {
+    record('getOtherDirs')
+    return copy(otherDirs)
+  },
+  onSyncProgress: () => () => {},
   getGitBranches: async (projectPath) => {
     record('getGitBranches', projectPath)
     return [
@@ -259,11 +285,11 @@ const api = {
   },
   getUpdateState: async () => {
     record('getUpdateState')
-    return { supported: false, status: 'unavailable' }
+    return { supported: false, status: 'unavailable', distribution: 'dev' }
   },
   downloadUpdate: async () => {
     record('downloadUpdate')
-    return { supported: false, status: 'unavailable' }
+    return { supported: false, status: 'unavailable', distribution: 'dev' }
   },
   installUpdate: async () => {
     record('installUpdate')
@@ -278,6 +304,18 @@ const api = {
   selectDirectory: async () => {
     record('selectDirectory')
     return null
+  },
+  testToolPath: async (toolPath) => {
+    record('testToolPath', toolPath)
+    return { path: toolPath, ok: true, message: 'Fixture tool found' }
+  },
+  exportConfig: async () => {
+    record('exportConfig')
+    return { success: true, message: 'Fixture export' }
+  },
+  importConfig: async () => {
+    record('importConfig')
+    return { success: true, message: 'Fixture import' }
   },
   windowControl: (action) => {
     record('windowControl', action)

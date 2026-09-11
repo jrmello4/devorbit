@@ -182,6 +182,70 @@ export async function scanDirectoryForProjects(rootDir: string, refreshRemote = 
   }
 }
 
+export interface OtherDir {
+  name: string
+  path: string
+  parentDir: string
+}
+
+export async function listNonProjectDirs(rootDir: string): Promise<OtherDir[]> {
+  try {
+    const realRoot = await fs.realpath(rootDir)
+    const entries = await fs.readdir(realRoot, { withFileTypes: true })
+    const candidateEntries = entries.filter(
+      (entry) =>
+        (entry.isDirectory() || entry.isSymbolicLink()) &&
+        !entry.name.startsWith('.') &&
+        !IGNORED_DIRS.has(entry.name)
+    )
+
+    const inspected = await mapWithConcurrency(
+      candidateEntries,
+      SCAN_CONCURRENCY,
+      async (entry): Promise<OtherDir | null> => {
+        try {
+          const projectPath = path.join(realRoot, entry.name)
+          const realProjectPath = await fs.realpath(projectPath)
+          const relative = path.relative(realRoot, realProjectPath)
+          if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return null
+          const stats = await fs.stat(realProjectPath)
+          if (!stats.isDirectory()) return null
+          if (await isGitRepository(realProjectPath)) return null
+          if ((await detectTechs(realProjectPath)).length > 0) return null
+          if (rootDir.toLowerCase().endsWith('projects')) return null
+          return { name: entry.name, path: realProjectPath, parentDir: path.basename(rootDir) }
+        } catch {
+          return null
+        }
+      }
+    )
+
+    return inspected.filter((dir): dir is OtherDir => dir !== null)
+  } catch (error) {
+    console.error(`Erro ao ler diretório ${rootDir}:`, error)
+    return []
+  }
+}
+
+export async function listAllNonProjectDirs(rootDirs: string[]): Promise<OtherDir[]> {
+  const allDirs: OtherDir[] = []
+  const seenPaths = new Set<string>()
+
+  for (const rootDir of rootDirs) {
+    const found = await listNonProjectDirs(rootDir)
+    for (const dir of found) {
+      const normalized = dir.path.toLowerCase()
+      if (!seenPaths.has(normalized)) {
+        seenPaths.add(normalized)
+        allDirs.push(dir)
+      }
+    }
+  }
+
+  allDirs.sort((a, b) => a.name.localeCompare(b.name))
+  return allDirs
+}
+
 export async function scanAllProjects(rootDirs: string[], refreshRemote = false): Promise<Project[]> {
   const allProjects: Project[] = []
   const seenPaths = new Set<string>()

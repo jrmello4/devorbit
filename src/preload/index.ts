@@ -5,16 +5,26 @@ import type { DevOrbitAPI, AppConfig, SyncResult } from '../renderer/src/types'
 const api: DevOrbitAPI = {
   getProjects: () => ipcRenderer.invoke('devorbit:getProjects'),
   refreshProjects: () => ipcRenderer.invoke('devorbit:refreshProjects'),
+  getOtherDirs: () => ipcRenderer.invoke('devorbit:getOtherDirs'),
   syncGit: (projectPath: string) => ipcRenderer.invoke('devorbit:syncGit', projectPath),
   getGitBranches: (projectPath: string, refreshRemote?: boolean) =>
     ipcRenderer.invoke('devorbit:getGitBranches', projectPath, refreshRemote),
   switchGitBranch: (projectPath: string, branch: string) =>
     ipcRenderer.invoke('devorbit:switchGitBranch', projectPath, branch),
+  stashSyncGit: (projectPath: string) =>
+    ipcRenderer.invoke('devorbit:stashSyncGit', projectPath),
+  stashSwitchGitBranch: (projectPath: string, branch: string) =>
+    ipcRenderer.invoke('devorbit:stashSwitchGitBranch', projectPath, branch),
   pushGit: (projectPath: string, commitMessage?: string) =>
     ipcRenderer.invoke('devorbit:pushGit', projectPath, commitMessage),
   getGitChanges: (projectPath: string) =>
     ipcRenderer.invoke('devorbit:getGitChanges', projectPath),
   syncAllGit: () => ipcRenderer.invoke('devorbit:syncAllGit'),
+  onSyncProgress: (callback) => {
+    const handler = (_event: any, progress: any) => callback(progress)
+    ipcRenderer.on('devorbit:syncProgress', handler)
+    return () => ipcRenderer.removeListener('devorbit:syncProgress', handler)
+  },
   getGitInitPreview: (projectPath: string, branch?: string) =>
     ipcRenderer.invoke('devorbit:getGitInitPreview', projectPath, branch),
   initGitRepository: (projectPath, options) =>
@@ -35,7 +45,10 @@ const api: DevOrbitAPI = {
     return () => ipcRenderer.removeListener('devorbit:updateStatus', handler)
   },
   saveConfig: (config: Partial<AppConfig>) => ipcRenderer.invoke('devorbit:saveConfig', config),
+  exportConfig: () => ipcRenderer.invoke('devorbit:exportConfig'),
+  importConfig: () => ipcRenderer.invoke('devorbit:importConfig'),
   selectDirectory: () => ipcRenderer.invoke('devorbit:selectDirectory'),
+  testToolPath: (toolPath: string) => ipcRenderer.invoke('devorbit:testToolPath', toolPath),
   windowControl: (action: 'minimize' | 'maximize' | 'close') =>
     ipcRenderer.send('devorbit:windowControl', action),
   getCodexAuthStatus: () => ipcRenderer.invoke('devorbit:getCodexAuthStatus'),

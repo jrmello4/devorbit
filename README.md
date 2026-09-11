@@ -22,6 +22,7 @@ npm run typecheck
 npm run test
 npm run lint
 npm run build
+npm run verify:ui
 npm start
 ```
 

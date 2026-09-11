@@ -3,6 +3,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import {
+  testToolPath,
   validateCodexAccount,
   validateFiniteNumber,
   validateGitInitOptions,
@@ -102,6 +103,25 @@ describe('IPC input validation', () => {
 
     expect(result).toHaveLength(1)
     expect(await fs.realpath(projects)).toBe(result[0])
+  })
+
+  it('checks tool paths against the filesystem and PATH', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'devorbit-validation-'))
+    temporaryDirectories.push(root)
+    const exe = path.join(root, 'tool.exe')
+    await fs.writeFile(exe, 'fixture')
+
+    const found = await testToolPath(exe)
+    expect(found).toMatchObject({ path: exe, ok: true })
+
+    const missing = await testToolPath(path.join(root, 'missing.exe'))
+    expect(missing).toMatchObject({ path: path.join(root, 'missing.exe'), ok: false })
+
+    const unknownCommand = await testToolPath('definitely-not-a-real-command-xyz')
+    expect(unknownCommand.ok).toBe(false)
+
+    await expect(testToolPath('')).rejects.toThrow('inválido')
+    await expect(testToolPath('a\0b')).rejects.toThrow('inválido')
   })
 
   it('rejects missing, file, and overlong project directory entries', async () => {

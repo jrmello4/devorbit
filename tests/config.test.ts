@@ -13,7 +13,7 @@ vi.mock('electron', () => ({
   },
 }))
 
-import { loadConfig, saveConfig } from '../src/main/config'
+import { exportConfigJson, importConfigJson, loadConfig, saveConfig } from '../src/main/config'
 
 let temporaryUserData = ''
 
@@ -58,5 +58,30 @@ describe('config persistence hardening', () => {
 
     expect(saved.projectDirs).toEqual([])
     expect((await loadConfig()).projectDirs).toEqual([])
+  })
+
+  it('exports valid JSON that can be reimported', async () => {
+    await saveConfig({ projectDirs: [], chatGptAccount1Name: 'Minha Conta' })
+    const exported = await exportConfigJson()
+    const parsed = JSON.parse(exported)
+    expect(parsed.chatGptAccount1Name).toBe('Minha Conta')
+
+    await saveConfig({ chatGptAccount1Name: 'Outra' })
+    const imported = await importConfigJson(exported)
+    expect(imported.chatGptAccount1Name).toBe('Minha Conta')
+    expect(imported.projectDirs).toEqual([])
+  })
+
+  it('backs up the previous file before importing', async () => {
+    await saveConfig({ chatGptAccount1Name: 'Antiga' })
+    await importConfigJson(JSON.stringify({ chatGptAccount1Name: 'Nova', projectDirs: [] }))
+    const backup = JSON.parse(await fs.readFile(path.join(temporaryUserData, 'config.json.bak'), 'utf-8'))
+    expect(backup.chatGptAccount1Name).toBe('Antiga')
+  })
+
+  it('rejects malformed import payloads', async () => {
+    await expect(importConfigJson('{invalid')).rejects.toThrow('inválido')
+    await expect(importConfigJson('')).rejects.toThrow('inválido')
+    await expect(importConfigJson(JSON.stringify({ projectDirs: ['/missing-dir-xyz'] }))).rejects.toThrow()
   })
 })

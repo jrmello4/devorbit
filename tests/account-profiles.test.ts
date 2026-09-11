@@ -3,12 +3,14 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import {
+  getAuthFilePaths,
   getBrowserLaunchArgs,
   getBrowserProfileDirectory,
   getCodexHome,
   hasValidCodexAuth,
   isAuthOrReopenUrl,
   isValidCodexAuthDocument,
+  resolveBrowserPath,
   shouldTrackBrowserUsage,
 } from '../src/main/account-profiles'
 
@@ -51,6 +53,26 @@ describe('isolated account profiles', () => {
     expect(await hasValidCodexAuth(root)).toBe(true)
     await fs.writeFile(path.join(root, 'auth.json'), '{malformed')
     expect(await hasValidCodexAuth(root)).toBe(false)
+  })
+
+  it('shares one auth-path list between usage and auth checks', () => {
+    const root = path.join(os.tmpdir(), 'devorbit-account-paths')
+    expect(getAuthFilePaths('account1', root)).toEqual([
+      path.join(root, '.codex-conta1', 'auth.json'),
+      path.join(root, '.codex', 'auth.json'),
+    ])
+    expect(getAuthFilePaths('account2', root)).toEqual([
+      path.join(root, '.codex-conta2', 'auth.json'),
+    ])
+  })
+
+  it('prefers an existing custom browser executable', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'devorbit-browser-'))
+    temporaryDirectories.push(root)
+    const fake = path.join(root, 'brave.exe')
+    await fs.writeFile(fake, 'x')
+    expect(await resolveBrowserPath('account2', fake)).toBe(fake)
+    expect(await resolveBrowserPath('account1', path.join(root, 'missing.exe'))).not.toBe(path.join(root, 'missing.exe'))
   })
 
   it('does not count OAuth/auth reopen URLs as ChatGPT usage', () => {

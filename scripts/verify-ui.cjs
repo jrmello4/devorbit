@@ -105,7 +105,8 @@ async function inspectShell(window, viewport) {
       const box = node.getBoundingClientRect()
       return { left: box.left, top: box.top, right: box.right, bottom: box.bottom, width: box.width, height: box.height }
     }
-    const rows = Array.from(document.querySelectorAll('.project-row'))
+    const rows = Array.from(document.querySelectorAll('.project-list .project-row'))
+    const strayRows = Array.from(document.querySelectorAll('.other-dirs .project-row'))
     return {
       viewport: { width: window.innerWidth, height: window.innerHeight },
       document: { scrollWidth: document.documentElement.scrollWidth, scrollHeight: document.documentElement.scrollHeight },
@@ -120,6 +121,8 @@ async function inspectShell(window, viewport) {
       modifiedRows: rows.filter((row) => row.querySelector('[title="Alterações locais"]')).length,
       longNameRows: rows.filter((row) => row.innerText.includes('Extremely Long Project Name')).length,
       selectedRows: rows.filter((row) => row.matches('.selected,[aria-pressed="true"]')).length,
+      strayRows: strayRows.length,
+      strayActions: strayRows.filter((row) => row.querySelector('[aria-label^="Adicionar Git"]') && row.querySelector('[aria-label^="Abrir pasta"]')).length,
     }
   })()`)
 
@@ -134,12 +137,13 @@ async function inspectShell(window, viewport) {
   assert(result.noGitRows > 0 && result.pullRows > 0 && result.modifiedRows > 0, `${viewport.label}: fixtures Git incompletas (${JSON.stringify({ noGit: result.noGitRows, pull: result.pullRows, modified: result.modifiedRows })})`)
   assert(result.longNameRows > 0, `${viewport.label}: fixture de nome longo não apareceu`)
   assert(result.selectedRows === 1, `${viewport.label}: seleção inicial inválida (${result.selectedRows})`)
-  recordPass(viewport.label, `shell bounded at ${result.viewport.width}×${result.viewport.height}; ${result.rows} project rows; Git fixtures visible`)
+  assert(result.strayRows >= 2 && result.strayActions === result.strayRows, `${viewport.label}: seção Outras pastas incompleta (${JSON.stringify({ stray: result.strayRows, actions: result.strayActions })})`)
+  recordPass(viewport.label, `shell bounded at ${result.viewport.width}×${result.viewport.height}; ${result.rows} project rows; ${result.strayRows} stray dirs; Git fixtures visible`)
 }
 
 async function inspectProjectInteractions(window, viewport) {
   const selection = await evaluate(window, `(() => {
-    const rows = Array.from(document.querySelectorAll('.project-row'))
+    const rows = Array.from(document.querySelectorAll('.project-list .project-row'))
     const target = rows[1]
     if (!target) return null
     const expected = target.innerText.split('\\n')[0]
@@ -154,18 +158,18 @@ async function inspectProjectInteractions(window, viewport) {
   recordPass(viewport.label, 'project selection updates row and detail state')
 
   await setInputValue(window, '#project-search', 'Fixture 02 · Pull pending develop')
-  await waitFor(window, `document.querySelectorAll('.project-row').length === 1`, `${viewport.label} busca`)
-  const searchResult = await evaluate(window, `document.querySelector('.project-row')?.innerText || ''`)
+  await waitFor(window, `document.querySelectorAll('.project-list .project-row').length === 1`, `${viewport.label} busca`)
+  const searchResult = await evaluate(window, `document.querySelector('.project-list .project-row')?.innerText || ''`)
   assert(searchResult.includes('Fixture 02 · Pull pending develop'), `${viewport.label}: busca retornou projeto inesperado (${searchResult})`)
   recordPass(viewport.label, 'project search narrows to the matching fixture')
 
   await setInputValue(window, '#project-search', '')
-  await waitFor(window, `document.querySelectorAll('.project-row').length >= 30`, `${viewport.label} limpeza da busca`)
+  await waitFor(window, `document.querySelectorAll('.project-list .project-row').length >= 30`, `${viewport.label} limpeza da busca`)
   await setSelectValue(window, '.project-filters select', 'modified')
-  await waitFor(window, `document.querySelectorAll('.project-row').length > 0 && Array.from(document.querySelectorAll('.project-row')).every((row) => row.querySelector('[title="Alterações locais"]'))`, `${viewport.label} filtro Git`)
+  await waitFor(window, `document.querySelectorAll('.project-list .project-row').length > 0 && Array.from(document.querySelectorAll('.project-list .project-row')).every((row) => row.querySelector('[title="Alterações locais"]'))`, `${viewport.label} filtro Git`)
   recordPass(viewport.label, 'Git status filter shows only local-change fixtures')
   await setSelectValue(window, '.project-filters select', 'all')
-  await waitFor(window, `document.querySelectorAll('.project-row').length >= 30`, `${viewport.label} reset do filtro`)
+  await waitFor(window, `document.querySelectorAll('.project-list .project-row').length >= 30`, `${viewport.label} reset do filtro`)
   await screenshot(window, `desktop-${viewport.label}-projects`)
 }
 

@@ -5,18 +5,21 @@ const { clipboard } = electron
 const execFileAsync = promisify(execFile)
 import { loadConfig } from './config'
 import {
+  checkBrowserAvailability,
   ensureAccountDirectories,
+  getAccountBrowser,
   getAccountLabel,
   getBrowserLaunchArgs,
   getBrowserProfileDirectory,
   getCodexHome,
   hasValidCodexAuth,
+  resolveBrowserPath,
   type AccountId,
 } from './account-profiles'
 
 export interface CodexAccountStatus {
-  account1: { connected: boolean; label: string; path: string }
-  account2: { connected: boolean; label: string; path: string }
+  account1: { connected: boolean; label: string; path: string; browserOk: boolean; browserPath: string }
+  account2: { connected: boolean; label: string; path: string; browserOk: boolean; browserPath: string }
 }
 
 export interface CodexAuthProgress {
@@ -58,6 +61,7 @@ export function getCodexBrowserProfileForAccount(account: AccountId): string {
 export async function checkCodexAuthStatus(): Promise<CodexAccountStatus> {
   const config = await loadConfig()
   const accounts: AccountId[] = ['account1', 'account2']
+  const browsers = await checkBrowserAvailability(config.customPaths).catch(() => undefined)
   const statuses = await Promise.all(accounts.map(async (account) => {
     try {
       const { codexHome } = await ensureAccountDirectories(account)
@@ -69,18 +73,15 @@ export async function checkCodexAuthStatus(): Promise<CodexAccountStatus> {
   const connected = Object.fromEntries(statuses) as Record<AccountId, boolean>
   const labels = { account1: config.chatGptAccount1Name, account2: config.chatGptAccount2Name }
 
-  return {
-    account1: {
-      connected: connected.account1,
-      label: getAccountLabel('account1', labels),
-      path: getCodexDirForAccount('account1'),
-    },
-    account2: {
-      connected: connected.account2,
-      label: getAccountLabel('account2', labels),
-      path: getCodexDirForAccount('account2'),
-    },
-  }
+  const entry = (account: AccountId) => ({
+    connected: connected[account],
+    label: getAccountLabel(account, labels),
+    path: getCodexDirForAccount(account),
+    browserOk: browsers?.[account].found ?? true,
+    browserPath: browsers?.[account].path ?? '',
+  })
+
+  return { account1: entry('account1'), account2: entry('account2') }
 }
 
 function extractAuthorizationUrl(output: string): string | undefined {
@@ -165,6 +166,16 @@ export async function startCodexDeviceLogin(
 
   onProgress({ account, status: 'starting', message: 'Iniciando autenticação oficial da OpenAI...' })
 
+  const { name: browserName } = getAccountBrowser(account)
+  const resolvedBrowser = await resolveBrowserPath(
+    account,
+    account === 'account2' ? custom.brave : custom.chrome
+  )
+  if (!resolvedBrowser) {
+    onProgress({ account, status: 'error', message: `${browserName} não encontrado. Ajuste o caminho em Configurações ou instale o navegador.` })
+    return
+  }
+
   const child = spawn('cmd.exe', ['/c', codexCmd, 'login'], {
     env: { ...process.env, CODEX_HOME: codexHome },
     windowsHide: true,
@@ -212,9 +223,7 @@ export async function startCodexDeviceLogin(
 
     try { clipboard.writeText(url) } catch { /* clipboard is only a convenience */ }
 
-    const browserPath = account === 'account2'
-      ? custom.brave || 'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe'
-      : custom.chrome || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
+    const browserPath = resolvedBrowser
     void openAuthorizationBrowser(browserPath, browserProfile, url).then(
       () => {
         if (!isCurrentSession(session)) return

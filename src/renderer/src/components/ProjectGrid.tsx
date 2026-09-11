@@ -1,12 +1,14 @@
 import React, { useState, useMemo } from 'react'
-import { Folder, FolderX, GitBranch, GitPullRequest, SlidersHorizontal, ArrowDown, Circle, ArrowUpDown } from 'lucide-react'
+import { Folder, FolderX, FolderOpen, GitBranch, GitPullRequest, SlidersHorizontal, ArrowDown, Circle, ArrowUpDown } from 'lucide-react'
 import { ProjectCard } from './ProjectCard'
-import type { Project, AppConfig } from '../types'
+import type { Project, OtherDir, AppConfig } from '../types'
 interface ProjectGridProps {
   projects: Project[]
+  otherDirs: OtherDir[]
   config: AppConfig | null
   search: string
   onSync: (projectPath: string) => Promise<void>
+  onStashSync?: (projectPath: string) => Promise<void>
   onOpenPushModal: (project: Project) => void
   onOpenGitInit: (project: Project) => void
   onNotify: (message: string, type?: 'success' | 'error' | 'info') => void
@@ -19,7 +21,32 @@ interface ProjectGridProps {
   onOpenClone?: () => void
 }
 export const ProjectGrid: React.FC<ProjectGridProps> = (props) => {
-  const { projects, config, search, isLoading, onOpenSettings, onOpenClone } = props
+  const { projects, otherDirs, config, search, isLoading, onOpenSettings, onOpenClone, onOpenGitInit, onNotify } = props
+  const visibleOtherDirs = useMemo(() => {
+    const query = search.trim().toLocaleLowerCase()
+    return otherDirs.filter((dir) => !query || [dir.name, dir.path].some((v) => v.toLocaleLowerCase().includes(query)))
+  }, [otherDirs, search])
+
+  const handleOpenFolder = async (dir: OtherDir) => {
+    try {
+      const res = await window.devorbit?.launchTool('folder', dir.path)
+      if (!res?.success) onNotify(res?.message || 'Não foi possível abrir a pasta.', 'error')
+    } catch (err: unknown) {
+      onNotify(`Erro ao abrir pasta: ${err instanceof Error ? err.message : String(err)}`, 'error')
+    }
+  }
+
+  const handleAddGit = (dir: OtherDir) => {
+    onOpenGitInit({
+      id: `other:${dir.path}`,
+      name: dir.name,
+      path: dir.path,
+      parentDir: dir.parentDir,
+      lastModified: Date.now(),
+      techs: [],
+      git: { isRepo: false, branch: '', ahead: 0, behind: 0, hasChanges: false, modifiedCount: 0, untrackedCount: 0 },
+    })
+  }
   const [filter, setFilter] = useState('all')
   const [tech, setTech] = useState('')
   const [sort, setSort] = useState('name')
@@ -50,6 +77,20 @@ export const ProjectGrid: React.FC<ProjectGridProps> = (props) => {
           ))}
           {!isLoading && !filtered.length && <p className="list-message">{projects.length ? 'Nenhum resultado para estes filtros.' : 'Nenhuma pasta adicionada.'}</p>}
         </div>
+        {!isLoading && visibleOtherDirs.length > 0 && (
+          <div className="other-dirs" aria-label="Outras pastas">
+            <div className="master-heading"><h2>Outras pastas</h2><span className="count-badge">{visibleOtherDirs.length}</span></div>
+            <p className="list-message">Sem Git ou manifesto — abra a pasta ou adicione Git.</p>
+            {visibleOtherDirs.map((dir) => (
+              <div key={dir.path} className="project-row">
+                <span className="project-row-icon"><Folder size={17} /></span>
+                <span className="project-row-copy"><strong title={dir.name}>{dir.name}</strong><span title={dir.path}>{dir.parentDir}</span></span>
+                <button className="icon-button" title={`Adicionar Git em ${dir.name}`} aria-label={`Adicionar Git em ${dir.name}`} onClick={() => handleAddGit(dir)}><GitBranch size={14} /></button>
+                <button className="icon-button" title={`Abrir pasta ${dir.name}`} aria-label={`Abrir pasta ${dir.name}`} onClick={() => void handleOpenFolder(dir)}><FolderOpen size={14} /></button>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="master-footer" role="status">{filtered.length} de {projects.length} projetos<span>{sort === 'name' ? 'Nome A–Z' : 'Mais recentes'}</span></div>
       </section>
       <section className="project-detail" aria-label="Projeto selecionado">

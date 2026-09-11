@@ -4,6 +4,9 @@ import os from 'node:os'
 import electron from 'electron'
 const { app } = electron
 import type { AppConfig } from '../renderer/src/types'
+import { validateConfigUpdates } from './validation'
+
+const MAX_IMPORT_BYTES = 1_000_000
 
 const MAX_CONFIG_TEXT_LENGTH = 160
 const MAX_CUSTOM_PATH_LENGTH = 4096
@@ -150,4 +153,29 @@ export async function saveConfig(updates: Partial<AppConfig>): Promise<AppConfig
   const filePath = getConfigPath()
   await atomicallyWriteConfig(filePath, merged)
   return merged
+}
+
+export async function exportConfigJson(): Promise<string> {
+  return JSON.stringify(await loadConfig(), null, 2)
+}
+
+export async function importConfigJson(raw: unknown): Promise<AppConfig> {
+  if (typeof raw !== 'string' || !raw.trim() || raw.length > MAX_IMPORT_BYTES) {
+    throw new Error('Arquivo de configuração inválido.')
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    throw new Error('Arquivo de configuração inválido.')
+  }
+  const updates = await validateConfigUpdates(parsed)
+  const filePath = getConfigPath()
+  try {
+    const current = await fs.readFile(filePath, 'utf-8')
+    await fs.writeFile(`${filePath}.bak`, current, 'utf-8')
+  } catch {
+    // Sem backup quando ainda não há arquivo anterior.
+  }
+  return saveConfig(updates)
 }

@@ -1,6 +1,10 @@
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import type { AppConfig } from '../renderer/src/types'
+
+const execFileAsync = promisify(execFile)
 
 export const MAX_PROJECT_DIRS = 16
 export const MAX_PROJECT_DIR_LENGTH = 4096
@@ -176,6 +180,38 @@ export function validateCloneInput(value: unknown): { parentDir: string; folderN
     folderName: validateFolderName(value.folderName),
     remoteUrl: validateHttpsUrl(value.remoteUrl),
   }
+}
+
+export interface ToolPathCheck {
+  path: string
+  ok: boolean
+  message: string
+}
+
+export async function testToolPath(value: unknown): Promise<ToolPathCheck> {
+  if (typeof value !== 'string' || !value.trim() || value.length > MAX_PROJECT_DIR_LENGTH || value.includes('\0')) {
+    throw new Error('Caminho da ferramenta inválido.')
+  }
+  const trimmed = value.trim()
+  if (path.isAbsolute(trimmed)) {
+    try {
+      const stats = await fs.stat(trimmed)
+      if (stats.isFile()) return { path: trimmed, ok: true, message: 'Executável encontrado.' }
+    } catch {
+      // Tratado abaixo como não encontrado.
+    }
+    return { path: trimmed, ok: false, message: 'Arquivo não encontrado neste caminho.' }
+  }
+  if (process.platform === 'win32') {
+    try {
+      const { stdout } = await execFileAsync('where', [trimmed], { windowsHide: true, timeout: 5000 })
+      const first = String(stdout || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean)[0]
+      if (first) return { path: first, ok: true, message: `Encontrado no PATH: ${first}` }
+    } catch {
+      // Tratado abaixo como não encontrado.
+    }
+  }
+  return { path: trimmed, ok: false, message: 'Comando não encontrado no PATH.' }
 }
 
 export function validateGitBranch(value: unknown): string {

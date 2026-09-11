@@ -41,6 +41,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [account2Name, setAccount2Name] = useState('')
   const [customPaths, setCustomPaths] = useState<AppConfig['customPaths']>({})
   const [isSaving, setIsSaving] = useState(false)
+  const [testingTool, setTestingTool] = useState<string | null>(null)
   const [isDirty, setIsDirty] = useState(false)
   const initializedConfigRef = useRef<AppConfig | null>(null)
 
@@ -90,6 +91,54 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const updateCustomPath = (key: keyof AppConfig['customPaths'], value: string) => {
     setCustomPaths((current) => ({ ...current, [key]: value }))
     setIsDirty(true)
+  }
+
+  const handleTestTool = async (key: keyof AppConfig['customPaths']) => {
+    const value = customPaths[key]
+    if (!value?.trim() || testingTool) return
+    setTestingTool(key)
+    try {
+      const result = await window.devorbit?.testToolPath(value)
+      onNotify(result?.message || 'Teste concluído.', result?.ok ? 'success' : 'error')
+    } catch (err: any) {
+      onNotify(`Erro ao testar: ${err.message}`, 'error')
+    } finally {
+      setTestingTool(null)
+    }
+  }
+
+  const renderToolTestButton = (key: keyof AppConfig['customPaths']) => (
+    <button
+      type="button"
+      onClick={() => void handleTestTool(key)}
+      disabled={testingTool === key || !customPaths[key]?.trim()}
+      className="mt-1.5 shrink-0 rounded-[5px] border border-stone-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-stone-700 hover:border-[#9eb28f] hover:text-stone-900 disabled:opacity-50"
+    >
+      {testingTool === key ? 'Testando…' : 'Testar'}
+    </button>
+  )
+
+  const handleExport = async () => {
+    try {
+      const result = await window.devorbit?.exportConfig()
+      onNotify(result?.message || 'Exportação concluída.', result?.success ? 'success' : 'info')
+    } catch (err: any) {
+      onNotify(`Erro ao exportar: ${err.message}`, 'error')
+    }
+  }
+
+  const handleImport = async () => {
+    try {
+      const result = await window.devorbit?.importConfig()
+      if (result?.success) {
+        await onSaveConfig({})
+        onNotify(result.message || 'Configurações importadas!', 'success')
+      } else {
+        onNotify(result?.message || 'Importação cancelada.', 'info')
+      }
+    } catch (err: any) {
+      onNotify(`Erro ao importar: ${err.message}`, 'error')
+    }
   }
 
   const handleSave = async () => {
@@ -252,6 +301,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         ? 'Autenticada e pronta para uso'
                         : 'Não autenticada'}
                     </div>
+                    {authStatus && (
+                      <div className={`text-xs font-mono ${authStatus.account1.browserOk ? 'text-stone-500' : 'text-red-700'}`} title={authStatus.account1.browserPath}>
+                        {authStatus.account1.browserOk
+                          ? 'Chrome detectado'
+                          : 'Chrome não encontrado — ajuste o caminho abaixo'}
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -283,6 +339,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         ? 'Autenticada e pronta para uso'
                         : 'Não autenticada (Requer login inicial)'}
                     </div>
+                    {authStatus && (
+                      <div className={`text-xs font-mono ${authStatus.account2.browserOk ? 'text-stone-500' : 'text-red-700'}`} title={authStatus.account2.browserPath}>
+                        {authStatus.account2.browserOk
+                          ? 'Brave detectado'
+                          : 'Brave não encontrado — ajuste o caminho abaixo'}
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -317,14 +380,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <label htmlFor="tool-path-codex" className="flex items-center gap-2 text-stone-700 font-medium">
                   <Bot className="w-3.5 h-3.5 text-[#3e562f]" /> Codex CLI
                 </label>
-                <input id="tool-path-codex" value={customPaths.codex || ''} onChange={(event) => updateCustomPath('codex', event.target.value)} className="mt-1.5 w-full rounded-[5px] border border-stone-300 bg-white px-2.5 py-1.5 font-mono text-xs text-stone-800 focus:border-[#3e562f] focus:outline-none focus:ring-1 focus:ring-[#3e562f]/30" />
+                <div className="flex items-start gap-2">
+                  <input id="tool-path-codex" value={customPaths.codex || ''} onChange={(event) => updateCustomPath('codex', event.target.value)} className="mt-1.5 w-full rounded-[5px] border border-stone-300 bg-white px-2.5 py-1.5 font-mono text-xs text-stone-800 focus:border-[#3e562f] focus:outline-none focus:ring-1 focus:ring-[#3e562f]/30" />
+                  {renderToolTestButton('codex')}
+                </div>
               </div>
 
               <div className="rounded-lg bg-stone-50 border border-stone-200 p-3">
                 <label htmlFor="tool-path-agy" className="flex items-center gap-2 text-stone-700 font-medium">
                   <Sparkles className="w-3.5 h-3.5 text-[#3e562f]" /> Antigravity CLI
                 </label>
-                <input id="tool-path-agy" value={customPaths.agy || ''} onChange={(event) => updateCustomPath('agy', event.target.value)} className="mt-1.5 w-full rounded-[5px] border border-stone-300 bg-white px-2.5 py-1.5 font-mono text-xs text-stone-800 focus:border-[#3e562f] focus:outline-none focus:ring-1 focus:ring-[#3e562f]/30" />
+                <div className="flex items-start gap-2">
+                  <input id="tool-path-agy" value={customPaths.agy || ''} onChange={(event) => updateCustomPath('agy', event.target.value)} className="mt-1.5 w-full rounded-[5px] border border-stone-300 bg-white px-2.5 py-1.5 font-mono text-xs text-stone-800 focus:border-[#3e562f] focus:outline-none focus:ring-1 focus:ring-[#3e562f]/30" />
+                  {renderToolTestButton('agy')}
+                </div>
               </div>
 
               <div className="flex items-center justify-between p-2 rounded-lg bg-stone-50 border border-stone-200">
@@ -352,7 +421,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <label htmlFor="tool-path-wt" className="flex items-center gap-2 text-stone-700 font-medium">
                   <Terminal className="w-3.5 h-3.5 text-[#3e562f]" /> Windows Terminal
                 </label>
-                <input id="tool-path-wt" value={customPaths.wt || ''} onChange={(event) => updateCustomPath('wt', event.target.value)} className="mt-1.5 w-full rounded-[5px] border border-stone-300 bg-white px-2.5 py-1.5 font-mono text-xs text-stone-800 focus:border-[#3e562f] focus:outline-none focus:ring-1 focus:ring-[#3e562f]/30" />
+                <div className="flex items-start gap-2">
+                  <input id="tool-path-wt" value={customPaths.wt || ''} onChange={(event) => updateCustomPath('wt', event.target.value)} className="mt-1.5 w-full rounded-[5px] border border-stone-300 bg-white px-2.5 py-1.5 font-mono text-xs text-stone-800 focus:border-[#3e562f] focus:outline-none focus:ring-1 focus:ring-[#3e562f]/30" />
+                  {renderToolTestButton('wt')}
+                </div>
               </div>
             </div>
           </div>
@@ -360,6 +432,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
         {/* Modal Footer */}
         <div className="flex items-center justify-end gap-2 px-6 py-3 border-t border-stone-200 bg-stone-50">
+          <span className="me-auto flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleExport}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold text-stone-600 hover:text-stone-900 hover:bg-stone-100 transition-colors"
+            >
+              Exportar
+            </button>
+            <button
+              type="button"
+              onClick={handleImport}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold text-stone-600 hover:text-stone-900 hover:bg-stone-100 transition-colors"
+            >
+              Importar
+            </button>
+          </span>
           <button
             onClick={handleClose}
             className="px-4 py-1.5 rounded-lg text-xs font-semibold text-stone-600 hover:text-stone-900 hover:bg-stone-100 transition-colors"

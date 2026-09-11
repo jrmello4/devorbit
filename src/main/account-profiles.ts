@@ -1,9 +1,12 @@
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import electron from 'electron'
 
 const { app } = electron
+const execFileAsync = promisify(execFile)
 
 export type AccountId = 'account1' | 'account2'
 
@@ -31,6 +34,87 @@ export function getBrowserProfileDirectory(
 
 export function getAccountLabel(account: AccountId, labels?: Partial<Record<AccountId, string>>): string {
   return labels?.[account] || (account === 'account2' ? 'Conta 2 (Brave)' : 'Conta 1 (Chrome)')
+}
+
+export function getAccountBrowser(account: AccountId): { name: string; executable: string } {
+  return account === 'account2'
+    ? { name: 'Brave', executable: 'brave.exe' }
+    : { name: 'Chrome', executable: 'chrome.exe' }
+}
+
+function defaultBrowserPaths(executable: string, vendorDir: string): string[] {
+  const roots = [process.env.ProgramFiles, process.env['ProgramFiles(x86)'], 'C:\\Program Files']
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const root of roots) {
+    if (!root) continue
+    const candidate = path.join(root, vendorDir, executable)
+    const key = candidate.toLowerCase()
+    if (!seen.has(key)) {
+      seen.add(key)
+      result.push(candidate)
+    }
+  }
+  return result
+}
+
+export function getDefaultBrowserPaths(account: AccountId): string[] {
+  return account === 'account2'
+    ? defaultBrowserPaths('brave.exe', path.join('BraveSoftware', 'Brave-Browser', 'Application'))
+    : defaultBrowserPaths('chrome.exe', path.join('Google', 'Chrome', 'Application'))
+}
+
+async function fileExists(file: string): Promise<boolean> {
+  try {
+    const stats = await fs.stat(file)
+    return stats.isFile()
+  } catch {
+    return false
+  }
+}
+
+async function findOnPath(executable: string): Promise<string | null> {
+  if (process.platform !== 'win32') return null
+  try {
+    const { stdout } = await execFileAsync('where', [executable], { windowsHide: true, timeout: 5000 })
+    const first = String(stdout || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean)[0]
+    return first && await fileExists(first) ? first : null
+  } catch {
+    return null
+  }
+}
+
+export async function resolveBrowserPath(account: AccountId, customPath?: string): Promise<string | null> {
+  const trimmed = customPath?.trim()
+  if (trimmed && await fileExists(trimmed)) return trimmed
+  for (const candidate of getDefaultBrowserPaths(account)) {
+    if (await fileExists(candidate)) return candidate
+  }
+  return findOnPath(getAccountBrowser(account).executable)
+}
+
+export interface BrowserAvailability {
+  browser: string
+  path: string
+  found: boolean
+}
+
+export async function checkBrowserAvailability(customPaths?: { chrome?: string; brave?: string }): Promise<Record<AccountId, BrowserAvailability>> {
+  const entries: AccountId[] = ['account1', 'account2']
+  const result = {} as Record<AccountId, BrowserAvailability>
+  await Promise.all(entries.map(async (account) => {
+    const { name } = getAccountBrowser(account)
+    const custom = account === 'account2' ? customPaths?.brave : customPaths?.chrome
+    const resolved = await resolveBrowserPath(account, custom)
+    result[account] = { browser: name, path: resolved || custom?.trim() || getDefaultBrowserPaths(account)[0], found: resolved !== null }
+  }))
+  return result
+}
+
+export function getAuthFilePaths(account: AccountId, homeDirectory = os.homedir()): string[] {
+  const isolated = path.join(homeDirectory, account === 'account2' ? '.codex-conta2' : '.codex-conta1', 'auth.json')
+  if (account === 'account1') return [isolated, path.join(homeDirectory, '.codex', 'auth.json')]
+  return [isolated]
 }
 
 export function getBrowserLaunchArgs(profileDirectory: string, url: string): string[] {

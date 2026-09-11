@@ -25,6 +25,7 @@ interface ProjectCardProps {
   project: Project
   config: AppConfig | null
   onSync: (projectPath: string) => Promise<void>
+  onStashSync?: (projectPath: string) => Promise<void>
   onOpenPushModal: (project: Project) => void
   onOpenGitInit: (project: Project) => void
   onNotify: (message: string, type?: 'success' | 'error' | 'info') => void
@@ -49,6 +50,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
   project,
   config,
   onSync,
+  onStashSync,
   onOpenPushModal,
   onOpenGitInit,
   onNotify,
@@ -58,6 +60,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
   onUsageUpdate,
 }) => {
   const [isSyncing, setIsSyncing] = useState(false)
+  const [isStashing, setIsStashing] = useState(false)
   const [copied, setCopied] = useState(false)
   const [launchingTool, setLaunchingTool] = useState<LaunchTool | null>(null)
 
@@ -67,6 +70,16 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
       await onSync(project.path)
     } finally {
       setIsSyncing(false)
+    }
+  }
+
+  const handleStashSync = async () => {
+    if (!onStashSync) return
+    setIsStashing(true)
+    try {
+      await onStashSync(project.path)
+    } finally {
+      setIsStashing(false)
     }
   }
 
@@ -358,6 +371,19 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                     <RefreshCw className={isSyncing ? 'work-icon-spinning' : ''} aria-hidden="true" />
                     <span>{isSyncing ? 'Puxando...' : needsPull ? 'Puxar mudanças' : 'Atualizar'}</span>
                   </button>
+                  {hasLocalChanges && onStashSync && (
+                    <button
+                      type="button"
+                      onClick={handleStashSync}
+                      disabled={isStashing || isSyncing}
+                      aria-busy={isStashing}
+                      className="work-button"
+                      title="Guarda as alterações em stash, faz pull e restaura tudo"
+                    >
+                      <RefreshCw className={isStashing ? 'work-icon-spinning' : ''} aria-hidden="true" />
+                      <span>{isStashing ? 'Sincronizando...' : 'Stash + puxar'}</span>
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => onOpenPushModal(project)}

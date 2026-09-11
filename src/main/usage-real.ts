@@ -1,11 +1,10 @@
 import fs from 'node:fs/promises'
-import os from 'node:os'
-import path from 'node:path'
 import type {
   RealAccountUsage,
   RealUsageMetric,
   RealUsageState,
 } from '../renderer/src/types'
+import { getAuthFilePaths } from './account-profiles'
 
 const CODEX_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage'
 const CODEX_TOKEN_URL = 'https://auth.openai.com/oauth/token'
@@ -83,19 +82,6 @@ function getExpiryMs(credentials: AuthCredentials): number | undefined {
   const explicit = credentials.expiresAt ? Date.parse(credentials.expiresAt) : Number.NaN
   if (Number.isFinite(explicit)) return explicit
   return decodeJwtExpiry(credentials.accessToken) ?? decodeJwtExpiry(credentials.idToken)
-}
-
-function getAuthFilePath(account: AccountId): string {
-  return path.join(os.homedir(), account === 'account2' ? '.codex-conta2' : '.codex-conta1', 'auth.json')
-}
-
-function getAuthFilePaths(account: AccountId): string[] {
-  const isolated = getAuthFilePath(account)
-  // Keep the legacy/default Codex login useful for account 1. New logins still
-  // use the isolated path, while existing users do not have to authenticate a
-  // third time just to see their real usage.
-  if (account === 'account1') return [isolated, path.join(os.homedir(), '.codex', 'auth.json')]
-  return [isolated]
 }
 
 async function readAuthDocument(account: AccountId): Promise<AuthDocument | undefined> {

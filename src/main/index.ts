@@ -3,9 +3,9 @@ const { app, BrowserWindow, ipcMain, dialog } = electron
 import path from 'node:path'
 import fs from 'node:fs/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { loadConfig, saveConfig } from './config'
-import { scanAllProjects } from './scanner'
-import { syncGit, getGitBranches, switchGitBranch, pushGit, getGitChangesSummary, cloneGitRepository } from './git'
+import { exportConfigJson, importConfigJson, loadConfig, saveConfig } from './config'
+import { listAllNonProjectDirs, scanAllProjects } from './scanner'
+import { syncGit, getGitBranches, switchGitBranch, pushGit, getGitChangesSummary, cloneGitRepository, stashSyncGit, stashSwitchGitBranch } from './git'
 import { getGitInitPreview, initGitRepository } from './git-init'
 import { launchTool, copyProjectContext } from './launcher'
 import {
@@ -40,6 +40,7 @@ import {
   validateGitInitOptions,
   validateGitBranch,
   validateCloneInput,
+  testToolPath,
   validateProjectDirs,
   validateUsageTarget,
   validateWindowAction,
@@ -222,6 +223,11 @@ function setupIpcHandlers() {
     return await scanAllProjects(config.projectDirs, true)
   })
 
+  registerIpcHandler('devorbit:getOtherDirs', async () => {
+    const config = await loadConfig()
+    return await listAllNonProjectDirs(config.projectDirs)
+  })
+
   // Sincronizar um projeto com Git (Pull)
   registerIpcHandler('devorbit:syncGit', async (_event, projectPath: string): Promise<SyncResult> => {
     return await syncGit(await validateProjectPath(projectPath))
@@ -239,6 +245,18 @@ function setupIpcHandlers() {
     async (_event, projectPath: string, branch: string): Promise<SyncResult> => {
       const safeBranch = validateGitBranch(branch)
       return await switchGitBranch(await validateProjectPath(projectPath), safeBranch)
+    }
+  )
+
+  registerIpcHandler('devorbit:stashSyncGit', async (_event, projectPath: string): Promise<SyncResult> => {
+    return await stashSyncGit(await validateProjectPath(projectPath))
+  })
+
+  registerIpcHandler(
+    'devorbit:stashSwitchGitBranch',
+    async (_event, projectPath: string, branch: string): Promise<SyncResult> => {
+      const safeBranch = validateGitBranch(branch)
+      return await stashSwitchGitBranch(await validateProjectPath(projectPath), safeBranch)
     }
   )
 
@@ -284,6 +302,7 @@ function setupIpcHandlers() {
     const orderedResults = new Array<[string, SyncResult]>(repositories.length)
     const concurrency = Math.min(4, repositories.length)
     let nextIndex = 0
+    let completed = 0
 
     const worker = async (): Promise<void> => {
       while (true) {
@@ -293,6 +312,12 @@ function setupIpcHandlers() {
         const project = repositories[index]
         try {
           orderedResults[index] = [project.path, await syncGit(project.path)]
+          completed += 1
+          mainWindow?.webContents.send('devorbit:syncProgress', {
+            path: project.path,
+            done: completed,
+            total: repositories.length,
+          })
         } catch (error: unknown) {
           // Keep the batch useful even if an unexpected error escapes a single
           // repository operation. The renderer can then report partial failure.
@@ -349,6 +374,35 @@ function setupIpcHandlers() {
 
   registerIpcHandler('devorbit:saveConfig', async (_event, updates: Partial<AppConfig>) => {
     return await saveConfig(await validateConfigUpdates(updates))
+  })
+
+  registerIpcHandler('devorbit:exportConfig', async () => {
+    if (!mainWindow) throw new Error('Janela indisponível.')
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: 'Exportar configurações do DevOrbit',
+      defaultPath: 'devorbit-config.json',
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    })
+    if (result.canceled || !result.filePath) return { success: false, message: 'Exportação cancelada.' }
+    await fs.writeFile(result.filePath, await exportConfigJson(), 'utf-8')
+    return { success: true, message: `Configurações exportadas para ${result.filePath}` }
+  })
+
+  registerIpcHandler('devorbit:importConfig', async () => {
+    if (!mainWindow) throw new Error('Janela indisponível.')
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Importar configurações do DevOrbit',
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+      properties: ['openFile'],
+    })
+    if (result.canceled || result.filePaths.length === 0) return { success: false, message: 'Importação cancelada.' }
+    const raw = await fs.readFile(result.filePaths[0], 'utf-8')
+    await importConfigJson(raw)
+    return { success: true, message: 'Configurações importadas! Backup anterior salvo em config.json.bak.' }
+  })
+
+  registerIpcHandler('devorbit:testToolPath', async (_event, toolPath: string) => {
+    return await testToolPath(toolPath)
   })
 
   // Seletor de pasta no Windows

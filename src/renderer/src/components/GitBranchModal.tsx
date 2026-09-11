@@ -8,6 +8,7 @@ interface GitBranchModalProps {
   project: Project | null
   onClose: () => void
   onSwitch: (projectPath: string, branch: string) => Promise<SyncResult>
+  onStashSwitch?: (projectPath: string, branch: string) => Promise<SyncResult>
   onProjectUpdated?: () => Promise<void>
   onNotify: (message: string, type?: 'success' | 'error' | 'info') => void
 }
@@ -17,12 +18,14 @@ export const GitBranchModal: React.FC<GitBranchModalProps> = ({
   project,
   onClose,
   onSwitch,
+  onStashSwitch,
   onProjectUpdated,
   onNotify,
 }) => {
   const [branches, setBranches] = useState<GitBranchInfo[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [switchingBranch, setSwitchingBranch] = useState<string | null>(null)
+  const [dirtyBranch, setDirtyBranch] = useState<string | null>(null)
 
   const loadBranches = async (refreshRemote: boolean) => {
     if (!project) return
@@ -49,8 +52,29 @@ export const GitBranchModal: React.FC<GitBranchModalProps> = ({
   const handleSwitch = async (branch: GitBranchInfo) => {
     if (branch.isCurrent || switchingBranch) return
     setSwitchingBranch(branch.name)
+    setDirtyBranch(null)
     try {
       const result = await onSwitch(project.path, branch.name)
+      if (result.success) {
+        onNotify(result.message, 'success')
+        await onProjectUpdated?.()
+        onClose()
+      } else {
+        if (onStashSwitch && /alterações locais/i.test(result.message)) setDirtyBranch(branch.name)
+        onNotify(result.message, 'error')
+      }
+    } catch (error: any) {
+      onNotify(`Erro ao trocar de branch: ${error.message}`, 'error')
+    } finally {
+      setSwitchingBranch(null)
+    }
+  }
+
+  const handleStashSwitch = async (branch: GitBranchInfo) => {
+    if (!onStashSwitch || switchingBranch) return
+    setSwitchingBranch(branch.name)
+    try {
+      const result = await onStashSwitch(project.path, branch.name)
       if (result.success) {
         onNotify(result.message, 'success')
         await onProjectUpdated?.()
@@ -59,9 +83,10 @@ export const GitBranchModal: React.FC<GitBranchModalProps> = ({
         onNotify(result.message, 'error')
       }
     } catch (error: any) {
-      onNotify(`Erro ao trocar de branch: ${error.message}`, 'error')
+      onNotify(`Erro ao trocar de branch com stash: ${error.message}`, 'error')
     } finally {
       setSwitchingBranch(null)
+      setDirtyBranch(null)
     }
   }
 
@@ -149,6 +174,25 @@ export const GitBranchModal: React.FC<GitBranchModalProps> = ({
             ))
           )}
         </div>
+
+        {dirtyBranch && onStashSwitch && (
+          <div className="flex items-center justify-between gap-3 rounded-[8px] border border-[#cbd8bf] bg-[#f4f7f1] px-3.5 py-3">
+            <p className="text-xs leading-5 text-stone-700">
+              Há alterações locais. Posso guardá-las em stash, trocar e restaurar.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                const target = [...localBranches, ...remoteBranches].find((b) => b.name === dirtyBranch)
+                if (target) void handleStashSwitch(target)
+              }}
+              disabled={Boolean(switchingBranch)}
+              className="shrink-0 rounded-lg bg-[#3e562f] px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#334827] disabled:opacity-60"
+            >
+              Stash + trocar
+            </button>
+          </div>
+        )}
 
         {remoteBranches.length > 0 && (
           <div>

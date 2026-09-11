@@ -25,15 +25,25 @@ vi.mock('../src/main/config', () => ({
 }))
 
 vi.mock('../src/main/account-profiles', () => ({
+  checkBrowserAvailability: vi.fn(async () => ({
+    account1: { browser: 'Chrome', path: 'C:/devorbit/chrome.exe', found: true },
+    account2: { browser: 'Brave', path: 'C:/devorbit/brave.exe', found: true },
+  })),
   ensureAccountDirectories: vi.fn(async (account: string) => ({
     codexHome: `C:/devorbit/${account}`,
     browserProfile: `C:/devorbit/browser/${account}`,
   })),
+  getAccountBrowser: vi.fn((account: string) => (
+    account === 'account2'
+      ? { name: 'Brave', executable: 'brave.exe' }
+      : { name: 'Chrome', executable: 'chrome.exe' }
+  )),
   getAccountLabel: vi.fn((account: string) => account),
   getBrowserLaunchArgs: vi.fn((_profile: string, url: string) => [url]),
   getBrowserProfileDirectory: vi.fn((account: string) => `C:/devorbit/browser/${account}`),
   getCodexHome: vi.fn((account: string) => `C:/devorbit/${account}`),
   hasValidCodexAuth: hasValidCodexAuthMock,
+  resolveBrowserPath: vi.fn(async () => 'C:/devorbit/browser.exe'),
 }))
 
 import { cancelCodexLogin, startCodexDeviceLogin } from '../src/main/codex-auth'

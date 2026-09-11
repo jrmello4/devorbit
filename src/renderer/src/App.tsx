@@ -13,6 +13,7 @@ import { CommandPalette } from './components/CommandPalette'
 import { UpdateModal } from './components/UpdateModal'
 import type {
   Project,
+  OtherDir,
   AppConfig,
   CodexAccountStatus,
   UsageTrackerState,
@@ -24,6 +25,7 @@ import { CheckCircle2, AlertCircle, Info, X, FolderKanban, ChartNoAxesCombined, 
 
 export const App: React.FC = () => {
   const [projects, setProjects] = useState<Project[]>([])
+  const [otherDirs, setOtherDirs] = useState<OtherDir[]>([])
   const [config, setConfig] = useState<AppConfig | null>(null)
   const [authStatus, setAuthStatus] = useState<CodexAccountStatus | null>(null)
   const [authModalAccount, setAuthModalAccount] = useState<'account1' | 'account2' | null>(null)
@@ -167,15 +169,17 @@ export const App: React.FC = () => {
     try {
       if (window.devorbit) {
         console.log('[App] Calling Promise.all for config, projects, auth, usage...')
-        const [loadedConfig, loadedProjects, loadedAuth, loadedUsage] = await Promise.all([
+        const [loadedConfig, loadedProjects, loadedOtherDirs, loadedAuth, loadedUsage] = await Promise.all([
           window.devorbit.getConfig(),
           window.devorbit.getProjects(),
+          window.devorbit.getOtherDirs(),
           window.devorbit.getCodexAuthStatus(),
           window.devorbit.getUsageState(),
         ])
         console.log('[App] Loaded successfully! Projects count:', loadedProjects?.length)
         setConfig(loadedConfig)
         setProjects(loadedProjects)
+        setOtherDirs(loadedOtherDirs)
         setAuthStatus(loadedAuth)
         setUsageState(loadedUsage)
       } else {
@@ -202,13 +206,15 @@ export const App: React.FC = () => {
     setIsRefreshing(true)
     try {
       if (window.devorbit) {
-        const [refreshed] = await Promise.all([
+        const [refreshed, refreshedOtherDirs] = await Promise.all([
           window.devorbit.refreshProjects(),
+          window.devorbit.getOtherDirs(),
           loadAuthStatus(),
           loadUsage(),
           loadRealUsage(true),
         ])
         setProjects(refreshed)
+        setOtherDirs(refreshedOtherDirs)
         notify('Lista de projetos atualizada!', 'success')
       }
     } catch (err: any) {
@@ -223,7 +229,12 @@ export const App: React.FC = () => {
   const refreshProjectsQuietly = useCallback(async () => {
     if (!window.devorbit) return
     try {
-      setProjects(await window.devorbit.getProjects())
+      const [refreshed, refreshedOtherDirs] = await Promise.all([
+        window.devorbit.getProjects(),
+        window.devorbit.getOtherDirs(),
+      ])
+      setProjects(refreshed)
+      setOtherDirs(refreshedOtherDirs)
     } catch (err) {
       console.error('[App] Erro ao atualizar projetos após operação Git:', err)
     }
@@ -319,10 +330,25 @@ export const App: React.FC = () => {
     }
   }
 
+  const handleStashSyncProject = async (projectPath: string) => {
+    if (!window.devorbit) return
+    try {
+      const result = await window.devorbit.stashSyncGit(projectPath)
+      notify(result.message, result.success ? 'success' : 'error')
+      const updated = await window.devorbit.getProjects()
+      setProjects(updated)
+    } catch (err: any) {
+      notify(`Erro na sincronização com stash: ${err.message}`, 'error')
+    }
+  }
+
   // Sincronizar todos os repositórios
   const handleSyncAll = async () => {
     if (!window.devorbit) return
     setIsSyncingAll(true)
+    const unsubscribe = window.devorbit.onSyncProgress((progress) => {
+      notify(`Sincronizando ${progress.done}/${progress.total} repositórios…`, 'info')
+    })
     try {
       const results = await window.devorbit.syncAllGit()
       const entries = Object.values(results)
@@ -351,6 +377,7 @@ export const App: React.FC = () => {
     } catch (err: any) {
       notify(`Erro ao sincronizar todos: ${err.message}`, 'error')
     } finally {
+      unsubscribe()
       setIsSyncingAll(false)
     }
   }
@@ -400,6 +427,13 @@ export const App: React.FC = () => {
   const handleSwitchBranch = async (projectPath: string, branch: string): Promise<SyncResult> => {
     if (!window.devorbit) return { success: false, message: 'A ponte do DevOrbit não está disponível.' }
     const result = await window.devorbit.switchGitBranch(projectPath, branch)
+    if (result.success) await refreshProjectsQuietly()
+    return result
+  }
+
+  const handleStashSwitchBranch = async (projectPath: string, branch: string): Promise<SyncResult> => {
+    if (!window.devorbit) return { success: false, message: 'A ponte do DevOrbit não está disponível.' }
+    const result = await window.devorbit.stashSwitchGitBranch(projectPath, branch)
     if (result.success) await refreshProjectsQuietly()
     return result
   }
@@ -473,9 +507,11 @@ export const App: React.FC = () => {
       {/* Grid de Projetos */}
       <ProjectGrid
         projects={projects}
+        otherDirs={otherDirs}
         config={config}
         search={search}
         onSync={handleSyncProject}
+        onStashSync={handleStashSyncProject}
         onOpenPushModal={setPushProject}
         onOpenGitInit={(project) => setGitInitProject(project)}
         onNotify={notify}
@@ -526,6 +562,7 @@ export const App: React.FC = () => {
         project={activeBranchProject}
         onClose={() => setActiveBranchProject(null)}
         onSwitch={handleSwitchBranch}
+        onStashSwitch={handleStashSwitchBranch}
         onProjectUpdated={refreshProjectsQuietly}
         onNotify={notify}
       />

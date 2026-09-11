@@ -38,6 +38,16 @@ jobs:
       - name: Production build
         run: npm run build
 
+      - name: UI verification (Electron)
+        run: npm run verify:ui
+
+      - name: Upload UI artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-artifacts
+          path: artifacts/ui
+
   release:
     name: Publicar instalador e atualização
     needs: quality

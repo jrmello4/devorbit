@@ -1,4 +1,5 @@
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
+import { promisify } from 'node:util'
 import electron from 'electron'
 const { clipboard, shell } = electron
 import path from 'node:path'
@@ -20,6 +21,23 @@ import {
   tryReserveUsage,
   type UsageTarget,
 } from './usage'
+
+const execFileAsync = promisify(execFile)
+
+const MAX_CONTEXT_CHARS = 8000
+
+async function getLastCommitLine(projectPath: string): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync(
+      'git',
+      ['log', '-1', '--format=%h (%ad) %s', '--date=short'],
+      { cwd: projectPath, timeout: 8000, windowsHide: true }
+    )
+    return String(stdout || '').trim()
+  } catch {
+    return ''
+  }
+}
 
 function spawnDetached(
   command: string,
@@ -317,8 +335,13 @@ export async function copyProjectContext(
     }
 
     if (git.isRepo) {
-      lines.push(`- **Branch Git Atual:** \`${git.branch}\``)
+      const position: string[] = []
+      if (git.ahead > 0) position.push(`${git.ahead} à frente`)
+      if (git.behind > 0) position.push(`${git.behind} atrás`)
+      lines.push(`- **Branch Git Atual:** \`${git.branch}\`${position.length > 0 ? ` (${position.join(', ')})` : ''}`)
       lines.push(`- **Status Git:** ${git.statusMessage}`)
+      const lastCommit = await getLastCommitLine(projectPath)
+      if (lastCommit) lines.push(`- **Último commit:** \`${lastCommit.slice(0, 200)}\``)
       if (changes.length > 0) {
         lines.push(`\n### 📝 Arquivos com alterações recentes:`)
         changes.forEach((c) => lines.push(`- \`${c}\``))
@@ -327,16 +350,25 @@ export async function copyProjectContext(
 
     // Lê a Memória da IA (Handoff) se existir
     const memory = await getProjectMemory(projectPath)
+    const footer = '\n---\n*Pronto para colar no ChatGPT, Codex ou Claude. Continue o raciocínio a partir do handoff acima.*'
     if (memory.exists && memory.content.trim()) {
-      lines.push(
-        `\n### 🧠 Memória da Sessão & Handoff (Onde paramos):`,
-        redactProjectPath(memory.content.trim(), projectPath)
-      )
+      const redacted = redactProjectPath(memory.content.trim(), projectPath)
+      const used = `${lines.join('\n')}\n\n### 🧠 Memória da Sessão & Handoff (Onde paramos):\n\n${footer}`.length
+      const budget = Math.max(0, MAX_CONTEXT_CHARS - used)
+      const trimmed = redacted.length > budget && budget > 0
+        ? `${redacted.slice(0, budget)}\n…(memória cortada para caber no limite)`
+        : redacted
+      if (budget > 0 || redacted.length === 0) {
+        lines.push(`\n### 🧠 Memória da Sessão & Handoff (Onde paramos):`, trimmed)
+      }
     }
 
-    lines.push('\n---\n*Pronto para colar no ChatGPT, Codex ou Claude. Continue o raciocínio a partir do handoff acima.*')
+    lines.push(footer)
 
-    const contextText = lines.join('\n')
+    let contextText = lines.join('\n')
+    if (contextText.length > MAX_CONTEXT_CHARS) {
+      contextText = `${contextText.slice(0, MAX_CONTEXT_CHARS)}\n…(contexto cortado no limite de ${MAX_CONTEXT_CHARS} caracteres)`
+    }
     clipboard.writeText(contextText)
 
     return { success: true, context: contextText }
