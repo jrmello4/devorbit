@@ -6,6 +6,10 @@ const api: DevOrbitAPI = {
   getProjects: () => ipcRenderer.invoke('devorbit:getProjects'),
   refreshProjects: () => ipcRenderer.invoke('devorbit:refreshProjects'),
   syncGit: (projectPath: string) => ipcRenderer.invoke('devorbit:syncGit', projectPath),
+  getGitBranches: (projectPath: string, refreshRemote?: boolean) =>
+    ipcRenderer.invoke('devorbit:getGitBranches', projectPath, refreshRemote),
+  switchGitBranch: (projectPath: string, branch: string) =>
+    ipcRenderer.invoke('devorbit:switchGitBranch', projectPath, branch),
   pushGit: (projectPath: string, commitMessage?: string) =>
     ipcRenderer.invoke('devorbit:pushGit', projectPath, commitMessage),
   getGitChanges: (projectPath: string) =>
@@ -41,6 +45,7 @@ const api: DevOrbitAPI = {
   generateMemoryFromGit: (projectPath) =>
     ipcRenderer.invoke('devorbit:generateMemoryFromGit', projectPath),
   getUsageState: () => ipcRenderer.invoke('devorbit:getUsageState'),
+  getRealUsage: (force?: boolean) => ipcRenderer.invoke('devorbit:getRealUsage', force),
   incrementUsage: (target) => ipcRenderer.invoke('devorbit:incrementUsage', target),
   decrementUsage: (target) => ipcRenderer.invoke('devorbit:decrementUsage', target),
   resetUsage: (target) => ipcRenderer.invoke('devorbit:resetUsage', target),

@@ -143,7 +143,7 @@ export function validateLaunchOptions(value: unknown): LaunchToolOptions | undef
   return options
 }
 
-function validateGitBranch(value: unknown): string {
+export function validateGitBranch(value: unknown): string {
   const branch = value === undefined ? 'main' : value
   if (typeof branch !== 'string' || !branch.trim() || branch.length > 100) {
     throw new Error('Nome de branch inválido.')

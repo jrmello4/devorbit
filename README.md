@@ -99,6 +99,38 @@ Se a criação do repositório ocorrer mas o commit ou push falhar, o card é
 atualizado para refletir o `.git` existente e a mensagem explica o próximo
 passo sem apagar o trabalho local.
 
+### Trocar branch e atualizar a `main`
+
+Em qualquer projeto com Git, clique no nome da branch no card para abrir o
+seletor de branches locais e remotas. A troca usa `git switch` e cria uma branch
+local acompanhando o remote quando necessário. Para proteger trabalho em
+andamento, o DevOrbit recusa a troca se houver arquivos modificados; faça
+commit ou stash e tente novamente. Depois de selecionar `main`, use **Pull** no
+mesmo card para executar `git pull --ff-only` somente nessa branch.
+
+### Uso real do Codex e sessões estimadas
+
+A seção **Uso local (estimado)** continua registrando apenas sessões abertas
+para bloquear lançamentos concorrentes; ela não é uma contagem de tokens. A
+seção **Uso real do Codex** consulta os `auth.json` isolados de cada conta
+(`.codex-conta1` e `.codex-conta2`) e a rota oficial usada pelo Codex CLI e pelo
+[ai-usagebar](https://github.com/akitaonrails/ai-usagebar). Ela exibe somente
+percentuais que a OpenAI realmente devolveu, com a janela e o próximo reset.
+Conta sem login, resposta sem percentual ou falha de rede aparecem como
+**Não autenticada/Indisponível**, nunca como `0%`. Tokens não são persistidos no
+estado do DevOrbit nem enviados ao renderer.
+
+### Memória contínua por projeto
+
+O arquivo `.devorbit/memory.md` é a memória canônica, com `CONTEXT.md` apenas
+como fallback de leitura. O DevOrbit atualiza o status dos projetos em segundo
+plano a cada minuto e consulta o uso real do Codex a cada cinco minutos quando
+a janela está visível. Ele também recalcula se a memória ficou desatualizada em
+relação à branch, commit e arquivos locais. O modal **Memória** oferece **Atualizar** e
+**Puxar do Git** para revisar o handoff antes de salvar; o conteúdo manual nunca
+é sobrescrito automaticamente. O formato segue a ideia de wiki versionada do
+[ai-memory](https://github.com/akitaonrails/ai-memory).
+
 ## CI
 
 O workflow do GitHub Actions executa em `windows-latest` uma instalação limpa

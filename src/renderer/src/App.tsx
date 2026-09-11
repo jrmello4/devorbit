@@ -7,8 +7,16 @@ import { CodexAuthModal } from './components/CodexAuthModal'
 import { UsageBar } from './components/UsageBar'
 import { AiMemoryModal } from './components/AiMemoryModal'
 import { GitInitModal } from './components/GitInitModal'
+import { GitBranchModal } from './components/GitBranchModal'
 import { CommandPalette } from './components/CommandPalette'
-import type { Project, AppConfig, CodexAccountStatus, UsageTrackerState } from './types'
+import type {
+  Project,
+  AppConfig,
+  CodexAccountStatus,
+  UsageTrackerState,
+  RealUsageState,
+  SyncResult,
+} from './types'
 import { CheckCircle2, AlertCircle, Info, X } from 'lucide-react'
 
 export const App: React.FC = () => {
@@ -17,7 +25,9 @@ export const App: React.FC = () => {
   const [authStatus, setAuthStatus] = useState<CodexAccountStatus | null>(null)
   const [authModalAccount, setAuthModalAccount] = useState<'account1' | 'account2' | null>(null)
   const [usageState, setUsageState] = useState<UsageTrackerState | null>(null)
+  const [realUsage, setRealUsage] = useState<RealUsageState | null>(null)
   const [activeMemoryProject, setActiveMemoryProject] = useState<Project | null>(null)
+  const [activeBranchProject, setActiveBranchProject] = useState<Project | null>(null)
   const [search, setSearch] = useState('')
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
@@ -27,6 +37,7 @@ export const App: React.FC = () => {
   const [pushProject, setPushProject] = useState<Project | null>(null)
   const [gitInitProject, setGitInitProject] = useState<Project | null>(null)
   const [isSwitchingAccount, setIsSwitchingAccount] = useState(false)
+  const [isRefreshingRealUsage, setIsRefreshingRealUsage] = useState(false)
   const accountSwitchInFlightRef = useRef(false)
   const [notification, setNotification] = useState<{
     message: string
@@ -83,6 +94,17 @@ export const App: React.FC = () => {
     }
   }, [])
 
+  const loadRealUsage = useCallback(async (force = false) => {
+    try {
+      if (window.devorbit) {
+        const usage = await window.devorbit.getRealUsage(force)
+        setRealUsage(usage)
+      }
+    } catch (err: any) {
+      console.error('Falha ao carregar uso real da OpenAI:', err)
+    }
+  }, [])
+
   const loadData = useCallback(async () => {
     console.log('[App] loadData called. window.devorbit available:', Boolean(window.devorbit))
     try {
@@ -114,6 +136,10 @@ export const App: React.FC = () => {
     loadData()
   }, [loadData])
 
+  useEffect(() => {
+    if (!isLoading) void loadRealUsage()
+  }, [isLoading, loadRealUsage])
+
   // Refresh projects on demand
   const handleRefresh = async () => {
     setIsRefreshing(true)
@@ -123,6 +149,7 @@ export const App: React.FC = () => {
           window.devorbit.refreshProjects(),
           loadAuthStatus(),
           loadUsage(),
+          loadRealUsage(true),
         ])
         setProjects(refreshed)
         notify('Lista de projetos atualizada!', 'success')
@@ -136,14 +163,33 @@ export const App: React.FC = () => {
 
   // Atualiza apenas o estado dos cards após uma operação Git parcial, sem
   // substituir a mensagem de erro/sucesso específica do modal.
-  const refreshProjectsQuietly = async () => {
+  const refreshProjectsQuietly = useCallback(async () => {
     if (!window.devorbit) return
     try {
       setProjects(await window.devorbit.getProjects())
     } catch (err) {
       console.error('[App] Erro ao atualizar projetos após operação Git:', err)
     }
-  }
+  }, [])
+
+  // Keep Git status and the memory stale indicator useful while the app stays
+  // open. The scan is local and quiet; explicit actions still provide toasts.
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void refreshProjectsQuietly()
+    }, 60_000)
+    return () => window.clearInterval(timer)
+  }, [refreshProjectsQuietly])
+
+  // Keep the real Codex quota close to the provider without polling while the
+  // app is hidden. The manual button and the global refresh remain available
+  // for an immediate check.
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void loadRealUsage(true)
+    }, 5 * 60_000)
+    return () => window.clearInterval(timer)
+  }, [loadRealUsage])
 
   // Ações da Barra de Uso (Cotas)
   const handleIncrementUsage = async (target: 'account1' | 'account2' | 'antigravity') => {
@@ -185,6 +231,16 @@ export const App: React.FC = () => {
       notify(`Limite de ${account === 'account1' ? 'Conta 1' : 'Conta 2'} atualizado para ${limit}!`, 'info')
     } catch (err: any) {
       console.error(err)
+    }
+  }
+
+  const handleRefreshRealUsage = async () => {
+    setIsRefreshingRealUsage(true)
+    try {
+      await loadRealUsage(true)
+      notify('Uso real do Codex atualizado.', 'success')
+    } finally {
+      setIsRefreshingRealUsage(false)
     }
   }
 
@@ -267,6 +323,7 @@ export const App: React.FC = () => {
         activeChatGptAccount: nextAccount,
       })
       setConfig(updated)
+      void loadRealUsage(true)
       notify(
         `ChatGPT aberto em ${
           nextAccount === 'account1'
@@ -283,6 +340,13 @@ export const App: React.FC = () => {
     }
   }
 
+  const handleSwitchBranch = async (projectPath: string, branch: string): Promise<SyncResult> => {
+    if (!window.devorbit) return { success: false, message: 'A ponte do DevOrbit não está disponível.' }
+    const result = await window.devorbit.switchGitBranch(projectPath, branch)
+    if (result.success) await refreshProjectsQuietly()
+    return result
+  }
+
   // Salvar configurações vindas do modal
   const handleSaveConfig = async (updates: Partial<AppConfig>) => {
     if (!window.devorbit) return
@@ -296,7 +360,7 @@ export const App: React.FC = () => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault()
-        if (isSettingsOpen || authModalAccount || pushProject || gitInitProject || activeMemoryProject) return
+        if (isSettingsOpen || authModalAccount || pushProject || gitInitProject || activeMemoryProject || activeBranchProject) return
         setIsCommandPaletteOpen(true)
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'r') {
         e.preventDefault()
@@ -305,7 +369,7 @@ export const App: React.FC = () => {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [activeMemoryProject, authModalAccount, gitInitProject, isSettingsOpen, pushProject])
+  }, [activeBranchProject, activeMemoryProject, authModalAccount, gitInitProject, isSettingsOpen, pushProject])
 
   const gitProjectsCount = projects.filter((p) => p.git.isRepo).length
 
@@ -340,6 +404,9 @@ export const App: React.FC = () => {
         onUpdateLimit={handleUpdateUsageLimit}
         onSwitchAccount={handleToggleAccount}
         isSwitchingAccount={isSwitchingAccount}
+        realUsage={realUsage}
+        onRefreshRealUsage={handleRefreshRealUsage}
+        isRefreshingRealUsage={isRefreshingRealUsage}
       />
 
       {/* Grid de Projetos */}
@@ -354,6 +421,7 @@ export const App: React.FC = () => {
         isLoading={isLoading}
         onOpenAuthModal={(acc) => setAuthModalAccount(acc)}
         onOpenMemory={(project) => setActiveMemoryProject(project)}
+        onOpenBranches={(project) => setActiveBranchProject(project)}
         onUsageUpdate={loadUsage}
         onOpenSettings={() => setIsSettingsOpen(true)}
       />
@@ -383,6 +451,15 @@ export const App: React.FC = () => {
         isOpen={Boolean(activeMemoryProject)}
         project={activeMemoryProject}
         onClose={() => setActiveMemoryProject(null)}
+        onNotify={notify}
+      />
+
+      <GitBranchModal
+        isOpen={Boolean(activeBranchProject)}
+        project={activeBranchProject}
+        onClose={() => setActiveBranchProject(null)}
+        onSwitch={handleSwitchBranch}
+        onProjectUpdated={refreshProjectsQuietly}
         onNotify={notify}
       />
 

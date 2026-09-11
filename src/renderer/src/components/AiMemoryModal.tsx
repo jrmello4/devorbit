@@ -219,6 +219,17 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
           <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
+              onClick={() => void loadMemory()}
+              disabled={isLoading || isSaving || isGenerating}
+              className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800/70 px-3 py-1 text-xs font-semibold text-slate-300 transition-colors hover:border-slate-600 hover:bg-slate-700 disabled:cursor-wait disabled:opacity-50"
+              title="Reler a memória e recalcular se ela está desatualizada em relação ao Git"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? 'motion-safe:animate-spin' : ''}`} aria-hidden="true" />
+              Atualizar
+            </button>
+
+            <button
+              type="button"
               onClick={handleGenerateFromGit}
               disabled={isGenerating}
               className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold bg-indigo-600/20 text-indigo-300 border border-indigo-500/40 hover:bg-indigo-600/30 transition-colors cursor-pointer disabled:opacity-50"

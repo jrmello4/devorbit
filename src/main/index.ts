@@ -5,7 +5,7 @@ import fs from 'node:fs/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { loadConfig, saveConfig } from './config'
 import { scanAllProjects } from './scanner'
-import { syncGit, pushGit, getGitChangesSummary } from './git'
+import { syncGit, getGitBranches, switchGitBranch, pushGit, getGitChangesSummary } from './git'
 import { getGitInitPreview, initGitRepository } from './git-init'
 import { launchTool, copyProjectContext } from './launcher'
 import {
@@ -26,6 +26,7 @@ import {
   resetUsageWindow,
   updateUsageLimits,
 } from './usage'
+import { getRealUsage } from './usage-real'
 import type { AppConfig, SyncResult } from '../renderer/src/types'
 import {
   assertTrustedIpcSender,
@@ -36,6 +37,7 @@ import {
   validateLaunchOptions,
   validateLaunchTool,
   validateGitInitOptions,
+  validateGitBranch,
   validateProjectDirs,
   validateUsageTarget,
   validateWindowAction,
@@ -205,6 +207,21 @@ function setupIpcHandlers() {
     return await syncGit(await validateProjectPath(projectPath))
   })
 
+  registerIpcHandler('devorbit:getGitBranches', async (_event, projectPath: string, refreshRemote?: boolean) => {
+    if (refreshRemote !== undefined && typeof refreshRemote !== 'boolean') {
+      throw new Error('Opção de atualização das branches inválida.')
+    }
+    return await getGitBranches(await validateProjectPath(projectPath), refreshRemote === true)
+  })
+
+  registerIpcHandler(
+    'devorbit:switchGitBranch',
+    async (_event, projectPath: string, branch: string): Promise<SyncResult> => {
+      const safeBranch = validateGitBranch(branch)
+      return await switchGitBranch(await validateProjectPath(projectPath), safeBranch)
+    }
+  )
+
   // Subir alterações para o GitHub (Commit & Push)
   registerIpcHandler(
     'devorbit:pushGit',
@@ -355,6 +372,13 @@ function setupIpcHandlers() {
   // Usage Tracker Handlers
   registerIpcHandler('devorbit:getUsageState', async () => {
     return await getUsageState()
+  })
+
+  registerIpcHandler('devorbit:getRealUsage', async (_event, force?: boolean) => {
+    if (force !== undefined && typeof force !== 'boolean') {
+      throw new Error('Opção de atualização de uso inválida.')
+    }
+    return await getRealUsage(force === true)
   })
 
   registerIpcHandler(

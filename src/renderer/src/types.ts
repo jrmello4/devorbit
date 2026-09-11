@@ -16,6 +16,14 @@ export interface GitStatus {
   statusMessage?: string
 }
 
+export interface GitBranch {
+  name: string
+  isCurrent: boolean
+  isRemote: boolean
+  upstream?: string
+  commit?: string
+}
+
 export interface Project {
   id: string
   name: string
@@ -120,6 +128,36 @@ export interface AccountUsage {
   windowDurationHours: number
 }
 
+export type RealUsageStatus = 'ready' | 'not_configured' | 'error'
+
+export interface RealUsageMetric {
+  id: string
+  label: string
+  percent?: number
+  resetAt?: number
+  windowSeconds?: number
+  value?: string
+  detail?: string
+}
+
+export interface RealAccountUsage {
+  account: 'account1' | 'account2'
+  status: RealUsageStatus
+  plan?: string
+  metrics: RealUsageMetric[]
+  fetchedAt?: string
+  message?: string
+}
+
+export interface RealUsageState {
+  source: 'codex-oauth'
+  fetchedAt: string
+  accounts: {
+    account1: RealAccountUsage
+    account2: RealAccountUsage
+  }
+}
+
 export interface UsageTrackerState {
   account1: AccountUsage
   account2: AccountUsage
@@ -132,6 +170,8 @@ export interface DevOrbitAPI {
   getProjects: () => Promise<Project[]>
   refreshProjects: () => Promise<Project[]>
   syncGit: (projectPath: string) => Promise<SyncResult>
+  getGitBranches: (projectPath: string, refreshRemote?: boolean) => Promise<GitBranch[]>
+  switchGitBranch: (projectPath: string, branch: string) => Promise<SyncResult>
   pushGit: (projectPath: string, commitMessage?: string) => Promise<SyncResult>
   getGitChanges: (projectPath: string) => Promise<string[]>
   syncAllGit: () => Promise<{ [projectPath: string]: SyncResult }>
@@ -167,6 +207,7 @@ export interface DevOrbitAPI {
   ) => Promise<{ success: boolean; message?: string }>
   generateMemoryFromGit: (projectPath: string) => Promise<string>
   getUsageState: () => Promise<UsageTrackerState>
+  getRealUsage: (force?: boolean) => Promise<RealUsageState>
   incrementUsage: (
     target: 'account1' | 'account2' | 'antigravity'
   ) => Promise<UsageTrackerState>

@@ -2,14 +2,15 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import path from 'node:path'
 import fs from 'node:fs/promises'
-import type { GitStatus, SyncResult } from '../renderer/src/types'
+import type { GitBranch, GitStatus, SyncResult } from '../renderer/src/types'
+import { validateGitBranch } from './validation'
 
 const execFileAsync = promisify(execFile)
 
 // Git operations are process-bound and can mutate the same working tree. Keep
 // syncs for one repository serialized even when the renderer fires multiple
 // requests (for example, a manual sync while "Sync all" is still running).
-const syncLocks = new Map<string, Promise<SyncResult>>()
+const mutationLocks = new Map<string, Promise<SyncResult>>()
 
 function getSyncLockKey(repoPath: string): string {
   const normalized = path.normalize(path.resolve(repoPath))
@@ -134,6 +135,163 @@ export async function getGitStatus(repoPath: string, refreshRemote = false): Pro
   }
 }
 
+interface GitRefRecord {
+  name: string
+  isCurrent: boolean
+  upstream?: string
+  commit?: string
+}
+
+function parseGitRefRecords(stdout: string): GitRefRecord[] {
+  return stdout
+    .split(/\r?\n/)
+    .map((line) => line.split('\0'))
+    .filter((fields) => fields[0]?.trim())
+    .map(([name, head, upstream, commit]) => ({
+      name: name.trim(),
+      isCurrent: head.trim() === '*',
+      ...(upstream?.trim() ? { upstream: upstream.trim() } : {}),
+      ...(commit?.trim() ? { commit: commit.trim() } : {}),
+    }))
+}
+
+/**
+ * Lists the local branches and the remote refs that can be checked out. The
+ * optional fetch is deliberately best-effort: a temporary network failure
+ * should not hide branches already present in the local repository.
+ */
+export async function getGitBranches(
+  repoPath: string,
+  refreshRemote = false
+): Promise<GitBranch[]> {
+  const isRepo = await isGitRepository(repoPath)
+  if (!isRepo) return []
+
+  if (refreshRemote) {
+    try {
+      await execFileAsync('git', ['fetch', '--quiet', '--prune'], {
+        cwd: repoPath,
+        timeout: 15000,
+        windowsHide: true,
+      })
+    } catch {
+      // Keep the locally known refs available when the network is offline.
+    }
+  }
+
+  try {
+    const format = '%(refname:short)%00%(HEAD)%00%(upstream:short)%00%(objectname:short)'
+    const [{ stdout: localOutput }, { stdout: remoteOutput }] = await Promise.all([
+      execFileAsync('git', ['for-each-ref', `--format=${format}`, 'refs/heads'], {
+        cwd: repoPath,
+        timeout: 8000,
+        windowsHide: true,
+      }),
+      execFileAsync('git', ['for-each-ref', `--format=${format}`, 'refs/remotes'], {
+        cwd: repoPath,
+        timeout: 8000,
+        windowsHide: true,
+      }),
+    ])
+
+    const local = parseGitRefRecords(localOutput).map((ref) => ({
+      name: ref.name,
+      isCurrent: ref.isCurrent,
+      isRemote: false,
+      ...(ref.upstream ? { upstream: ref.upstream } : {}),
+      ...(ref.commit ? { commit: ref.commit } : {}),
+    }))
+    const remote = parseGitRefRecords(remoteOutput)
+      // origin/HEAD is a symbolic convenience ref, not a branch a user can
+      // sensibly check out, so keep it out of the picker.
+      .filter((ref) => ref.name.includes('/') && !ref.name.endsWith('/HEAD'))
+      .map((ref) => ({
+        name: ref.name,
+        isCurrent: false,
+        isRemote: true,
+        ...(ref.commit ? { commit: ref.commit } : {}),
+      }))
+
+    return [...local, ...remote].sort((a, b) => {
+      if (a.isCurrent !== b.isCurrent) return a.isCurrent ? -1 : 1
+      if (a.isRemote !== b.isRemote) return a.isRemote ? 1 : -1
+      return a.name.localeCompare(b.name)
+    })
+  } catch (error: any) {
+    throw new Error(`Não foi possível listar as branches: ${error.stderr || error.message || 'falha no Git'}`)
+  }
+}
+
+async function switchGitBranchUnlocked(repoPath: string, requestedBranch: string): Promise<SyncResult> {
+  const isRepo = await isGitRepository(repoPath)
+  if (!isRepo) {
+    return { success: false, message: 'Esta pasta não é um repositório Git.' }
+  }
+
+  try {
+    const { stdout: statusOutput } = await execFileAsync('git', ['status', '--porcelain=v1'], {
+      cwd: repoPath,
+      timeout: 8000,
+      windowsHide: true,
+    })
+    if (statusOutput.trim()) {
+      return {
+        success: false,
+        message: 'Troca recusada: existem alterações locais. Faça commit ou stash antes de trocar de branch.',
+        output: statusOutput.trim().slice(0, 4000),
+      }
+    }
+
+    const branches = await getGitBranches(repoPath)
+    const localBranches = branches.filter((branch) => !branch.isRemote)
+    const remoteBranches = branches.filter((branch) => branch.isRemote)
+    const remote = remoteBranches.find((branch) =>
+      branch.name === requestedBranch || branch.name === `origin/${requestedBranch}`
+    )
+    const localName = remote
+      ? remote.name.slice(remote.name.indexOf('/') + 1)
+      : requestedBranch
+    const local = localBranches.find((branch) => branch.name === localName)
+
+    if (local) {
+      const { stdout, stderr } = await execFileAsync('git', ['switch', '--no-guess', localName], {
+        cwd: repoPath,
+        timeout: 15000,
+        windowsHide: true,
+      })
+      return {
+        success: true,
+        message: `Branch alterada para ${localName}.`,
+        output: (stdout + '\n' + stderr).trim(),
+      }
+    }
+
+    if (!remote) {
+      return {
+        success: false,
+        message: `A branch “${requestedBranch}” não foi encontrada neste repositório. Atualize a lista e tente novamente.`,
+      }
+    }
+
+    const { stdout, stderr } = await execFileAsync(
+      'git',
+      ['switch', '--track', '-c', localName, remote.name],
+      { cwd: repoPath, timeout: 15000, windowsHide: true }
+    )
+    return {
+      success: true,
+      message: `Branch local ${localName} criada acompanhando ${remote.name}.`,
+      output: (stdout + '\n' + stderr).trim(),
+    }
+  } catch (error: any) {
+    return {
+      success: false,
+      message: `Erro ao trocar de branch: ${error.stderr || error.message || 'falha no Git'}`,
+      output: error.stderr || error.stdout,
+    }
+  }
+}
+
 async function syncGitUnlocked(repoPath: string): Promise<SyncResult> {
   const isRepo = await isGitRepository(repoPath)
   if (!isRepo) {
@@ -212,19 +370,41 @@ export async function syncGit(repoPath: string): Promise<SyncResult> {
     }
   }
 
-  const previous = syncLocks.get(lockKey)
+  const previous = mutationLocks.get(lockKey)
   const current = (previous ?? Promise.resolve())
     .catch(() => undefined)
     .then(() => syncGitUnlocked(repoPath))
 
-  syncLocks.set(lockKey, current)
+  mutationLocks.set(lockKey, current)
 
   try {
     return await current
   } finally {
-    if (syncLocks.get(lockKey) === current) {
-      syncLocks.delete(lockKey)
+    if (mutationLocks.get(lockKey) === current) {
+      mutationLocks.delete(lockKey)
     }
+  }
+}
+
+export async function switchGitBranch(repoPath: string, requestedBranch: string): Promise<SyncResult> {
+  const safeBranch = validateGitBranch(requestedBranch)
+  let lockKey: string
+  try {
+    lockKey = getSyncLockKey(repoPath)
+  } catch {
+    return { success: false, message: 'Caminho de repositório inválido.' }
+  }
+
+  const previous = mutationLocks.get(lockKey)
+  const current = (previous ?? Promise.resolve())
+    .catch(() => undefined)
+    .then(() => switchGitBranchUnlocked(repoPath, safeBranch))
+
+  mutationLocks.set(lockKey, current)
+  try {
+    return await current
+  } finally {
+    if (mutationLocks.get(lockKey) === current) mutationLocks.delete(lockKey)
   }
 }
 

@@ -20,6 +20,7 @@ interface ProjectGridProps {
   isLoading: boolean
   onOpenAuthModal?: (account: 'account1' | 'account2') => void
   onOpenMemory?: (project: Project) => void
+  onOpenBranches?: (project: Project) => void
   onUsageUpdate?: () => void
   onOpenSettings?: () => void
 }
@@ -37,6 +38,7 @@ export const ProjectGrid: React.FC<ProjectGridProps> = ({
   isLoading,
   onOpenAuthModal,
   onOpenMemory,
+  onOpenBranches,
   onUsageUpdate,
   onOpenSettings,
 }) => {
@@ -258,6 +260,7 @@ export const ProjectGrid: React.FC<ProjectGridProps> = ({
                 onNotify={onNotify}
                 onOpenAuthModal={onOpenAuthModal}
                 onOpenMemory={onOpenMemory}
+                onOpenBranches={onOpenBranches}
                 onUsageUpdate={onUsageUpdate}
               />
             ))}

@@ -11,8 +11,14 @@ import {
   ChevronDown,
   Clock,
   CheckCircle2,
+  RefreshCw,
 } from 'lucide-react'
-import type { AppConfig, UsageTrackerState, AccountUsage } from '../types'
+import type {
+  AppConfig,
+  UsageTrackerState,
+  AccountUsage,
+  RealUsageState,
+} from '../types'
 
 interface UsageBarProps {
   usage: UsageTrackerState | null
@@ -23,6 +29,9 @@ interface UsageBarProps {
   onUpdateLimit: (account: 'account1' | 'account2', limit: number) => Promise<void>
   onSwitchAccount: () => Promise<void>
   isSwitchingAccount?: boolean
+  realUsage: RealUsageState | null
+  onRefreshRealUsage: () => Promise<void>
+  isRefreshingRealUsage?: boolean
 }
 
 export const UsageBar: React.FC<UsageBarProps> = ({
@@ -34,6 +43,9 @@ export const UsageBar: React.FC<UsageBarProps> = ({
   onUpdateLimit,
   onSwitchAccount,
   isSwitchingAccount = false,
+  realUsage,
+  onRefreshRealUsage,
+  isRefreshingRealUsage = false,
 }) => {
   const [popoverOpen, setPopoverOpen] = useState(false)
   const [now, setNow] = useState(Date.now())
@@ -59,6 +71,16 @@ export const UsageBar: React.FC<UsageBarProps> = ({
       return `${hours}h ${minutes}m`
     }
     return `${minutes}m`
+  }
+
+  const formatRealReset = (resetAt?: number) => {
+    if (!resetAt) return null
+    const remainingMs = Math.max(0, resetAt - now)
+    if (remainingMs <= 0) return 'reset disponível'
+    const totalMinutes = Math.ceil(remainingMs / 60000)
+    const hours = Math.floor(totalMinutes / 60)
+    const minutes = totalMinutes % 60
+    return hours > 0 ? `reseta em ${hours}h ${minutes}m` : `reseta em ${minutes}m`
   }
 
   const renderMeter = (
@@ -93,7 +115,7 @@ export const UsageBar: React.FC<UsageBarProps> = ({
         <div
           className="relative h-2 w-16 overflow-hidden rounded-full border border-slate-700/50 bg-slate-800 sm:w-20"
           role="progressbar"
-          aria-label={`${name} — uso da cota`}
+          aria-label={`${name} — sessões estimadas`}
           aria-valuemin={0}
           aria-valuemax={100}
           aria-valuenow={percent}
@@ -110,7 +132,7 @@ export const UsageBar: React.FC<UsageBarProps> = ({
           />
         </div>
 
-        {/* Contagem e Timer */}
+        {/* Contagem local: não representa tokens oficiais */}
         <span
           className={`tabular-nums font-mono text-[11px] font-bold ${
             isCritical ? 'text-red-400' : isWarning ? 'text-amber-300' : 'text-slate-200'
@@ -118,6 +140,7 @@ export const UsageBar: React.FC<UsageBarProps> = ({
         >
           {acc.used}/{acc.limit}
         </span>
+        <span className="hidden text-[9px] font-medium uppercase tracking-wide text-slate-500 xl:inline">estimado</span>
 
         {remaining && (
           <span className="hidden items-center gap-1 font-mono text-[10px] text-[var(--color-text-muted)] md:inline-flex">
@@ -157,10 +180,10 @@ export const UsageBar: React.FC<UsageBarProps> = ({
   return (
     <div className="titlebar-no-drag border-b border-[var(--color-border-subtle)]/55 bg-[var(--color-bg-toolbar)]/75 px-4 py-2.5 backdrop-blur-lg sm:px-5 lg:px-6">
       <div className="mx-auto flex w-full max-w-[1680px] flex-wrap items-center justify-between gap-2.5">
-      {/* Esquerda: Medidores de Quota */}
+      {/* Esquerda: medidores locais de sessão */}
       <div className="flex min-w-0 max-w-full items-center gap-2 overflow-x-auto py-0.5">
         <span className="mr-1 flex shrink-0 items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
-          <Zap className="h-3.5 w-3.5 text-amber-300" /> Quotas
+          <Zap className="h-3.5 w-3.5 text-amber-300" /> Uso local (estimado)
         </span>
 
         {renderMeter(
@@ -188,7 +211,7 @@ export const UsageBar: React.FC<UsageBarProps> = ({
           <div role="status" className="flex items-center gap-1.5 rounded-xl border border-amber-400/35 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-200 motion-safe:animate-pulse">
             <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-300" />
             <span className="hidden sm:inline">
-              {activePercent >= 100 ? 'Limite Atingido!' : 'Limite Próximo!'}
+              {activePercent >= 100 ? 'Limite de sessões atingido!' : 'Limite de sessões próximo!'}
             </span>
             <button
               onClick={() => void onSwitchAccount()}
@@ -220,7 +243,7 @@ export const UsageBar: React.FC<UsageBarProps> = ({
           {popoverOpen && (
             <div id="usage-settings-popover" className="surface-panel absolute end-0 top-12 z-50 w-72 space-y-3 rounded-2xl p-4 text-xs">
               <div className="flex items-center justify-between border-b border-[var(--color-border-subtle)]/70 pb-3">
-                <span className="font-bold text-white">Configurar Cotas IA</span>
+                <span className="font-bold text-white">Contador local (não tokens)</span>
                 <button
                   onClick={() => setPopoverOpen(false)}
                   aria-label="Fechar configurações de quota"
@@ -256,7 +279,7 @@ export const UsageBar: React.FC<UsageBarProps> = ({
               {/* Ajuste de Limite Máximo */}
               <div className="space-y-1.5 border-t border-[var(--color-border-subtle)]/70 pt-3">
                 <span className="text-slate-400 text-[11px] block">
-                  Limite por Janela (mensagens / 3h):
+                  Limite de sessões por janela (3h):
                 </span>
                 <div className="flex items-center gap-2">
                   <label htmlFor="usage-limit-account-1" className="text-[11px] text-slate-400">C1:</label>
@@ -291,6 +314,70 @@ export const UsageBar: React.FC<UsageBarProps> = ({
           )}
         </div>
       </div>
+
+      {realUsage && (
+        <div className="basis-full rounded-xl border border-cyan-400/20 bg-cyan-500/[0.04] px-3 py-2.5">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-[11px]">
+              <CheckCircle2 className="h-3.5 w-3.5 text-cyan-300" aria-hidden="true" />
+              <span className="font-semibold uppercase tracking-[0.12em] text-cyan-100">Uso real do Codex</span>
+              <span className="text-[10px] text-slate-500">OAuth · endpoint compatível com ai-usagebar</span>
+              <span className="text-[10px] text-slate-500">atualizado {new Date(realUsage.fetchedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => void onRefreshRealUsage()}
+              disabled={isRefreshingRealUsage}
+              className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-cyan-400/25 bg-cyan-500/10 px-2.5 text-[11px] font-semibold text-cyan-100 transition-colors hover:border-cyan-300/50 hover:bg-cyan-500/20 disabled:cursor-wait disabled:opacity-60"
+            >
+              <RefreshCw className={`h-3 w-3 ${isRefreshingRealUsage ? 'motion-safe:animate-spin' : ''}`} aria-hidden="true" />
+              {isRefreshingRealUsage ? 'Consultando…' : 'Atualizar uso real'}
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
+            {(['account1', 'account2'] as const).map((accountKey) => {
+              const account = realUsage.accounts[accountKey]
+              const accountName = accountKey === 'account1'
+                ? config?.chatGptAccount1Name || 'Codex #1'
+                : config?.chatGptAccount2Name || 'Codex #2'
+              const metrics = account.metrics
+                .filter((metric): metric is typeof metric & { percent: number } => metric.percent !== undefined)
+                .slice(0, 2)
+              return (
+                <div key={accountKey} className="rounded-lg border border-slate-800/80 bg-slate-950/35 px-2.5 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate text-[11px] font-semibold text-slate-200">{accountName}</span>
+                    <span className={`shrink-0 text-[10px] font-medium ${account.status === 'ready' ? 'text-emerald-300' : account.status === 'not_configured' ? 'text-amber-300' : 'text-rose-300'}`}>
+                      {account.status === 'ready' ? account.plan ? `Ativa · ${account.plan}` : 'Ativa' : account.status === 'not_configured' ? 'Não autenticada' : 'Indisponível'}
+                    </span>
+                  </div>
+                  {metrics.length > 0 ? (
+                    <div className="mt-1.5 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                      {metrics.map((metric) => (
+                        <div key={`${accountKey}-${metric.id}`} className="min-w-0">
+                          <div className="flex items-center justify-between gap-2 text-[10px] text-slate-400">
+                            <span className="truncate">{metric.label}</span>
+                            <span className="font-mono font-bold text-cyan-200">{metric.percent}%</span>
+                          </div>
+                          <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-800" role="progressbar" aria-label={`${accountName} — ${metric.label}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={metric.percent}>
+                            <div className={`h-full rounded-full ${metric.percent >= 90 ? 'bg-rose-400' : metric.percent >= 75 ? 'bg-amber-300' : 'bg-cyan-400'}`} style={{ width: `${metric.percent}%` }} />
+                          </div>
+                          {metric.resetAt && <span className="mt-0.5 block text-[9px] text-slate-500">{formatRealReset(metric.resetAt)}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  ) : account.status === 'ready' ? (
+                    <p className="mt-1.5 text-[10px] text-slate-400">A conta respondeu, mas não publicou uma janela percentual.</p>
+                  ) : (
+                    <p className="mt-1.5 truncate text-[10px] text-slate-500" title={account.message}>{account.message}</p>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
       </div>
     </div>
   )

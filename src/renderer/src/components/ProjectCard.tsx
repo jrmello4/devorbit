@@ -27,6 +27,7 @@ interface ProjectCardProps {
   onNotify: (message: string, type?: 'success' | 'error' | 'info') => void
   onOpenAuthModal?: (account: 'account1' | 'account2') => void
   onOpenMemory?: (project: Project) => void
+  onOpenBranches?: (project: Project) => void
   onUsageUpdate?: () => void
 }
 
@@ -39,6 +40,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
   onNotify,
   onOpenAuthModal,
   onOpenMemory,
+  onOpenBranches,
   onUsageUpdate,
 }) => {
   const [isSyncing, setIsSyncing] = useState(false)
@@ -176,10 +178,16 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
           {/* Git Status Badge */}
           {git.isRepo ? (
             <div className="ms-auto flex items-center gap-2">
-              <span className="flex items-center gap-1 font-mono text-[11px] text-[var(--color-text-muted)]">
+              <button
+                type="button"
+                onClick={() => onOpenBranches?.(project)}
+                className="flex min-h-8 min-w-0 items-center gap-1 rounded-lg px-1.5 font-mono text-[11px] text-[var(--color-text-muted)] transition-colors hover:bg-sky-500/10 hover:text-sky-200"
+                title="Listar e trocar branches deste repositório"
+                aria-label={`Trocar branch de ${project.name}; branch atual ${git.branch}`}
+              >
                 <GitBranch className="h-3 w-3 text-slate-500" />
                 {git.branch}
-              </span>
+              </button>
 
               {needsPull ? (
                 <span className="flex items-center gap-1 rounded-md border border-sky-400/30 bg-sky-500/10 px-2 py-1 text-[11px] font-semibold text-sky-200">
