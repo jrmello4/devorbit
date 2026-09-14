@@ -12,6 +12,9 @@ const execFileAsync = promisify(execFile)
 // requests (for example, a manual sync while "Sync all" is still running).
 const mutationLocks = new Map<string, Promise<SyncResult>>()
 const cloneLocks = new Map<string, Promise<GitCloneResult>>()
+const RECREATABLE_IGNORED_ROOTS = new Set([
+  'node_modules', '.gradle', '.next', 'coverage', '.venv', 'venv', '__pycache__',
+])
 
 function getSyncLockKey(repoPath: string): string {
   const normalized = path.normalize(path.resolve(repoPath))
@@ -133,6 +136,21 @@ export async function getGitStatus(repoPath: string, refreshRemote = false): Pro
       untrackedCount: 0,
       statusMessage: `Erro ao consultar Git: ${error.message || 'desconhecido'}`,
     }
+  }
+}
+
+export async function getGitRemoteUrl(repoPath: string): Promise<string | null> {
+  if (!await isGitRepository(repoPath)) return null
+  try {
+    const { stdout } = await execFileAsync('git', ['remote', 'get-url', 'origin'], {
+      cwd: repoPath,
+      timeout: 8000,
+      windowsHide: true,
+    })
+    const remote = stdout.trim()
+    return remote || null
+  } catch {
+    return null
   }
 }
 
@@ -743,4 +761,170 @@ export async function pushGit(
       output: error.stderr || error.stdout,
     }
   }
+}
+
+async function finalizeGitProjectUnlocked(repoPath: string, allowRecreatableIgnored: boolean): Promise<SyncResult> {
+  if (!await isGitRepository(repoPath)) {
+    return { success: false, message: 'Esta pasta não é um repositório Git.' }
+  }
+
+  try {
+    const { stdout: localStatus } = await execFileAsync('git', ['status', '--porcelain=v1'], {
+      cwd: repoPath, timeout: 8000, windowsHide: true,
+    })
+    if (localStatus.trim()) {
+      return { success: false, message: 'Liberação recusada: existem alterações locais. Faça commit e push antes de liberar espaço.', output: localStatus.trim().slice(0, 4000) }
+    }
+
+    const { stdout: ignoredStatus } = await execFileAsync('git', ['status', '--porcelain=v1', '--ignored'], {
+      cwd: repoPath, timeout: 8000, windowsHide: true,
+    })
+    const unsafeIgnored = ignoredStatus
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith('!!'))
+      .map((line) => line.slice(3).trim().replace(/^"|"$/g, ''))
+      .filter((entry) => !allowRecreatableIgnored || !RECREATABLE_IGNORED_ROOTS.has(entry.split(/[\\/]/)[0]))
+    if (unsafeIgnored.length > 0) {
+      return { success: false, message: allowRecreatableIgnored
+        ? 'Liberação recusada: existem arquivos ignorados importantes (por exemplo .env ou bancos) nesta pasta. Remova-os ou mova-os manualmente antes de liberar espaço.'
+        : 'Liberação recusada: confirme explicitamente a remoção das dependências recriáveis ou remova os arquivos ignorados manualmente antes de liberar espaço.', output: unsafeIgnored.slice(0, 20).join('\n') }
+    }
+
+    const { stdout: stashList } = await execFileAsync('git', ['stash', 'list'], {
+      cwd: repoPath, timeout: 8000, windowsHide: true,
+    })
+    if (stashList.trim()) {
+      return { success: false, message: 'Liberação recusada: existem alterações guardadas em stash. Recupere ou remova o stash antes de liberar espaço.' }
+    }
+
+    const remote = await getGitRemoteUrl(repoPath)
+    if (!remote) return { success: false, message: 'Liberação recusada: o repositório não possui um remote origin.' }
+
+    try {
+      await execFileAsync('git', ['fetch', '--quiet', '--prune'], {
+        cwd: repoPath, timeout: 30000, windowsHide: true,
+      })
+    } catch (error: any) {
+      return { success: false, message: 'Liberação recusada: não foi possível confirmar o estado do GitHub. Verifique a conexão e tente novamente.', output: error?.stderr || error?.message }
+    }
+
+    try {
+      const [{ stdout: branchOutput }, { stdout: upstreamOutput }] = await Promise.all([
+        execFileAsync('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], { cwd: repoPath, timeout: 8000, windowsHide: true }),
+        execFileAsync('git', ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], { cwd: repoPath, timeout: 8000, windowsHide: true }),
+      ])
+      if (!branchOutput.trim() || !upstreamOutput.trim() || !upstreamOutput.trim().startsWith('origin/')) throw new Error('missing-origin-upstream')
+    } catch {
+      return { success: false, message: 'Liberação recusada: a branch atual não está acompanhando um branch remoto.' }
+    }
+
+    const { stdout: currentCounts } = await execFileAsync('git', ['rev-list', '--left-right', '--count', 'HEAD...@{u}'], {
+      cwd: repoPath, timeout: 8000, windowsHide: true,
+    })
+    if (!/^0\s+0$/.test(currentCounts.trim())) {
+      return { success: false, message: 'Liberação recusada: existem commits locais ou remotos pendentes.' }
+    }
+
+    const { stdout: branchOutput } = await execFileAsync('git', ['for-each-ref', '--format=%(refname:short)', 'refs/heads'], {
+      cwd: repoPath, timeout: 8000, windowsHide: true,
+    })
+    const localBranches = branchOutput.split(/\r?\n/).map((branch) => branch.trim()).filter(Boolean)
+    for (const branch of localBranches) {
+      let upstream = ''
+      try {
+        const { stdout } = await execFileAsync('git', ['rev-parse', '--abbrev-ref', '--symbolic-full-name', `${branch}@{u}`], { cwd: repoPath, timeout: 8000, windowsHide: true })
+        upstream = stdout.trim()
+        if (!upstream.startsWith('origin/')) throw new Error('non-origin-upstream')
+      } catch {
+        return { success: false, message: `Liberação recusada: a branch local “${branch}” não foi enviada ao GitHub.` }
+      }
+      const { stdout: counts } = await execFileAsync('git', ['rev-list', '--left-right', '--count', `${branch}...${upstream}`], { cwd: repoPath, timeout: 8000, windowsHide: true })
+      if (!/^0\s+0$/.test(counts.trim())) {
+        return { success: false, message: `Liberação recusada: a branch “${branch}” não está alinhada ao GitHub.` }
+      }
+    }
+
+    const { stdout: tagOutput } = await execFileAsync('git', ['tag', '--list'], {
+      cwd: repoPath, timeout: 8000, windowsHide: true,
+    })
+    for (const tag of tagOutput.split(/\r?\n/).map((value) => value.trim()).filter(Boolean)) {
+      try {
+        await execFileAsync('git', ['merge-base', '--is-ancestor', tag, 'HEAD'], {
+          cwd: repoPath, timeout: 8000, windowsHide: true,
+        })
+      } catch {
+        return { success: false, message: `Liberação recusada: a tag local “${tag}” aponta para um commit fora da branch atual.` }
+      }
+    }
+    if (tagOutput.trim()) {
+      let remoteTagOutput = ''
+      try {
+        const { stdout } = await execFileAsync('git', ['ls-remote', '--tags', 'origin'], {
+          cwd: repoPath, timeout: 15000, windowsHide: true,
+        })
+        remoteTagOutput = stdout
+      } catch {
+        return { success: false, message: 'Liberação recusada: não foi possível confirmar as tags locais no GitHub.' }
+      }
+      const remoteTags = new Map<string, Set<string>>()
+      for (const line of remoteTagOutput.split(/\r?\n/).filter(Boolean)) {
+        const [objectId, ref] = line.trim().split(/\s+/)
+        if (!objectId || !ref || !ref.startsWith('refs/tags/')) continue
+        const tagName = ref.slice('refs/tags/'.length).replace(/\^\{\}$/, '')
+        const hashes = remoteTags.get(tagName) || new Set<string>()
+        hashes.add(objectId)
+        remoteTags.set(tagName, hashes)
+      }
+      const { stdout: localTagRefs } = await execFileAsync('git', ['for-each-ref', '--format=%(refname:strip=2)%00%(objectname)', 'refs/tags'], {
+        cwd: repoPath, timeout: 8000, windowsHide: true,
+      })
+      for (const line of localTagRefs.split(/\r?\n/).filter(Boolean)) {
+        const [tagName, objectId] = line.split('\0')
+        if (!tagName || !objectId || !remoteTags.get(tagName)?.has(objectId)) {
+          return { success: false, message: `Liberação recusada: a tag local “${tagName || 'desconhecida'}” não está idêntica à tag do GitHub.` }
+        }
+      }
+    }
+
+    const { stdout: finalIgnoredStatus } = await execFileAsync('git', ['status', '--porcelain=v1', '--ignored'], {
+      cwd: repoPath, timeout: 8000, windowsHide: true,
+    })
+    const { stdout: finalTrackedStatus } = await execFileAsync('git', ['status', '--porcelain=v1'], {
+      cwd: repoPath, timeout: 8000, windowsHide: true,
+    })
+    if (finalTrackedStatus.trim()) {
+      return { success: false, message: 'Liberação recusada: alterações locais apareceram durante a verificação.', output: finalTrackedStatus.trim().slice(0, 4000) }
+    }
+    const { stdout: finalStashList } = await execFileAsync('git', ['stash', 'list'], {
+      cwd: repoPath, timeout: 8000, windowsHide: true,
+    })
+    if (finalStashList.trim()) {
+      return { success: false, message: 'Liberação recusada: um stash apareceu durante a verificação.' }
+    }
+    const finalUnsafeIgnored = finalIgnoredStatus
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith('!!'))
+      .map((line) => line.slice(3).trim().replace(/^"|"$/g, ''))
+      .filter((entry) => !allowRecreatableIgnored || !RECREATABLE_IGNORED_ROOTS.has(entry.split(/[\\/]/)[0]))
+    if (finalUnsafeIgnored.length > 0) {
+      return { success: false, message: 'Liberação recusada: arquivos ignorados importantes apareceram durante a verificação.' }
+    }
+
+    const entries = await fs.readdir(repoPath, { withFileTypes: true })
+    for (const entry of entries) {
+      await fs.rm(path.join(repoPath, entry.name), { recursive: true, force: true })
+    }
+    return { success: true, message: 'Projeto confirmado no GitHub e conteúdo local liberado com segurança.' }
+  } catch (error: any) {
+    return { success: false, message: `Não foi possível liberar espaço: ${error?.message || 'falha desconhecida'}` }
+  }
+}
+
+export async function finalizeGitProject(
+  repoPath: string,
+  options: { allowRecreatableIgnored?: boolean } = {}
+): Promise<SyncResult> {
+  let key: string
+  try { key = getSyncLockKey(repoPath) } catch { return { success: false, message: 'Caminho de repositório inválido.' } }
+  return runSerialized(key, () => finalizeGitProjectUnlocked(repoPath, options.allowRecreatableIgnored === true))
 }

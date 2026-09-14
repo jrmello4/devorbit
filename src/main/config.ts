@@ -3,7 +3,7 @@ import path from 'node:path'
 import os from 'node:os'
 import electron from 'electron'
 const { app } = electron
-import type { AppConfig } from '../renderer/src/types'
+import type { AppConfig, ManagedProject } from '../renderer/src/types'
 import { validateConfigUpdates } from './validation'
 
 const MAX_IMPORT_BYTES = 1_000_000
@@ -18,6 +18,7 @@ const defaultConfig: AppConfig = {
     path.join(os.homedir(), 'projects'),
     path.join(os.homedir(), 'Documents'),
   ],
+  managedProjects: [],
   activeChatGptAccount: 'account1',
   chatGptAccount1Name: 'Conta 1 (Principal)',
   chatGptAccount2Name: 'Conta 2 (Codex / Backup)',
@@ -30,6 +31,35 @@ const defaultConfig: AppConfig = {
     vscode: 'code.cmd',
     wt: 'wt.exe',
   },
+}
+
+function normalizeManagedProjects(value: unknown): ManagedProject[] {
+  if (!Array.isArray(value)) return []
+  const seen = new Set<string>()
+  const result: ManagedProject[] = []
+  for (const entry of value) {
+    if (!isRecord(entry)) continue
+    const id = typeof entry.id === 'string' ? entry.id.trim() : ''
+    const name = typeof entry.name === 'string' ? entry.name.trim() : ''
+    const parentPath = typeof entry.parentPath === 'string' ? entry.parentPath.trim() : ''
+    const folderName = typeof entry.folderName === 'string' ? entry.folderName.trim() : ''
+    const remoteUrl = typeof entry.remoteUrl === 'string' ? entry.remoteUrl.trim() : ''
+    const branch = typeof entry.branch === 'string' && entry.branch.trim() ? entry.branch.trim() : 'main'
+    const registeredAt = typeof entry.registeredAt === 'string' ? entry.registeredAt : new Date().toISOString()
+    if (!id || !name || !parentPath || !folderName || !remoteUrl) continue
+    if (folderName === '.' || folderName === '..' || /[\\/\0]/.test(folderName)) continue
+    try {
+      const url = new URL(remoteUrl)
+      if (url.protocol !== 'https:' || url.username || url.password) continue
+    } catch {
+      continue
+    }
+    const key = `${parentPath.toLowerCase()}\\${folderName.toLowerCase()}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    result.push({ id, name, parentPath, folderName, remoteUrl, branch, registeredAt })
+  }
+  return result.slice(0, 500)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -77,6 +107,7 @@ function normalizeConfig(value: unknown): AppConfig {
 
   return {
     projectDirs: hasValidProjectDirList ? projectDirs : [...defaultConfig.projectDirs],
+    managedProjects: normalizeManagedProjects(source.managedProjects),
     activeChatGptAccount:
       source.activeChatGptAccount === 'account2' ? 'account2' : 'account1',
     chatGptAccount1Name: safeText(

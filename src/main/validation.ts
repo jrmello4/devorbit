@@ -2,13 +2,14 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import type { AppConfig } from '../renderer/src/types'
+import type { AppConfig, ManagedProject } from '../renderer/src/types'
 
 const execFileAsync = promisify(execFile)
 
 export const MAX_PROJECT_DIRS = 16
 export const MAX_PROJECT_DIR_LENGTH = 4096
 export const MAX_CONFIG_TEXT_LENGTH = 160
+const MAX_MANAGED_PROJECTS = 500
 
 export const LAUNCH_TOOLS = [
   'agy',
@@ -336,12 +337,49 @@ function validateCustomPaths(value: unknown): AppConfig['customPaths'] {
   return customPaths
 }
 
+async function validateManagedProjects(value: unknown): Promise<ManagedProject[]> {
+  if (!Array.isArray(value) || value.length > MAX_MANAGED_PROJECTS) {
+    throw new Error('Cadastro de projetos inválido.')
+  }
+  const result: ManagedProject[] = []
+  const seen = new Set<string>()
+  for (const entry of value) {
+    if (!isRecord(entry)) throw new Error('Cadastro de projetos inválido.')
+    const name = typeof entry.name === 'string' ? entry.name.trim() : ''
+    if (typeof entry.parentPath !== 'string' || !entry.parentPath.trim() || entry.parentPath.length > MAX_PROJECT_DIR_LENGTH || entry.parentPath.includes('\0')) {
+      throw new Error('Pasta pai do projeto inválida.')
+    }
+    const parentPath = path.resolve(entry.parentPath.trim())
+    const folderName = validateFolderName(entry.folderName)
+    const remoteUrl = validateHttpsUrl(entry.remoteUrl)
+    const branch = validateGitBranch(entry.branch === undefined ? 'main' : entry.branch)
+    const id = typeof entry.id === 'string' && entry.id.trim() ? entry.id.trim() : Buffer.from(`${parentPath}\\${folderName}`).toString('base64')
+    if (!name || name.length > MAX_CONFIG_TEXT_LENGTH) throw new Error('Nome de projeto inválido.')
+    const key = `${parentPath.toLowerCase()}\\${folderName.toLowerCase()}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    result.push({
+      id,
+      name,
+      parentPath,
+      folderName,
+      remoteUrl,
+      branch,
+      registeredAt: typeof entry.registeredAt === 'string' && entry.registeredAt ? entry.registeredAt : new Date().toISOString(),
+    })
+  }
+  return result
+}
+
 export async function validateConfigUpdates(value: unknown): Promise<Partial<AppConfig>> {
   if (!isRecord(value)) throw new Error('Configuração inválida.')
 
   const updates: Partial<AppConfig> = {}
   if ('projectDirs' in value) {
     updates.projectDirs = await validateProjectDirs(value.projectDirs)
+  }
+  if ('managedProjects' in value) {
+    updates.managedProjects = await validateManagedProjects(value.managedProjects)
   }
   if ('activeChatGptAccount' in value && value.activeChatGptAccount !== undefined) {
     updates.activeChatGptAccount = validateCodexAccount(value.activeChatGptAccount)

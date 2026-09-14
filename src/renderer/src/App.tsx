@@ -342,6 +342,30 @@ export const App: React.FC = () => {
     }
   }
 
+  const handleRestoreProject = async (project: Project) => {
+    if (!window.devorbit) return
+    try {
+      const result = await window.devorbit.restoreManagedProject(project.path)
+      notify(result.message || (result.success ? 'Projeto baixado.' : 'Não foi possível baixar o projeto.'), result.success ? 'success' : 'error')
+      if (result.success) await handleRefresh()
+    } catch (err: any) {
+      notify(`Erro ao baixar projeto: ${err.message || 'falha desconhecida'}`, 'error')
+    }
+  }
+
+  const handleFinalizeProject = async (project: Project) => {
+    if (!window.devorbit) return
+    try {
+      const result = await window.devorbit.finalizeManagedProject(project.path, {
+        allowRecreatableIgnored: true,
+      })
+      notify(result.message, result.success ? 'success' : 'error')
+      if (result.success) await handleRefresh()
+    } catch (err: any) {
+      notify(`Erro ao liberar espaço: ${err.message || 'falha desconhecida'}`, 'error')
+    }
+  }
+
   // Sincronizar todos os repositórios
   const handleSyncAll = async () => {
     if (!window.devorbit) return
@@ -522,6 +546,8 @@ export const App: React.FC = () => {
         onUsageUpdate={loadUsage}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenClone={() => setIsCloneOpen(true)}
+        onRestoreProject={handleRestoreProject}
+        onFinalizeProject={handleFinalizeProject}
       />
 
       </div>

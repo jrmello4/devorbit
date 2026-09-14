@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import type { Project, TechStack } from '../renderer/src/types'
+import type { ManagedProject, Project, TechStack } from '../renderer/src/types'
 import { getGitStatus, isGitRepository } from './git'
 
 const IGNORED_DIRS = new Set([
@@ -163,6 +163,8 @@ export async function scanDirectoryForProjects(rootDir: string, refreshRemote = 
               lastModified: stats.mtimeMs,
               techs,
               git,
+              parentPath: realRoot,
+              lifecycle: 'local',
             }
           }
 
@@ -246,7 +248,11 @@ export async function listAllNonProjectDirs(rootDirs: string[]): Promise<OtherDi
   return allDirs
 }
 
-export async function scanAllProjects(rootDirs: string[], refreshRemote = false): Promise<Project[]> {
+export async function scanAllProjects(
+  rootDirs: string[],
+  refreshRemote = false,
+  managedProjects: ManagedProject[] = []
+): Promise<Project[]> {
   const allProjects: Project[] = []
   const seenPaths = new Set<string>()
 
@@ -259,6 +265,76 @@ export async function scanAllProjects(rootDirs: string[], refreshRemote = false)
         allProjects.push(p)
       }
     }
+  }
+
+  // Keep a lightweight catalog entry after a working copy is released. Local
+  // projects are enriched with the remote metadata; missing or empty folders
+  // become archived placeholders that can be restored on demand.
+  const byPath = new Map(allProjects.map((project) => [project.path.toLowerCase(), project]))
+  const canonicalRoots = await Promise.all(rootDirs.map((rootDir) => fs.realpath(rootDir).catch(() => path.resolve(rootDir))))
+  for (const managed of managedProjects) {
+    const managedParent = await fs.realpath(managed.parentPath).catch(() => path.resolve(managed.parentPath))
+    const belongsToConfiguredRoot = canonicalRoots.some((rootDir) => {
+      const relative = path.relative(rootDir, managedParent)
+      return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))
+    })
+    if (!belongsToConfiguredRoot) continue
+    const expectedPath = await fs.realpath(path.resolve(managedParent, managed.folderName)).catch(() => path.resolve(managedParent, managed.folderName))
+    const key = expectedPath.toLowerCase()
+    const current = byPath.get(key)
+    if (current) {
+      current.remoteUrl = managed.remoteUrl
+      current.parentPath = managedParent
+      if (current.git.isRepo) {
+        current.lifecycle = 'local'
+      } else {
+        try {
+          const entries = await fs.readdir(current.path)
+          if (entries.length === 0) {
+            current.lifecycle = 'archived'
+            current.git.statusMessage = 'Projeto arquivado — conteúdo não baixado'
+            current.git.branch = managed.branch
+          }
+        } catch {
+          // Keep the scanned project visible if the folder disappears mid-scan.
+        }
+      }
+      continue
+    }
+
+    let archived = true
+    let actualPath = expectedPath
+    try {
+      actualPath = await fs.realpath(expectedPath)
+      const entries = await fs.readdir(actualPath)
+      archived = entries.length === 0
+    } catch {
+      // A missing directory is still a valid catalog entry; restore will create it.
+    }
+    if (!archived) continue
+    const placeholder: Project = {
+      id: managed.id,
+      name: managed.name,
+      path: actualPath,
+      parentDir: path.basename(managedParent),
+      parentPath: managedParent,
+      lastModified: Date.parse(managed.registeredAt) || Date.now(),
+      techs: [],
+      remoteUrl: managed.remoteUrl,
+      lifecycle: 'archived',
+      git: {
+        isRepo: false,
+        branch: managed.branch,
+        ahead: 0,
+        behind: 0,
+        hasChanges: false,
+        modifiedCount: 0,
+        untrackedCount: 0,
+        statusMessage: 'Projeto arquivado — conteúdo não baixado',
+      },
+    }
+    allProjects.push(placeholder)
+    byPath.set(key, placeholder)
   }
 
   // Sort by last modified descending

@@ -31,6 +31,10 @@ const api: DevOrbitAPI = {
     ipcRenderer.invoke('devorbit:initGitRepository', projectPath, options),
   cloneGitRepository: (input) =>
     ipcRenderer.invoke('devorbit:cloneGitRepository', input),
+  restoreManagedProject: (projectPath: string) =>
+    ipcRenderer.invoke('devorbit:restoreManagedProject', projectPath),
+  finalizeManagedProject: (projectPath: string, options?: { allowRecreatableIgnored?: boolean }) =>
+    ipcRenderer.invoke('devorbit:finalizeManagedProject', projectPath, options),
   launchTool: (tool, projectPath, options) =>
     ipcRenderer.invoke('devorbit:launchTool', tool, projectPath, options),
   copyProjectContext: (projectPath) =>

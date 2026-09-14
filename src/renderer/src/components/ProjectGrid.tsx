@@ -19,6 +19,8 @@ interface ProjectGridProps {
   onUsageUpdate?: () => void
   onOpenSettings?: () => void
   onOpenClone?: () => void
+  onRestoreProject?: (project: Project) => Promise<void>
+  onFinalizeProject?: (project: Project) => Promise<void>
 }
 export const ProjectGrid: React.FC<ProjectGridProps> = (props) => {
   const { projects, otherDirs, config, search, isLoading, onOpenSettings, onOpenClone, onOpenGitInit, onNotify } = props
@@ -71,7 +73,7 @@ export const ProjectGrid: React.FC<ProjectGridProps> = (props) => {
           {isLoading && !projects.length ? <p className="list-message" role="status">Lendo projetos…</p> : filtered.map(p => (
             <button key={p.id} className={`project-row ${selected?.id === p.id ? 'selected' : ''}`} aria-pressed={selected?.id === p.id} onClick={() => setSelectedId(p.id)}>
               <span className="project-row-icon"><Folder size={17}/></span>
-              <span className="project-row-copy"><strong title={p.name}>{p.name}</strong><span title={p.path}>{p.parentDir}</span><small>{p.git.isRepo ? <><GitBranch size={11}/><span>{p.git.branch || 'Sem commits'}</span></> : 'Sem repositório'}</small></span>
+              <span className="project-row-copy"><strong title={p.name}>{p.name}</strong><span title={p.path}>{p.parentDir}</span><small>{p.lifecycle === 'archived' ? 'Arquivado · pronto para baixar' : p.git.isRepo ? <><GitBranch size={11}/><span>{p.git.branch || 'Sem commits'}</span></> : 'Sem repositório'}</small></span>
               {p.git.behind > 0 ? <span className="row-status" title={`${p.git.behind} commits para receber`}><ArrowDown size={12}/>{p.git.behind}</span> : p.git.hasChanges ? <span className="row-status warning" title="Alterações locais"><Circle size={8} fill="currentColor"/></span> : null}
             </button>
           ))}

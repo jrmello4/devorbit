@@ -32,6 +32,20 @@ export interface Project {
   lastModified: number
   techs: TechStack[]
   git: GitStatus
+  /** Metadata retained when the local working copy is released. */
+  remoteUrl?: string
+  parentPath?: string
+  lifecycle?: 'local' | 'archived'
+}
+
+export interface ManagedProject {
+  id: string
+  name: string
+  parentPath: string
+  folderName: string
+  remoteUrl: string
+  branch: string
+  registeredAt: string
 }
 
 export interface OtherDir {
@@ -42,6 +56,7 @@ export interface OtherDir {
 
 export interface AppConfig {
   projectDirs: string[]
+  managedProjects: ManagedProject[]
   activeChatGptAccount: 'account1' | 'account2'
   chatGptAccount1Name: string
   chatGptAccount2Name: string
@@ -227,6 +242,8 @@ export interface DevOrbitAPI {
   getGitInitPreview: (projectPath: string, branch?: string) => Promise<GitInitPreview>
   initGitRepository: (projectPath: string, options?: GitInitOptions) => Promise<GitInitResult>
   cloneGitRepository: (input: GitCloneInput) => Promise<GitCloneResult>
+  restoreManagedProject: (projectPath: string) => Promise<GitCloneResult>
+  finalizeManagedProject: (projectPath: string, options?: { allowRecreatableIgnored?: boolean }) => Promise<SyncResult>
   launchTool: (
     tool:
       | 'agy'

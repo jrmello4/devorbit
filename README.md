@@ -120,6 +120,21 @@ Se a criação do repositório ocorrer mas o commit ou push falhar, o card é
 atualizado para refletir o `.git` existente e a mensagem explica o próximo
 passo sem apagar o trabalho local.
 
+### Catálogo de projetos e liberação de espaço
+
+O botão **Clonar por link** também registra o projeto no catálogo do DevOrbit.
+Depois de enviar o trabalho para o GitHub, use **Finalizar e liberar espaço**
+no card. O DevOrbit mantém a pasta com o nome e os dados do remote, mas remove
+o conteúdo local somente quando confirma que a árvore está limpa, a branch e
+as demais branches locais estão alinhadas ao GitHub, não há stash nem arquivos
+ignorados importantes. Se alguma verificação falhar, nada é removido.
+
+Um projeto arquivado aparece como **Arquivado · pronto para baixar**. Clique em
+**Baixar projeto** para clonar novamente o remote na mesma pasta e continuar o
+trabalho. Dependências e diretórios recriáveis ignorados pelo Git podem ser
+liberados junto com a cópia; arquivos ignorados como `.env` e bancos bloqueiam
+o fluxo para evitar perda acidental.
+
 ### Trocar branch e atualizar a `main`
 
 Em qualquer projeto com Git, clique no nome da branch no card para abrir o

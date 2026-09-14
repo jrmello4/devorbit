@@ -5,7 +5,7 @@ import fs from 'node:fs/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { exportConfigJson, importConfigJson, loadConfig, saveConfig } from './config'
 import { listAllNonProjectDirs, scanAllProjects } from './scanner'
-import { syncGit, getGitBranches, switchGitBranch, pushGit, getGitChangesSummary, cloneGitRepository, stashSyncGit, stashSwitchGitBranch } from './git'
+import { syncGit, getGitBranches, switchGitBranch, pushGit, getGitChangesSummary, cloneGitRepository, stashSyncGit, stashSwitchGitBranch, finalizeGitProject, getGitRemoteUrl } from './git'
 import { getGitInitPreview, initGitRepository } from './git-init'
 import { launchTool, copyProjectContext } from './launcher'
 import {
@@ -28,7 +28,7 @@ import {
 } from './usage'
 import { getRealUsage } from './usage-real'
 import { downloadUpdate, getUpdateState, initializeUpdater, installUpdate } from './updater'
-import type { AppConfig, SyncResult } from '../renderer/src/types'
+import type { AppConfig, ManagedProject, SyncResult } from '../renderer/src/types'
 import {
   assertTrustedIpcSender,
   canonicalizeExistingDirectory,
@@ -63,6 +63,7 @@ process.env.VITE_PUBLIC = process.env.VITE_DEV_SERVER_URL
 let mainWindow: BrowserWindowType | null = null
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL)
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
+let managedConfigQueue: Promise<void> = Promise.resolve()
 
 async function validateCloneParent(input: unknown): Promise<string> {
   const candidate = await canonicalizeExistingDirectory(input, 'Pasta de destino')
@@ -91,6 +92,24 @@ async function validateProjectPath(input: unknown): Promise<string> {
   }))).some(Boolean)
   if (!allowed) throw new Error('O projeto não pertence a uma pasta monitorada.')
   return candidate
+}
+
+function managedProjectPath(project: ManagedProject): string {
+  return path.resolve(project.parentPath, project.folderName)
+}
+
+async function rememberManagedProject(entry: ManagedProject): Promise<void> {
+  const operation = managedConfigQueue.catch(() => undefined).then(async () => {
+    const config = await loadConfig()
+    const target = managedProjectPath(entry).toLowerCase()
+    const managedProjects = [
+      ...config.managedProjects.filter((item) => managedProjectPath(item).toLowerCase() !== target),
+      entry,
+    ]
+    await saveConfig({ managedProjects })
+  })
+  managedConfigQueue = operation.then(() => undefined, () => undefined)
+  await operation
 }
 
 function createWindow() {
@@ -214,13 +233,13 @@ function setupIpcHandlers() {
   // Obter lista de projetos
   registerIpcHandler('devorbit:getProjects', async () => {
     const config = await loadConfig()
-    return await scanAllProjects(config.projectDirs)
+    return await scanAllProjects(config.projectDirs, false, config.managedProjects)
   })
 
   // Atualizar projetos forçando novo scan
   registerIpcHandler('devorbit:refreshProjects', async () => {
     const config = await loadConfig()
-    return await scanAllProjects(config.projectDirs, true)
+    return await scanAllProjects(config.projectDirs, true, config.managedProjects)
   })
 
   registerIpcHandler('devorbit:getOtherDirs', async () => {
@@ -291,13 +310,87 @@ function setupIpcHandlers() {
   registerIpcHandler('devorbit:cloneGitRepository', async (_event, input?: unknown) => {
     const parsed = validateCloneInput(input)
     const safeParent = await validateCloneParent(parsed.parentDir)
-    return await cloneGitRepository({ ...parsed, parentDir: safeParent })
+    const result = await cloneGitRepository({ ...parsed, parentDir: safeParent })
+    if (result.success) {
+      await rememberManagedProject({
+        id: Buffer.from(path.resolve(safeParent, parsed.folderName)).toString('base64'),
+        name: parsed.folderName,
+        parentPath: safeParent,
+        folderName: parsed.folderName,
+        remoteUrl: parsed.remoteUrl,
+        branch: 'main',
+        registeredAt: new Date().toISOString(),
+      })
+    }
+    return result
+  })
+
+  registerIpcHandler('devorbit:restoreManagedProject', async (_event, projectPath: string) => {
+    const config = await loadConfig()
+    const requested = path.resolve(String(projectPath || '')).toLowerCase()
+    const managed = config.managedProjects.find((entry) => managedProjectPath(entry).toLowerCase() === requested)
+    if (!managed) throw new Error('Projeto não encontrado no cadastro do DevOrbit.')
+    const safeParent = await validateCloneParent(managed.parentPath)
+    return await cloneGitRepository({
+      parentDir: safeParent,
+      folderName: managed.folderName,
+      remoteUrl: managed.remoteUrl,
+    })
+  })
+
+  registerIpcHandler('devorbit:finalizeManagedProject', async (_event, projectPath: string, options?: unknown): Promise<SyncResult> => {
+    const allowRecreatableIgnored = options === undefined
+      ? false
+      : typeof options === 'object' && options !== null && !Array.isArray(options) &&
+        ('allowRecreatableIgnored' in options)
+        ? (options as { allowRecreatableIgnored?: unknown }).allowRecreatableIgnored
+        : false
+    if (typeof allowRecreatableIgnored !== 'boolean') {
+      throw new Error('Opção de liberação inválida.')
+    }
+    const safePath = await validateProjectPath(projectPath)
+    const remoteBefore = await getGitRemoteUrl(safePath)
+    const configBefore = await loadConfig()
+    const existing = configBefore.managedProjects.find((entry) => managedProjectPath(entry).toLowerCase() === safePath.toLowerCase())
+    if (!existing && !remoteBefore) {
+      return { success: false, message: 'Liberação recusada: não foi possível identificar o remote origin para restaurar este projeto depois.' }
+    }
+    if (!existing && remoteBefore) {
+      try {
+        const remoteUrl = new URL(remoteBefore)
+        if (remoteUrl.protocol !== 'https:' || remoteUrl.username || remoteUrl.password) {
+          return { success: false, message: 'Liberação recusada: cadastre o projeto com um remote HTTPS antes de liberar a cópia local.' }
+        }
+      } catch {
+        return { success: false, message: 'Liberação recusada: o remote origin não é uma URL HTTPS válida.' }
+      }
+    }
+    const catalogEntry: ManagedProject = existing
+      ? { ...existing, remoteUrl: remoteBefore || existing.remoteUrl }
+      : {
+          id: Buffer.from(safePath).toString('base64'),
+          name: path.basename(safePath),
+          parentPath: path.dirname(safePath),
+          folderName: path.basename(safePath),
+          remoteUrl: remoteBefore as string,
+          branch: 'main',
+          registeredAt: new Date().toISOString(),
+        }
+    try {
+      // Persist the restore metadata before deleting the working tree. A
+      // failed config write therefore leaves all local files untouched.
+      await rememberManagedProject(catalogEntry)
+    } catch (error: any) {
+      return { success: false, message: `Liberação recusada: não foi possível salvar o cadastro do projeto (${error?.message || 'erro de configuração'}).` }
+    }
+    const result = await finalizeGitProject(safePath, { allowRecreatableIgnored })
+    return result
   })
 
   // Sincronizar todos os projetos
   registerIpcHandler('devorbit:syncAllGit', async (): Promise<{ [path: string]: SyncResult }> => {
     const config = await loadConfig()
-    const projects = await scanAllProjects(config.projectDirs)
+    const projects = await scanAllProjects(config.projectDirs, false, config.managedProjects)
     const repositories = projects.filter((project) => project.git.isRepo)
     const orderedResults = new Array<[string, SyncResult]>(repositories.length)
     const concurrency = Math.min(4, repositories.length)

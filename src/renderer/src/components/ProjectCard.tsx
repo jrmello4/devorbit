@@ -12,6 +12,8 @@ import {
   GitPullRequest,
   Globe,
   Brain,
+  Archive,
+  Download,
   RefreshCw,
   Sparkles,
   Terminal,
@@ -33,6 +35,8 @@ interface ProjectCardProps {
   onOpenMemory?: (project: Project) => void
   onOpenBranches?: (project: Project) => void
   onUsageUpdate?: () => void
+  onRestoreProject?: (project: Project) => Promise<void>
+  onFinalizeProject?: (project: Project) => Promise<void>
 }
 
 type LaunchTool =
@@ -58,11 +62,14 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
   onOpenMemory,
   onOpenBranches,
   onUsageUpdate,
+  onRestoreProject,
+  onFinalizeProject,
 }) => {
   const [isSyncing, setIsSyncing] = useState(false)
   const [isStashing, setIsStashing] = useState(false)
   const [copied, setCopied] = useState(false)
   const [launchingTool, setLaunchingTool] = useState<LaunchTool | null>(null)
+  const [isLifecycleBusy, setIsLifecycleBusy] = useState(false)
 
   const handleSync = async () => {
     setIsSyncing(true)
@@ -84,6 +91,10 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
   }
 
   const handleLaunch = async (tool: LaunchTool) => {
+    if (project.lifecycle === 'archived') {
+      onNotify('Baixe o projeto antes de abrir as ferramentas.', 'info')
+      return
+    }
     setLaunchingTool(tool)
     try {
       const res = await window.devorbit?.launchTool(tool, project.path, {
@@ -132,6 +143,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
   }
 
   const { git } = project
+  const isArchived = project.lifecycle === 'archived'
   const needsPull = git.isRepo && git.behind > 0
   const hasLocalChanges = git.isRepo && git.hasChanges
   const hasRemoteChanges = git.isRepo && git.ahead > 0
@@ -147,7 +159,9 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
       ? config?.chatGptAccount2Name || 'Conta 2'
       : config?.chatGptAccount1Name || 'Conta 1'
   const branchLabel = git.branch || 'sem branch'
-  const statusDescription = !git.isRepo
+  const statusDescription = isArchived
+    ? 'Conteúdo local liberado; baixe o projeto quando for trabalhar nele.'
+    : !git.isRepo
     ? 'Repositório Git ainda não configurado nesta pasta.'
     : git.behind > 0 && git.ahead > 0
       ? 'O branch local e o remoto divergiram.'
@@ -171,7 +185,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
       <button
         type="button"
         onClick={() => handleLaunch(tool)}
-        disabled={isLaunching}
+        disabled={isLaunching || isArchived}
         aria-busy={isLaunching}
         className="work-tool"
         title={title}
@@ -227,7 +241,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
           <button
             type="button"
             onClick={() => handleLaunch('folder')}
-            disabled={launchingTool === 'folder'}
+            disabled={launchingTool === 'folder' || isArchived}
             aria-busy={launchingTool === 'folder'}
             className="work-icon-button"
             title="Abrir a pasta no Explorador de Arquivos"
@@ -238,7 +252,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
           <button
             type="button"
             onClick={() => onOpenMemory?.(project)}
-            disabled={!onOpenMemory}
+            disabled={!onOpenMemory || isArchived}
             className="work-icon-button"
             title="Abrir memória de sessão e handoff"
             aria-label={'Abrir memória de sessão e handoff de ' + project.name}
@@ -254,7 +268,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
           <button
             type="button"
             onClick={() => onOpenBranches?.(project)}
-            disabled={!git.isRepo || !onOpenBranches}
+            disabled={!git.isRepo || !onOpenBranches || isArchived}
             className="detail-branch-button"
             title="Listar e trocar branches deste repositório"
             aria-label={
@@ -314,6 +328,27 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
               <span className="work-section-meta">Atalhos principais</span>
             </div>
             <div className="work-primary-actions">
+              {isArchived ? (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!onRestoreProject || isLifecycleBusy) return
+                    setIsLifecycleBusy(true)
+                    try { await onRestoreProject(project) } finally { setIsLifecycleBusy(false) }
+                  }}
+                  disabled={!onRestoreProject || isLifecycleBusy}
+                  aria-busy={isLifecycleBusy}
+                  className="work-primary-action work-primary-action-accent"
+                  title="Baixar a versão atual do projeto para esta pasta"
+                >
+                  <Download aria-hidden="true" />
+                  <span className="work-action-copy">
+                    <strong>{isLifecycleBusy ? 'Baixando...' : 'Baixar projeto'}</strong>
+                    <small>Trazer a versão do GitHub</small>
+                  </span>
+                  <ChevronRight aria-hidden="true" />
+                </button>
+              ) : <>
               <button
                 type="button"
                 onClick={() => handleLaunch('vscode')}
@@ -344,6 +379,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                 </span>
                 <ChevronRight aria-hidden="true" />
               </button>
+              </>}
             </div>
           </section>
 
@@ -354,7 +390,9 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
             </div>
 
             <div className="work-inline-actions">
-              {git.isRepo ? (
+              {isArchived ? (
+                <p className="work-section-note">O conteúdo foi liberado do computador. O cadastro e o link do GitHub continuam disponíveis para restaurar quando quiser.</p>
+              ) : git.isRepo ? (
                 <>
                   <button
                     type="button"
@@ -407,6 +445,28 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                 >
                   <GitBranch aria-hidden="true" />
                   <span>Adicionar Git</span>
+                </button>
+              )}
+
+              {!isArchived && git.isRepo && onFinalizeProject && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (isLifecycleBusy) return
+                    const confirmed = window.confirm(
+                      'O DevOrbit só libera a pasta depois de confirmar que ela está limpa e sincronizada com o GitHub. A cópia local e dependências recriáveis como node_modules serão removidas; arquivos ignorados importantes bloqueiam a operação. O cadastro do projeto permanecerá. Continuar?'
+                    )
+                    if (!confirmed) return
+                    setIsLifecycleBusy(true)
+                    try { await onFinalizeProject(project) } finally { setIsLifecycleBusy(false) }
+                  }}
+                  disabled={isLifecycleBusy}
+                  aria-busy={isLifecycleBusy}
+                  className="work-button"
+                  title="Remover a cópia local depois de confirmar que está sincronizada"
+                >
+                  <Archive aria-hidden="true" />
+                  <span>{isLifecycleBusy ? 'Liberando...' : 'Finalizar e liberar espaço'}</span>
                 </button>
               )}
 
