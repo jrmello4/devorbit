@@ -65,10 +65,10 @@ Na página **Releases** há dois artefatos:
 
 | Arquivo | Tipo | Auto-update |
 |---|---|---|
-| `DevOrbit-<versão>-x64.exe` | Instalador NSIS | Sim, o app avisa e instala ao reiniciar |
-| `DevOrbit-<versão>-portable.exe` | Portable, sem instalação | Não, baixe a nova versão manualmente |
+| `DevOrbit-<versão>-x64.exe` | Instalador NSIS | Sim, baixa e instala no próximo reinício |
+| `DevOrbit-<versão>-portable.exe` | Portable, sem instalação | Sim, troca o executável no reinício |
 
-A barra de status indica `portable (update manual)` quando aplicável.
+A barra de status indica `portable · atualização automática` quando aplicável. O instalador NSIS e a versão portable consultam o release privado automaticamente; o GitHub CLI precisa estar autenticado uma vez com `gh auth login` para que o app consiga baixar os arquivos.
 O `DevOrbit-...-x64.exe` é o **instalador**: execute-o uma vez para instalar
 (atalhos no menu Iniciar e área de trabalho). Não confunda com o app.
 

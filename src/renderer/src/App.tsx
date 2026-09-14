@@ -107,7 +107,7 @@ export const App: React.FC = () => {
       if (!active) return
       setUpdateState(state)
       if (state.status === 'available') setIsUpdateDismissed(false)
-      if (state.status === 'error') notify('Não foi possível verificar a atualização agora.', 'error')
+      if (state.status === 'error') notify(state.message || 'Não foi possível verificar a atualização agora.', 'error')
     }
 
     void window.devorbit.getUpdateState().then(receiveUpdateState).catch(() => undefined)
@@ -568,7 +568,7 @@ export const App: React.FC = () => {
       </div>
       </div>
       </div>
-      <footer className="app-statusbar"><span><span className={`status-dot ${isLoading ? 'loading' : ''}`}/>{isLoading ? 'Carregando workspace' : `${projects.length} projetos · ${gitProjectsCount} repositórios`}{updateState?.distribution === 'portable' ? ' · portable (update manual)' : ''}</span><span>Dados locais <span aria-hidden="true">·</span> <kbd>Ctrl K</kbd> Ações rápidas <span aria-hidden="true">·</span> <kbd>Ctrl R</kbd> Atualizar</span></footer>
+      <footer className="app-statusbar"><span><span className={`status-dot ${isLoading ? 'loading' : ''}`}/>{isLoading ? 'Carregando workspace' : `${projects.length} projetos · ${gitProjectsCount} repositórios`}{updateState?.distribution === 'portable' ? ' · portable · atualização automática' : ''}</span><span>Dados locais <span aria-hidden="true">·</span> <kbd>Ctrl K</kbd> Ações rápidas <span aria-hidden="true">·</span> <kbd>Ctrl R</kbd> Atualizar</span></footer>
       <CommandPalette
         isOpen={isCommandPaletteOpen}
         onClose={closeCommandPalette}

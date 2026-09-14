@@ -460,9 +460,8 @@ function setupIpcHandlers() {
 
   registerIpcHandler('devorbit:getUpdateState', () => getUpdateState())
   registerIpcHandler('devorbit:downloadUpdate', () => downloadUpdate())
-  registerIpcHandler('devorbit:installUpdate', () => {
-    installUpdate()
-    return { success: true }
+  registerIpcHandler('devorbit:installUpdate', async () => {
+    return await installUpdate()
   })
 
   registerIpcHandler('devorbit:saveConfig', async (_event, updates: Partial<AppConfig>) => {

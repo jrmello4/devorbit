@@ -97,5 +97,16 @@ jobs:
         run: |
           npm run build
           npx electron-builder --publish always
+          $portable = Get-ChildItem -LiteralPath release -Filter 'DevOrbit-*-portable.exe' | Select-Object -First 1
+          if (-not $portable) { throw 'Executável portable não foi gerado.' }
+          $hash = (Get-FileHash -LiteralPath $portable.FullName -Algorithm SHA512).Hash.ToLowerInvariant()
+          $manifest = @"
+version: $env:RELEASE_VERSION
+path: $($portable.Name)
+sha512: $hash
+releaseDate: $([DateTime]::UtcNow.ToString('o'))
+"@
+          [IO.File]::WriteAllText((Join-Path (Get-Location) 'release/latest-portable.yml'), $manifest, (New-Object Text.UTF8Encoding($false)))
+          gh release upload "$env:RELEASE_TAG" release/latest-portable.yml --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

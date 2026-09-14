@@ -21,16 +21,16 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ state, isOpen, onClose
       <div className="flex items-start gap-3">
         <div className="rounded-lg bg-[#e7eee1] p-2 text-[#3e562f]"><RefreshCw size={20} aria-hidden="true" /></div>
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#607157]">DevOrbit atualizado</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#607157]">Atualizações do DevOrbit</p>
           <h2 id="update-title" className="mt-1 text-lg font-semibold text-stone-900">
-            {downloaded ? 'Atualização pronta' : downloading ? 'Baixando atualização' : 'Nova versão disponível'}
+            {downloaded ? 'Atualização pronta' : downloading ? 'Baixando atualização automaticamente' : 'Nova versão disponível'}
           </h2>
           <p className="mt-2 text-sm leading-6 text-stone-600">
             {downloaded
-              ? `A versão ${state.version ?? 'nova'} foi baixada. Reinicie para concluir a instalação.`
+              ? `A versão ${state.version ?? 'nova'} foi baixada. Reinicie o app para concluir a atualização.`
               : downloading
                 ? `Baixando a versão ${state.version ?? 'nova'}${state.progress === undefined ? '…' : `: ${state.progress}%`}`
-                : `A versão ${state.version ?? 'nova'} está disponível. Deseja baixar e instalar agora?`}
+                : `A versão ${state.version ?? 'nova'} está disponível. O download começará automaticamente.`}
           </p>
         </div>
       </div>
