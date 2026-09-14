@@ -60,6 +60,14 @@ describe('config persistence hardening', () => {
     expect((await loadConfig()).projectDirs).toEqual([])
   })
 
+  it('serializa a inicialização concorrente do primeiro config.json', async () => {
+    const configs = await Promise.all([loadConfig(), loadConfig(), loadConfig()])
+
+    expect(configs).toHaveLength(3)
+    expect(configs.every((config) => Array.isArray(config.projectDirs))).toBe(true)
+    await expect(fs.readFile(path.join(temporaryUserData, 'config.json'), 'utf-8')).resolves.toMatch(/projectDirs/)
+  })
+
   it('exports valid JSON that can be reimported', async () => {
     await saveConfig({ projectDirs: [], chatGptAccount1Name: 'Minha Conta' })
     const exported = await exportConfigJson()

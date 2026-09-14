@@ -117,7 +117,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
         )
       }
     } catch (err: any) {
-      onNotify('Erro: ' + err.message, 'error')
+      onNotify('Erro: ' + (err instanceof Error ? err.message : String(err || 'erro desconhecido')), 'error')
     } finally {
       setTimeout(() => setLaunchingTool(null), 600)
     }
@@ -138,7 +138,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
         onNotify(res?.context || 'Falha ao copiar contexto', 'error')
       }
     } catch (err: any) {
-      onNotify('Erro: ' + err.message, 'error')
+      onNotify('Erro: ' + (err instanceof Error ? err.message : String(err || 'erro desconhecido')), 'error')
     }
   }
 

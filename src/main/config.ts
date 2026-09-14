@@ -12,6 +12,7 @@ const MAX_CONFIG_TEXT_LENGTH = 160
 const MAX_CUSTOM_PATH_LENGTH = 4096
 const MAX_PROJECT_DIRS = 16
 const CUSTOM_PATH_KEYS = ['brave', 'chrome', 'mimo', 'agy', 'codex', 'vscode', 'wt'] as const
+let configOperationQueue: Promise<void> = Promise.resolve()
 
 const defaultConfig: AppConfig = {
   projectDirs: [
@@ -26,7 +27,7 @@ const defaultConfig: AppConfig = {
     brave: path.join(process.env.ProgramFiles || 'C:\\Program Files', 'BraveSoftware', 'Brave-Browser', 'Application', 'brave.exe'),
     chrome: path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe'),
     mimo: path.join(os.homedir(), 'AppData', 'Local', 'Programs', 'Xiaomi MiMo AI', 'Xiaomi MiMo AI.exe'),
-    agy: path.join(os.homedir(), 'AppData', 'Local', 'agy', 'agy.exe'),
+    agy: path.join(os.homedir(), 'AppData', 'Local', 'agy', 'bin', 'agy.exe'),
     codex: 'codex.cmd',
     vscode: 'code.cmd',
     wt: 'wt.exe',
@@ -151,39 +152,56 @@ async function atomicallyWriteConfig(file: string, config: AppConfig): Promise<v
   }
 }
 
+function enqueueConfigOperation<T>(operation: () => Promise<T>): Promise<T> {
+  const queued = configOperationQueue.catch(() => undefined).then(operation)
+  configOperationQueue = queued.then(() => undefined, () => undefined)
+  return queued
+}
+
 export async function loadConfig(): Promise<AppConfig> {
   const filePath = getConfigPath()
   try {
     const content = await fs.readFile(filePath, 'utf-8')
     return normalizeConfig(JSON.parse(content))
   } catch {
-    await saveConfig(defaultConfig)
-    return normalizeConfig(defaultConfig)
+    return enqueueConfigOperation(async () => {
+      // Another initial load may have created the file while this call was
+      // waiting for the queue. Re-read before deciding to initialize it.
+      try {
+        const content = await fs.readFile(filePath, 'utf-8')
+        return normalizeConfig(JSON.parse(content))
+      } catch {
+        await atomicallyWriteConfig(filePath, defaultConfig)
+        return normalizeConfig(defaultConfig)
+      }
+    })
   }
 }
 
 export async function saveConfig(updates: Partial<AppConfig>): Promise<AppConfig> {
-  const current = await (async () => {
-    try {
-      const content = await fs.readFile(getConfigPath(), 'utf-8')
-      return normalizeConfig(JSON.parse(content))
-    } catch {
-      return normalizeConfig(defaultConfig)
-    }
-  })()
-
-  const merged = normalizeConfig({
-    ...current,
-    ...updates,
-    customPaths: {
-      ...current.customPaths,
-      ...(updates.customPaths || {}),
-    },
-  })
-
   const filePath = getConfigPath()
-  await atomicallyWriteConfig(filePath, merged)
-  return merged
+  return enqueueConfigOperation(async () => {
+    const current = await (async () => {
+      try {
+        const content = await fs.readFile(filePath, 'utf-8')
+        return normalizeConfig(JSON.parse(content))
+      } catch {
+        return normalizeConfig(defaultConfig)
+      }
+    })()
+
+    const merged = normalizeConfig({
+      ...current,
+      ...updates,
+      customPaths: {
+        ...current.customPaths,
+        ...(updates.customPaths || {}),
+      },
+    })
+
+    await atomicallyWriteConfig(filePath, merged)
+    return merged
+  })
 }
 
 export async function exportConfigJson(): Promise<string> {

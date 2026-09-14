@@ -43,6 +43,7 @@ vi.mock('../src/main/account-profiles', () => ({
   getBrowserProfileDirectory: vi.fn((account: string) => `C:/devorbit/browser/${account}`),
   getCodexHome: vi.fn((account: string) => `C:/devorbit/${account}`),
   hasValidCodexAuth: hasValidCodexAuthMock,
+  resolveCodexCommand: vi.fn(async (configured: string | undefined) => configured || 'codex.cmd'),
   resolveBrowserPath: vi.fn(async () => 'C:/devorbit/browser.exe'),
 }))
 

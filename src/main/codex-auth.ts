@@ -13,6 +13,7 @@ import {
   getBrowserProfileDirectory,
   getCodexHome,
   hasValidCodexAuth,
+  resolveCodexCommand,
   resolveBrowserPath,
   type AccountId,
 } from './account-profiles'
@@ -120,6 +121,30 @@ function openAuthorizationBrowser(
   })
 }
 
+function quoteWindowsCommandLineArg(value: string): string {
+  if (value.length === 0) return '""'
+  if (/[%!]/.test(value)) {
+    throw new Error('Caminhos com % ou ! não podem ser executados com segurança pelo CMD.')
+  }
+  return `"${value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/g, '$1$1')}"`
+}
+
+function getCodexLoginInvocation(codexCommand: string): {
+  command: string
+  args: string[]
+  windowsVerbatimArguments?: boolean
+} {
+  if (process.platform !== 'win32' || !/\.(?:cmd|bat)$/i.test(codexCommand)) {
+    return { command: codexCommand, args: ['login'] }
+  }
+
+  return {
+    command: process.env.ComSpec || 'cmd.exe',
+    args: ['/d', '/v:off', '/s', '/c', `"${[codexCommand, 'login'].map(quoteWindowsCommandLineArg).join(' ')}"`],
+    windowsVerbatimArguments: true,
+  }
+}
+
 /**
  * On Windows the CLI is launched through cmd.exe and may create a child
  * process of its own. Killing only the wrapper leaves the OAuth process alive,
@@ -157,7 +182,7 @@ export async function startCodexDeviceLogin(
   const config = await loadConfig()
   const custom = config.customPaths
   const { codexHome, browserProfile } = await ensureAccountDirectories(account)
-  const codexCmd = custom.codex || 'codex.cmd'
+  const codexCmd = await resolveCodexCommand(custom.codex)
 
   if (generation !== loginGeneration) {
     onProgress({ account, status: 'cancelled', message: 'Processo de login cancelado.' })
@@ -176,9 +201,11 @@ export async function startCodexDeviceLogin(
     return
   }
 
-  const child = spawn('cmd.exe', ['/c', codexCmd, 'login'], {
+  const invocation = getCodexLoginInvocation(codexCmd)
+  const child = spawn(invocation.command, invocation.args, {
     env: { ...process.env, CODEX_HOME: codexHome },
     windowsHide: true,
+    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
   })
 
   let resolveStartup!: () => void

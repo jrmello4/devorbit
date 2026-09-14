@@ -11,6 +11,7 @@ import {
   isAuthOrReopenUrl,
   isValidCodexAuthDocument,
   resolveBrowserPath,
+  resolveCodexCommand,
   shouldTrackBrowserUsage,
 } from '../src/main/account-profiles'
 
@@ -73,6 +74,23 @@ describe('isolated account profiles', () => {
     await fs.writeFile(fake, 'x')
     expect(await resolveBrowserPath('account2', fake)).toBe(fake)
     expect(await resolveBrowserPath('account1', path.join(root, 'missing.exe'))).not.toBe(path.join(root, 'missing.exe'))
+  })
+
+  it('encontra o executÃ¡vel versionado do Codex mesmo sem codex.cmd no PATH', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'devorbit-codex-bin-'))
+    temporaryDirectories.push(root)
+    const executable = path.join(root, 'OpenAI', 'Codex', 'bin', 'version', 'codex.exe')
+    const previousLocalAppData = process.env.LOCALAPPDATA
+    process.env.LOCALAPPDATA = root
+    await fs.mkdir(path.dirname(executable), { recursive: true })
+    await fs.writeFile(executable, 'fixture')
+
+    try {
+      expect(await resolveCodexCommand('codex.cmd')).toBe(executable)
+    } finally {
+      if (previousLocalAppData === undefined) delete process.env.LOCALAPPDATA
+      else process.env.LOCALAPPDATA = previousLocalAppData
+    }
   })
 
   it('does not count OAuth/auth reopen URLs as ChatGPT usage', () => {

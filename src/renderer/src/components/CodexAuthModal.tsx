@@ -40,6 +40,7 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
   const [authUrl, setAuthUrl] = useState<string>('')
   const [copied, setCopied] = useState(false)
   const [message, setMessage] = useState('')
+  const [browserReopenError, setBrowserReopenError] = useState('')
   const successTimerRef = useRef<number | null>(null)
   const onSuccessRef = useRef(onSuccess)
 
@@ -90,11 +91,12 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
     setStatus('starting')
     setMessage(`Iniciando conexão oficial com a OpenAI para ${accountLabel}...`)
     setAuthUrl('')
+    setBrowserReopenError('')
     try {
       await window.devorbit?.startCodexLogin(account)
     } catch (err: any) {
       setStatus('error')
-      setMessage(`Falha ao iniciar login: ${err.message}`)
+      setMessage(`Falha ao iniciar login: ${err instanceof Error ? err.message : String(err || 'erro desconhecido')}`)
     }
   }
 
@@ -105,17 +107,25 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
     setTimeout(() => setCopied(false), 2500)
   }
 
-  const handleOpenBrowserAgain = () => {
-    if (authUrl) {
-      window.devorbit?.launchTool(isAccount2 ? 'brave' : 'chrome', '', {
+  const handleOpenBrowserAgain = async () => {
+    if (!authUrl) return
+    try {
+      const result = await window.devorbit?.launchTool(isAccount2 ? 'brave' : 'chrome', '', {
         account,
         url: authUrl,
       })
+      if (!result?.success) {
+        setBrowserReopenError(result?.message || 'Falha ao reabrir o navegador.')
+        setMessage(result?.message || `Não foi possível reabrir o ${browserName}.`)
+      }
+    } catch (err: unknown) {
+      setBrowserReopenError(`Falha ao abrir o ${browserName}: ${err instanceof Error ? err.message : String(err || 'erro desconhecido')}`)
+      setMessage(`Falha ao abrir o ${browserName}: ${err instanceof Error ? err.message : String(err || 'erro desconhecido')}`)
     }
   }
 
   const handleCancel = () => {
-    window.devorbit?.cancelCodexLogin()
+    void window.devorbit?.cancelCodexLogin().catch(() => undefined)
     onClose()
   }
 
@@ -249,6 +259,12 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
                     <ExternalLink className="w-3 h-3" />
                   </button>
                 </div>
+
+                {browserReopenError && (
+                  <p className="text-xs text-red-700" role="alert">
+                    {browserReopenError}
+                  </p>
+                )}
 
                 <p className="text-[11px] text-stone-600">
                   💡 Caso o Google Chrome também tenha aberto por ser o navegador padrão, você pode fechá-lo e confirmar na janela do <strong>{browserName}</strong>.

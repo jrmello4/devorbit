@@ -84,6 +84,51 @@ async function findOnPath(executable: string): Promise<string | null> {
   }
 }
 
+async function findInstalledCodexCommand(): Promise<string | null> {
+  const binDirectory = path.join(
+    process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
+    'OpenAI',
+    'Codex',
+    'bin'
+  )
+
+  try {
+    const entries = await fs.readdir(binDirectory, { withFileTypes: true })
+    const candidates = await Promise.all(
+      entries
+        .filter((entry) => entry.isDirectory())
+        .map(async (entry) => {
+          const executable = path.join(binDirectory, entry.name, 'codex.exe')
+          try {
+            const stats = await fs.stat(executable)
+            return stats.isFile() ? { executable, modifiedAt: stats.mtimeMs } : null
+          } catch {
+            return null
+          }
+        })
+    )
+    return candidates
+      .filter((candidate): candidate is { executable: string; modifiedAt: number } => candidate !== null)
+      .sort((left, right) => right.modifiedAt - left.modifiedAt)[0]?.executable || null
+  } catch {
+    return null
+  }
+}
+
+export async function resolveCodexCommand(configuredCommand?: string): Promise<string> {
+  const configured = configuredCommand?.trim()
+  const isDefaultShim = !configured || configured.toLowerCase() === 'codex.cmd'
+
+  if (!isDefaultShim && configured) {
+    if (path.isAbsolute(configured)) return configured
+    return await findOnPath(configured) || configured
+  }
+
+  return await findInstalledCodexCommand()
+    || await findOnPath('codex.cmd')
+    || 'codex.cmd'
+}
+
 export async function resolveBrowserPath(account: AccountId, customPath?: string): Promise<string | null> {
   const trimmed = customPath?.trim()
   if (trimmed && await fileExists(trimmed)) return trimmed
