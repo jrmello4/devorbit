@@ -169,6 +169,11 @@ async function inspectProjectInteractions(window, viewport) {
   await clickButtonByText(window, (node) => node.classList.contains('workspace-open-all'), `${viewport.label} integrated workspace launch`)
   await waitFor(window, `Boolean(document.querySelector('.integrated-workspace') && document.querySelector('[aria-label="Terminal interno"]') && document.querySelector('[aria-label="Pesquisa web"]'))`, `${viewport.label} integrated workspace view`)
   recordPass(viewport.label, 'Abrir ambiente mounts the editor, terminal and web panels')
+  await clickButtonByText(window, (node) => /contas e uso/i.test(node.innerText), `${viewport.label} usage navigation from workspace`)
+  await waitFor(window, `document.querySelector('.view-panel:not([hidden])')?.innerText.includes('Quotas do provedor')`, `${viewport.label} usage navigation from workspace`)
+  await clickButtonByText(window, (node) => (node.getAttribute('title') || '').startsWith('Ambiente integrado de '), `${viewport.label} workspace restore`)
+  await waitFor(window, `Boolean(document.querySelector('.integrated-workspace') && document.querySelector('.integrated-workspace-view:not([hidden])'))`, `${viewport.label} workspace restore`)
+  recordPass(viewport.label, 'workspace remains mounted while switching sections')
 
   await setInputValue(window, '#project-search', 'Fixture 02 · Pull pending develop')
   await waitFor(window, `document.querySelectorAll('.project-list .project-row').length === 1`, `${viewport.label} busca`)
