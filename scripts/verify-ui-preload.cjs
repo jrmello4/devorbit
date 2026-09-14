@@ -294,6 +294,14 @@ const api = {
     record('startTerminal', id, projectPath)
     return { id, pid: 1234 }
   },
+  startCodexTerminal: async (id, projectPath, account, cols, rows) => {
+    record('startCodexTerminal', id, projectPath, account, cols, rows)
+    return { success: true, id, pid: 1235, account, message: 'Fixture Codex connected' }
+  },
+  resizeTerminal: async (id, cols, rows) => {
+    record('resizeTerminal', id, cols, rows)
+    return { success: true }
+  },
   writeTerminal: async (id, input) => {
     record('writeTerminal', id, input)
     return { success: true }
@@ -312,6 +320,9 @@ const api = {
     url: 'https://www.google.com/',
     title: 'Google',
   }),
+  goBackWeb: async () => ({ success: true }),
+  goForwardWeb: async () => ({ success: true }),
+  reloadWeb: async () => ({ success: true }),
   setWebVisible: async (visible) => {
     record('setWebVisible', visible)
     return { success: true }

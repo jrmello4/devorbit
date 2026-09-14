@@ -1,16 +1,21 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  AlertCircle, Check, Code2, FileText, Folder, Globe, GripVertical,
-  RefreshCw, Save, Terminal, X,
+  AlertCircle, ArrowLeft, ArrowRight, Check, Code2, Globe, GripVertical,
+  RefreshCw, Send, Terminal, X,
 } from 'lucide-react'
-import type { Project, ProjectFileEntry, TerminalEvent, WebPanelEvent } from '../types'
+import type { Project, WebPanelEvent } from '../types'
+import { WorkspaceEditor, type WorkspaceEditorContext } from './WorkspaceEditor'
+import { WorkspaceTerminal } from './WorkspaceTerminal'
 import './IntegratedWorkspace.css'
 
 interface IntegratedWorkspaceProps {
   project: Project
   onClose: () => void
   onNotify: (message: string, type?: 'success' | 'error' | 'info') => void
+  codexAccount?: 'account1' | 'account2'
   isWebSuppressed?: boolean
+  isSuspended?: boolean
+  onRequestCodexAuth?: (account: 'account1' | 'account2') => void
 }
 interface WorkspaceLayout {
   rightWidth: number
@@ -26,7 +31,6 @@ const MIN_RIGHT_WIDTH = 300
 const MAX_RIGHT_WIDTH = 680
 const MIN_TERMINAL_HEIGHT = 150
 const MAX_TERMINAL_HEIGHT = 420
-const MAX_TERMINAL_OUTPUT = 160_000
 
 function layoutKey(id: string): string {
   return 'devorbit:workspace-layout:' + id
@@ -50,122 +54,27 @@ function readLayout(id: string): WorkspaceLayout {
     return DEFAULT_LAYOUT
   }
 }
-function fileName(path: string): string {
-  return path.replaceAll('\\', '/').split('/').pop() || path
-}
-function fileDepth(path: string): number {
-  return Math.max(0, path.replaceAll('\\', '/').split('/').length - 1)
-}
-function formatBytes(size?: number): string {
-  if (size === undefined) return ''
-  if (size < 1024) return size + ' B'
-  return (size / 1024).toFixed(size < 1024 * 1024 ? 1 : 0) + (size < 1024 * 1024 ? ' KB' : ' MB')
-}
 
 export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
-  project, onClose, onNotify, isWebSuppressed = false,
+  project, onClose, onNotify, codexAccount = 'account1', isWebSuppressed = false, isSuspended = false, onRequestCodexAuth,
 }) => {
-  const [files, setFiles] = useState<ProjectFileEntry[]>([])
-  const [selectedPath, setSelectedPath] = useState('')
-  const [editorContent, setEditorContent] = useState('')
-  const [savedContent, setSavedContent] = useState('')
-  const [isLoadingFiles, setIsLoadingFiles] = useState(true)
-  const [isLoadingFile, setIsLoadingFile] = useState(false)
-  const [isSaving, setIsSaving] = useState(false)
-  const [fileError, setFileError] = useState('')
-  const [terminalOutput, setTerminalOutput] = useState('')
-  const [terminalInput, setTerminalInput] = useState('')
-  const [terminalState, setTerminalState] = useState<'starting' | 'ready' | 'stopped' | 'error'>('starting')
   const [webUrl, setWebUrl] = useState('https://www.google.com/')
   const [webTitle, setWebTitle] = useState('Navegador')
   const [webLoading, setWebLoading] = useState(false)
   const [webError, setWebError] = useState('')
+  const [editorContext, setEditorContext] = useState<WorkspaceEditorContext | null>(null)
+  const [isEditorDirty, setIsEditorDirty] = useState(false)
+  const suppressNativeWeb = isWebSuppressed || isSuspended
   const [layout, setLayout] = useState<WorkspaceLayout>(() => readLayout(project.id))
   const [dragging, setDragging] = useState<'browser' | 'terminal' | null>(null)
   const terminalId = useMemo(
     () => 'workspace-' + project.id.replace(/[^a-z0-9_-]/gi, '-').slice(0, 48),
     [project.id],
   )
-  const editorRef = useRef<HTMLTextAreaElement>(null)
   const webViewportRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef({
     startX: 0, startY: 0, rightWidth: layout.rightWidth, terminalHeight: layout.terminalHeight,
   })
-  const initialFileLoadRef = useRef(true)
-  const latestContentRef = useRef(editorContent)
-  const latestPathRef = useRef(selectedPath)
-  const isDirty = editorContent !== savedContent
-  const isDirtyRef = useRef(false)
-  isDirtyRef.current = isDirty
-  latestContentRef.current = editorContent
-  latestPathRef.current = selectedPath
-
-  const openFile = useCallback(async (entry: ProjectFileEntry, ignoreDirty = false) => {
-    if (entry.kind !== 'file' || entry.editable === false) return
-    if (!ignoreDirty && isDirtyRef.current && !window.confirm('Há alterações não salvas. Deseja trocar de arquivo?')) return
-    setIsLoadingFile(true)
-    setFileError('')
-    try {
-      const loaded = await window.devorbit.readProjectFile(project.path, entry.path)
-      setSelectedPath(loaded.path)
-      setEditorContent(loaded.content)
-      setSavedContent(loaded.content)
-      window.requestAnimationFrame(() => editorRef.current?.focus())
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      setFileError(message)
-      onNotify('Não foi possível abrir ' + fileName(entry.path) + ': ' + message, 'error')
-    } finally {
-      setIsLoadingFile(false)
-    }
-  }, [onNotify, project.path])
-
-  const loadFiles = useCallback(async () => {
-    setIsLoadingFiles(true)
-    setFileError('')
-    try {
-      const entries = await window.devorbit.listProjectFiles(project.path)
-      setFiles(entries)
-      const editable = entries.filter((entry) => entry.kind === 'file' && entry.editable !== false)
-      const preferred = editable.find((entry) => /(^|[\\/])readme(?:\.md)?$/i.test(entry.path))
-        || editable.find((entry) => fileName(entry.path).toLowerCase() === 'package.json')
-        || editable[0]
-      const shouldOpenInitialFile = initialFileLoadRef.current
-      initialFileLoadRef.current = false
-      if (shouldOpenInitialFile && preferred) await openFile(preferred, true)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      setFileError(message)
-      onNotify('Não foi possível ler os arquivos do projeto: ' + message, 'error')
-    } finally {
-      setIsLoadingFiles(false)
-    }
-  }, [onNotify, openFile, project.path])
-
-  useEffect(() => { void loadFiles() }, [loadFiles])
-
-  useEffect(() => {
-    const unsubscribe = window.devorbit.onTerminalEvent((event: TerminalEvent) => {
-      if (event.id !== terminalId) return
-      if (event.type === 'data' && event.data) {
-        setTerminalOutput((current) => (current + event.data).slice(-MAX_TERMINAL_OUTPUT))
-      } else if (event.type === 'exit') {
-        setTerminalState('stopped')
-        setTerminalOutput((current) => current + '\r\n[processo encerrado: ' + String(event.code ?? '') + ']\r\n')
-      } else if (event.type === 'error') {
-        setTerminalState('error')
-        if (event.data) setTerminalOutput((current) => current + '\r\n[erro: ' + event.data + ']\r\n')
-      }
-    })
-    void window.devorbit.startTerminal(terminalId, project.path)
-      .then(() => setTerminalState('ready'))
-      .catch((error) => {
-        setTerminalState('error')
-        onNotify('Não foi possível iniciar o terminal interno: ' + (error instanceof Error ? error.message : String(error)), 'error')
-      })
-    return () => { unsubscribe(); void window.devorbit.stopTerminal(terminalId) }
-  }, [onNotify, project.path, terminalId])
-
   useEffect(() => {
     const unsubscribe = window.devorbit.onWebEvent((event: WebPanelEvent) => {
       setWebUrl(event.url || 'https://www.google.com/')
@@ -177,9 +86,9 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
       setWebUrl(state.url || 'https://www.google.com/')
       setWebTitle(state.title || 'Navegador')
     }).catch(() => undefined)
-    void window.devorbit.setWebVisible(layout.webVisible && !isWebSuppressed)
+    void window.devorbit.setWebVisible(layout.webVisible && !suppressNativeWeb)
     return unsubscribe
-  }, [isWebSuppressed, layout.webVisible])
+  }, [suppressNativeWeb, layout.webVisible])
 
   useEffect(() => {
     try { window.localStorage.setItem(layoutKey(project.id), JSON.stringify(layout)) } catch { /* opcional */ }
@@ -190,7 +99,7 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
     if (!viewport) return
     const updateBounds = () => {
       const rect = viewport.getBoundingClientRect()
-      const visible = layout.webVisible && !isWebSuppressed && rect.width > 0 && rect.height > 0
+      const visible = layout.webVisible && !suppressNativeWeb && rect.width > 0 && rect.height > 0
       void window.devorbit.setWebBounds({
         x: Math.round(rect.left), y: Math.round(rect.top),
         width: Math.round(rect.width), height: Math.round(rect.height),
@@ -206,7 +115,7 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
       window.removeEventListener('resize', updateBounds)
       void window.devorbit.setWebVisible(false)
     }
-  }, [isWebSuppressed, layout.rightWidth, layout.webVisible])
+  }, [suppressNativeWeb, layout.rightWidth, layout.webVisible])
 
   useEffect(() => {
     if (!dragging) return
@@ -237,41 +146,26 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
     setDragging(kind)
   }
 
-  const saveFile = async () => {
-    if (!selectedPath || !isDirty || isSaving) return
-    const pathAtStart = selectedPath
-    const contentAtStart = editorContent
-    setIsSaving(true)
-    try {
-      const saved = await window.devorbit.saveProjectFile(project.path, pathAtStart, contentAtStart)
-      if (latestPathRef.current === pathAtStart) {
-        setSavedContent(saved.content)
-        if (latestContentRef.current === contentAtStart) setEditorContent(saved.content)
-      }
-      onNotify('Arquivo salvo: ' + fileName(saved.path), 'success')
-    } catch (error) {
-      onNotify('Não foi possível salvar o arquivo: ' + (error instanceof Error ? error.message : String(error)), 'error')
-    } finally { setIsSaving(false) }
-  }
-
-  useEffect(() => {
-    const handleEditorShortcut = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's' && document.activeElement === editorRef.current) {
-        event.preventDefault()
-        void saveFile()
-      }
+  const sendContextToTerminal = async () => {
+    const context = editorContext
+    if (!context?.path) {
+      onNotify('Abra um arquivo antes de enviar contexto ao terminal.', 'info')
+      return
     }
-    window.addEventListener('keydown', handleEditorShortcut)
-    return () => window.removeEventListener('keydown', handleEditorShortcut)
-  })
-
-  const submitTerminal = async (event: React.FormEvent) => {
-    event.preventDefault()
-    if (!terminalInput.trim() || terminalState !== 'ready') return
-    const command = terminalInput
-    setTerminalInput('')
-    try { await window.devorbit.writeTerminal(terminalId, command + '\r\n') }
-    catch (error) { onNotify('Não foi possível enviar o comando: ' + (error instanceof Error ? error.message : String(error)), 'error') }
+    const body = (context.selection.trim() || context.content).slice(0, 12_000)
+    const payload = [
+      '',
+      '[DevOrbit contexto]',
+      'Arquivo: ' + context.path,
+      'Pesquisa web: ' + webUrl,
+      context.selection.trim() ? 'Seleção atual:' : 'Conteúdo atual:',
+      body,
+      '[/DevOrbit contexto]',
+      '',
+    ].join('\r\n')
+    const result = await window.devorbit.writeTerminal(terminalId, payload)
+    if (result.success) onNotify('Contexto do editor e da web enviado ao terminal.', 'success')
+    else onNotify('O terminal interno não está pronto para receber contexto.', 'error')
   }
 
   const navigateBrowser = async (event: React.FormEvent) => {
@@ -289,21 +183,8 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
     } else if (result.url) setWebUrl(result.url)
   }
 
-  const restartTerminal = async () => {
-    setTerminalOutput('')
-    setTerminalState('starting')
-    try {
-      await window.devorbit.stopTerminal(terminalId)
-      await window.devorbit.startTerminal(terminalId, project.path)
-      setTerminalState('ready')
-    } catch (error) {
-      setTerminalState('error')
-      onNotify('Não foi possível reiniciar o terminal: ' + (error instanceof Error ? error.message : String(error)), 'error')
-    }
-  }
-
   const closeWorkspace = () => {
-    if (isDirty && !window.confirm('Há alterações não salvas. Fechar o ambiente mesmo assim?')) return
+    if (isEditorDirty && !window.confirm('Há alterações não salvas. Fechar o ambiente mesmo assim?')) return
     void window.devorbit.setWebVisible(false)
     void window.devorbit.disposeWebPanel()
     void window.devorbit.stopTerminal(terminalId)
@@ -331,6 +212,9 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
           <button type="button" className={'workspace-tool-button' + (layout.webVisible ? ' active' : '')} onClick={() => setLayout((current) => ({ ...current, webVisible: !current.webVisible }))} aria-pressed={layout.webVisible} title="Mostrar ou ocultar navegador">
             <Globe size={14} aria-hidden="true" /><span>Web</span>
           </button>
+          <button type="button" className="workspace-tool-button" onClick={() => void sendContextToTerminal()} disabled={!editorContext?.path} title="Enviar arquivo e pesquisa web ao terminal">
+            <Send size={14} aria-hidden="true" /><span>Enviar contexto</span>
+          </button>
           <button type="button" className="workspace-close-button" onClick={closeWorkspace} title="Fechar ambiente integrado">
             <X size={16} aria-hidden="true" /><span>Fechar</span>
           </button>
@@ -338,70 +222,24 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
       </header>
 
       <div className="workspace-editor-stack">
-        <div className="workspace-code-area">
-          <aside className="workspace-file-panel" aria-label="Arquivos do projeto">
-            <div className="workspace-panel-heading">
-              <div><strong>Arquivos</strong><span>{files.filter((entry) => entry.kind === 'file').length}</span></div>
-              <button type="button" className="workspace-icon-button" onClick={() => void loadFiles()} aria-label="Atualizar arquivos" title="Atualizar arquivos"><RefreshCw size={14} aria-hidden="true" /></button>
-            </div>
-            <div className="workspace-file-list">
-              {isLoadingFiles && <p className="workspace-muted" role="status">Lendo arquivos…</p>}
-              {!isLoadingFiles && !files.length && <p className="workspace-muted">Nenhum arquivo encontrado.</p>}
-              {!isLoadingFiles && files.map((entry) => (
-                <button
-                  type="button" key={entry.path}
-                  className={'workspace-file-row' + (entry.path === selectedPath ? ' selected' : '') + (entry.kind === 'directory' ? ' directory' : '')}
-                  style={{ paddingLeft: 10 + fileDepth(entry.path) * 12 }}
-                  onClick={() => void openFile(entry)}
-                  disabled={entry.kind === 'directory' || entry.editable === false}
-                  title={entry.editable === false ? 'Arquivo somente leitura ou binário' : entry.path}
-                  aria-current={entry.path === selectedPath ? 'page' : undefined}
-                >
-                  {entry.kind === 'directory' ? <Folder size={14} aria-hidden="true" /> : <FileText size={14} aria-hidden="true" />}
-                  <span>{entry.name}</span>
-                  {entry.kind === 'file' && <small>{formatBytes(entry.size)}</small>}
-                </button>
-              ))}
-            </div>
-            {fileError && <p className="workspace-error workspace-file-error"><AlertCircle size={13} aria-hidden="true" />{fileError}</p>}
-          </aside>
-
-          <section className="workspace-editor-panel" aria-label="Editor de texto">
-            <div className="workspace-panel-heading editor-heading">
-              <div><strong>{selectedPath ? fileName(selectedPath) : 'Editor'}</strong><span>{selectedPath || 'Selecione um arquivo à esquerda'}</span></div>
-              <div className="editor-actions">
-                {isDirty && <span className="editor-dirty" title="Alterações não salvas">● Não salvo</span>}
-                <button type="button" className="workspace-save-button" onClick={() => void saveFile()} disabled={!selectedPath || !isDirty || isSaving} aria-busy={isSaving}>
-                  <Save size={14} aria-hidden="true" /><span>{isSaving ? 'Salvando…' : 'Salvar'}</span>
-                </button>
-              </div>
-            </div>
-            <textarea
-              ref={editorRef} className="workspace-editor" value={editorContent}
-              onChange={(event) => setEditorContent(event.target.value)}
-              placeholder="Selecione um arquivo para começar." spellCheck={false}
-              aria-label={selectedPath ? 'Editando ' + selectedPath : 'Editor de texto'}
-              disabled={!selectedPath || isLoadingFile}
-            />
-            {isLoadingFile && <div className="workspace-editor-loading" role="status">Abrindo arquivo…</div>}
-          </section>
-        </div>
+        <WorkspaceEditor
+          projectPath={project.path}
+          onNotify={onNotify}
+          onContextChange={setEditorContext}
+          onDirtyChange={setIsEditorDirty}
+        />
 
         {layout.terminalVisible && (
           <>
             <button type="button" className="workspace-resize-handle horizontal" onPointerDown={(event) => startDrag('terminal', event)} aria-label="Redimensionar terminal" title="Arraste para redimensionar o terminal"><GripVertical size={15} aria-hidden="true" /></button>
-            <section className="workspace-terminal-panel" aria-label="Terminal interno">
-              <div className="workspace-panel-heading terminal-heading">
-                <div><strong><Terminal size={14} aria-hidden="true" /> Terminal interno</strong><span className={'terminal-status ' + terminalState}><i />{terminalState === 'ready' ? 'Pronto' : terminalState === 'starting' ? 'Iniciando' : terminalState === 'error' ? 'Erro' : 'Encerrado'}</span></div>
-                <button type="button" className="workspace-icon-button" onClick={() => void restartTerminal()} aria-label="Reiniciar terminal" title="Reiniciar terminal"><RefreshCw size={14} aria-hidden="true" /></button>
-              </div>
-              <pre className="workspace-terminal-output" aria-live="polite">{terminalOutput || 'Terminal pronto. Digite um comando abaixo.'}</pre>
-              <form className="workspace-terminal-form" onSubmit={(event) => void submitTerminal(event)}>
-                <span className="terminal-prompt" aria-hidden="true">&gt;</span>
-                <input value={terminalInput} onChange={(event) => setTerminalInput(event.target.value)} disabled={terminalState !== 'ready'} aria-label="Comando do terminal" placeholder="Digite um comando…" autoComplete="off" />
-                <button type="submit" className="workspace-send-button" disabled={terminalState !== 'ready' || !terminalInput.trim()}>Enviar</button>
-              </form>
-            </section>
+            <WorkspaceTerminal
+              projectPath={project.path}
+              terminalId={terminalId}
+              codexAccount={codexAccount}
+              onNotify={onNotify}
+              isSuspended={isSuspended}
+              onRequestCodexAuth={onRequestCodexAuth}
+            />
           </>
         )}
       </div>
@@ -411,7 +249,12 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
           <aside className="workspace-browser-panel" aria-label="Pesquisa web">
             <div className="workspace-panel-heading browser-heading">
               <div><strong><Globe size={14} aria-hidden="true" /> Pesquisa web</strong><span title={webTitle}>{webTitle}</span></div>
-              <span className={'browser-loading-dot' + (webLoading ? ' loading' : '')} aria-label={webLoading ? 'Carregando página' : 'Página pronta'} />
+              <div className="browser-actions">
+                <button type="button" className="workspace-icon-button" onClick={() => void window.devorbit.goBackWeb()} aria-label="Voltar na pesquisa web" title="Voltar"><ArrowLeft size={14} aria-hidden="true" /></button>
+                <button type="button" className="workspace-icon-button" onClick={() => void window.devorbit.goForwardWeb()} aria-label="Avançar na pesquisa web" title="Avançar"><ArrowRight size={14} aria-hidden="true" /></button>
+                <button type="button" className="workspace-icon-button" onClick={() => void window.devorbit.reloadWeb()} aria-label="Recarregar pesquisa web" title="Recarregar"><RefreshCw size={14} aria-hidden="true" /></button>
+                <span className={'browser-loading-dot' + (webLoading ? ' loading' : '')} aria-label={webLoading ? 'Carregando página' : 'Página pronta'} />
+              </div>
             </div>
             <form className="workspace-browser-form" onSubmit={(event) => void navigateBrowser(event)}>
               <label className="sr-only" htmlFor="workspace-web-url">Endereço da página web</label>

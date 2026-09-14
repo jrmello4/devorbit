@@ -92,6 +92,24 @@ export async function navigateWeb(url: string): Promise<{ success: boolean; url?
   }
 }
 
+export function goBackWeb(): { success: boolean } {
+  if (!webView?.webContents.canGoBack()) return { success: false }
+  webView.webContents.goBack()
+  return { success: true }
+}
+
+export function goForwardWeb(): { success: boolean } {
+  if (!webView?.webContents.canGoForward()) return { success: false }
+  webView.webContents.goForward()
+  return { success: true }
+}
+
+export function reloadWeb(): { success: boolean } {
+  if (!webView) return { success: false }
+  webView.webContents.reload()
+  return { success: true }
+}
+
 export function setWebBounds(bounds: Rectangle): void {
   if (!webView) return
   lastBounds = {

@@ -40,6 +40,10 @@ const api: DevOrbitAPI = {
     ipcRenderer.invoke('devorbit:finalizeManagedProject', projectPath, options),
   startTerminal: (id: string, projectPath: string) =>
     ipcRenderer.invoke('devorbit:startTerminal', id, projectPath),
+  startCodexTerminal: (id, projectPath, account, cols, rows) =>
+    ipcRenderer.invoke('devorbit:startCodexTerminal', id, projectPath, account, cols, rows),
+  resizeTerminal: (id, cols, rows) =>
+    ipcRenderer.invoke('devorbit:resizeTerminal', id, cols, rows),
   writeTerminal: (id: string, input: string) =>
     ipcRenderer.invoke('devorbit:writeTerminal', id, input),
   stopTerminal: (id: string) =>
@@ -53,6 +57,9 @@ const api: DevOrbitAPI = {
     ipcRenderer.invoke('devorbit:navigateWeb', url),
   getWebState: () =>
     ipcRenderer.invoke('devorbit:getWebState'),
+  goBackWeb: () => ipcRenderer.invoke('devorbit:goBackWeb'),
+  goForwardWeb: () => ipcRenderer.invoke('devorbit:goForwardWeb'),
+  reloadWeb: () => ipcRenderer.invoke('devorbit:reloadWeb'),
   setWebVisible: (visible: boolean) =>
     ipcRenderer.invoke('devorbit:setWebVisible', visible),
   disposeWebPanel: () => ipcRenderer.invoke('devorbit:disposeWebPanel'),

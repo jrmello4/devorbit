@@ -3,6 +3,10 @@
   "productName": "DevOrbit",
   "artifactName": "DevOrbit-${version}-${arch}.${ext}",
   "asar": true,
+  "npmRebuild": false,
+  "asarUnpack": [
+    "node_modules/node-pty/**/*"
+  ],
   "electronUpdaterCompatibility": ">=2.16",
   "publish": {
     "provider": "github",

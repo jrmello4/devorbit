@@ -70,6 +70,15 @@ export interface ProjectFileContent {
   size: number
 }
 
+export interface CodexTerminalStartResult {
+  success: boolean
+  id?: string
+  pid?: number
+  needsAuth?: boolean
+  account?: 'account1' | 'account2'
+  message?: string
+}
+
 export interface TerminalEvent {
   id: string
   type: 'data' | 'exit' | 'error'
@@ -296,11 +305,22 @@ export interface DevOrbitAPI {
   restoreManagedProject: (projectPath: string) => Promise<GitCloneResult>
   finalizeManagedProject: (projectPath: string, options?: { allowRecreatableIgnored?: boolean }) => Promise<SyncResult>
   startTerminal: (id: string, projectPath: string) => Promise<{ id: string; pid: number | undefined }>
+  startCodexTerminal: (
+    id: string,
+    projectPath: string,
+    account: 'account1' | 'account2',
+    cols?: number,
+    rows?: number,
+  ) => Promise<CodexTerminalStartResult>
+  resizeTerminal: (id: string, cols: number, rows: number) => Promise<{ success: boolean }>
   writeTerminal: (id: string, input: string) => Promise<{ success: boolean }>
   stopTerminal: (id: string) => Promise<{ success: boolean }>
   onTerminalEvent: (callback: (event: TerminalEvent) => void) => () => void
   navigateWeb: (url: string) => Promise<{ success: boolean; url?: string; message?: string }>
   getWebState: () => Promise<WebPanelEvent>
+  goBackWeb: () => Promise<{ success: boolean }>
+  goForwardWeb: () => Promise<{ success: boolean }>
+  reloadWeb: () => Promise<{ success: boolean }>
   setWebVisible: (visible: boolean) => Promise<{ success: boolean }>
   disposeWebPanel: () => Promise<{ success: boolean }>
   setWebBounds: (bounds: WebPanelBounds) => Promise<{ success: boolean }>

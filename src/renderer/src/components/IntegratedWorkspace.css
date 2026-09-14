@@ -173,22 +173,51 @@
 .workspace-save-button { border-color: #cdd8c5; background: #f2f5ef; color: #3f5834; }
 .workspace-save-button:hover:not(:disabled) { background: #e5ecdf; }
 .workspace-save-button:disabled { border-color: transparent; background: transparent; }
-.workspace-editor {
-  flex: 1;
+.workspace-editor-shell { position: relative; flex: 1; min-height: 0; overflow: hidden; background: #fff; }
+.workspace-editor-highlight,
+.workspace-editor-input {
+  position: absolute;
+  inset: 0;
   width: 100%;
-  min-height: 0;
+  height: 100%;
+  margin: 0;
   padding: 18px 20px;
-  resize: none;
   border: 0;
   outline: none;
-  color: #283027;
-  background: #fff;
   font: 12px/1.65 Consolas, 'Cascadia Code', monospace;
   tab-size: 2;
   white-space: pre;
-  overflow: auto;
 }
-.workspace-editor:focus { box-shadow: inset 0 0 0 1px #c9d6bf; }
+.workspace-editor-highlight {
+  z-index: 0;
+  overflow: hidden;
+  color: #283027;
+  background: #fff;
+  pointer-events: none;
+}
+.workspace-editor-input {
+  z-index: 1;
+  resize: none;
+  overflow: auto;
+  color: transparent;
+  background: transparent;
+  caret-color: #283027;
+}
+.workspace-editor-input::selection { color: transparent; background: rgba(111, 145, 92, .3); }
+.workspace-editor-input::placeholder { color: #899184; }
+.workspace-editor-input:focus { box-shadow: inset 0 0 0 1px #c9d6bf; }
+.syntax-comment { color: #7e8a76; }
+.syntax-string { color: #9a5d35; }
+.syntax-number { color: #796ca5; }
+.syntax-keyword { color: #426b75; font-weight: 650; }
+.workspace-symbol-list { display: flex; gap: 4px; min-height: 35px; padding: 5px 10px; overflow: auto; border-bottom: 1px solid var(--workspace-border); background: #f6f8f3; }
+.workspace-symbol { display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; min-height: 25px; padding: 3px 7px; border: 1px solid #d5ded0; border-radius: 4px; color: #52664d; background: #fff; font: 10px Consolas, monospace; }
+.workspace-symbol:hover { border-color: #b4c9ac; background: #eaf0e6; color: #34492b; }
+.workspace-symbol small { color: #899184; }
+.workspace-diff-view { flex: 1; min-height: 0; margin: 0; padding: 18px 20px; overflow: auto; color: #526052; background: #fbfcf9; font: 12px/1.65 Consolas, 'Cascadia Code', monospace; white-space: pre; }
+.diff-line { display: block; min-height: 1.65em; }
+.diff-line.added { color: #3b7041; background: #edf7eb; }
+.diff-line.removed { color: #9b4438; background: #fff0ed; }
 .workspace-editor-loading {
   position: absolute;
   inset: 50px 0 0;
@@ -240,6 +269,12 @@
   overflow-wrap: anywhere;
 }
 .terminal-heading { border-bottom-color: #394336; }
+.terminal-actions { display: flex; align-items: center; gap: 5px; }
+.terminal-codex-button { min-height: 26px; padding-block: 3px; color: #cfe2c7; }
+.terminal-codex-button:hover:not(:disabled) { background: #34432f; border-color: #52614d; color: #f4f8f1; }
+.workspace-terminal-xterm { flex: 1; min-height: 0; padding: 8px 10px 10px; overflow: hidden; }
+.workspace-terminal-xterm .xterm { height: 100%; }
+.workspace-terminal-xterm .xterm-viewport { border-radius: 4px; }
 .terminal-heading strong { color: #e8efe4; }
 .terminal-heading > div { gap: 12px; }
 .terminal-status { display: inline-flex; align-items: center; gap: 5px; }
@@ -270,7 +305,9 @@
 .workspace-send-button { min-height: 27px; padding-inline: 9px; border-color: #aebeaa; background: #e8efe4; color: #34492b; font-size: 10px; }
 .workspace-send-button:hover:not(:disabled) { background: #fff; }
 .browser-heading { min-height: 42px; }
-.browser-heading > div { min-width: 0; }
+.browser-heading > div:first-child { min-width: 0; }
+.browser-actions { display: flex !important; align-items: center; gap: 1px !important; }
+.browser-actions .workspace-icon-button { width: 24px; height: 24px; }
 .browser-heading strong { color: #3d5135; }
 .browser-loading-dot { width: 7px; height: 7px; flex-shrink: 0; border-radius: 50%; background: #7b9770; }
 .browser-loading-dot.loading { background: #bf873d; animation: workspace-pulse 1s ease-in-out infinite; }

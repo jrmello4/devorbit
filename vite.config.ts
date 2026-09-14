@@ -20,6 +20,7 @@ export default defineConfig({
                 'electron',
                 'electron-updater',
                 'node:child_process',
+                'node-pty',
                 'node:fs',
                 'node:fs/promises',
                 'node:path',

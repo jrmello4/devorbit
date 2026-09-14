@@ -1,5 +1,6 @@
 import electron, { type BrowserWindow as BrowserWindowType } from 'electron'
 const { app, BrowserWindow, ipcMain, dialog } = electron
+if (process.argv.includes('--disable-gpu')) app.disableHardwareAcceleration()
 import path from 'node:path'
 import fs from 'node:fs/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -7,10 +8,11 @@ import { exportConfigJson, importConfigJson, loadConfig, saveConfig } from './co
 import { listAllNonProjectDirs, scanAllProjects } from './scanner'
 import { syncGit, getGitBranches, switchGitBranch, pushGit, getGitChangesSummary, cloneGitRepository, stashSyncGit, stashSwitchGitBranch, finalizeGitProject, getGitRemoteUrl } from './git'
 import { getGitInitPreview, initGitRepository } from './git-init'
+import { ensureAccountDirectories, getAccountLabel, hasValidCodexAuth, resolveCodexCommand } from './account-profiles'
 import { launchTool, copyProjectContext, getToolHealth } from './launcher'
 import { listProjectFiles, readProjectFile, saveProjectFile } from './project-files'
-import { onTerminalEvent, startTerminal, stopAllTerminals, stopTerminal, writeTerminal } from './terminal-session'
-import { attachWebPanel, disposeWebPanel, getWebState, navigateWeb, onWebPanelEvent, setWebBounds, setWebVisible } from './web-panel'
+import { onTerminalEvent, resizeTerminal, startTerminal, stopAllTerminals, stopTerminal, writeTerminal } from './terminal-session'
+import { attachWebPanel, disposeWebPanel, getWebState, goBackWeb, goForwardWeb, navigateWeb, onWebPanelEvent, reloadWeb, setWebBounds, setWebVisible } from './web-panel'
 import {
   checkCodexAuthStatus,
   startCodexDeviceLogin,
@@ -28,6 +30,8 @@ import {
   decrementUsage,
   resetUsageWindow,
   updateUsageLimits,
+  releaseUsageReservation,
+  tryReserveUsage,
 } from './usage'
 import { getRealUsage } from './usage-real'
 import { downloadUpdate, getUpdateState, initializeUpdater, installUpdate } from './updater'
@@ -479,6 +483,73 @@ function setupIpcHandlers() {
     return await startTerminal(id, await validateProjectPath(projectPath))
   })
 
+  registerIpcHandler('devorbit:startCodexTerminal', async (
+    _event,
+    id: unknown,
+    projectPath: string,
+    account: unknown,
+    cols?: unknown,
+    rows?: unknown,
+  ) => {
+    if (typeof id !== 'string' || !/^[a-z0-9_-]{1,64}$/i.test(id)) throw new Error('Identificador de terminal inválido.')
+    const safeAccount = validateCodexAccount(account)
+    const safePath = await validateProjectPath(projectPath)
+    const config = await loadConfig()
+    const { codexHome } = await ensureAccountDirectories(safeAccount)
+    const accountLabel = getAccountLabel(safeAccount, {
+      account1: config.chatGptAccount1Name,
+      account2: config.chatGptAccount2Name,
+    })
+    if (!(await hasValidCodexAuth(codexHome))) {
+      return {
+        success: false,
+        needsAuth: true,
+        account: safeAccount,
+        message: accountLabel + ' ainda não está conectada. Conecte a conta e tente novamente.',
+      }
+    }
+
+    const safeCols = cols === undefined ? 120 : validateFiniteNumber(cols, 'Colunas do terminal', { minimum: 40, integer: true })
+    const safeRows = rows === undefined ? 32 : validateFiniteNumber(rows, 'Linhas do terminal', { minimum: 12, integer: true })
+    const codexCommand = await resolveCodexCommand(config.customPaths.codex)
+    if (/[%!]/.test(codexCommand)) {
+      return { success: false, message: 'O caminho configurado do Codex contém caracteres que o terminal não pode executar com segurança.' }
+    }
+    const usageReserved = await tryReserveUsage(safeAccount)
+    if (!usageReserved) {
+      return { success: false, message: 'Limite de uso da ' + accountLabel + ' atingido.' }
+    }
+    const isScript = /\.(?:cmd|bat)$/i.test(codexCommand)
+    const command = isScript ? (process.env.ComSpec || 'cmd.exe') : codexCommand
+    const args = isScript ? ['/d', '/q', '/k', 'call "' + codexCommand + '"'] : []
+    let result
+    try {
+      result = await startTerminal(id, safePath, {
+        command,
+        args,
+        env: { CODEX_HOME: codexHome },
+        cols: safeCols,
+        rows: safeRows,
+      })
+    } catch (error) {
+      await releaseUsageReservation(safeAccount)
+      throw error
+    }
+    return {
+      success: true,
+      ...result,
+      account: safeAccount,
+      message: 'Codex conectado no terminal interno (' + accountLabel + ').',
+    }
+  })
+
+  registerIpcHandler('devorbit:resizeTerminal', (_event, id: unknown, cols: unknown, rows: unknown) => {
+    if (typeof id !== 'string' || !/^[a-z0-9_-]{1,64}$/i.test(id)) throw new Error('Identificador de terminal inválido.')
+    const safeCols = validateFiniteNumber(cols, 'Colunas do terminal', { minimum: 40, integer: true })
+    const safeRows = validateFiniteNumber(rows, 'Linhas do terminal', { minimum: 12, integer: true })
+    return { success: resizeTerminal(id, safeCols, safeRows) }
+  })
+
   registerIpcHandler('devorbit:writeTerminal', (_event, id: unknown, input: unknown) => {
     if (typeof id !== 'string' || !/^[a-z0-9_-]{1,64}$/i.test(id)) throw new Error('Identificador de terminal inválido.')
     if (typeof input !== 'string' || input.length > 64_000) throw new Error('Entrada de terminal inválida.')
@@ -497,6 +568,9 @@ function setupIpcHandlers() {
   })
 
   registerIpcHandler('devorbit:getWebState', () => getWebState())
+  registerIpcHandler('devorbit:goBackWeb', () => goBackWeb())
+  registerIpcHandler('devorbit:goForwardWeb', () => goForwardWeb())
+  registerIpcHandler('devorbit:reloadWeb', () => reloadWeb())
 
   registerIpcHandler('devorbit:disposeWebPanel', () => {
     disposeWebPanel()

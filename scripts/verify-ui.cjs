@@ -168,14 +168,32 @@ async function inspectProjectInteractions(window, viewport) {
   await waitFor(window, `document.querySelector('.work-account-control select')?.value === 'account2'`, `${viewport.label} account selection`)
   await clickButtonByText(window, (node) => node.classList.contains('workspace-open-all'), `${viewport.label} integrated workspace launch`)
   await waitFor(window, `Boolean(document.querySelector('.integrated-workspace') && document.querySelector('[aria-label="Terminal interno"]') && document.querySelector('[aria-label="Pesquisa web"]'))`, `${viewport.label} integrated workspace view`)
-  recordPass(viewport.label, 'Abrir ambiente mounts the editor, terminal and web panels')
+  const workspaceFeatures = await evaluate(window, `(() => ({
+    editor: Boolean(document.querySelector('.workspace-editor')),
+    editorTabs: document.querySelectorAll('[role="tab"]').length >= 1,
+    search: Boolean(document.querySelector('button[title*="Buscar no arquivo"]')),
+    symbols: Boolean(document.querySelector('button[title="Mostrar símbolos do arquivo atual"]')),
+    diff: Boolean(document.querySelector('button[title="Ver alterações não salvas"]')),
+    context: Boolean(document.querySelector('button[title*="Enviar arquivo ao contexto"]')),
+    terminalPty: Boolean(document.querySelector('.workspace-terminal-xterm .xterm')),
+    browserControls: document.querySelectorAll('.browser-actions button').length === 3,
+  }))()`)
+  assert(Object.values(workspaceFeatures).every(Boolean), `${viewport.label}: recursos do workspace incompletos (${JSON.stringify(workspaceFeatures)})`)
+  recordPass(viewport.label, 'editor com abas/busca/contexto, terminal PTY e controles web visíveis')
+  await clickButtonByText(window, (node) => node.getAttribute('title') === 'Projetos', `${viewport.label} multi-project navigation`)
+  await waitFor(window, `document.querySelector('.view-panel:not([hidden])')?.innerText.includes('Projetos')`, `${viewport.label} multi-project view`)
+  await setInputValue(window, '#project-search', 'Fixture 03')
+  await waitFor(window, `document.querySelectorAll('.project-list .project-row').length === 1`, `${viewport.label} multi-project search`)
+  await clickButtonByText(window, (node) => node.classList.contains('workspace-open-all'), `${viewport.label} second workspace launch`)
+  await waitFor(window, `document.querySelectorAll('.workspace-tabs .workspace-tab').length >= 2`, `${viewport.label} multiple workspace tabs`)
+  recordPass(viewport.label, 'multiple projects use workspace tabs with inactive sessions suspended')
+
   await clickButtonByText(window, (node) => /contas e uso/i.test(node.innerText), `${viewport.label} usage navigation from workspace`)
   await waitFor(window, `document.querySelector('.view-panel:not([hidden])')?.innerText.includes('Quotas do provedor')`, `${viewport.label} usage navigation from workspace`)
   await clickButtonByText(window, (node) => (node.getAttribute('title') || '').startsWith('Ambiente integrado de '), `${viewport.label} workspace restore`)
   await waitFor(window, `Boolean(document.querySelector('.integrated-workspace') && document.querySelector('.integrated-workspace-view:not([hidden])'))`, `${viewport.label} workspace restore`)
   recordPass(viewport.label, 'workspace remains mounted while switching sections')
-
-  await setInputValue(window, '#project-search', 'Fixture 02 · Pull pending develop')
+  await setInputValue(window, '#project-search', 'Fixture 02')
   await waitFor(window, `document.querySelectorAll('.project-list .project-row').length === 1`, `${viewport.label} busca`)
   const searchResult = await evaluate(window, `document.querySelector('.project-list .project-row')?.innerText || ''`)
   assert(searchResult.includes('Fixture 02 · Pull pending develop'), `${viewport.label}: busca retornou projeto inesperado (${searchResult})`)

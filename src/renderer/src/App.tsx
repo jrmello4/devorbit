@@ -36,6 +36,7 @@ export const App: React.FC = () => {
   const [activeMemoryProject, setActiveMemoryProject] = useState<Project | null>(null)
   const [activeBranchProject, setActiveBranchProject] = useState<Project | null>(null)
   const [activeWorkspaceProject, setActiveWorkspaceProject] = useState<Project | null>(null)
+  const [workspaceProjects, setWorkspaceProjects] = useState<Project[]>([])
   const [search, setSearch] = useState('')
   const [workspaceView, setWorkspaceView] = useState<'projects' | 'usage' | 'workspace'>('projects')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -474,13 +475,23 @@ export const App: React.FC = () => {
     await handleRefresh()
   }
   const openIntegratedWorkspace = (project: Project) => {
+    setWorkspaceProjects((current) => current.some((item) => item.id === project.id) ? current : [...current, project])
+    setActiveWorkspaceProject(project)
+    setWorkspaceView('workspace')
+  }
+
+  const selectWorkspaceProject = (project: Project) => {
     setActiveWorkspaceProject(project)
     setWorkspaceView('workspace')
   }
 
   const closeIntegratedWorkspace = () => {
-    setActiveWorkspaceProject(null)
-    setWorkspaceView('projects')
+    if (!activeWorkspaceProject) return
+    const remaining = workspaceProjects.filter((item) => item.id !== activeWorkspaceProject.id)
+    setWorkspaceProjects(remaining)
+    const nextProject = remaining[remaining.length - 1]
+    setActiveWorkspaceProject(nextProject || null)
+    if (!nextProject) setWorkspaceView('projects')
   }
 
   const handleProjectAccountChange = async (project: Project, account: 'account1' | 'account2') => {
@@ -544,7 +555,48 @@ export const App: React.FC = () => {
       </aside>
       <div id="main" tabIndex={-1} className="workspace-content">
       <div className="view-panel integrated-workspace-view" hidden={workspaceView !== 'workspace'}>
-        {activeWorkspaceProject && <IntegratedWorkspace key={activeWorkspaceProject.id} project={activeWorkspaceProject} onClose={closeIntegratedWorkspace} onNotify={notify} isWebSuppressed={isWorkspaceWebSuppressed} />}
+        {workspaceProjects.length > 0 && (
+          <div className="workspace-tabs" role="tablist" aria-label="Projetos abertos">
+            <div className="workspace-tab-list">
+              {workspaceProjects.map((workspaceProject) => (
+                <button
+                  key={workspaceProject.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeWorkspaceProject?.id === workspaceProject.id}
+                  className={'workspace-tab' + (activeWorkspaceProject?.id === workspaceProject.id ? ' active' : '')}
+                  onClick={() => selectWorkspaceProject(workspaceProject)}
+                  title={workspaceProject.path}
+                >
+                  <span>{workspaceProject.name}</span>
+                  <small>{workspaceProject.git.branch || 'local'}</small>
+                </button>
+              ))}
+            </div>
+            <button type="button" className="workspace-tab-projects" onClick={() => setWorkspaceView('projects')}>
+              <FolderKanban size={13} aria-hidden="true" /> Projetos
+            </button>
+          </div>
+        )}
+        <div className="workspace-tab-panes">
+          {workspaceProjects.map((workspaceProject) => (
+            <div
+              key={workspaceProject.id}
+              className="workspace-tab-pane"
+              hidden={activeWorkspaceProject?.id !== workspaceProject.id}
+            >
+              <IntegratedWorkspace
+                project={workspaceProject}
+                onClose={closeIntegratedWorkspace}
+                onNotify={notify}
+                codexAccount={config?.projectAccounts[workspaceProject.id] || config?.activeChatGptAccount || 'account1'}
+                isSuspended={activeWorkspaceProject?.id !== workspaceProject.id}
+                onRequestCodexAuth={setAuthModalAccount}
+                isWebSuppressed={isWorkspaceWebSuppressed || activeWorkspaceProject?.id !== workspaceProject.id}
+              />
+            </div>
+          ))}
+        </div>
       </div>
       <div className="view-panel" hidden={workspaceView !== 'usage'}>
       <UsageBar
