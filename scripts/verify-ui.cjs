@@ -157,18 +157,18 @@ async function inspectProjectInteractions(window, viewport) {
   })()`, `${viewport.label} seleção de projeto`)
   recordPass(viewport.label, 'project selection updates row and detail state')
   const workspaceControls = await evaluate(window, `(() => ({
-    openAll: Boolean(document.querySelector('button[title="Abrir o editor, terminal, Codex e navegador deste projeto"]')),
+    openAll: Boolean(document.querySelector('button.workspace-open-all')),
     accountSelect: Boolean(document.querySelector('.work-account-control select')),
     metadata: Boolean(document.querySelector('.detail-project-meta')),
   }))()`)
   assert(workspaceControls.openAll && workspaceControls.accountSelect && workspaceControls.metadata, `${viewport.label}: controles do workspace incompletos (${JSON.stringify(workspaceControls)})`)
-  recordPass(viewport.label, 'workspace actions expose Abrir tudo, project account and metadata')
+  recordPass(viewport.label, 'workspace actions expose integrated environment, project account and metadata')
 
   await setSelectValue(window, '.work-account-control select', 'account2')
   await waitFor(window, `document.querySelector('.work-account-control select')?.value === 'account2'`, `${viewport.label} account selection`)
-  await clickButtonByText(window, (node) => node.getAttribute('title') === 'Abrir o editor, terminal, Codex e navegador deste projeto', `${viewport.label} workspace launch`)
-  await waitFor(window, `document.body.innerText.includes('Workspace aberto: editor, terminal, Codex e navegador iniciados.')`, `${viewport.label} workspace launch result`)
-  recordPass(viewport.label, 'Abrir tudo launches the workspace sequence with the selected account')
+  await clickButtonByText(window, (node) => node.classList.contains('workspace-open-all'), `${viewport.label} integrated workspace launch`)
+  await waitFor(window, `Boolean(document.querySelector('.integrated-workspace') && document.querySelector('[aria-label="Terminal interno"]') && document.querySelector('[aria-label="Pesquisa web"]'))`, `${viewport.label} integrated workspace view`)
+  recordPass(viewport.label, 'Abrir ambiente mounts the editor, terminal and web panels')
 
   await setInputValue(window, '#project-search', 'Fixture 02 · Pull pending develop')
   await waitFor(window, `document.querySelectorAll('.project-list .project-row').length === 1`, `${viewport.label} busca`)

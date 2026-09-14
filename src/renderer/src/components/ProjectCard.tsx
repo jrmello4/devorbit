@@ -39,6 +39,7 @@ interface ProjectCardProps {
   onRestoreProject?: (project: Project) => Promise<void>
   onFinalizeProject?: (project: Project) => Promise<void>
   onProjectAccountChange?: (project: Project, account: 'account1' | 'account2') => Promise<void>
+  onOpenWorkspace?: (project: Project) => void
 }
 
 type LaunchTool =
@@ -73,6 +74,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
   onRestoreProject,
   onFinalizeProject,
   onProjectAccountChange,
+  onOpenWorkspace,
 }) => {
   const [isSyncing, setIsSyncing] = useState(false)
   const [isStashing, setIsStashing] = useState(false)
@@ -171,47 +173,11 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
       : config?.chatGptAccount1Name || 'Conta 1'
   const branchLabel = git.branch || 'sem branch'
 
-  const handleOpenWorkspace = async () => {
-    if (isOpeningWorkspace || isArchived) return
+  const handleOpenWorkspace = () => {
+    if (isOpeningWorkspace || isArchived || !onOpenWorkspace) return
     setIsOpeningWorkspace(true)
-    const browserTool: LaunchTool = projectAccount === 'account2' ? 'brave' : 'chrome'
-    const steps: Array<{ tool: LaunchTool; path: string; label: string }> = [
-      { tool: 'vscode', path: project.path, label: 'VS Code' },
-      { tool: 'terminal', path: project.path, label: 'Terminal' },
-      { tool: 'codex-cli', path: project.path, label: 'Codex CLI' },
-      { tool: browserTool, path: '', label: projectAccount === 'account2' ? 'Brave' : 'Chrome' },
-    ]
-    const failures: string[] = []
-    let firstAuthAccount: 'account1' | 'account2' | undefined
-    let launched = 0
-
-    try {
-      for (const step of steps) {
-        try {
-          const result = await window.devorbit?.launchTool(step.tool, step.path, { account: projectAccount })
-          if (result?.success) {
-            launched += 1
-          } else {
-            failures.push(`${step.label}: ${result?.message || 'não foi iniciado'}`)
-            if (result?.needsAuth && !firstAuthAccount) {
-              firstAuthAccount = (result.account as 'account1' | 'account2') || projectAccount
-            }
-          }
-        } catch (error) {
-          failures.push(`${step.label}: ${error instanceof Error ? error.message : String(error)}`)
-        }
-      }
-
-      if (firstAuthAccount) onOpenAuthModal?.(firstAuthAccount)
-      if (launched > 0) onUsageUpdate?.()
-      if (!failures.length) {
-        onNotify('Workspace aberto: editor, terminal, Codex e navegador iniciados.', 'success')
-      } else {
-        onNotify(`${launched} ferramenta(s) iniciada(s). ${failures.join(' · ')}`, launched ? 'info' : 'error')
-      }
-    } finally {
-      setIsOpeningWorkspace(false)
-    }
+    onOpenWorkspace(project)
+    window.setTimeout(() => setIsOpeningWorkspace(false), 450)
   }
   const statusDescription = isArchived
     ? 'Conteúdo local liberado; baixe o projeto quando for trabalhar nele.'
@@ -414,12 +380,12 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                 disabled={isOpeningWorkspace}
                 aria-busy={isOpeningWorkspace}
                 className="work-primary-action work-primary-action-accent workspace-open-all"
-                title="Abrir o editor, terminal, Codex e navegador deste projeto"
+                title="Abrir o editor, terminal e pesquisa web dentro do DevOrbit"
               >
                 <Rocket aria-hidden="true" />
                 <span className="work-action-copy">
-                  <strong>{isOpeningWorkspace ? 'Abrindo workspace...' : 'Abrir tudo'}</strong>
-                  <small>Editor, terminal, Codex e navegador</small>
+                  <strong>{isOpeningWorkspace ? 'Abrindo ambiente...' : 'Abrir ambiente'}</strong>
+                  <small>Editor, terminal e web no DevOrbit</small>
                 </span>
                 <ChevronRight aria-hidden="true" />
               </button>

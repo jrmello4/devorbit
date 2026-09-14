@@ -8,6 +8,9 @@ import { listAllNonProjectDirs, scanAllProjects } from './scanner'
 import { syncGit, getGitBranches, switchGitBranch, pushGit, getGitChangesSummary, cloneGitRepository, stashSyncGit, stashSwitchGitBranch, finalizeGitProject, getGitRemoteUrl } from './git'
 import { getGitInitPreview, initGitRepository } from './git-init'
 import { launchTool, copyProjectContext, getToolHealth } from './launcher'
+import { listProjectFiles, readProjectFile, saveProjectFile } from './project-files'
+import { onTerminalEvent, startTerminal, stopAllTerminals, stopTerminal, writeTerminal } from './terminal-session'
+import { attachWebPanel, disposeWebPanel, getWebState, navigateWeb, onWebPanelEvent, setWebBounds, setWebVisible } from './web-panel'
 import {
   checkCodexAuthStatus,
   startCodexDeviceLogin,
@@ -64,6 +67,12 @@ let mainWindow: BrowserWindowType | null = null
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL)
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 let managedConfigQueue: Promise<void> = Promise.resolve()
+onTerminalEvent((event) => {
+  mainWindow?.webContents.send('devorbit:terminalEvent', event)
+})
+onWebPanelEvent((event) => {
+  mainWindow?.webContents.send('devorbit:webEvent', event)
+})
 
 async function validateCloneParent(input: unknown): Promise<string> {
   const candidate = await canonicalizeExistingDirectory(input, 'Pasta de destino')
@@ -198,6 +207,11 @@ if (!hasSingleInstanceLock) {
     })
   })
 }
+
+app.on('before-quit', () => {
+  stopAllTerminals()
+  disposeWebPanel()
+})
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
@@ -447,6 +461,68 @@ function setupIpcHandlers() {
       return await launchTool(safeTool, safePath, safeOptions)
     }
   )
+
+  registerIpcHandler('devorbit:listProjectFiles', async (_event, projectPath: string) => {
+    return await listProjectFiles(await validateProjectPath(projectPath))
+  })
+
+  registerIpcHandler('devorbit:readProjectFile', async (_event, projectPath: string, relativePath: unknown) => {
+    return await readProjectFile(await validateProjectPath(projectPath), relativePath)
+  })
+
+  registerIpcHandler('devorbit:saveProjectFile', async (_event, projectPath: string, relativePath: unknown, content: unknown) => {
+    return await saveProjectFile(await validateProjectPath(projectPath), relativePath, content)
+  })
+
+  registerIpcHandler('devorbit:startTerminal', async (_event, id: unknown, projectPath: string) => {
+    if (typeof id !== 'string' || !/^[a-z0-9_-]{1,64}$/i.test(id)) throw new Error('Identificador de terminal inválido.')
+    return await startTerminal(id, await validateProjectPath(projectPath))
+  })
+
+  registerIpcHandler('devorbit:writeTerminal', (_event, id: unknown, input: unknown) => {
+    if (typeof id !== 'string' || !/^[a-z0-9_-]{1,64}$/i.test(id)) throw new Error('Identificador de terminal inválido.')
+    if (typeof input !== 'string' || input.length > 64_000) throw new Error('Entrada de terminal inválida.')
+    return { success: writeTerminal(id, input) }
+  })
+
+  registerIpcHandler('devorbit:stopTerminal', (_event, id: unknown) => {
+    if (typeof id !== 'string' || !/^[a-z0-9_-]{1,64}$/i.test(id)) throw new Error('Identificador de terminal inválido.')
+    stopTerminal(id)
+    return { success: true }
+  })
+
+  registerIpcHandler('devorbit:navigateWeb', async (_event, url: unknown) => {
+    if (typeof url !== 'string') throw new Error('URL inválida.')
+    return await navigateWeb(url)
+  })
+
+  registerIpcHandler('devorbit:getWebState', () => getWebState())
+
+  registerIpcHandler('devorbit:disposeWebPanel', () => {
+    disposeWebPanel()
+    return { success: true }
+  })
+
+  registerIpcHandler('devorbit:setWebVisible', (_event, visible: unknown) => {
+    if (typeof visible !== 'boolean') throw new Error('Visibilidade inválida.')
+    if (visible && mainWindow) attachWebPanel(mainWindow)
+    setWebVisible(visible)
+    return { success: true }
+  })
+
+  registerIpcHandler('devorbit:setWebBounds', (_event, rawBounds: unknown) => {
+    if (!rawBounds || typeof rawBounds !== 'object') throw new Error('Dimensões do navegador inválidas.')
+    const value = rawBounds as Record<string, unknown>
+    const safeBounds = {
+      x: validateFiniteNumber(value.x, 'Posição horizontal'),
+      y: validateFiniteNumber(value.y, 'Posição vertical'),
+      width: validateFiniteNumber(value.width, 'Largura'),
+      height: validateFiniteNumber(value.height, 'Altura'),
+    }
+    if ((safeBounds.width > 0 && safeBounds.height > 0) && mainWindow) attachWebPanel(mainWindow)
+    setWebBounds(safeBounds)
+    return { success: true }
+  })
 
   // Copiar resumo de contexto
   registerIpcHandler('devorbit:copyProjectContext', async (_event, projectPath: string) => {

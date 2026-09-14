@@ -56,6 +56,41 @@ export interface OtherDir {
   parentDir: string
 }
 
+export interface ProjectFileEntry {
+  path: string
+  name: string
+  kind: 'file' | 'directory'
+  size?: number
+  editable?: boolean
+}
+
+export interface ProjectFileContent {
+  path: string
+  content: string
+  size: number
+}
+
+export interface TerminalEvent {
+  id: string
+  type: 'data' | 'exit' | 'error'
+  data?: string
+  code?: number | null
+}
+
+export interface WebPanelEvent {
+  type: 'loading' | 'loaded' | 'navigated' | 'error'
+  url: string
+  title?: string
+  message?: string
+}
+
+export interface WebPanelBounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 export interface AppConfig {
   projectDirs: string[]
   managedProjects: ManagedProject[]
@@ -243,6 +278,9 @@ export interface DevOrbitAPI {
   getProjects: () => Promise<Project[]>
   refreshProjects: () => Promise<Project[]>
   getOtherDirs: () => Promise<OtherDir[]>
+  listProjectFiles: (projectPath: string) => Promise<ProjectFileEntry[]>
+  readProjectFile: (projectPath: string, relativePath: string) => Promise<ProjectFileContent>
+  saveProjectFile: (projectPath: string, relativePath: string, content: string) => Promise<ProjectFileContent>
   syncGit: (projectPath: string) => Promise<SyncResult>
   getGitBranches: (projectPath: string, refreshRemote?: boolean) => Promise<GitBranch[]>
   switchGitBranch: (projectPath: string, branch: string) => Promise<SyncResult>
@@ -257,6 +295,16 @@ export interface DevOrbitAPI {
   cloneGitRepository: (input: GitCloneInput) => Promise<GitCloneResult>
   restoreManagedProject: (projectPath: string) => Promise<GitCloneResult>
   finalizeManagedProject: (projectPath: string, options?: { allowRecreatableIgnored?: boolean }) => Promise<SyncResult>
+  startTerminal: (id: string, projectPath: string) => Promise<{ id: string; pid: number | undefined }>
+  writeTerminal: (id: string, input: string) => Promise<{ success: boolean }>
+  stopTerminal: (id: string) => Promise<{ success: boolean }>
+  onTerminalEvent: (callback: (event: TerminalEvent) => void) => () => void
+  navigateWeb: (url: string) => Promise<{ success: boolean; url?: string; message?: string }>
+  getWebState: () => Promise<WebPanelEvent>
+  setWebVisible: (visible: boolean) => Promise<{ success: boolean }>
+  disposeWebPanel: () => Promise<{ success: boolean }>
+  setWebBounds: (bounds: WebPanelBounds) => Promise<{ success: boolean }>
+  onWebEvent: (callback: (event: WebPanelEvent) => void) => () => void
   launchTool: (
     tool:
       | 'agy'

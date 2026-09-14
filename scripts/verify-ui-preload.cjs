@@ -274,6 +274,53 @@ const api = {
       message: 'Fixture init',
     }
   },
+  listProjectFiles: async (projectPath) => {
+    record('listProjectFiles', projectPath)
+    return [
+      { path: 'src', name: 'src', kind: 'directory' },
+      { path: 'src\\fixture.ts', name: 'fixture.ts', kind: 'file', size: 28, editable: true },
+      { path: 'README.md', name: 'README.md', kind: 'file', size: 18, editable: true },
+    ]
+  },
+  readProjectFile: async (projectPath, relativePath) => {
+    record('readProjectFile', projectPath, relativePath)
+    return { path: relativePath, content: relativePath === 'README.md' ? '# Fixture workspace\\n' : 'export const fixture = true\\n', size: 24 }
+  },
+  saveProjectFile: async (projectPath, relativePath, content) => {
+    record('saveProjectFile', projectPath, relativePath, content)
+    return { path: relativePath, content, size: content.length }
+  },
+  startTerminal: async (id, projectPath) => {
+    record('startTerminal', id, projectPath)
+    return { id, pid: 1234 }
+  },
+  writeTerminal: async (id, input) => {
+    record('writeTerminal', id, input)
+    return { success: true }
+  },
+  stopTerminal: async (id) => {
+    record('stopTerminal', id)
+    return { success: true }
+  },
+  onTerminalEvent: () => () => {},
+  navigateWeb: async (url) => {
+    record('navigateWeb', url)
+    return { success: true, url }
+  },
+  getWebState: async () => ({
+    type: 'navigated',
+    url: 'https://www.google.com/',
+    title: 'Google',
+  }),
+  setWebVisible: async (visible) => {
+    record('setWebVisible', visible)
+    return { success: true }
+  },
+  setWebBounds: async (bounds) => {
+    record('setWebBounds', bounds)
+    return { success: true }
+  },
+  onWebEvent: () => () => {},
   launchTool: async (tool, projectPath, options) => {
     record('launchTool', tool, projectPath, options)
     return { success: true, message: `Fixture launch: ${tool}` }

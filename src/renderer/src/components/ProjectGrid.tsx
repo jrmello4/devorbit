@@ -22,6 +22,7 @@ interface ProjectGridProps {
   onRestoreProject?: (project: Project) => Promise<void>
   onFinalizeProject?: (project: Project) => Promise<void>
   onProjectAccountChange?: (project: Project, account: 'account1' | 'account2') => Promise<void>
+  onOpenWorkspace?: (project: Project) => void
 }
 export const ProjectGrid: React.FC<ProjectGridProps> = (props) => {
   const { projects, otherDirs, config, search, isLoading, onOpenSettings, onOpenClone, onOpenGitInit, onNotify } = props

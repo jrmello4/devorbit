@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { Header } from './components/Header'
 import { ProjectGrid } from './components/ProjectGrid'
+import { IntegratedWorkspace } from './components/IntegratedWorkspace'
 import { SettingsModal } from './components/SettingsModal'
 import { GitPushModal } from './components/GitPushModal'
 import { CodexAuthModal } from './components/CodexAuthModal'
@@ -22,7 +23,7 @@ import type {
   SyncResult,
   UpdateState,
 } from './types'
-import { CheckCircle2, AlertCircle, Info, X, FolderKanban, ChartNoAxesCombined, Settings, ArrowRightLeft, GitPullRequest, PanelLeftClose, PanelLeftOpen, Wrench } from 'lucide-react'
+import { CheckCircle2, AlertCircle, Info, X, FolderKanban, ChartNoAxesCombined, Settings, ArrowRightLeft, GitPullRequest, PanelLeftClose, PanelLeftOpen, Wrench, LayoutDashboard } from 'lucide-react'
 
 export const App: React.FC = () => {
   const [projects, setProjects] = useState<Project[]>([])
@@ -34,8 +35,9 @@ export const App: React.FC = () => {
   const [realUsage, setRealUsage] = useState<RealUsageState | null>(null)
   const [activeMemoryProject, setActiveMemoryProject] = useState<Project | null>(null)
   const [activeBranchProject, setActiveBranchProject] = useState<Project | null>(null)
+  const [activeWorkspaceProject, setActiveWorkspaceProject] = useState<Project | null>(null)
   const [search, setSearch] = useState('')
-  const [workspaceView, setWorkspaceView] = useState<'projects' | 'usage'>('projects')
+  const [workspaceView, setWorkspaceView] = useState<'projects' | 'usage' | 'workspace'>('projects')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
@@ -471,6 +473,16 @@ export const App: React.FC = () => {
     setConfig(saved)
     await handleRefresh()
   }
+  const openIntegratedWorkspace = (project: Project) => {
+    setActiveWorkspaceProject(project)
+    setWorkspaceView('workspace')
+  }
+
+  const closeIntegratedWorkspace = () => {
+    setActiveWorkspaceProject(null)
+    setWorkspaceView('projects')
+  }
+
   const handleProjectAccountChange = async (project: Project, account: 'account1' | 'account2') => {
     if (!window.devorbit || !config) return
     try {
@@ -505,6 +517,11 @@ export const App: React.FC = () => {
   }, [activeBranchProject, activeMemoryProject, authModalAccount, gitInitProject, isCloneOpen, isSettingsOpen, isCommandPaletteOpen, openCommandPalette, pushProject])
 
   const gitProjectsCount = projects.filter((p) => p.git.isRepo).length
+  const isWorkspaceWebSuppressed = workspaceView !== 'workspace' || Boolean(
+    isSettingsOpen || isToolHealthOpen || authModalAccount || pushProject || gitInitProject || isCloneOpen ||
+    activeMemoryProject || activeBranchProject || isCommandPaletteOpen ||
+    (updateState && !isUpdateDismissed && ['available', 'downloading', 'downloaded'].includes(updateState.status))
+  )
 
   return (
     <div className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
@@ -516,6 +533,7 @@ export const App: React.FC = () => {
         <nav>
           <button className={`nav-item ${workspaceView === 'projects' ? 'active' : ''}`} aria-current={workspaceView === 'projects' ? 'page' : undefined} title="Projetos" onClick={() => setWorkspaceView('projects')}><FolderKanban size={17}/><span>Projetos</span><small>{projects.length}</small></button>
           <button className={`nav-item ${workspaceView === 'usage' ? 'active' : ''}`} aria-current={workspaceView === 'usage' ? 'page' : undefined} title="Contas e uso" onClick={() => setWorkspaceView('usage')}><ChartNoAxesCombined size={17}/><span>Contas e uso</span></button>
+          {activeWorkspaceProject && <button className={`nav-item ${workspaceView === 'workspace' ? 'active' : ''}`} aria-current={workspaceView === 'workspace' ? 'page' : undefined} title={`Ambiente integrado de ${activeWorkspaceProject.name}`} onClick={() => setWorkspaceView('workspace')}><LayoutDashboard size={17}/><span>Ambiente</span></button>}
         </nav>
         <div className="sidebar-tools"><span className="sidebar-label">Workspace</span><button className="nav-item" title="Sincronizar todos os repositórios" onClick={handleSyncAll} disabled={isSyncingAll}><GitPullRequest size={17}/><span>{isSyncingAll ? 'Sincronizando…' : 'Sincronizar Git'}</span></button><button className="nav-item" title="Configurações" onClick={() => setIsSettingsOpen(true)}><Settings size={17}/><span>Configurações</span></button><button className="nav-item" title="Diagnosticar ferramentas instaladas" onClick={() => setIsToolHealthOpen(true)}><Wrench size={17}/><span>Diagnóstico</span></button></div>
         <div className="sidebar-bottom">
@@ -525,6 +543,9 @@ export const App: React.FC = () => {
         </div>
       </aside>
       <div id="main" tabIndex={-1} className="workspace-content">
+      <div className="view-panel integrated-workspace-view" hidden={workspaceView !== 'workspace'}>
+        {activeWorkspaceProject && <IntegratedWorkspace key={activeWorkspaceProject.id} project={activeWorkspaceProject} onClose={closeIntegratedWorkspace} onNotify={notify} isWebSuppressed={isWorkspaceWebSuppressed} />}
+      </div>
       <div className="view-panel" hidden={workspaceView !== 'usage'}>
       <UsageBar
         usage={usageState}
@@ -563,6 +584,7 @@ export const App: React.FC = () => {
         onRestoreProject={handleRestoreProject}
         onFinalizeProject={handleFinalizeProject}
         onProjectAccountChange={handleProjectAccountChange}
+        onOpenWorkspace={openIntegratedWorkspace}
       />
 
       </div>

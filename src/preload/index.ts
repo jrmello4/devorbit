@@ -6,6 +6,9 @@ const api: DevOrbitAPI = {
   getProjects: () => ipcRenderer.invoke('devorbit:getProjects'),
   refreshProjects: () => ipcRenderer.invoke('devorbit:refreshProjects'),
   getOtherDirs: () => ipcRenderer.invoke('devorbit:getOtherDirs'),
+  listProjectFiles: (projectPath: string) => ipcRenderer.invoke('devorbit:listProjectFiles', projectPath),
+  readProjectFile: (projectPath: string, relativePath: string) => ipcRenderer.invoke('devorbit:readProjectFile', projectPath, relativePath),
+  saveProjectFile: (projectPath: string, relativePath: string, content: string) => ipcRenderer.invoke('devorbit:saveProjectFile', projectPath, relativePath, content),
   syncGit: (projectPath: string) => ipcRenderer.invoke('devorbit:syncGit', projectPath),
   getGitBranches: (projectPath: string, refreshRemote?: boolean) =>
     ipcRenderer.invoke('devorbit:getGitBranches', projectPath, refreshRemote),
@@ -35,6 +38,31 @@ const api: DevOrbitAPI = {
     ipcRenderer.invoke('devorbit:restoreManagedProject', projectPath),
   finalizeManagedProject: (projectPath: string, options?: { allowRecreatableIgnored?: boolean }) =>
     ipcRenderer.invoke('devorbit:finalizeManagedProject', projectPath, options),
+  startTerminal: (id: string, projectPath: string) =>
+    ipcRenderer.invoke('devorbit:startTerminal', id, projectPath),
+  writeTerminal: (id: string, input: string) =>
+    ipcRenderer.invoke('devorbit:writeTerminal', id, input),
+  stopTerminal: (id: string) =>
+    ipcRenderer.invoke('devorbit:stopTerminal', id),
+  onTerminalEvent: (callback) => {
+    const handler = (_event: any, terminalEvent: any) => callback(terminalEvent)
+    ipcRenderer.on('devorbit:terminalEvent', handler)
+    return () => ipcRenderer.removeListener('devorbit:terminalEvent', handler)
+  },
+  navigateWeb: (url: string) =>
+    ipcRenderer.invoke('devorbit:navigateWeb', url),
+  getWebState: () =>
+    ipcRenderer.invoke('devorbit:getWebState'),
+  setWebVisible: (visible: boolean) =>
+    ipcRenderer.invoke('devorbit:setWebVisible', visible),
+  disposeWebPanel: () => ipcRenderer.invoke('devorbit:disposeWebPanel'),
+  setWebBounds: (bounds) =>
+    ipcRenderer.invoke('devorbit:setWebBounds', bounds),
+  onWebEvent: (callback) => {
+    const handler = (_event: any, webEvent: any) => callback(webEvent)
+    ipcRenderer.on('devorbit:webEvent', handler)
+    return () => ipcRenderer.removeListener('devorbit:webEvent', handler)
+  },
   launchTool: (tool, projectPath, options) =>
     ipcRenderer.invoke('devorbit:launchTool', tool, projectPath, options),
   copyProjectContext: (projectPath) =>
