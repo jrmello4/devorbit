@@ -3,6 +3,8 @@ name: DevOrbit CI
 on:
   push:
     branches: [main]
+    tags:
+      - 'v*'
   pull_request:
 
 concurrency:
@@ -51,7 +53,7 @@ jobs:
   release:
     name: Publicar instalador e atualização
     needs: quality
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-latest
     permissions:
       contents: write
@@ -69,16 +71,27 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Definir versão da publicação
+      - name: Validar versão da publicação
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          $version = "1.0.${{ github.run_number }}"
-          "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
-          npm version $version --no-git-tag-version --ignore-scripts
+          if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+$') {
+            throw "Tag inválida: $env:RELEASE_TAG. Use o formato vMAJOR.MINOR.PATCH."
+          }
+
+          $tagVersion = $env:RELEASE_TAG.Substring(1)
+          $packageVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($packageVersion -ne $tagVersion) {
+            throw "A tag $env:RELEASE_TAG não corresponde à versão do package.json ($packageVersion)."
+          }
+
+          "RELEASE_VERSION=$tagVersion" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Criar release para a versão
-        run: gh release create "v$env:RELEASE_VERSION" --target "$env:GITHUB_SHA" --title "DevOrbit $env:RELEASE_VERSION" --notes "Atualização automática do DevOrbit."
+        run: gh release create "$env:RELEASE_TAG" --target "$env:GITHUB_SHA" --title "DevOrbit $env:RELEASE_VERSION" --notes "Atualização do DevOrbit."
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
 
       - name: Gerar e publicar instalador NSIS e portable
         run: |

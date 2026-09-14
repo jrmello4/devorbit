@@ -170,12 +170,13 @@ relação à branch, commit e arquivos locais. O modal **Memória** oferece **At
 ## CI
 
 O workflow do GitHub Actions executa em `windows-latest` uma instalação limpa
-com `npm ci` e verifica typecheck, testes, lint e build. Depois de cada push
-aprovado na `main`, ele gera uma versão de publicação nova, cria um Release
-público com o instalador NSIS e os metadados de atualização, e o aplicativo
-instalado pode encontrá-la. O lockfile deve ser atualizado junto com qualquer
-mudança de dependência usando npm; o CI não aceita uma árvore de dependências
-gerada manualmente.
+com `npm ci` e verifica typecheck, testes, lint e build. Pushes na `main`
+executam apenas essas verificações. Para publicar uma versão, atualize a
+versão do `package.json` e do lockfile, crie uma tag correspondente como
+`v1.0.14` e envie essa tag; então o workflow valida a versão, gera o instalador
+NSIS e portable, cria o Release e publica os metadados de atualização. O
+lockfile deve ser atualizado junto com qualquer mudança de dependência usando
+npm; o CI não aceita uma árvore de dependências gerada manualmente.
 
 ## Interface desktop
 
