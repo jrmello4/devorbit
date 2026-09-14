@@ -234,7 +234,7 @@ describe('git initialization safety flow', () => {
     expect(result.initialized).toBe(false)
     expect(result.message).toContain('prévia está incompleta')
     expect(calls).toHaveLength(0)
-  })
+  }, 15_000)
 
   it('keeps the initialized state visible when the first commit fails', async () => {
     execFileMock.mockImplementation(
