@@ -49,4 +49,20 @@ describe('managed project catalog', () => {
 
     expect(projects.find((project) => project.name === 'released')?.lifecycle).toBe('archived')
   })
+  it('summarizes package manager and useful scripts', async () => {
+    const projectPath = path.join(root, 'node-project')
+    await fs.mkdir(projectPath)
+    await fs.writeFile(path.join(projectPath, 'package.json'), JSON.stringify({
+      packageManager: 'pnpm@9.0.0',
+      scripts: { dev: 'vite', build: 'vite build', lint: 'eslint .' },
+      dependencies: { react: '^19.0.0' },
+    }))
+    await fs.writeFile(path.join(projectPath, 'pnpm-lock.yaml'), 'lockfileVersion: 9.0\n')
+
+    const projects = await scanAllProjects([root])
+    const project = projects.find((entry) => entry.name === 'node-project')
+
+    expect(project?.packageManager).toBe('pnpm')
+    expect(project?.scripts).toEqual(['dev', 'build', 'lint'])
+  })
 })

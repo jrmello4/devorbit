@@ -15,6 +15,7 @@ import {
   Archive,
   Download,
   RefreshCw,
+  Rocket,
   Sparkles,
   Terminal,
   UploadCloud,
@@ -37,6 +38,7 @@ interface ProjectCardProps {
   onUsageUpdate?: () => void
   onRestoreProject?: (project: Project) => Promise<void>
   onFinalizeProject?: (project: Project) => Promise<void>
+  onProjectAccountChange?: (project: Project, account: 'account1' | 'account2') => Promise<void>
 }
 
 type LaunchTool =
@@ -50,6 +52,12 @@ type LaunchTool =
   | 'terminal'
   | 'folder'
 
+
+function formatProjectDate(value: number): string {
+  const date = new Date(value)
+  if (!Number.isFinite(date.getTime())) return 'data desconhecida'
+  return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(date)
+}
 export const ProjectCard: React.FC<ProjectCardProps> = ({
   project,
   config,
@@ -64,12 +72,14 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
   onUsageUpdate,
   onRestoreProject,
   onFinalizeProject,
+  onProjectAccountChange,
 }) => {
   const [isSyncing, setIsSyncing] = useState(false)
   const [isStashing, setIsStashing] = useState(false)
   const [copied, setCopied] = useState(false)
   const [launchingTool, setLaunchingTool] = useState<LaunchTool | null>(null)
   const [isLifecycleBusy, setIsLifecycleBusy] = useState(false)
+  const [isOpeningWorkspace, setIsOpeningWorkspace] = useState(false)
 
   const handleSync = async () => {
     setIsSyncing(true)
@@ -98,7 +108,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
     setLaunchingTool(tool)
     try {
       const res = await window.devorbit?.launchTool(tool, project.path, {
-        account: config?.activeChatGptAccount,
+        account: projectAccount,
       })
       if (res?.success) {
         onNotify(res.message || 'Ferramenta iniciada!', 'success')
@@ -154,11 +164,55 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
       ? 'push'
       : 'pull'
   const activeAccount = config?.activeChatGptAccount || 'account1'
+  const projectAccount = config?.projectAccounts?.[project.id] || activeAccount
   const activeAccountLabel =
-    activeAccount === 'account2'
+    projectAccount === 'account2'
       ? config?.chatGptAccount2Name || 'Conta 2'
       : config?.chatGptAccount1Name || 'Conta 1'
   const branchLabel = git.branch || 'sem branch'
+
+  const handleOpenWorkspace = async () => {
+    if (isOpeningWorkspace || isArchived) return
+    setIsOpeningWorkspace(true)
+    const browserTool: LaunchTool = projectAccount === 'account2' ? 'brave' : 'chrome'
+    const steps: Array<{ tool: LaunchTool; path: string; label: string }> = [
+      { tool: 'vscode', path: project.path, label: 'VS Code' },
+      { tool: 'terminal', path: project.path, label: 'Terminal' },
+      { tool: 'codex-cli', path: project.path, label: 'Codex CLI' },
+      { tool: browserTool, path: '', label: projectAccount === 'account2' ? 'Brave' : 'Chrome' },
+    ]
+    const failures: string[] = []
+    let firstAuthAccount: 'account1' | 'account2' | undefined
+    let launched = 0
+
+    try {
+      for (const step of steps) {
+        try {
+          const result = await window.devorbit?.launchTool(step.tool, step.path, { account: projectAccount })
+          if (result?.success) {
+            launched += 1
+          } else {
+            failures.push(`${step.label}: ${result?.message || 'não foi iniciado'}`)
+            if (result?.needsAuth && !firstAuthAccount) {
+              firstAuthAccount = (result.account as 'account1' | 'account2') || projectAccount
+            }
+          }
+        } catch (error) {
+          failures.push(`${step.label}: ${error instanceof Error ? error.message : String(error)}`)
+        }
+      }
+
+      if (firstAuthAccount) onOpenAuthModal?.(firstAuthAccount)
+      if (launched > 0) onUsageUpdate?.()
+      if (!failures.length) {
+        onNotify('Workspace aberto: editor, terminal, Codex e navegador iniciados.', 'success')
+      } else {
+        onNotify(`${launched} ferramenta(s) iniciada(s). ${failures.join(' · ')}`, launched ? 'info' : 'error')
+      }
+    } finally {
+      setIsOpeningWorkspace(false)
+    }
+  }
   const statusDescription = isArchived
     ? 'Conteúdo local liberado; baixe o projeto quando for trabalhar nele.'
     : !git.isRepo
@@ -185,7 +239,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
       <button
         type="button"
         onClick={() => handleLaunch(tool)}
-        disabled={isLaunching || isArchived}
+        disabled={isLaunching || isArchived || isOpeningWorkspace}
         aria-busy={isLaunching}
         className="work-tool"
         title={title}
@@ -235,6 +289,11 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
               ))}
             </div>
           )}
+          <div className="detail-project-meta" aria-label="Resumo do projeto">
+            <span>Atualizado {formatProjectDate(project.lastModified)}</span>
+            {project.packageManager && <span>{project.packageManager}</span>}
+            {project.scripts?.slice(0, 4).map((script) => <code key={script}>{script}</code>)}
+          </div>
         </div>
 
         <div className="detail-header-tools">
@@ -351,8 +410,23 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
               ) : <>
               <button
                 type="button"
+                onClick={() => void handleOpenWorkspace()}
+                disabled={isOpeningWorkspace}
+                aria-busy={isOpeningWorkspace}
+                className="work-primary-action work-primary-action-accent workspace-open-all"
+                title="Abrir o editor, terminal, Codex e navegador deste projeto"
+              >
+                <Rocket aria-hidden="true" />
+                <span className="work-action-copy">
+                  <strong>{isOpeningWorkspace ? 'Abrindo workspace...' : 'Abrir tudo'}</strong>
+                  <small>Editor, terminal, Codex e navegador</small>
+                </span>
+                <ChevronRight aria-hidden="true" />
+              </button>
+              <button
+                type="button"
                 onClick={() => handleLaunch('vscode')}
-                disabled={launchingTool === 'vscode'}
+                disabled={launchingTool === 'vscode' || isOpeningWorkspace}
                 aria-busy={launchingTool === 'vscode'}
                 className="work-primary-action work-primary-action-accent"
                 title="Abrir no VS Code"
@@ -367,7 +441,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
               <button
                 type="button"
                 onClick={() => handleLaunch('terminal')}
-                disabled={launchingTool === 'terminal'}
+                disabled={launchingTool === 'terminal' || isOpeningWorkspace}
                 aria-busy={launchingTool === 'terminal'}
                 className="work-primary-action"
                 title="Abrir terminal na pasta do projeto"
@@ -499,7 +573,21 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
           <section className="work-section" aria-labelledby={'ai-tools-' + project.id}>
             <div className="work-section-heading">
               <h3 id={'ai-tools-' + project.id}>Assistentes IA</h3>
-              <span className="work-section-meta">{activeAccountLabel}</span>
+              <label className="work-account-control">
+                <span>Conta</span>
+                <select
+                  value={projectAccount}
+                  onChange={(event) => {
+                    const nextAccount = event.target.value === 'account2' ? 'account2' : 'account1'
+                    void onProjectAccountChange?.(project, nextAccount)
+                  }}
+                  disabled={!onProjectAccountChange || isOpeningWorkspace}
+                  aria-label={`Conta do Codex para ${project.name}`}
+                >
+                  <option value="account1">{config?.chatGptAccount1Name || 'Conta 1'}</option>
+                  <option value="account2">{config?.chatGptAccount2Name || 'Conta 2'}</option>
+                </select>
+              </label>
             </div>
             <div className="work-tool-grid">
               {renderToolButton(
@@ -512,7 +600,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
               {renderToolButton(
                 'codex-cli',
                 Terminal,
-                'Codex ' + (activeAccount === 'account2' ? '#2' : '#1'),
+                'Codex ' + (projectAccount === 'account2' ? '#2' : '#1'),
                 'CLI · ' + activeAccountLabel,
                 'Abrir Codex CLI no terminal conectado com ' + activeAccountLabel
               )}

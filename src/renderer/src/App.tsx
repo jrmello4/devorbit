@@ -11,6 +11,7 @@ import { GitCloneModal } from './components/GitCloneModal'
 import { GitBranchModal } from './components/GitBranchModal'
 import { CommandPalette } from './components/CommandPalette'
 import { UpdateModal } from './components/UpdateModal'
+import { ToolHealthModal } from './components/ToolHealthModal'
 import type {
   Project,
   OtherDir,
@@ -21,7 +22,7 @@ import type {
   SyncResult,
   UpdateState,
 } from './types'
-import { CheckCircle2, AlertCircle, Info, X, FolderKanban, ChartNoAxesCombined, Settings, ArrowRightLeft, GitPullRequest, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
+import { CheckCircle2, AlertCircle, Info, X, FolderKanban, ChartNoAxesCombined, Settings, ArrowRightLeft, GitPullRequest, PanelLeftClose, PanelLeftOpen, Wrench } from 'lucide-react'
 
 export const App: React.FC = () => {
   const [projects, setProjects] = useState<Project[]>([])
@@ -41,6 +42,7 @@ export const App: React.FC = () => {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [isSyncingAll, setIsSyncingAll] = useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const [isToolHealthOpen, setIsToolHealthOpen] = useState(false)
   const [pushProject, setPushProject] = useState<Project | null>(null)
   const [gitInitProject, setGitInitProject] = useState<Project | null>(null)
   const [isCloneOpen, setIsCloneOpen] = useState(false)
@@ -469,6 +471,18 @@ export const App: React.FC = () => {
     setConfig(saved)
     await handleRefresh()
   }
+  const handleProjectAccountChange = async (project: Project, account: 'account1' | 'account2') => {
+    if (!window.devorbit || !config) return
+    try {
+      const saved = await window.devorbit.saveConfig({
+        projectAccounts: { ...config.projectAccounts, [project.id]: account },
+      })
+      setConfig(saved)
+      notify(`Conta do Codex definida para ${project.name}.`, 'success')
+    } catch (err) {
+      notify(`Não foi possível salvar a conta do projeto: ${err instanceof Error ? err.message : String(err)}`, 'error')
+    }
+  }
 
   // Atalhos de teclado globais
   useEffect(() => {
@@ -503,7 +517,7 @@ export const App: React.FC = () => {
           <button className={`nav-item ${workspaceView === 'projects' ? 'active' : ''}`} aria-current={workspaceView === 'projects' ? 'page' : undefined} title="Projetos" onClick={() => setWorkspaceView('projects')}><FolderKanban size={17}/><span>Projetos</span><small>{projects.length}</small></button>
           <button className={`nav-item ${workspaceView === 'usage' ? 'active' : ''}`} aria-current={workspaceView === 'usage' ? 'page' : undefined} title="Contas e uso" onClick={() => setWorkspaceView('usage')}><ChartNoAxesCombined size={17}/><span>Contas e uso</span></button>
         </nav>
-        <div className="sidebar-tools"><span className="sidebar-label">Workspace</span><button className="nav-item" title="Sincronizar todos os repositórios" onClick={handleSyncAll} disabled={isSyncingAll}><GitPullRequest size={17}/><span>{isSyncingAll ? 'Sincronizando…' : 'Sincronizar Git'}</span></button><button className="nav-item" title="Configurações" onClick={() => setIsSettingsOpen(true)}><Settings size={17}/><span>Configurações</span></button></div>
+        <div className="sidebar-tools"><span className="sidebar-label">Workspace</span><button className="nav-item" title="Sincronizar todos os repositórios" onClick={handleSyncAll} disabled={isSyncingAll}><GitPullRequest size={17}/><span>{isSyncingAll ? 'Sincronizando…' : 'Sincronizar Git'}</span></button><button className="nav-item" title="Configurações" onClick={() => setIsSettingsOpen(true)}><Settings size={17}/><span>Configurações</span></button><button className="nav-item" title="Diagnosticar ferramentas instaladas" onClick={() => setIsToolHealthOpen(true)}><Wrench size={17}/><span>Diagnóstico</span></button></div>
         <div className="sidebar-bottom">
           <div className="sidebar-account"><span className="account-avatar">{config?.activeChatGptAccount === 'account2' ? 'C2' : 'C1'}</span><div><strong title={config?.activeChatGptAccount === 'account2' ? config.chatGptAccount2Name : config?.chatGptAccount1Name}>{config?.activeChatGptAccount === 'account2' ? config.chatGptAccount2Name || 'Conta 2' : config?.chatGptAccount1Name || 'Conta 1'}</strong><span>{authStatus?.[config?.activeChatGptAccount || 'account1']?.connected ? 'Codex conectado' : 'Codex não conectado'}</span></div></div>
           <button className="nav-item" title="Alternar conta do ChatGPT" onClick={handleToggleAccount} disabled={isSwitchingAccount}><ArrowRightLeft size={16}/><span>{isSwitchingAccount ? 'Alternando…' : 'Alternar conta'}</span></button>
@@ -548,6 +562,7 @@ export const App: React.FC = () => {
         onOpenClone={() => setIsCloneOpen(true)}
         onRestoreProject={handleRestoreProject}
         onFinalizeProject={handleFinalizeProject}
+        onProjectAccountChange={handleProjectAccountChange}
       />
 
       </div>
@@ -626,6 +641,7 @@ export const App: React.FC = () => {
           updateState &&
           !isUpdateDismissed &&
           !isSettingsOpen &&
+          !isToolHealthOpen &&
           !authModalAccount &&
           !pushProject &&
           !gitInitProject &&
@@ -639,6 +655,8 @@ export const App: React.FC = () => {
         onDownload={handleDownloadUpdate}
         onInstall={handleInstallUpdate}
       />
+
+      <ToolHealthModal isOpen={isToolHealthOpen} onClose={() => setIsToolHealthOpen(false)} />
 
       {/* Modal de Configurações */}
       <SettingsModal

@@ -371,6 +371,15 @@ async function validateManagedProjects(value: unknown): Promise<ManagedProject[]
   return result
 }
 
+function validateProjectAccounts(value: unknown): Record<string, 'account1' | 'account2'> {
+  if (!isRecord(value)) throw new Error('Preferências de conta por projeto inválidas.')
+  const result: Record<string, 'account1' | 'account2'> = {}
+  for (const [projectId, account] of Object.entries(value).slice(0, MAX_MANAGED_PROJECTS)) {
+    if (!projectId.trim() || projectId.length > 512) throw new Error('Identificador de projeto inválido.')
+    result[projectId] = validateCodexAccount(account)
+  }
+  return result
+}
 export async function validateConfigUpdates(value: unknown): Promise<Partial<AppConfig>> {
   if (!isRecord(value)) throw new Error('Configuração inválida.')
 
@@ -380,6 +389,9 @@ export async function validateConfigUpdates(value: unknown): Promise<Partial<App
   }
   if ('managedProjects' in value) {
     updates.managedProjects = await validateManagedProjects(value.managedProjects)
+  }
+  if ('projectAccounts' in value) {
+    updates.projectAccounts = validateProjectAccounts(value.projectAccounts)
   }
   if ('activeChatGptAccount' in value && value.activeChatGptAccount !== undefined) {
     updates.activeChatGptAccount = validateCodexAccount(value.activeChatGptAccount)

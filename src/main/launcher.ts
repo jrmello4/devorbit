@@ -6,6 +6,7 @@ import path from 'node:path'
 import os from 'node:os'
 import fs from 'node:fs/promises'
 import { loadConfig } from './config'
+import type { AppConfig, ToolHealth } from '../renderer/src/types'
 import { getGitStatus, getGitChangesSummary } from './git'
 import { getProjectMemory } from './memory'
 import {
@@ -205,6 +206,83 @@ async function openCmdSession(
   }
 }
 
+async function resolveCommandPath(command?: string): Promise<string | null> {
+  const trimmed = command?.trim()
+  if (!trimmed) return null
+  if (path.isAbsolute(trimmed)) return await fileExists(trimmed) ? trimmed : null
+  return await findCommandOnPath(trimmed)
+}
+
+export async function getToolHealth(config: AppConfig): Promise<ToolHealth[]> {
+  const custom = config.customPaths
+  const terminalPath = await resolveCommandPath(custom.wt || 'wt.exe')
+  const powershellPath = await resolveCommandPath('powershell.exe')
+  const codexCandidate = await resolveCodexCommand(custom.codex)
+  const codexPath = await resolveCommandPath(codexCandidate)
+  const [bravePath, chromePath, vscodePath, agyPath, mimoPath] = await Promise.all([
+    resolveBrowserPath('account2', custom.brave),
+    resolveBrowserPath('account1', custom.chrome),
+    resolveVscodeCommand(custom.vscode),
+    resolveAntigravityCommand(custom.agy),
+    resolveCommandPath(custom.mimo || path.join(os.homedir(), 'AppData', 'Local', 'Programs', 'Xiaomi MiMo AI', 'Xiaomi MiMo AI.exe')),
+  ])
+
+  return [
+    {
+      id: 'terminal',
+      label: 'Terminal',
+      state: terminalPath ? 'ready' : powershellPath ? 'fallback' : 'missing',
+      path: terminalPath || powershellPath || custom.wt,
+      message: terminalPath
+        ? 'Windows Terminal pronto.'
+        : powershellPath
+          ? 'Windows Terminal não foi encontrado; o DevOrbit usará PowerShell como alternativa.'
+          : 'Nenhum terminal compatível foi encontrado.',
+    },
+    {
+      id: 'vscode',
+      label: 'VS Code',
+      state: vscodePath ? 'ready' : 'missing',
+      path: vscodePath || custom.vscode,
+      message: vscodePath ? 'Editor pronto para abrir projetos.' : 'VS Code não foi encontrado.',
+    },
+    {
+      id: 'codex',
+      label: 'Codex CLI',
+      state: codexPath ? 'ready' : 'missing',
+      path: codexPath || custom.codex,
+      message: codexPath ? 'CLI do Codex pronto.' : 'Codex CLI não foi encontrado.',
+    },
+    {
+      id: 'agy',
+      label: 'Antigravity',
+      state: agyPath ? 'ready' : 'missing',
+      path: agyPath || custom.agy,
+      message: agyPath ? 'CLI do Antigravity pronto.' : 'Antigravity não foi encontrado.',
+    },
+    {
+      id: 'brave',
+      label: 'Brave',
+      state: bravePath ? 'ready' : 'missing',
+      path: bravePath || custom.brave,
+      message: bravePath ? 'Navegador da Conta 2 pronto.' : 'Brave não foi encontrado.',
+    },
+    {
+      id: 'chrome',
+      label: 'Chrome',
+      state: chromePath ? 'ready' : 'missing',
+      path: chromePath || custom.chrome,
+      message: chromePath ? 'Navegador da Conta 1 pronto.' : 'Chrome não foi encontrado.',
+    },
+    {
+      id: 'mimo',
+      label: 'MiMo AI',
+      state: mimoPath ? 'ready' : 'missing',
+      path: mimoPath || custom.mimo,
+      message: mimoPath ? 'Aplicativo MiMo AI pronto.' : 'MiMo AI não foi encontrado.',
+    },
+  ]
+}
 async function reserveUsage(target: UsageTarget): Promise<boolean> {
   return tryReserveUsage(target)
 }

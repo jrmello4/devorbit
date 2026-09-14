@@ -97,6 +97,15 @@ Credenciais do Codex ficam separadas por conta em diretórios do usuário. Não
 adicione tokens, e-mails ou caminhos pessoais a este repositório, às
 especificações ou aos scripts de automação.
 
+### Diagnóstico e abertura do workspace
+
+O menu **Diagnóstico** verifica os caminhos configurados para Terminal, VS Code,
+Codex CLI, Antigravity, Chrome, Brave e MiMo AI, informando quando uma
+alternativa pode ser usada. No card de cada projeto, **Abrir tudo** inicia o
+VS Code, um terminal na pasta, o Codex CLI e o navegador associado à conta
+selecionada. A conta pode ser definida por projeto e fica salva localmente;
+quando não há escolha específica, o DevOrbit usa a conta ativa. O card também
+mostra a última atualização detectada, o gerenciador de pacotes e scripts úteis.
 ### Troca de contas do ChatGPT
 
 O botão de conta abre o ChatGPT em um perfil persistente e isolado para cada

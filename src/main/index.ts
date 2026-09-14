@@ -7,7 +7,7 @@ import { exportConfigJson, importConfigJson, loadConfig, saveConfig } from './co
 import { listAllNonProjectDirs, scanAllProjects } from './scanner'
 import { syncGit, getGitBranches, switchGitBranch, pushGit, getGitChangesSummary, cloneGitRepository, stashSyncGit, stashSwitchGitBranch, finalizeGitProject, getGitRemoteUrl } from './git'
 import { getGitInitPreview, initGitRepository } from './git-init'
-import { launchTool, copyProjectContext } from './launcher'
+import { launchTool, copyProjectContext, getToolHealth } from './launcher'
 import {
   checkCodexAuthStatus,
   startCodexDeviceLogin,
@@ -496,6 +496,10 @@ function setupIpcHandlers() {
 
   registerIpcHandler('devorbit:testToolPath', async (_event, toolPath: string) => {
     return await testToolPath(toolPath)
+  })
+
+  registerIpcHandler('devorbit:getToolHealth', async () => {
+    return await getToolHealth(await loadConfig())
   })
 
   // Seletor de pasta no Windows

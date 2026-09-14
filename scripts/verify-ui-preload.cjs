@@ -103,12 +103,15 @@ const projects = Array.from({ length: 36 }, (_, index) => {
     parentDir: `team-${number}-workspace`,
     lastModified: baseTime - index * 86_400_000,
     techs: [technologies[index % technologies.length], technologies[(index + 1) % technologies.length]],
+    packageManager: index % 2 === 0 ? 'pnpm' : 'npm',
+    scripts: ['dev', 'build', 'test'],
     git: copy(fixture.git),
   }
 })
 
 let config = {
   projectDirs: ['C:\\DevOrbit Fixture Workspace\\teams'],
+  projectAccounts: {},
   activeChatGptAccount: 'account1',
   chatGptAccount1Name: 'Codex Primary Desktop Fixture',
   chatGptAccount2Name: 'Codex Secondary Desktop Fixture',
@@ -274,6 +277,18 @@ const api = {
   launchTool: async (tool, projectPath, options) => {
     record('launchTool', tool, projectPath, options)
     return { success: true, message: `Fixture launch: ${tool}` }
+  },
+  getToolHealth: async () => {
+    record('getToolHealth')
+    return [
+      { id: 'terminal', label: 'Terminal', state: 'ready', path: 'C:\\Fixture\\Terminal\\wt.exe', message: 'Windows Terminal pronto.' },
+      { id: 'vscode', label: 'VS Code', state: 'ready', path: 'C:\\Fixture\\VSCode\\code.exe', message: 'Editor pronto.' },
+      { id: 'codex', label: 'Codex CLI', state: 'ready', path: 'C:\\Fixture\\Codex\\codex.exe', message: 'CLI pronto.' },
+      { id: 'agy', label: 'Antigravity', state: 'missing', message: 'Antigravity não foi encontrado.' },
+      { id: 'brave', label: 'Brave', state: 'ready', path: 'C:\\Fixture\\Brave\\brave.exe', message: 'Navegador pronto.' },
+      { id: 'chrome', label: 'Chrome', state: 'ready', path: 'C:\\Fixture\\Chrome\\chrome.exe', message: 'Navegador pronto.' },
+      { id: 'mimo', label: 'MiMo AI', state: 'fallback', path: 'C:\\Fixture\\MiMo\\mimo.exe', message: 'Alternativa disponível.' },
+    ]
   },
   copyProjectContext: async (projectPath) => {
     record('copyProjectContext', projectPath)

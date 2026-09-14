@@ -119,6 +119,61 @@ async function detectTechs(dirPath: string): Promise<TechStack[]> {
   return techs
 }
 
+
+interface ProjectMetadata {
+  techs: TechStack[]
+  packageManager?: string
+  scripts: string[]
+}
+
+async function detectProjectMetadata(dirPath: string): Promise<ProjectMetadata> {
+  const techs = await detectTechs(dirPath)
+  let packageManager: string | undefined
+  let scripts: string[] = []
+
+  try {
+    const packageJson = JSON.parse(await fs.readFile(path.join(dirPath, 'package.json'), 'utf-8')) as {
+      packageManager?: unknown
+      scripts?: Record<string, unknown>
+    }
+    if (typeof packageJson.packageManager === 'string' && packageJson.packageManager.trim()) {
+      packageManager = packageJson.packageManager.trim().split('@')[0]
+    }
+    const declaredScripts = packageJson.scripts && typeof packageJson.scripts === 'object'
+      ? Object.keys(packageJson.scripts)
+      : []
+    const preferredScripts = ['dev', 'start', 'build', 'test', 'lint', 'typecheck', 'format', 'preview', 'check']
+    scripts = preferredScripts.filter((script) => declaredScripts.includes(script)).slice(0, 6)
+    if (!scripts.length) scripts = declaredScripts.slice(0, 6)
+  } catch {
+    // A project may be recognized by another manifest even when package.json
+    // is absent or invalid.
+  }
+
+  if (!packageManager) {
+    const lockFiles: Array<[string, string]> = [
+      ['pnpm-lock.yaml', 'pnpm'],
+      ['yarn.lock', 'yarn'],
+      ['bun.lockb', 'bun'],
+      ['package-lock.json', 'npm'],
+      ['Cargo.toml', 'Cargo'],
+      ['pubspec.yaml', 'Flutter'],
+      ['pyproject.toml', 'Python'],
+    ]
+    for (const [fileName, manager] of lockFiles) {
+      try {
+        await fs.access(path.join(dirPath, fileName))
+        packageManager = manager
+        break
+      } catch {
+        // Try the next manifest.
+      }
+    }
+  }
+
+  return { techs, packageManager, scripts }
+}
+
 export async function scanDirectoryForProjects(rootDir: string, refreshRemote = false): Promise<Project[]> {
   try {
     // Resolve the configured root once. Apart from avoiding repeated I/O, this
@@ -144,7 +199,8 @@ export async function scanDirectoryForProjects(rootDir: string, refreshRemote = 
           const stats = await fs.stat(realProjectPath)
           if (!stats.isDirectory()) return null
           const hasGit = await isGitRepository(realProjectPath)
-          const techs = await detectTechs(realProjectPath)
+          const metadata = await detectProjectMetadata(realProjectPath)
+          const techs = metadata.techs
 
           // If in a dedicated projects folder or has git or has tech manifest, consider it a project
           const isProjectFolder =
@@ -162,6 +218,8 @@ export async function scanDirectoryForProjects(rootDir: string, refreshRemote = 
               parentDir: path.basename(rootDir),
               lastModified: stats.mtimeMs,
               techs,
+              packageManager: metadata.packageManager,
+              scripts: metadata.scripts,
               git,
               parentPath: realRoot,
               lifecycle: 'local',

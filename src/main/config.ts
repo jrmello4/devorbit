@@ -20,6 +20,7 @@ const defaultConfig: AppConfig = {
     path.join(os.homedir(), 'Documents'),
   ],
   managedProjects: [],
+  projectAccounts: {},
   activeChatGptAccount: 'account1',
   chatGptAccount1Name: 'Conta 1 (Principal)',
   chatGptAccount2Name: 'Conta 2 (Codex / Backup)',
@@ -79,6 +80,15 @@ function safePath(value: unknown, fallback?: string): string | undefined {
   return trimmed || fallback
 }
 
+function normalizeProjectAccounts(value: unknown): Record<string, 'account1' | 'account2'> {
+  if (!isRecord(value)) return {}
+  const result: Record<string, 'account1' | 'account2'> = {}
+  for (const [projectId, account] of Object.entries(value).slice(0, 500)) {
+    if (projectId.length > 512) continue
+    if (account === 'account1' || account === 'account2') result[projectId] = account
+  }
+  return result
+}
 function normalizeConfig(value: unknown): AppConfig {
   const source = isRecord(value) ? value : {}
   const rawProjectDirs = source.projectDirs
@@ -109,6 +119,7 @@ function normalizeConfig(value: unknown): AppConfig {
   return {
     projectDirs: hasValidProjectDirList ? projectDirs : [...defaultConfig.projectDirs],
     managedProjects: normalizeManagedProjects(source.managedProjects),
+    projectAccounts: normalizeProjectAccounts(source.projectAccounts),
     activeChatGptAccount:
       source.activeChatGptAccount === 'account2' ? 'account2' : 'account1',
     chatGptAccount1Name: safeText(

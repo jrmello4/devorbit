@@ -53,6 +53,7 @@ const api: DevOrbitAPI = {
   importConfig: () => ipcRenderer.invoke('devorbit:importConfig'),
   selectDirectory: () => ipcRenderer.invoke('devorbit:selectDirectory'),
   testToolPath: (toolPath: string) => ipcRenderer.invoke('devorbit:testToolPath', toolPath),
+  getToolHealth: () => ipcRenderer.invoke('devorbit:getToolHealth'),
   windowControl: (action: 'minimize' | 'maximize' | 'close') =>
     ipcRenderer.send('devorbit:windowControl', action),
   getCodexAuthStatus: () => ipcRenderer.invoke('devorbit:getCodexAuthStatus'),

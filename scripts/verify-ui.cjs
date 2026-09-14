@@ -156,6 +156,19 @@ async function inspectProjectInteractions(window, viewport) {
     return Boolean(selected && selected.innerText.includes(${JSON.stringify(selection)}))
   })()`, `${viewport.label} seleção de projeto`)
   recordPass(viewport.label, 'project selection updates row and detail state')
+  const workspaceControls = await evaluate(window, `(() => ({
+    openAll: Boolean(document.querySelector('button[title="Abrir o editor, terminal, Codex e navegador deste projeto"]')),
+    accountSelect: Boolean(document.querySelector('.work-account-control select')),
+    metadata: Boolean(document.querySelector('.detail-project-meta')),
+  }))()`)
+  assert(workspaceControls.openAll && workspaceControls.accountSelect && workspaceControls.metadata, `${viewport.label}: controles do workspace incompletos (${JSON.stringify(workspaceControls)})`)
+  recordPass(viewport.label, 'workspace actions expose Abrir tudo, project account and metadata')
+
+  await setSelectValue(window, '.work-account-control select', 'account2')
+  await waitFor(window, `document.querySelector('.work-account-control select')?.value === 'account2'`, `${viewport.label} account selection`)
+  await clickButtonByText(window, (node) => node.getAttribute('title') === 'Abrir o editor, terminal, Codex e navegador deste projeto', `${viewport.label} workspace launch`)
+  await waitFor(window, `document.body.innerText.includes('Workspace aberto: editor, terminal, Codex e navegador iniciados.')`, `${viewport.label} workspace launch result`)
+  recordPass(viewport.label, 'Abrir tudo launches the workspace sequence with the selected account')
 
   await setInputValue(window, '#project-search', 'Fixture 02 · Pull pending develop')
   await waitFor(window, `document.querySelectorAll('.project-list .project-row').length === 1`, `${viewport.label} busca`)
@@ -204,6 +217,19 @@ async function inspectMemory(window, viewport) {
   await waitFor(window, `!document.querySelector('[role="dialog"] #ai-memory-dialog-title')`, `${viewport.label} memory Escape`)
 }
 
+async function inspectToolHealth(window, viewport) {
+  await clickButtonByText(window, (node) => node.getAttribute('title') === 'Diagnosticar ferramentas instaladas', `${viewport.label} tool health navigation`)
+  await waitFor(window, `(() => { const dialog = document.querySelector('[role="dialog"]'); return Boolean(dialog?.querySelector('#tool-health-title') && dialog.querySelectorAll('article').length === 7 && dialog.contains(document.activeElement)) })()`, `${viewport.label} tool health dialog`)
+  const health = await evaluate(window, `(() => ({
+    title: document.querySelector('#tool-health-title')?.innerText,
+    tools: document.querySelectorAll('[role="dialog"] article').length,
+    missing: Array.from(document.querySelectorAll('[role="dialog"] article')).filter((article) => article.innerText.includes('Não encontrado')).length,
+  }))()`)
+  assert(health.title === 'Diagnóstico de ferramentas' && health.tools === 7 && health.missing === 1, `${viewport.label}: diagnóstico incompleto (${JSON.stringify(health)})`)
+  recordPass(viewport.label, 'tool health dialog lists all launchers and their states')
+  await key(window, 'Escape')
+  await waitFor(window, `!document.querySelector('[role="dialog"] #tool-health-title')`, `${viewport.label} tool health Escape`)
+}
 async function inspectSettingsAndPalette(window, viewport) {
   await clickButtonByText(window, (node) => node.getAttribute('title') === 'Configurações', `${viewport.label} settings navigation`)
   await waitFor(window, `(() => { const dialog = document.querySelector('[role="dialog"]'); return Boolean(dialog?.querySelector('#settings-dialog-title') && dialog.contains(document.activeElement)) })()`, `${viewport.label} settings dialog`)
@@ -271,6 +297,7 @@ async function runViewport(viewport) {
     // Return to projects so the settings trigger lives in the visible shell.
     await clickButtonByText(window, (node) => /projetos/i.test(node.innerText) && node.getAttribute('title') === 'Projetos', `${viewport.label} projects navigation`)
     await waitFor(window, `document.querySelector('.view-panel:not([hidden])')?.innerText.includes('Projetos')`, `${viewport.label} projects navigation restore`)
+    await inspectToolHealth(window, viewport)
     await inspectSettingsAndPalette(window, viewport)
   } finally {
     if (window && !window.isDestroyed()) {

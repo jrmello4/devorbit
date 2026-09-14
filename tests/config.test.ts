@@ -53,6 +53,22 @@ describe('config persistence hardening', () => {
     expect(config.customPaths.wt).toBe('wt.exe')
   })
 
+  it('persists a valid Codex account selection per project', async () => {
+    const saved = await saveConfig({
+      projectAccounts: {
+        projectA: 'account2',
+        projectB: 'account1',
+      },
+    })
+
+    expect(saved.projectAccounts).toEqual({ projectA: 'account2', projectB: 'account1' })
+
+    await fs.writeFile(
+      path.join(temporaryUserData, 'config.json'),
+      JSON.stringify({ ...saved, projectAccounts: { projectA: 'account2', invalid: 'account3' } })
+    )
+    expect((await loadConfig()).projectAccounts).toEqual({ projectA: 'account2' })
+  })
   it('preserves an explicit empty list of monitored folders', async () => {
     const saved = await saveConfig({ projectDirs: [] })
 

@@ -31,6 +31,8 @@ export interface Project {
   parentDir: string
   lastModified: number
   techs: TechStack[]
+  packageManager?: string
+  scripts?: string[]
   git: GitStatus
   /** Metadata retained when the local working copy is released. */
   remoteUrl?: string
@@ -57,6 +59,7 @@ export interface OtherDir {
 export interface AppConfig {
   projectDirs: string[]
   managedProjects: ManagedProject[]
+  projectAccounts: Record<string, 'account1' | 'account2'>
   activeChatGptAccount: 'account1' | 'account2'
   chatGptAccount1Name: string
   chatGptAccount2Name: string
@@ -96,6 +99,16 @@ export interface GitCloneInput {
 export interface ToolPathCheck {
   path: string
   ok: boolean
+  message: string
+}
+
+export type ToolHealthState = 'ready' | 'fallback' | 'missing'
+
+export interface ToolHealth {
+  id: 'terminal' | 'vscode' | 'codex' | 'agy' | 'brave' | 'chrome' | 'mimo'
+  label: string
+  state: ToolHealthState
+  path?: string
   message: string
 }
 
@@ -269,6 +282,7 @@ export interface DevOrbitAPI {
   importConfig: () => Promise<SyncResult>
   selectDirectory: () => Promise<string | null>
   testToolPath: (toolPath: string) => Promise<ToolPathCheck>
+  getToolHealth: () => Promise<ToolHealth[]>
   windowControl: (action: 'minimize' | 'maximize' | 'close') => void
   getCodexAuthStatus: () => Promise<CodexAccountStatus>
   startCodexLogin: (account: 'account1' | 'account2') => Promise<{ success: boolean }>
