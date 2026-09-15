@@ -36,6 +36,10 @@ const api: DevOrbitAPI = {
     : invoke('devorbit:listProjectFiles', projectPath, relativeDirectory),
   readProjectFile: (projectPath: string, relativePath: string) => invoke('devorbit:readProjectFile', projectPath, relativePath),
   saveProjectFile: (projectPath: string, relativePath: string, content: string) => invoke('devorbit:saveProjectFile', projectPath, relativePath, content),
+  createProjectFile: (projectPath: string, relativePath: string) => invoke('devorbit:createProjectFile', projectPath, relativePath),
+  createProjectDirectory: (projectPath: string, relativePath: string) => invoke('devorbit:createProjectDirectory', projectPath, relativePath),
+  moveProjectEntry: (projectPath: string, sourcePath: string, destinationPath: string) => invoke('devorbit:moveProjectEntry', projectPath, sourcePath, destinationPath),
+  deleteProjectEntry: (projectPath: string, relativePath: string, options?: { recursive: boolean }) => invoke('devorbit:deleteProjectEntry', projectPath, relativePath, options),
   syncGit: (projectPath: string) => invoke('devorbit:syncGit', projectPath),
   getGitBranches: (projectPath: string, refreshRemote?: boolean) =>
     invoke('devorbit:getGitBranches', projectPath, refreshRemote),

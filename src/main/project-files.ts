@@ -56,6 +56,13 @@ function normalizeRelativePath(value: unknown): string {
   return normalized
 }
 
+function assertMutablePath(relativePath: string): void {
+  const segments = relativePath.split(/[\\/]+/)
+  if (segments.some((segment) => IGNORED_DIRECTORIES.has(segment.toLowerCase()))) {
+    throw new Error('Esta pasta é protegida e não pode ser alterada pelo editor.')
+  }
+}
+
 function normalizeRelativeDirectory(value: unknown): string {
   if (value === undefined || value === null || value === '') return ''
   if (typeof value !== 'string' || value.includes('\0')) {
@@ -102,9 +109,23 @@ async function resolveProjectFile(projectPath: string, relativePath: unknown): P
   const candidate = path.resolve(root, normalized)
   assertInside(root, candidate)
 
+  const candidateStats = await fs.lstat(candidate)
+  if (candidateStats.isSymbolicLink()) throw new Error('Links simbólicos não podem ser abertos pelo editor.')
+
   const file = await fs.realpath(candidate)
   assertInside(root, file)
   return { root, file }
+}
+
+async function resolveNewProjectPath(projectPath: string, relativePath: unknown): Promise<{ root: string; target: string }> {
+  const root = await resolveProjectRoot(projectPath)
+  const normalized = normalizeRelativePath(relativePath)
+  assertMutablePath(normalized)
+  const target = path.resolve(root, normalized)
+  assertInside(root, target)
+  const parent = await fs.realpath(path.dirname(target))
+  assertInside(root, parent)
+  return { root, target: path.join(parent, path.basename(target)) }
 }
 
 async function resolveProjectDirectory(
@@ -218,4 +239,67 @@ export async function saveProjectFile(projectPath: string, relativePath: unknown
   }
 
   return { path: path.relative(root, file), content, size: Buffer.byteLength(content, 'utf8') }
+}
+
+export async function createProjectFile(projectPath: string, relativePath: unknown): Promise<ProjectFileContent> {
+  const { root, target } = await resolveNewProjectPath(projectPath, relativePath)
+  const handle = await fs.open(target, 'wx')
+  await handle.close()
+  return { path: path.relative(root, target), content: '', size: 0 }
+}
+
+export async function createProjectDirectory(projectPath: string, relativePath: unknown): Promise<ProjectFileEntry> {
+  const { root, target } = await resolveNewProjectPath(projectPath, relativePath)
+  await fs.mkdir(target)
+  return { path: path.relative(root, target), name: path.basename(target), kind: 'directory' }
+}
+
+export async function moveProjectEntry(projectPath: string, sourcePath: unknown, destinationPath: unknown): Promise<{ from: string; path: string }> {
+  const normalizedSource = normalizeRelativePath(sourcePath)
+  assertMutablePath(normalizedSource)
+  const { root, file: source } = await resolveProjectFile(projectPath, normalizedSource)
+  const { target: destination } = await resolveNewProjectPath(projectPath, destinationPath)
+  const stats = await fs.lstat(source)
+  if (stats.isSymbolicLink()) throw new Error('Links simbólicos não podem ser movidos pelo editor.')
+  if (stats.isDirectory()) {
+    const relativeDestination = path.relative(source, destination)
+    if (!relativeDestination || (!relativeDestination.startsWith('..' + path.sep) && relativeDestination !== '..')) {
+      throw new Error('Uma pasta não pode ser movida para dentro dela mesma.')
+    }
+  }
+  const isCaseOnlyRename = process.platform === 'win32' && source.toLowerCase() === destination.toLowerCase() && source !== destination
+  if (!isCaseOnlyRename) {
+    try {
+      await fs.lstat(destination)
+      throw new Error('Já existe um item no caminho de destino.')
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+  }
+  if (isCaseOnlyRename) {
+    const temporary = source + '.' + process.pid + '.' + Date.now() + '.rename-tmp'
+    await fs.rename(source, temporary)
+    try {
+      await fs.rename(temporary, destination)
+    } catch (error) {
+      await fs.rename(temporary, source).catch(() => undefined)
+      throw error
+    }
+  } else {
+    await fs.rename(source, destination)
+  }
+  return { from: path.relative(root, source), path: path.relative(root, destination) }
+}
+
+export async function deleteProjectEntry(projectPath: string, relativePath: unknown, options?: { recursive?: unknown }): Promise<{ path: string }> {
+  const normalized = normalizeRelativePath(relativePath)
+  assertMutablePath(normalized)
+  const { root, file } = await resolveProjectFile(projectPath, normalized)
+  const stats = await fs.lstat(file)
+  if (stats.isSymbolicLink()) throw new Error('Links simbólicos não podem ser excluídos pelo editor.')
+  if (stats.isDirectory() && options?.recursive !== true) {
+    throw new Error('A exclusão de uma pasta exige confirmação recursiva explícita.')
+  }
+  await fs.rm(file, { recursive: stats.isDirectory(), force: false })
+  return { path: path.relative(root, file) }
 }

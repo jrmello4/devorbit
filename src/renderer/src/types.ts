@@ -150,6 +150,7 @@ export type GitPushOptions = {
 export type IpcInvokeChannel =
   | 'devorbit:getProjects' | 'devorbit:refreshProjects' | 'devorbit:getOtherDirs'
   | 'devorbit:listProjectFiles' | 'devorbit:readProjectFile' | 'devorbit:saveProjectFile'
+  | 'devorbit:createProjectFile' | 'devorbit:createProjectDirectory' | 'devorbit:moveProjectEntry' | 'devorbit:deleteProjectEntry'
   | 'devorbit:syncGit' | 'devorbit:getGitBranches' | 'devorbit:switchGitBranch'
   | 'devorbit:stashSyncGit' | 'devorbit:stashSwitchGitBranch' | 'devorbit:pushGit'
   | 'devorbit:getGitChanges' | 'devorbit:syncAllGit' | 'devorbit:getGitInitPreview'
@@ -343,6 +344,10 @@ export interface DevOrbitAPI {
   listProjectFiles: (projectPath: string, relativeDirectory?: string) => Promise<ProjectFileTree>
   readProjectFile: (projectPath: string, relativePath: string) => Promise<ProjectFileContent>
   saveProjectFile: (projectPath: string, relativePath: string, content: string) => Promise<ProjectFileContent>
+  createProjectFile: (projectPath: string, relativePath: string) => Promise<ProjectFileContent>
+  createProjectDirectory: (projectPath: string, relativePath: string) => Promise<ProjectFileEntry>
+  moveProjectEntry: (projectPath: string, sourcePath: string, destinationPath: string) => Promise<{ from: string; path: string }>
+  deleteProjectEntry: (projectPath: string, relativePath: string, options?: { recursive: boolean }) => Promise<{ path: string }>
   syncGit: (projectPath: string) => Promise<SyncResult>
   getGitBranches: (projectPath: string, refreshRemote?: boolean) => Promise<GitBranch[]>
   switchGitBranch: (projectPath: string, branch: string) => Promise<SyncResult>

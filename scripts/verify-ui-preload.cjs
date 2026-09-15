@@ -296,6 +296,22 @@ const api = {
     record('saveProjectFile', projectPath, relativePath, content)
     return { path: relativePath, content, size: content.length }
   },
+  createProjectFile: async (projectPath, relativePath) => {
+    record('createProjectFile', projectPath, relativePath)
+    return { path: relativePath, content: '', size: 0 }
+  },
+  createProjectDirectory: async (projectPath, relativePath) => {
+    record('createProjectDirectory', projectPath, relativePath)
+    return { path: relativePath, name: relativePath.split(/[\\/]/).pop(), kind: 'directory' }
+  },
+  moveProjectEntry: async (projectPath, sourcePath, destinationPath) => {
+    record('moveProjectEntry', projectPath, sourcePath, destinationPath)
+    return { from: sourcePath, path: destinationPath }
+  },
+  deleteProjectEntry: async (projectPath, relativePath, options) => {
+    record('deleteProjectEntry', projectPath, relativePath, options)
+    return { path: relativePath }
+  },
   startTerminal: async (id, projectPath) => {
     record('startTerminal', id, projectPath)
     return { id, pid: 1234 }

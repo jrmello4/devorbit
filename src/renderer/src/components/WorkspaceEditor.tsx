@@ -8,11 +8,15 @@ import {
   GitCompare,
   ListTree,
   FileText,
+  FilePlus,
   Folder,
+  FolderPlus,
+  Pencil,
   RefreshCw,
   Save,
   Search,
   Send,
+  Trash2,
   X,
 } from 'lucide-react'
 import type { ProjectFileEntry } from '../types'
@@ -208,6 +212,7 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
   const [isSymbolsOpen, setIsSymbolsOpen] = useState(false)
   const [isDiffOpen, setIsDiffOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [selectedEntryPath, setSelectedEntryPath] = useState('')
 
   const editorRef = useRef<HTMLTextAreaElement>(null)
   const highlightRef = useRef<HTMLPreElement>(null)
@@ -422,6 +427,78 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
     }
   }, [onNotify, openFile, projectPath])
 
+  const createEntry = useCallback(async (kind: 'file' | 'directory') => {
+    const suggestedParent = files.find((entry) => entry.path === selectedEntryPath)?.kind === 'directory'
+      ? selectedEntryPath.replaceAll('\\', '/') + '/'
+      : ''
+    const requested = window.prompt(kind === 'file' ? 'Caminho do novo arquivo:' : 'Caminho da nova pasta:', suggestedParent)
+    if (!requested?.trim()) return
+    try {
+      if (kind === 'file') {
+        const created = await window.devorbit.createProjectFile(projectPath, requested.trim())
+        await loadFiles()
+        await openFile({ path: created.path, name: fileName(created.path), kind: 'file', size: 0, editable: true })
+        setSelectedEntryPath(created.path)
+        onNotify('Arquivo criado: ' + created.path, 'success')
+      } else {
+        const created = await window.devorbit.createProjectDirectory(projectPath, requested.trim())
+        await loadFiles()
+        setSelectedEntryPath(created.path)
+        onNotify('Pasta criada: ' + created.path, 'success')
+      }
+    } catch (error) {
+      onNotify('Não foi possível criar: ' + errorMessage(error), 'error')
+    }
+  }, [files, loadFiles, onNotify, openFile, projectPath, selectedEntryPath])
+
+  const moveSelectedEntry = useCallback(async () => {
+    if (!selectedEntryPath) return
+    const destination = window.prompt('Novo caminho para o item:', selectedEntryPath.replaceAll('\\', '/'))
+    if (!destination?.trim() || destination.trim() === selectedEntryPath) return
+    const affectedTabs = tabsRef.current.filter((tab) => tab.path === selectedEntryPath || isDescendantPath(tab.path, selectedEntryPath))
+    if (affectedTabs.some((tab) => tab.content !== tab.savedContent) && !window.confirm('O item contém alterações não salvas. Renomear ou mover mesmo assim?')) return
+    try {
+      const moved = await window.devorbit.moveProjectEntry(projectPath, selectedEntryPath, destination.trim())
+      const mapPath = (current: string) => current === moved.from
+        ? moved.path
+        : isDescendantPath(current, moved.from)
+          ? moved.path + current.slice(moved.from.length)
+          : current
+      setTabs((current) => current.map((tab) => ({ ...tab, path: mapPath(tab.path) })))
+      setActivePath((current) => mapPath(current))
+      setSelectedEntryPath(moved.path)
+      await loadFiles()
+      onNotify('Item movido para: ' + moved.path, 'success')
+    } catch (error) {
+      onNotify('Não foi possível renomear ou mover: ' + errorMessage(error), 'error')
+    }
+  }, [loadFiles, onNotify, projectPath, selectedEntryPath])
+
+  const deleteSelectedEntry = useCallback(async () => {
+    if (!selectedEntryPath) return
+    const selected = files.find((entry) => entry.path === selectedEntryPath)
+    if (!selected) return
+    const affectedTabs = tabsRef.current.filter((tab) => tab.path === selectedEntryPath || isDescendantPath(tab.path, selectedEntryPath))
+    const warning = affectedTabs.some((tab) => tab.content !== tab.savedContent) ? ' Há alterações não salvas que serão perdidas.' : ''
+    if (!window.confirm('Excluir ' + selectedEntryPath + '?' + warning)) return
+    try {
+      await window.devorbit.deleteProjectEntry(projectPath, selectedEntryPath, { recursive: selected.kind === 'directory' })
+      const nextTabs = tabsRef.current.filter((tab) => !affectedTabs.includes(tab))
+      tabsRef.current = nextTabs
+      setTabs(nextTabs)
+      if (affectedTabs.some((tab) => tab.path === activePathRef.current)) {
+        const nextPath = nextTabs.at(-1)?.path || ''
+        activePathRef.current = nextPath
+        setActivePath(nextPath)
+      }
+      setSelectedEntryPath('')
+      await loadFiles()
+      onNotify('Item excluído: ' + selectedEntryPath, 'success')
+    } catch (error) {
+      onNotify('Não foi possível excluir: ' + errorMessage(error), 'error')
+    }
+  }, [files, loadFiles, onNotify, projectPath, selectedEntryPath])
+
   useEffect(() => {
     onDirtyChange?.(tabs.some((tab) => tab.content !== tab.savedContent))
   }, [onDirtyChange, tabs])
@@ -441,6 +518,7 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
     setIsSymbolsOpen(false)
     setIsDiffOpen(false)
     setSearchQuery('')
+    setSelectedEntryPath('')
     void loadFiles()
   }, [loadFiles])
 
@@ -640,6 +718,11 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
             <strong><Folder size={14} aria-hidden="true" /> Arquivos</strong>
             <span>{fileCount}</span>
           </div>
+          <div className="editor-actions">
+          <button type="button" className="workspace-icon-button" onClick={() => void createEntry('file')} aria-label="Novo arquivo" title="Novo arquivo"><FilePlus size={14} aria-hidden="true" /></button>
+          <button type="button" className="workspace-icon-button" onClick={() => void createEntry('directory')} aria-label="Nova pasta" title="Nova pasta"><FolderPlus size={14} aria-hidden="true" /></button>
+          <button type="button" className="workspace-icon-button" onClick={() => void moveSelectedEntry()} disabled={!selectedEntryPath} aria-label="Renomear ou mover item" title="Renomear ou mover"><Pencil size={14} aria-hidden="true" /></button>
+          <button type="button" className="workspace-icon-button" onClick={() => void deleteSelectedEntry()} disabled={!selectedEntryPath} aria-label="Excluir item" title="Excluir"><Trash2 size={14} aria-hidden="true" /></button>
           <button
             type="button"
             className="workspace-icon-button"
@@ -651,6 +734,7 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
           >
             <RefreshCw size={14} aria-hidden="true" />
           </button>
+          </div>
         </div>
 
         <div className="workspace-file-list" role="list" aria-busy={isLoadingFiles}>
@@ -666,9 +750,9 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
               <button
                 type="button"
                 key={entry.path}
-                className={'workspace-file-row' + (activePath === entry.path ? ' selected' : '') + (entry.kind === 'directory' ? ' directory' : '')}
+                className={'workspace-file-row' + (selectedEntryPath === entry.path || activePath === entry.path ? ' selected' : '') + (entry.kind === 'directory' ? ' directory' : '')}
                 style={{ paddingLeft: 10 + fileDepth(entry.path) * 12 }}
-                onClick={() => isDirectory ? toggleDirectory(entry) : void openFile(entry)}
+                onClick={() => { setSelectedEntryPath(entry.path); if (isDirectory) toggleDirectory(entry); else void openFile(entry) }}
                 disabled={isDirectory ? isDirectoryLoading : entry.editable === false || isLoading}
                 title={entry.editable === false ? 'Arquivo somente leitura ou binário' : entry.path}
                 aria-current={activePath === entry.path ? 'page' : undefined}

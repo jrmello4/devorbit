@@ -10,7 +10,7 @@ import { syncGit, getGitBranches, switchGitBranch, pushGit, getGitChanges, clone
 import { getGitInitPreview, initGitRepository } from './git-init'
 import { ensureAccountDirectories, getAccountLabel, hasValidCodexAuth, resolveCodexCommand } from './account-profiles'
 import { launchTool, copyProjectContext, getToolHealth } from './launcher'
-import { listProjectFiles, readProjectFile, saveProjectFile } from './project-files'
+import { createProjectDirectory, createProjectFile, deleteProjectEntry, listProjectFiles, moveProjectEntry, readProjectFile, saveProjectFile } from './project-files'
 import { onTerminalEvent, resizeTerminal, startTerminal, stopAllTerminals, stopTerminal, writeTerminal, type TerminalEvent } from './terminal-session'
 import { attachWebPanel, disposeWebPanel, getWebState, goBackWeb, goForwardWeb, navigateWeb, onWebPanelEvent, reloadWeb, setWebBounds, setWebVisible } from './web-panel'
 import {
@@ -524,6 +524,22 @@ function setupIpcHandlers() {
 
   registerIpcHandler('devorbit:saveProjectFile', async (_event, projectPath: string, relativePath: unknown, content: unknown) => {
     return await saveProjectFile(await validateProjectPath(projectPath), relativePath, content)
+  })
+
+  registerIpcHandler('devorbit:createProjectFile', async (_event, projectPath: string, relativePath: unknown) => {
+    return await createProjectFile(await validateProjectPath(projectPath), relativePath)
+  })
+
+  registerIpcHandler('devorbit:createProjectDirectory', async (_event, projectPath: string, relativePath: unknown) => {
+    return await createProjectDirectory(await validateProjectPath(projectPath), relativePath)
+  })
+
+  registerIpcHandler('devorbit:moveProjectEntry', async (_event, projectPath: string, sourcePath: unknown, destinationPath: unknown) => {
+    return await moveProjectEntry(await validateProjectPath(projectPath), sourcePath, destinationPath)
+  })
+
+  registerIpcHandler('devorbit:deleteProjectEntry', async (_event, projectPath: string, relativePath: unknown, options?: { recursive?: unknown }) => {
+    return await deleteProjectEntry(await validateProjectPath(projectPath), relativePath, options)
   })
 
   registerIpcHandler('devorbit:startTerminal', async (_event, id: unknown, projectPath: string) => {

@@ -123,6 +123,11 @@ async function main() {
       const entries = await window.devorbit.listProjectFiles(projectPath)
       await window.devorbit.saveProjectFile(projectPath, 'README.md', before.content + 'saved\\n')
       const after = await window.devorbit.readProjectFile(projectPath, 'README.md')
+      await window.devorbit.createProjectDirectory(projectPath, 'notes')
+      await window.devorbit.createProjectFile(projectPath, 'notes/todo.md')
+      await window.devorbit.moveProjectEntry(projectPath, 'notes/todo.md', 'TODO.md')
+      await window.devorbit.deleteProjectEntry(projectPath, 'notes', { recursive: true })
+      await window.devorbit.deleteProjectEntry(projectPath, 'TODO.md')
 
       let invalidPathRejected = false
       try {
@@ -140,6 +145,7 @@ async function main() {
         before: before.content,
         after: after.content,
         invalidPathRejected,
+        mutationsCompleted: true,
       }
     })()`, true)
 
@@ -151,6 +157,7 @@ async function main() {
     if (result.before !== '# Runtime fixture\noriginal\n') throw new Error('leitura real retornou conteúdo inesperado')
     if (result.after !== '# Runtime fixture\noriginal\nsaved\n') throw new Error('gravação real não persistiu')
     if (!result.invalidPathRejected) throw new Error('caminho relativo inválido foi aceito')
+    if (!result.mutationsCompleted) throw new Error('operações reais de arquivo não foram concluídas')
 
     process.stdout.write('Runtime verification passed: preload real, IPC, scan, read, save e validação de caminho\n')
   } catch (error) {

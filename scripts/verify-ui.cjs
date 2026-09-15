@@ -180,6 +180,22 @@ async function inspectProjectInteractions(window, viewport) {
   }))()`)
   assert(Object.values(workspaceFeatures).every(Boolean), `${viewport.label}: recursos do workspace incompletos (${JSON.stringify(workspaceFeatures)})`)
   recordPass(viewport.label, 'editor com abas/busca/contexto, terminal PTY e controles web visíveis')
+  await evaluate(window, `(() => {
+    const prompts = ['notes.md', 'renamed-notes.md']
+    window.prompt = () => prompts.shift() || null
+    window.confirm = () => true
+    return true
+  })()`)
+  await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Novo arquivo', `${viewport.label} create file`)
+  await waitFor(window, `window.__devorbitVerifyFixture.getCalls().some((call) => call.name === 'createProjectFile' && call.args[1] === 'notes.md')`, `${viewport.label} create file IPC`)
+  await waitFor(window, `!document.querySelector('button[aria-label="Renomear ou mover item"]')?.disabled`, `${viewport.label} created file selected`)
+  await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Renomear ou mover item', `${viewport.label} move file`)
+  await waitFor(window, `window.__devorbitVerifyFixture.getCalls().some((call) => call.name === 'moveProjectEntry' && call.args[1] === 'notes.md' && call.args[2] === 'renamed-notes.md')`, `${viewport.label} move file IPC`)
+  await evaluate(window, `(() => { document.querySelector('.workspace-file-row[title="src"]')?.click(); return true })()`)
+  await waitFor(window, `!document.querySelector('button[aria-label="Excluir item"]')?.disabled`, `${viewport.label} directory selected`)
+  await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Excluir item', `${viewport.label} delete directory`)
+  await waitFor(window, `window.__devorbitVerifyFixture.getCalls().some((call) => call.name === 'deleteProjectEntry' && call.args[1] === 'src' && call.args[2]?.recursive === true)`, `${viewport.label} delete directory IPC`)
+  recordPass(viewport.label, 'editor cria, move e exclui itens por IPC com confirmação')
   const dirtyEditor = await evaluate(window, `(() => {
     const editor = document.querySelector('textarea.workspace-editor')
     if (!editor || editor.disabled) return false

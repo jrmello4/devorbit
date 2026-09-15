@@ -4,7 +4,11 @@ import os from 'node:os'
 import path from 'node:path'
 import {
   MAX_PROJECT_FILE_BYTES,
+  createProjectDirectory,
+  createProjectFile,
+  deleteProjectEntry,
   listProjectFiles,
+  moveProjectEntry,
   readProjectFile,
   saveProjectFile,
 } from '../src/main/project-files'
@@ -89,5 +93,24 @@ describe('project file workspace', () => {
 
     await fs.writeFile(path.join(root, 'invalid.txt'), Buffer.from([0xc3, 0x28]))
     await expect(readProjectFile(root, 'invalid.txt')).rejects.toThrow('UTF-8')
+  })
+
+  it('creates, moves and deletes files and directories without overwriting', async () => {
+    const root = await createProject()
+    await expect(createProjectDirectory(root, 'notes')).resolves.toMatchObject({ kind: 'directory' })
+    await expect(createProjectFile(root, path.join('notes', 'todo.md'))).resolves.toMatchObject({ content: '', size: 0 })
+    await expect(createProjectFile(root, path.join('notes', 'todo.md'))).rejects.toThrow()
+    await expect(moveProjectEntry(root, path.join('notes', 'todo.md'), 'TODO.md')).resolves.toMatchObject({ path: 'TODO.md' })
+    await expect(deleteProjectEntry(root, 'notes')).rejects.toThrow('recursiva')
+    await expect(deleteProjectEntry(root, 'notes', { recursive: true })).resolves.toMatchObject({ path: 'notes' })
+    await expect(deleteProjectEntry(root, 'TODO.md')).resolves.toMatchObject({ path: 'TODO.md' })
+  })
+
+  it('blocks protected paths, traversal and moving a directory into itself', async () => {
+    const root = await createProject()
+    await expect(createProjectFile(root, path.join('.git', 'unsafe'))).rejects.toThrow('protegida')
+    await expect(createProjectFile(root, '..\\unsafe')).rejects.toThrow('dentro do projeto')
+    await expect(moveProjectEntry(root, 'src', path.join('src', 'nested'))).rejects.toThrow('dentro dela mesma')
+    await expect(deleteProjectEntry(root, 'node_modules', { recursive: true })).rejects.toThrow('protegida')
   })
 })
