@@ -113,4 +113,14 @@ describe('project file workspace', () => {
     await expect(moveProjectEntry(root, 'src', path.join('src', 'nested'))).rejects.toThrow('dentro dela mesma')
     await expect(deleteProjectEntry(root, 'node_modules', { recursive: true })).rejects.toThrow('protegida')
   })
+
+  it('blocks protected directories reached through an intermediate link', async () => {
+    const root = await createProject()
+    const alias = path.join(root, 'metadata-alias')
+    await fs.symlink(path.join(root, '.git'), alias, process.platform === 'win32' ? 'junction' : 'dir')
+
+    await expect(createProjectFile(root, path.join('metadata-alias', 'unsafe'))).rejects.toThrow('protegida')
+    await expect(moveProjectEntry(root, 'README.md', path.join('metadata-alias', 'README.md'))).rejects.toThrow('protegida')
+    await expect(deleteProjectEntry(root, path.join('metadata-alias', 'config'))).rejects.toThrow('protegida')
+  })
 })

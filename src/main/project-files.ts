@@ -125,6 +125,7 @@ async function resolveNewProjectPath(projectPath: string, relativePath: unknown)
   assertInside(root, target)
   const parent = await fs.realpath(path.dirname(target))
   assertInside(root, parent)
+  assertMutablePath(path.relative(root, parent))
   return { root, target: path.join(parent, path.basename(target)) }
 }
 
@@ -258,6 +259,7 @@ export async function moveProjectEntry(projectPath: string, sourcePath: unknown,
   const normalizedSource = normalizeRelativePath(sourcePath)
   assertMutablePath(normalizedSource)
   const { root, file: source } = await resolveProjectFile(projectPath, normalizedSource)
+  assertMutablePath(path.relative(root, source))
   const { target: destination } = await resolveNewProjectPath(projectPath, destinationPath)
   const stats = await fs.lstat(source)
   if (stats.isSymbolicLink()) throw new Error('Links simbólicos não podem ser movidos pelo editor.')
@@ -295,6 +297,7 @@ export async function deleteProjectEntry(projectPath: string, relativePath: unkn
   const normalized = normalizeRelativePath(relativePath)
   assertMutablePath(normalized)
   const { root, file } = await resolveProjectFile(projectPath, normalized)
+  assertMutablePath(path.relative(root, file))
   const stats = await fs.lstat(file)
   if (stats.isSymbolicLink()) throw new Error('Links simbólicos não podem ser excluídos pelo editor.')
   if (stats.isDirectory() && options?.recursive !== true) {

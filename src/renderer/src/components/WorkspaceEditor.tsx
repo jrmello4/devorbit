@@ -213,6 +213,7 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
   const [isDiffOpen, setIsDiffOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedEntryPath, setSelectedEntryPath] = useState('')
+  const [selectedEntryKind, setSelectedEntryKind] = useState<'file' | 'directory' | ''>('')
 
   const editorRef = useRef<HTMLTextAreaElement>(null)
   const highlightRef = useRef<HTMLPreElement>(null)
@@ -436,15 +437,17 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
     try {
       if (kind === 'file') {
         const created = await window.devorbit.createProjectFile(projectPath, requested.trim())
-        await loadFiles()
-        await openFile({ path: created.path, name: fileName(created.path), kind: 'file', size: 0, editable: true })
         setSelectedEntryPath(created.path)
+        setSelectedEntryKind('file')
         onNotify('Arquivo criado: ' + created.path, 'success')
+        await loadFiles()
+        void openFile({ path: created.path, name: fileName(created.path), kind: 'file', size: 0, editable: true })
       } else {
         const created = await window.devorbit.createProjectDirectory(projectPath, requested.trim())
-        await loadFiles()
         setSelectedEntryPath(created.path)
+        setSelectedEntryKind('directory')
         onNotify('Pasta criada: ' + created.path, 'success')
+        await loadFiles()
       }
     } catch (error) {
       onNotify('Não foi possível criar: ' + errorMessage(error), 'error')
@@ -467,8 +470,8 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
       setTabs((current) => current.map((tab) => ({ ...tab, path: mapPath(tab.path) })))
       setActivePath((current) => mapPath(current))
       setSelectedEntryPath(moved.path)
-      await loadFiles()
       onNotify('Item movido para: ' + moved.path, 'success')
+      await loadFiles()
     } catch (error) {
       onNotify('Não foi possível renomear ou mover: ' + errorMessage(error), 'error')
     }
@@ -476,13 +479,11 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
 
   const deleteSelectedEntry = useCallback(async () => {
     if (!selectedEntryPath) return
-    const selected = files.find((entry) => entry.path === selectedEntryPath)
-    if (!selected) return
     const affectedTabs = tabsRef.current.filter((tab) => tab.path === selectedEntryPath || isDescendantPath(tab.path, selectedEntryPath))
     const warning = affectedTabs.some((tab) => tab.content !== tab.savedContent) ? ' Há alterações não salvas que serão perdidas.' : ''
     if (!window.confirm('Excluir ' + selectedEntryPath + '?' + warning)) return
     try {
-      await window.devorbit.deleteProjectEntry(projectPath, selectedEntryPath, { recursive: selected.kind === 'directory' })
+      await window.devorbit.deleteProjectEntry(projectPath, selectedEntryPath, { recursive: selectedEntryKind === 'directory' })
       const nextTabs = tabsRef.current.filter((tab) => !affectedTabs.includes(tab))
       tabsRef.current = nextTabs
       setTabs(nextTabs)
@@ -492,12 +493,13 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
         setActivePath(nextPath)
       }
       setSelectedEntryPath('')
-      await loadFiles()
+      setSelectedEntryKind('')
       onNotify('Item excluído: ' + selectedEntryPath, 'success')
+      await loadFiles()
     } catch (error) {
       onNotify('Não foi possível excluir: ' + errorMessage(error), 'error')
     }
-  }, [files, loadFiles, onNotify, projectPath, selectedEntryPath])
+  }, [loadFiles, onNotify, projectPath, selectedEntryKind, selectedEntryPath])
 
   useEffect(() => {
     onDirtyChange?.(tabs.some((tab) => tab.content !== tab.savedContent))
@@ -519,6 +521,7 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
     setIsDiffOpen(false)
     setSearchQuery('')
     setSelectedEntryPath('')
+    setSelectedEntryKind('')
     void loadFiles()
   }, [loadFiles])
 
@@ -752,7 +755,7 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
                 key={entry.path}
                 className={'workspace-file-row' + (selectedEntryPath === entry.path || activePath === entry.path ? ' selected' : '') + (entry.kind === 'directory' ? ' directory' : '')}
                 style={{ paddingLeft: 10 + fileDepth(entry.path) * 12 }}
-                onClick={() => { setSelectedEntryPath(entry.path); if (isDirectory) toggleDirectory(entry); else void openFile(entry) }}
+                onClick={() => { setSelectedEntryPath(entry.path); setSelectedEntryKind(entry.kind); if (isDirectory) toggleDirectory(entry); else void openFile(entry) }}
                 disabled={isDirectory ? isDirectoryLoading : entry.editable === false || isLoading}
                 title={entry.editable === false ? 'Arquivo somente leitura ou binário' : entry.path}
                 aria-current={activePath === entry.path ? 'page' : undefined}
