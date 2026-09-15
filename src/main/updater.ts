@@ -15,6 +15,8 @@ const execFileAsync = promisify(execFile)
 
 const GITHUB_RELEASE_BASE = 'https://github.com/jrmello4/devorbit/releases'
 const PORTABLE_MANIFEST_NAME = 'latest-portable.yml'
+export const MAX_UPDATE_BYTES = 512 * 1024 * 1024
+const MAX_MANIFEST_BYTES = 64 * 1024
 const PORTABLE_UPDATE_SCRIPT = [
   'param([int]$ProcessId,[string]$Source,[string]$Target,[string]$Backup,[string]$ScriptPath)',
   '$deadline = (Get-Date).AddSeconds(90)',
@@ -62,6 +64,7 @@ let initialized = false
 let githubHeaders: Record<string, string> = {}
 let portableManifest: PortableManifest | null = null
 let portableDownloadPath: string | null = null
+let portableDownloadInFlight: Promise<UpdateState> | null = null
 
 function setState(nextState: UpdateState): void {
   state = nextState
@@ -148,10 +151,65 @@ async function loadGitHubHeaders(): Promise<Record<string, string>> {
     : {}
 }
 
+export function isValidUpdateSize(size: number, maxBytes = MAX_UPDATE_BYTES): boolean {
+  return Number.isSafeInteger(size) && size >= 0 && size <= maxBytes
+}
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit = {},
+  timeoutMs = 12_000
+): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, { ...init, signal: controller.signal })
+  } catch (error: unknown) {
+    if (controller.signal.aborted) throw new Error('tempo limite excedido')
+    throw error
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function readResponseText(response: Response, maxBytes: number): Promise<string> {
+  const contentLength = Number(response.headers.get('content-length') || 0)
+  if (contentLength > 0 && !isValidUpdateSize(contentLength, maxBytes)) {
+    throw new Error('resposta do GitHub excede o limite permitido')
+  }
+  if (!response.body) {
+    const text = await response.text()
+    if (!isValidUpdateSize(Buffer.byteLength(text, 'utf8'), maxBytes)) {
+      throw new Error('resposta do GitHub excede o limite permitido')
+    }
+    return text
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let received = 0
+  let text = ''
+  try {
+    while (true) {
+      const chunk = await reader.read()
+      if (chunk.done) break
+      received += chunk.value.byteLength
+      if (!isValidUpdateSize(received, maxBytes)) {
+        await reader.cancel()
+        throw new Error('resposta do GitHub excede o limite permitido')
+      }
+      text += decoder.decode(chunk.value, { stream: true })
+    }
+    return text + decoder.decode()
+  } finally {
+    reader.releaseLock()
+  }
+}
+
 async function fetchText(url: string, headers: Record<string, string>): Promise<string> {
-  const response = await fetch(url, { headers, redirect: 'follow' })
+  const response = await fetchWithTimeout(url, { headers, redirect: 'follow' })
   if (!response.ok) throw new Error('GitHub respondeu HTTP ' + response.status + '.')
-  return await response.text()
+  return await readResponseText(response, MAX_MANIFEST_BYTES)
 }
 
 async function checkPortableForUpdates(distribution: UpdateDistribution): Promise<void> {
@@ -250,25 +308,32 @@ export function initializeUpdater(sendState: (nextState: UpdateState) => void): 
   })
 }
 
-async function downloadPortableUpdate(): Promise<UpdateState> {
+async function performPortableDownload(): Promise<UpdateState> {
   if (getUpdateDistribution() !== 'portable' || state.status !== 'available' || !portableManifest) return state
   const manifest = portableManifest
   const temporaryPath = path.join(app.getPath('temp'), 'DevOrbit-' + manifest.version + '-' + Date.now() + '.exe.download')
   setState({ ...state, status: 'downloading', progress: 0 })
   try {
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       GITHUB_RELEASE_BASE + '/download/v' + manifest.version + '/' + encodeURIComponent(manifest.path),
       { headers: githubHeaders, redirect: 'follow' }
     )
     if (!response.ok) throw new Error('GitHub respondeu HTTP ' + response.status + '.')
     if (!response.body) throw new Error('O download não retornou um arquivo.')
     const total = Number(response.headers.get('content-length') || 0)
+    if (total > 0 && !isValidUpdateSize(total)) {
+      throw new Error('O arquivo de atualização excede o limite permitido.')
+    }
     const hash = createHash('sha512')
     let received = 0
     let lastProgress = -1
     const input = Readable.fromWeb(response.body as unknown as import('node:stream/web').ReadableStream<Uint8Array>)
     input.on('data', (chunk: Buffer) => {
       received += chunk.length
+      if (!isValidUpdateSize(received)) {
+        input.destroy(new Error('O arquivo de atualização excede o limite permitido.'))
+        return
+      }
       hash.update(chunk)
       if (total > 0) {
         const progress = Math.min(99, Math.floor((received / total) * 100))
@@ -298,6 +363,16 @@ async function downloadPortableUpdate(): Promise<UpdateState> {
     })
   }
   return state
+}
+
+function downloadPortableUpdate(): Promise<UpdateState> {
+  if (portableDownloadInFlight) return portableDownloadInFlight
+  const operation = performPortableDownload()
+  const trackedOperation = operation.finally(() => {
+    if (portableDownloadInFlight === trackedOperation) portableDownloadInFlight = null
+  })
+  portableDownloadInFlight = trackedOperation
+  return trackedOperation
 }
 
 export async function downloadUpdate(): Promise<UpdateState> {

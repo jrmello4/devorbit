@@ -13,7 +13,7 @@ vi.mock('electron-updater', () => ({
   default: { autoUpdater: autoUpdaterMock },
 }))
 
-import { getPortableExecutablePath, getUpdateDistribution, isNewerVersion, parsePortableManifest } from '../src/main/updater'
+import { getPortableExecutablePath, getUpdateDistribution, isNewerVersion, isValidUpdateSize, MAX_UPDATE_BYTES, parsePortableManifest } from '../src/main/updater'
 
 describe('getUpdateDistribution', () => {
   it('classifica checkout como dev', () => {
@@ -31,6 +31,14 @@ describe('getUpdateDistribution', () => {
 })
 
 describe('portable update helpers', () => {
+  it('rejects invalid or oversized update bodies', () => {
+    expect(isValidUpdateSize(0)).toBe(true)
+    expect(isValidUpdateSize(MAX_UPDATE_BYTES)).toBe(true)
+    expect(isValidUpdateSize(MAX_UPDATE_BYTES + 1)).toBe(false)
+    expect(isValidUpdateSize(-1)).toBe(false)
+    expect(isValidUpdateSize(Number.POSITIVE_INFINITY)).toBe(false)
+  })
+
   it('detects only newer stable versions', () => {
     expect(isNewerVersion('1.0.15', '1.0.14')).toBe(true)
     expect(isNewerVersion('1.0.14', '1.0.14')).toBe(false)
