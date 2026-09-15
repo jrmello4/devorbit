@@ -21,6 +21,7 @@
     "dist": "npm run build && electron-builder --publish never",
     "start": "electron .",
     "verify:ui": "electron scripts/verify-ui.cjs",
+    "verify:runtime": "electron scripts/verify-runtime.cjs",
     "preview": "vite preview"
   },
   "dependencies": {
