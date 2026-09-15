@@ -180,10 +180,44 @@ async function inspectProjectInteractions(window, viewport) {
   }))()`)
   assert(Object.values(workspaceFeatures).every(Boolean), `${viewport.label}: recursos do workspace incompletos (${JSON.stringify(workspaceFeatures)})`)
   recordPass(viewport.label, 'editor com abas/busca/contexto, terminal PTY e controles web visíveis')
-  await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Abrir canvas', `${viewport.label} canvas launch`)
+  const canvasAlreadyOpen = await evaluate(window, `Boolean(document.querySelector('.workspace-canvas'))`)
+  if (!canvasAlreadyOpen) await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Abrir canvas', `${viewport.label} canvas launch`)
   await waitFor(window, `document.querySelectorAll('.workspace-canvas [data-canvas-card]').length === 3`, `${viewport.label} canvas cards`)
   const canvasCards = await evaluate(window, `Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card]')).map((node) => node.getAttribute('data-canvas-card')).sort().join(',')`)
   assert(canvasCards === 'browser,notes,workbench', `${viewport.label}: cards do canvas incompletos (${canvasCards})`)
+  const canvasInteractions = await evaluate(window, `(function () {
+    const workbench = document.querySelector('[data-canvas-card="workbench"]')
+    const dragHandle = workbench?.querySelector('[data-canvas-drag-handle]')
+    if (!workbench || !dragHandle) return false
+    const beforeLeft = Number.parseFloat(workbench.style.left)
+    const beforeWidth = Number.parseFloat(workbench.style.width)
+    dragHandle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 100, clientY: 100 }))
+    return { beforeLeft, beforeWidth }
+  })()`)
+  assert(canvasInteractions, `${viewport.label}: controles de interação do canvas ausentes`)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  await evaluate(window, `(() => { window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: 132, clientY: 124 })); window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: 132, clientY: 124 })); return true })()`)
+  await waitFor(window, `Number.parseFloat(document.querySelector('[data-canvas-card="workbench"]').style.left) > ${canvasInteractions.beforeLeft}`, `${viewport.label} canvas drag`)
+  await evaluate(window, `(function () {
+    const workbench = document.querySelector('[data-canvas-card="workbench"]')
+    const resizeHandle = workbench?.querySelector('[data-canvas-resize-handle]')
+    if (!resizeHandle) return false
+    resizeHandle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 200, clientY: 200 }))
+    return true
+  })()`)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  await evaluate(window, `(() => { window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: 246, clientY: 232 })); window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: 246, clientY: 232 })); return true })()`)
+  await waitFor(window, `Number.parseFloat(document.querySelector('[data-canvas-card="workbench"]').style.width) > ${canvasInteractions.beforeWidth}`, `${viewport.label} canvas resize`)
+  await evaluate(window, `(function () {
+    const note = document.querySelector('[data-canvas-note-editor]')
+    if (!note) return false
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set
+    setter.call(note, 'handoff persistente')
+    note.dispatchEvent(new Event('input', { bubbles: true }))
+    return true
+  })()`)
+  await waitFor(window, `document.querySelector('[data-canvas-note-editor]').value === 'handoff persistente'`, `${viewport.label} canvas notes`)
+  recordPass(viewport.label, 'canvas com cartões, arraste, redimensionamento e notas locais')
   await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Voltar ao layout integrado', `${viewport.label} canvas close`)
   await waitFor(window, `!document.querySelector('.workspace-canvas')`, `${viewport.label} grid layout restore`)
   await clickButtonByText(window, (node) => node.getAttribute('title') === 'Projetos', `${viewport.label} multi-project navigation`)
