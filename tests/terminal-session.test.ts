@@ -84,4 +84,25 @@ describe('terminal-session', () => {
       { id: 'workspace-one', type: 'data', data: 'fresh' },
     ])
   })
+
+  it('encerra todos os PTYs e ignora operaÃ§Ãµes posteriores', async () => {
+    const first = createFakeTerminal(601)
+    const second = createFakeTerminal(602)
+    spawnMock.mockReturnValueOnce(first).mockReturnValueOnce(second)
+    const { startTerminal, stopAllTerminals, writeTerminal } = await import('../src/main/terminal-session')
+
+    await startTerminal('workspace-one', 'C:\\workspace')
+    await startTerminal('workspace-two', 'C:\\workspace')
+
+    stopAllTerminals()
+
+    expect(first.kill).toHaveBeenCalledOnce()
+    expect(second.kill).toHaveBeenCalledOnce()
+    expect(writeTerminal('workspace-one', 'after-cleanup')).toBe(false)
+    expect(writeTerminal('workspace-two', 'after-cleanup')).toBe(false)
+
+    stopAllTerminals()
+    expect(first.kill).toHaveBeenCalledOnce()
+    expect(second.kill).toHaveBeenCalledOnce()
+  })
 })

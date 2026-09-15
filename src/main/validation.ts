@@ -58,6 +58,10 @@ export interface GitInitRequest {
   previewFingerprint?: string
 }
 
+export interface GitPushRequest {
+  selectedPaths?: string[]
+}
+
 export interface IpcSenderLike {
   senderFrame?: { url?: string } | null
   sender?: { getURL?: () => string }
@@ -97,6 +101,30 @@ export function validateWindowAction(value: unknown): WindowAction {
     throw new Error('Ação de janela inválida.')
   }
   return value
+}
+
+export function validateGitPushOptions(value: unknown): GitPushRequest {
+  if (value === undefined) return {}
+  if (!isRecord(value)) throw new Error('Opções de push inválidas.')
+  if (value.selectedPaths === undefined) return {}
+  if (!Array.isArray(value.selectedPaths) || value.selectedPaths.length > 500) {
+    throw new Error('Lista de arquivos para push inválida.')
+  }
+  const selectedPaths = value.selectedPaths.map((entry) => {
+    if (typeof entry !== 'string' || !entry.trim() || entry.length > MAX_PROJECT_DIR_LENGTH || entry.includes('\0')) {
+      throw new Error('Caminho de arquivo para push inválido.')
+    }
+    const normalized = entry.replaceAll('\\', '/')
+    if (
+      /^[A-Za-z]:/.test(entry) || normalized.startsWith('/') || normalized.startsWith('-') ||
+      normalized.startsWith(':') || normalized.startsWith('!') || normalized.startsWith('^') ||
+      normalized.split('/').some((part) => part === '.' || part === '..')
+    ) {
+      throw new Error('Caminho de arquivo para push inválido.')
+    }
+    return entry
+  })
+  return { selectedPaths: [...new Set(selectedPaths)] }
 }
 
 export function validateFiniteNumber(

@@ -210,6 +210,23 @@ async function inspectProjectInteractions(window, viewport) {
   await waitFor(window, `document.querySelectorAll('.workspace-canvas [data-canvas-card]').length === 3`, `${viewport.label} canvas cards`)
   const canvasCards = await evaluate(window, `Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card]')).map((node) => node.getAttribute('data-canvas-card')).sort().join(',')`)
   assert(canvasCards === 'browser,notes,workbench', `${viewport.label}: cards do canvas incompletos (${canvasCards})`)
+  await waitFor(window, `(() => {
+    const viewport = document.querySelector('.workspace-canvas .workspace-web-viewport')
+    const boundsCall = Array.from(window.__devorbitVerifyFixture.getCalls()).filter((call) => call.name === 'setWebBounds').at(-1)
+    if (!viewport || !boundsCall) return false
+    const rect = viewport.getBoundingClientRect()
+    const bounds = boundsCall.args[0]
+    const canvas = document.querySelector('.workspace-canvas')?.getBoundingClientRect()
+    const left = Math.max(0, rect.left, canvas?.left || 0)
+    const top = Math.max(0, rect.top, canvas?.top || 0)
+    const right = Math.min(window.innerWidth, rect.right, canvas?.right || window.innerWidth)
+    const bottom = Math.min(window.innerHeight, rect.bottom, canvas?.bottom || window.innerHeight)
+    return Math.abs(bounds.x - Math.round(left)) <= 1 &&
+      Math.abs(bounds.y - Math.round(top)) <= 1 &&
+      Math.abs(bounds.width - Math.round(Math.max(0, right - left))) <= 1 &&
+      Math.abs(bounds.height - Math.round(Math.max(0, bottom - top))) <= 1
+  })()`, `${viewport.label} canvas web bounds`)
+  recordPass(viewport.label, 'painel web nativo acompanha o viewport atual do canvas')
   const terminalIds = await evaluate(window, `Array.from(window.__devorbitVerifyFixture.getCalls())
     .filter((call) => call.name === 'startTerminal' || call.name === 'startCodexTerminal')
     .map((call) => call.args[0])`)
@@ -238,6 +255,15 @@ async function inspectProjectInteractions(window, viewport) {
   await new Promise((resolve) => setTimeout(resolve, 0))
   await evaluate(window, `(() => { window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: 246, clientY: 232 })); window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: 246, clientY: 232 })); return true })()`)
   await waitFor(window, `Number.parseFloat(document.querySelector('[data-canvas-card="workbench"]').style.width) > ${canvasInteractions.beforeWidth}`, `${viewport.label} canvas resize`)
+  await waitFor(window, `(() => {
+    const canvas = document.querySelector('.workspace-canvas')
+    const id = canvas?.getAttribute('data-canvas-project-id')
+    const raw = id ? window.localStorage.getItem('devorbit:workspace-canvas:' + id) : null
+    if (!canvas || !raw) return false
+    const saved = JSON.parse(raw)
+    const card = saved.cards?.find((item) => item.id === 'workbench')
+    return card && Number(card.width) === Number.parseFloat(canvas.querySelector('[data-canvas-card="workbench"]').style.width)
+  })()`, `${viewport.label} canvas geometry persistence`)
   await evaluate(window, `(function () {
     const note = document.querySelector('[data-canvas-note-editor]')
     if (!note) return false

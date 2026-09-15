@@ -171,6 +171,17 @@ export const App: React.FC = () => {
     }
   }, [])
 
+  const applyProjects = useCallback((nextProjects: Project[]) => {
+    setProjects(nextProjects)
+    setWorkspaceProjects((current) => current.map((workspaceProject) =>
+      nextProjects.find((project) => project.id === workspaceProject.id) || workspaceProject
+    ))
+    setActiveWorkspaceProject((current) => current
+      ? nextProjects.find((project) => project.id === current.id) || current
+      : current
+    )
+  }, [])
+
   const loadData = useCallback(async () => {
     console.log('[App] loadData called. window.devorbit available:', Boolean(window.devorbit))
     try {
@@ -185,7 +196,7 @@ export const App: React.FC = () => {
         ])
         console.log('[App] Loaded successfully! Projects count:', loadedProjects?.length)
         setConfig(loadedConfig)
-        setProjects(loadedProjects)
+        applyProjects(loadedProjects)
         setOtherDirs(loadedOtherDirs)
         setAuthStatus(loadedAuth)
         setUsageState(loadedUsage)
@@ -198,7 +209,7 @@ export const App: React.FC = () => {
     } finally {
       setIsLoading(false)
     }
-  }, [notify])
+  }, [applyProjects, notify])
 
   useEffect(() => {
     loadData()
@@ -220,7 +231,7 @@ export const App: React.FC = () => {
           loadUsage(),
           loadRealUsage(true),
         ])
-        setProjects(refreshed)
+        applyProjects(refreshed)
         setOtherDirs(refreshedOtherDirs)
         notify('Lista de projetos atualizada!', 'success')
       }
@@ -240,12 +251,12 @@ export const App: React.FC = () => {
         window.devorbit.getProjects(),
         window.devorbit.getOtherDirs(),
       ])
-      setProjects(refreshed)
+      applyProjects(refreshed)
       setOtherDirs(refreshedOtherDirs)
     } catch (err) {
       console.error('[App] Erro ao atualizar projetos após operação Git:', err)
     }
-  }, [])
+  }, [applyProjects])
 
   // Keep Git status and the memory stale indicator useful while the app stays
   // open. The scan is local and quiet; explicit actions still provide toasts.
@@ -331,7 +342,7 @@ export const App: React.FC = () => {
       }
       // Atualiza lista em segundo plano
       const updated = await window.devorbit.getProjects()
-      setProjects(updated)
+      applyProjects(updated)
     } catch (err: any) {
       notify(`Erro na sincronização: ${err.message}`, 'error')
     }
@@ -343,7 +354,7 @@ export const App: React.FC = () => {
       const result = await window.devorbit.stashSyncGit(projectPath)
       notify(result.message, result.success ? 'success' : 'error')
       const updated = await window.devorbit.getProjects()
-      setProjects(updated)
+      applyProjects(updated)
     } catch (err: any) {
       notify(`Erro na sincronização com stash: ${err.message}`, 'error')
     }
@@ -404,7 +415,7 @@ export const App: React.FC = () => {
       }
 
       const refreshed = await window.devorbit.getProjects()
-      setProjects(refreshed)
+      applyProjects(refreshed)
     } catch (err: any) {
       notify(`Erro ao sincronizar todos: ${err.message}`, 'error')
     } finally {
@@ -477,7 +488,12 @@ export const App: React.FC = () => {
     await handleRefresh()
   }
   const openIntegratedWorkspace = (project: Project) => {
-    setWorkspaceProjects((current) => current.some((item) => item.id === project.id) ? current : [...current, project])
+    setWorkspaceProjects((current) => {
+      const existingIndex = current.findIndex((item) => item.id === project.id)
+      if (existingIndex < 0) return [...current, project]
+      if (current[existingIndex] === project) return current
+      return current.map((item) => item.id === project.id ? project : item)
+    })
     setActiveWorkspaceProject(project)
     setWorkspaceView('workspace')
   }
@@ -526,29 +542,59 @@ export const App: React.FC = () => {
 
   // Atalhos de teclado globais
   useEffect(() => {
+    const isUpdateModalOpen = Boolean(
+      updateState &&
+      !isUpdateDismissed &&
+      ['available', 'downloading', 'downloaded'].includes(updateState.status)
+    )
+    const hasOpenModal = Boolean(
+      isSettingsOpen || isToolHealthOpen || authModalAccount || pushProject || gitInitProject ||
+      isCloneOpen || activeMemoryProject || activeBranchProject || isCommandPaletteOpen ||
+      isUpdateModalOpen
+    )
     const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target
+      const isEditableTarget = target instanceof HTMLElement && (
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.isContentEditable
+      )
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault()
-        if (isSettingsOpen || authModalAccount || pushProject || gitInitProject || isCloneOpen || activeMemoryProject || activeBranchProject) return
+        if (hasOpenModal) return
         openCommandPalette()
       } else if ((e.ctrlKey || e.metaKey) && e.key === ',') {
         e.preventDefault()
-        if (authModalAccount || pushProject || gitInitProject || isCloneOpen || activeMemoryProject || activeBranchProject || isCommandPaletteOpen) return
+        if (hasOpenModal) return
         setIsSettingsOpen(true)
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'r') {
         e.preventDefault()
-        handleRefresh()
+        if (hasOpenModal || isEditableTarget) return
+        void handleRefresh()
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [activeBranchProject, activeMemoryProject, authModalAccount, gitInitProject, isCloneOpen, isSettingsOpen, isCommandPaletteOpen, openCommandPalette, pushProject])
+  }, [activeBranchProject, activeMemoryProject, authModalAccount, gitInitProject, isCloneOpen, isSettingsOpen, isToolHealthOpen, isCommandPaletteOpen, isUpdateDismissed, openCommandPalette, pushProject, updateState])
 
   const gitProjectsCount = projects.filter((p) => p.git.isRepo).length
+  const isUpdateModalOpen = Boolean(
+    updateState &&
+    !isUpdateDismissed &&
+    !isSettingsOpen &&
+    !isToolHealthOpen &&
+    !authModalAccount &&
+    !pushProject &&
+    !gitInitProject &&
+    !isCloneOpen &&
+    !activeMemoryProject &&
+    !activeBranchProject &&
+    !isCommandPaletteOpen &&
+    ['available', 'downloading', 'downloaded'].includes(updateState.status)
+  )
   const isWorkspaceWebSuppressed = workspaceView !== 'workspace' || Boolean(
     isSettingsOpen || isToolHealthOpen || authModalAccount || pushProject || gitInitProject || isCloneOpen ||
-    activeMemoryProject || activeBranchProject || isCommandPaletteOpen ||
-    (updateState && !isUpdateDismissed && ['available', 'downloading', 'downloaded'].includes(updateState.status))
+    activeMemoryProject || activeBranchProject || isCommandPaletteOpen || isUpdateModalOpen
   )
 
   return (
@@ -731,20 +777,7 @@ export const App: React.FC = () => {
 
       <UpdateModal
         state={updateState}
-        isOpen={Boolean(
-          updateState &&
-          !isUpdateDismissed &&
-          !isSettingsOpen &&
-          !isToolHealthOpen &&
-          !authModalAccount &&
-          !pushProject &&
-          !gitInitProject &&
-          !isCloneOpen &&
-          !activeMemoryProject &&
-          !activeBranchProject &&
-          !isCommandPaletteOpen &&
-          ['available', 'downloading', 'downloaded'].includes(updateState.status)
-        )}
+        isOpen={isUpdateModalOpen}
         onClose={() => setIsUpdateDismissed(true)}
         onDownload={handleDownloadUpdate}
         onInstall={handleInstallUpdate}
@@ -829,5 +862,3 @@ export const App: React.FC = () => {
 }
 
 export default App
-
-

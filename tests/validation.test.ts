@@ -7,6 +7,7 @@ import {
   validateCodexAccount,
   validateFiniteNumber,
   validateGitInitOptions,
+  validateGitPushOptions,
   validateHttpsUrl,
   validateLaunchTool,
   validateProjectDirs,
@@ -76,6 +77,15 @@ describe('IPC input validation', () => {
     expect(() => validateGitInitOptions({ commitMessage: '' })).toThrow(
       'Mensagem do commit inválida'
     )
+  })
+
+  it('validates and deduplicates explicitly selected Git push paths', () => {
+    expect(validateGitPushOptions({ selectedPaths: ['src/app.ts', 'README.md', 'src/app.ts'] }))
+      .toEqual({ selectedPaths: ['src/app.ts', 'README.md'] })
+    expect(validateGitPushOptions(undefined)).toEqual({})
+    expect(() => validateGitPushOptions({ selectedPaths: ['../outside'] })).toThrow('Caminho de arquivo')
+    expect(() => validateGitPushOptions({ selectedPaths: [''] })).toThrow('Caminho de arquivo')
+    expect(() => validateGitPushOptions({ selectedPaths: ['a\0b'] })).toThrow('Caminho de arquivo')
   })
 
   it('rejects non-finite and out-of-range numeric values', () => {

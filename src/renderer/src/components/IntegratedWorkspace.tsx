@@ -138,25 +138,40 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
     if (suppressNativeWeb) return
     const viewport = webViewportRef.current
     if (!viewport) return
+    const canvas = viewport.closest('.workspace-canvas')
     const updateBounds = () => {
       const rect = viewport.getBoundingClientRect()
-      const visible = layout.webVisible && !suppressNativeWeb && rect.width > 0 && rect.height > 0
+      const clip = canvas?.getBoundingClientRect()
+      const left = Math.max(0, rect.left, clip?.left ?? 0)
+      const top = Math.max(0, rect.top, clip?.top ?? 0)
+      const right = Math.min(window.innerWidth, rect.right, clip?.right ?? window.innerWidth)
+      const bottom = Math.min(window.innerHeight, rect.bottom, clip?.bottom ?? window.innerHeight)
+      const width = Math.max(0, right - left)
+      const height = Math.max(0, bottom - top)
+      const visible = layout.webVisible && !suppressNativeWeb && width > 0 && height > 0
       void window.devorbit.setWebBounds({
-        x: Math.round(rect.left), y: Math.round(rect.top),
-        width: Math.round(rect.width), height: Math.round(rect.height),
+        x: Math.round(left), y: Math.round(top),
+        width: Math.round(width), height: Math.round(height),
+        contentX: Math.round(rect.left), contentY: Math.round(rect.top),
+        contentWidth: Math.round(rect.width), contentHeight: Math.round(rect.height),
       })
       void window.devorbit.setWebVisible(visible)
     }
     const observer = new ResizeObserver(updateBounds)
     observer.observe(viewport)
+    const mutationObserver = canvas ? new MutationObserver(updateBounds) : null
+    if (canvas) mutationObserver?.observe(canvas, { attributes: true, subtree: true, attributeFilter: ['style'] })
+    canvas?.addEventListener('scroll', updateBounds, { passive: true })
     updateBounds()
     window.addEventListener('resize', updateBounds)
     return () => {
       observer.disconnect()
+      mutationObserver?.disconnect()
+      canvas?.removeEventListener('scroll', updateBounds)
       window.removeEventListener('resize', updateBounds)
       void window.devorbit.setWebVisible(false)
     }
-  }, [suppressNativeWeb, layout.rightWidth, layout.webVisible])
+  }, [isCanvas, suppressNativeWeb, layout.rightWidth, layout.webVisible])
 
   useEffect(() => {
     if (!dragging) return

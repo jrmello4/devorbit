@@ -4,12 +4,11 @@ import {
   UploadCloud,
   GitBranch,
   FileCode,
-  Check,
   AlertCircle,
   ArrowUpCircle,
   Loader2,
 } from 'lucide-react'
-import type { Project } from '../types'
+import type { GitChange, Project } from '../types'
 import { AccessibleDialog } from './AccessibleDialog'
 
 interface GitPushModalProps {
@@ -29,7 +28,8 @@ export const GitPushModal: React.FC<GitPushModalProps> = ({
 }) => {
 
   const [commitMessage, setCommitMessage] = useState('')
-  const [changedFiles, setChangedFiles] = useState<string[]>([])
+  const [changedFiles, setChangedFiles] = useState<GitChange[]>([])
+  const [selectedPaths, setSelectedPaths] = useState<string[]>([])
   const [isLoadingFiles, setIsLoadingFiles] = useState(false)
   const [isPushing, setIsPushing] = useState(false)
 
@@ -40,13 +40,20 @@ export const GitPushModal: React.FC<GitPushModalProps> = ({
   // Carrega lista de arquivos modificados ao abrir
   useEffect(() => {
     let isMounted = true
-    if (project && project.git.hasChanges) {
+    if (project && isOpen && project.git.hasChanges) {
       setIsLoadingFiles(true)
       window.devorbit
         ?.getGitChanges(project.path)
         .then((files) => {
           if (isMounted) {
             setChangedFiles(files || [])
+            setSelectedPaths((files || []).map((file) => file.path))
+          }
+        })
+        .catch(() => {
+          if (isMounted) {
+            setChangedFiles([])
+            setSelectedPaths([])
           }
         })
         .finally(() => {
@@ -54,6 +61,7 @@ export const GitPushModal: React.FC<GitPushModalProps> = ({
         })
     } else {
       setChangedFiles([])
+      setSelectedPaths([])
     }
     return () => {
       isMounted = false
@@ -71,7 +79,16 @@ export const GitPushModal: React.FC<GitPushModalProps> = ({
         ? commitMessage.trim() || `update: ${project.name}`
         : undefined
 
-      const result = await window.devorbit?.pushGit(project.path, msgToSend)
+      if (project.git.hasChanges && selectedPaths.length === 0) {
+        onNotify('Selecione pelo menos um arquivo para criar o commit.', 'error')
+        return
+      }
+
+      const result = await window.devorbit?.pushGit(
+        project.path,
+        msgToSend,
+        project.git.hasChanges ? { selectedPaths } : undefined,
+      )
 
       if (result?.success) {
         onNotify(result.message || 'Subido para o GitHub com sucesso!', 'success')
@@ -163,7 +180,7 @@ export const GitPushModal: React.FC<GitPushModalProps> = ({
                 autoFocus
               />
               <p id="git-commit-message-help" className="text-xs text-stone-600 mt-1">
-                Todas as alterações locais serão adicionadas (`git add -A`) e commitadas automaticamente antes do envio.
+                Somente os arquivos selecionados abaixo serão adicionados e commitados antes do envio.
               </p>
             </div>
           )}
@@ -185,14 +202,23 @@ export const GitPushModal: React.FC<GitPushModalProps> = ({
                     Nenhum arquivo listado.
                   </p>
                 ) : (
-                  changedFiles.map((file, idx) => (
-                    <div
-                      key={idx}
+                  changedFiles.map((file) => (
+                    <label
+                      key={`${file.status}:${file.path}`}
                       className="flex items-center gap-2 text-stone-700 py-0.5 px-1 rounded hover:bg-stone-100 truncate"
                     >
-                      <span className="text-[#3e562f] text-[10px] font-bold">●</span>
-                      <span className="truncate" title={file}>{file}</span>
-                    </div>
+                      <input
+                        type="checkbox"
+                        checked={selectedPaths.includes(file.path)}
+                        onChange={() => setSelectedPaths((current) => current.includes(file.path)
+                          ? current.filter((path) => path !== file.path)
+                          : [...current, file.path])}
+                        disabled={isPushing}
+                        aria-label={`Selecionar ${file.path}`}
+                      />
+                      <span className="text-[10px] font-bold text-stone-500">{file.status.trim() || '  '}</span>
+                      <span className="truncate" title={file.path}>{file.path}</span>
+                    </label>
                   ))
                 )}
               </div>

@@ -129,6 +129,14 @@ Se a criação do repositório ocorrer mas o commit ou push falhar, o card é
 atualizado para refletir o `.git` existente e a mensagem explica o próximo
 passo sem apagar o trabalho local.
 
+### Enviar alterações para o GitHub
+
+Ao enviar alterações de um projeto existente, o modal lista o estado atual do
+Git e permite marcar os arquivos que entrarão no commit. O DevOrbit revalida
+essa lista antes de executar `git add -- <paths>`; uma seleção antiga ou
+alterações preparadas fora dela bloqueiam o commit. Um push sem mensagem envia
+somente commits que já existem no repositório local.
+
 ### Catálogo de projetos e liberação de espaço
 
 O botão **Clonar por link** também registra o projeto no catálogo do DevOrbit.

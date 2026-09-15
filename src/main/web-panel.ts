@@ -1,7 +1,7 @@
-import electron, { type BrowserWindow, type Rectangle, type WebContentsView } from 'electron'
+import electron, { type BrowserWindow, type Rectangle, type View, type WebContentsView } from 'electron'
 import { validateHttpsUrl } from './validation'
 
-const { WebContentsView: WebContentsViewConstructor, session } = electron
+const { View: ViewConstructor, WebContentsView: WebContentsViewConstructor, session } = electron
 const DEFAULT_WEB_URL = 'https://www.google.com/'
 
 export interface WebPanelEvent {
@@ -11,9 +11,18 @@ export interface WebPanelEvent {
   message?: string
 }
 
+export interface WebPanelBounds extends Rectangle {
+  contentX?: number
+  contentY?: number
+  contentWidth?: number
+  contentHeight?: number
+}
+
 let hostWindow: BrowserWindow | null = null
 let webView: WebContentsView | null = null
+let clipView: View | null = null
 let lastBounds: Rectangle = { x: 0, y: 0, width: 0, height: 0 }
+let lastContentBounds: Rectangle = { x: 0, y: 0, width: 0, height: 0 }
 let lastUrl = DEFAULT_WEB_URL
 let lastTitle = 'Navegador'
 const listeners = new Set<(event: WebPanelEvent) => void>()
@@ -28,6 +37,17 @@ function currentState(): WebPanelEvent {
     url: webView?.webContents.getURL() || lastUrl,
     title: webView?.webContents.getTitle() || lastTitle,
   }
+}
+
+function applyNativeBounds(): void {
+  if (!webView || !clipView) return
+  clipView.setBounds(lastBounds)
+  webView.setBounds({
+    x: Math.round(lastContentBounds.x - lastBounds.x),
+    y: Math.round(lastContentBounds.y - lastBounds.y),
+    width: Math.max(0, Math.round(lastContentBounds.width)),
+    height: Math.max(0, Math.round(lastContentBounds.height)),
+  })
 }
 
 export function onWebPanelEvent(listener: (event: WebPanelEvent) => void): () => void {
@@ -51,15 +71,25 @@ export function attachWebPanel(window: BrowserWindow): void {
       devTools: false,
     },
   })
+  clipView = new ViewConstructor()
   webView.setVisible(false)
-  webView.setBounds(lastBounds)
-  window.contentView.addChildView(webView)
+  clipView.setVisible(false)
+  applyNativeBounds()
+  clipView.addChildView(webView)
+  window.contentView.addChildView(clipView)
 
   webView.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('https://')) void navigateWeb(url)
+    try {
+      void navigateWeb(validateHttpsUrl(url))
+    } catch {
+      // Keep popups denied when the target is not a valid HTTPS URL.
+    }
     return { action: 'deny' }
   })
   webView.webContents.on('will-navigate', (event, url) => {
+    try { validateHttpsUrl(url) } catch { event.preventDefault() }
+  })
+  webView.webContents.on('will-redirect', (event, url) => {
     try { validateHttpsUrl(url) } catch { event.preventDefault() }
   })
   webView.webContents.on('did-start-loading', () => emit({ ...currentState(), type: 'loading' }))
@@ -110,20 +140,28 @@ export function reloadWeb(): { success: boolean } {
   return { success: true }
 }
 
-export function setWebBounds(bounds: Rectangle): void {
-  if (!webView) return
+export function setWebBounds(bounds: WebPanelBounds): void {
   lastBounds = {
     x: Math.max(0, Math.round(bounds.x)),
     y: Math.max(0, Math.round(bounds.y)),
     width: Math.max(0, Math.round(bounds.width)),
     height: Math.max(0, Math.round(bounds.height)),
   }
-  webView.setBounds(lastBounds)
-  webView.setVisible(lastBounds.width > 0 && lastBounds.height > 0)
+  lastContentBounds = {
+    x: Math.round(bounds.contentX ?? lastBounds.x),
+    y: Math.round(bounds.contentY ?? lastBounds.y),
+    width: Math.max(0, Math.round(bounds.contentWidth ?? lastBounds.width)),
+    height: Math.max(0, Math.round(bounds.contentHeight ?? lastBounds.height)),
+  }
+  applyNativeBounds()
+  clipView?.setVisible(lastBounds.width > 0 && lastBounds.height > 0)
+  webView?.setVisible(lastBounds.width > 0 && lastBounds.height > 0)
 }
 
 export function setWebVisible(visible: boolean): void {
-  webView?.setVisible(visible && lastBounds.width > 0 && lastBounds.height > 0)
+  const nextVisible = visible && lastBounds.width > 0 && lastBounds.height > 0
+  clipView?.setVisible(nextVisible)
+  webView?.setVisible(nextVisible)
 }
 
 export function getWebState(): WebPanelEvent {
@@ -131,8 +169,10 @@ export function getWebState(): WebPanelEvent {
 }
 
 export function disposeWebPanel(): void {
-  if (hostWindow && webView) hostWindow.contentView.removeChildView(webView)
+  if (hostWindow && clipView) hostWindow.contentView.removeChildView(clipView)
+  if (clipView && webView) clipView.removeChildView(webView)
   if (webView && !webView.webContents.isDestroyed()) webView.webContents.close({ waitForBeforeUnload: false })
   webView = null
+  clipView = null
   hostWindow = null
 }

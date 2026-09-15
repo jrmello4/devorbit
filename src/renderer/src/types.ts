@@ -98,6 +98,10 @@ export interface WebPanelBounds {
   y: number
   width: number
   height: number
+  contentX?: number
+  contentY?: number
+  contentWidth?: number
+  contentHeight?: number
 }
 
 export interface AppConfig {
@@ -123,6 +127,47 @@ export interface SyncResult {
   message: string
   output?: string
 }
+
+export interface GitChange {
+  /** Relative path reported by Git and safe to send back as a pathspec. */
+  path: string
+  /** Two-character porcelain status, for example ` M` or `??`. */
+  status: string
+  /** Related paths for rename/copy entries, when Git reports more than one. */
+  stagingPaths?: string[]
+}
+
+export type GitPushOptions = {
+  /** Paths explicitly reviewed by the user before creating a commit. */
+  selectedPaths?: string[]
+}
+
+export type IpcInvokeChannel =
+  | 'devorbit:getProjects' | 'devorbit:refreshProjects' | 'devorbit:getOtherDirs'
+  | 'devorbit:listProjectFiles' | 'devorbit:readProjectFile' | 'devorbit:saveProjectFile'
+  | 'devorbit:syncGit' | 'devorbit:getGitBranches' | 'devorbit:switchGitBranch'
+  | 'devorbit:stashSyncGit' | 'devorbit:stashSwitchGitBranch' | 'devorbit:pushGit'
+  | 'devorbit:getGitChanges' | 'devorbit:syncAllGit' | 'devorbit:getGitInitPreview'
+  | 'devorbit:initGitRepository' | 'devorbit:cloneGitRepository' | 'devorbit:restoreManagedProject'
+  | 'devorbit:finalizeManagedProject' | 'devorbit:startTerminal' | 'devorbit:startCodexTerminal'
+  | 'devorbit:resizeTerminal' | 'devorbit:writeTerminal' | 'devorbit:stopTerminal'
+  | 'devorbit:navigateWeb' | 'devorbit:getWebState' | 'devorbit:goBackWeb'
+  | 'devorbit:goForwardWeb' | 'devorbit:reloadWeb' | 'devorbit:setWebVisible'
+  | 'devorbit:disposeWebPanel' | 'devorbit:setWebBounds' | 'devorbit:launchTool'
+  | 'devorbit:copyProjectContext' | 'devorbit:getConfig' | 'devorbit:getUpdateState'
+  | 'devorbit:downloadUpdate' | 'devorbit:installUpdate' | 'devorbit:saveConfig'
+  | 'devorbit:exportConfig' | 'devorbit:importConfig' | 'devorbit:selectDirectory'
+  | 'devorbit:testToolPath' | 'devorbit:getToolHealth' | 'devorbit:getCodexAuthStatus'
+  | 'devorbit:startCodexLogin' | 'devorbit:cancelCodexLogin' | 'devorbit:getProjectMemory'
+  | 'devorbit:saveProjectMemory' | 'devorbit:generateMemoryFromGit' | 'devorbit:getUsageState'
+  | 'devorbit:getRealUsage' | 'devorbit:incrementUsage' | 'devorbit:decrementUsage'
+  | 'devorbit:resetUsage' | 'devorbit:updateUsageLimits'
+
+export type IpcEventChannel =
+  | 'devorbit:syncProgress' | 'devorbit:terminalEvent' | 'devorbit:webEvent'
+  | 'devorbit:updateStatus' | 'devorbit:codexAuthProgress'
+
+export type IpcSendChannel = 'devorbit:windowControl'
 
 export interface SyncProgress {
   path: string
@@ -295,8 +340,8 @@ export interface DevOrbitAPI {
   switchGitBranch: (projectPath: string, branch: string) => Promise<SyncResult>
   stashSyncGit: (projectPath: string) => Promise<SyncResult>
   stashSwitchGitBranch: (projectPath: string, branch: string) => Promise<SyncResult>
-  pushGit: (projectPath: string, commitMessage?: string) => Promise<SyncResult>
-  getGitChanges: (projectPath: string) => Promise<string[]>
+  pushGit: (projectPath: string, commitMessage?: string, options?: GitPushOptions) => Promise<SyncResult>
+  getGitChanges: (projectPath: string) => Promise<GitChange[]>
   syncAllGit: () => Promise<{ [projectPath: string]: SyncResult }>
   onSyncProgress: (callback: (progress: SyncProgress) => void) => () => void
   getGitInitPreview: (projectPath: string, branch?: string) => Promise<GitInitPreview>

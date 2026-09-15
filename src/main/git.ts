@@ -2,7 +2,14 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import path from 'node:path'
 import fs from 'node:fs/promises'
-import type { GitBranch, GitCloneResult, GitStatus, SyncResult } from '../renderer/src/types'
+import type {
+  GitBranch,
+  GitChange,
+  GitCloneResult,
+  GitPushOptions,
+  GitStatus,
+  SyncResult,
+} from '../renderer/src/types'
 import { validateFolderName, validateGitBranch, validateHttpsUrl } from './validation'
 
 const execFileAsync = promisify(execFile)
@@ -10,15 +17,38 @@ const execFileAsync = promisify(execFile)
 // Git operations are process-bound and can mutate the same working tree. Keep
 // syncs for one repository serialized even when the renderer fires multiple
 // requests (for example, a manual sync while "Sync all" is still running).
-const mutationLocks = new Map<string, Promise<SyncResult>>()
+const mutationLocks = new Map<string, Promise<unknown>>()
 const cloneLocks = new Map<string, Promise<GitCloneResult>>()
 const RECREATABLE_IGNORED_ROOTS = new Set([
   'node_modules', '.gradle', '.next', 'coverage', '.venv', 'venv', '__pycache__',
 ])
 
-function getSyncLockKey(repoPath: string): string {
-  const normalized = path.normalize(path.resolve(repoPath))
+function normalizeLockPath(repoPath: string): string {
+  const normalized = path.normalize(repoPath)
   return process.platform === 'win32' ? normalized.toLowerCase() : normalized
+}
+
+async function getRepositoryLockKey(repoPath: string): Promise<string> {
+  const absolutePath = path.resolve(repoPath)
+  try {
+    // realpath collapses symlinks and junctions so aliases share one queue.
+    return normalizeLockPath(await fs.realpath(absolutePath))
+  } catch {
+    // Keep useful behavior for paths that do not exist yet or cannot be
+    // resolved. Existing callers still validate the repository separately.
+    return normalizeLockPath(absolutePath)
+  }
+}
+
+async function refreshGitRemote(repoPath: string): Promise<void> {
+  const lockKey = await getRepositoryLockKey(repoPath)
+  await runSerialized(lockKey, async () => {
+    await execFileAsync('git', ['fetch', '--quiet', '--prune'], {
+      cwd: repoPath,
+      timeout: 15000,
+      windowsHide: true,
+    })
+  })
 }
 
 export async function isGitRepository(dirPath: string): Promise<boolean> {
@@ -49,11 +79,7 @@ export async function getGitStatus(repoPath: string, refreshRemote = false): Pro
   try {
     if (refreshRemote) {
       try {
-        await execFileAsync('git', ['fetch', '--quiet', '--prune'], {
-          cwd: repoPath,
-          timeout: 15000,
-          windowsHide: true,
-        })
+        await refreshGitRemote(repoPath)
       } catch {
         // A network failure must not hide the local Git status.
       }
@@ -188,11 +214,7 @@ export async function getGitBranches(
 
   if (refreshRemote) {
     try {
-      await execFileAsync('git', ['fetch', '--quiet', '--prune'], {
-        cwd: repoPath,
-        timeout: 15000,
-        windowsHide: true,
-      })
+      await refreshGitRemote(repoPath)
     } catch {
       // Keep the locally known refs available when the network is offline.
     }
@@ -381,7 +403,7 @@ async function syncGitUnlocked(repoPath: string): Promise<SyncResult> {
 export async function syncGit(repoPath: string): Promise<SyncResult> {
   let lockKey: string
   try {
-    lockKey = getSyncLockKey(repoPath)
+    lockKey = await getRepositoryLockKey(repoPath)
   } catch {
     return {
       success: false,
@@ -389,42 +411,19 @@ export async function syncGit(repoPath: string): Promise<SyncResult> {
     }
   }
 
-  const previous = mutationLocks.get(lockKey)
-  const current = (previous ?? Promise.resolve())
-    .catch(() => undefined)
-    .then(() => syncGitUnlocked(repoPath))
-
-  mutationLocks.set(lockKey, current)
-
-  try {
-    return await current
-  } finally {
-    if (mutationLocks.get(lockKey) === current) {
-      mutationLocks.delete(lockKey)
-    }
-  }
+  return runSerialized(lockKey, () => syncGitUnlocked(repoPath))
 }
 
 export async function switchGitBranch(repoPath: string, requestedBranch: string): Promise<SyncResult> {
   const safeBranch = validateGitBranch(requestedBranch)
   let lockKey: string
   try {
-    lockKey = getSyncLockKey(repoPath)
+    lockKey = await getRepositoryLockKey(repoPath)
   } catch {
     return { success: false, message: 'Caminho de repositório inválido.' }
   }
 
-  const previous = mutationLocks.get(lockKey)
-  const current = (previous ?? Promise.resolve())
-    .catch(() => undefined)
-    .then(() => switchGitBranchUnlocked(repoPath, safeBranch))
-
-  mutationLocks.set(lockKey, current)
-  try {
-    return await current
-  } finally {
-    if (mutationLocks.get(lockKey) === current) mutationLocks.delete(lockKey)
-  }
+  return runSerialized(lockKey, () => switchGitBranchUnlocked(repoPath, safeBranch))
 }
 
 export interface CloneGitOptions {
@@ -500,12 +499,13 @@ async function cloneGitUnlocked(options: CloneGitOptions): Promise<GitCloneResul
 }
 
 export async function cloneGitRepository(options: CloneGitOptions): Promise<GitCloneResult> {
-  const key = (() => {
+  const key = await (async () => {
     try {
-      const normalized = path.normalize(path.resolve(path.join(options.parentDir.trim(), options.folderName.trim())))
-      return process.platform === 'win32' ? normalized.toLowerCase() : normalized
+      const canonicalParent = await fs.realpath(path.resolve(options.parentDir.trim()))
+      return normalizeLockPath(path.join(canonicalParent, options.folderName.trim()))
     } catch {
-      return `${options.parentDir}/${options.folderName}`
+      const normalized = path.normalize(path.resolve(path.join(options.parentDir.trim(), options.folderName.trim())))
+      return normalizeLockPath(normalized)
     }
   })()
   const previous = cloneLocks.get(key)
@@ -522,9 +522,9 @@ export async function cloneGitRepository(options: CloneGitOptions): Promise<GitC
 
 const STASH_MESSAGE = 'devorbit: guarda automática antes de sincronizar'
 
-async function runSerialized(key: string, task: () => Promise<SyncResult>): Promise<SyncResult> {
+async function runSerialized<T>(key: string, task: () => Promise<T>): Promise<T> {
   const previous = mutationLocks.get(key)
-  const current = (previous ?? Promise.resolve({ success: true, message: '' }))
+  const current = (previous ?? Promise.resolve())
     .catch(() => undefined)
     .then(task)
   mutationLocks.set(key, current)
@@ -633,7 +633,7 @@ async function stashSwitchUnlocked(repoPath: string, requestedBranch: string): P
 export async function stashSyncGit(repoPath: string): Promise<SyncResult> {
   let key: string
   try {
-    key = getSyncLockKey(repoPath)
+    key = await getRepositoryLockKey(repoPath)
   } catch {
     return { success: false, message: 'Caminho de repositório inválido.' }
   }
@@ -644,33 +644,113 @@ export async function stashSwitchGitBranch(repoPath: string, requestedBranch: st
   const safeBranch = validateGitBranch(requestedBranch)
   let key: string
   try {
-    key = getSyncLockKey(repoPath)
+    key = await getRepositoryLockKey(repoPath)
   } catch {
     return { success: false, message: 'Caminho de repositório inválido.' }
   }
   return runSerialized(key, () => stashSwitchUnlocked(repoPath, safeBranch))
 }
 
-export async function getGitChangesSummary(repoPath: string): Promise<string[]> {
-  try {
-    const { stdout } = await execFileAsync('git', ['status', '--short'], {
-      cwd: repoPath,
-      timeout: 5000,
-      windowsHide: true,
+interface GitStatusChange extends GitChange {
+  /** Every path represented by this status entry, including rename/copy pairs. */
+  paths: string[]
+}
+
+function parseGitStatusPorcelainZ(stdout: string): GitStatusChange[] {
+  const fields = stdout.split('\0')
+  const changes: GitStatusChange[] = []
+
+  for (let index = 0; index < fields.length; index += 1) {
+    const record = fields[index]
+    if (!record) continue
+    if (record.length < 4 || record[2] !== ' ') {
+      throw new Error('Resposta de status do Git inválida.')
+    }
+
+    const status = record.slice(0, 2)
+    const changePath = record.slice(3)
+    if (!changePath) throw new Error('Resposta de status do Git inválida.')
+
+    const isRenameOrCopy = status.includes('R') || status.includes('C')
+    const relatedPath = isRenameOrCopy ? fields[++index] : undefined
+    if (isRenameOrCopy && !relatedPath) {
+      throw new Error('Resposta de status do Git inválida.')
+    }
+
+    const paths = relatedPath ? [changePath, relatedPath] : [changePath]
+    changes.push({
+      path: changePath,
+      status,
+      ...(relatedPath ? { stagingPaths: paths } : {}),
+      paths,
     })
-    return stdout
-      .split(/\r?\n/)
-      .map((l) => l.trim())
-      .filter(Boolean)
+  }
+
+  return changes
+}
+
+async function readGitStatusChanges(repoPath: string): Promise<GitStatusChange[]> {
+  const { stdout } = await execFileAsync('git', ['status', '--porcelain=v1', '-z'], {
+    cwd: repoPath,
+    timeout: 8000,
+    windowsHide: true,
+  })
+  return parseGitStatusPorcelainZ(stdout)
+}
+
+export async function getGitChanges(repoPath: string): Promise<GitChange[]> {
+  try {
+    return (await readGitStatusChanges(repoPath))
+      .map(({ paths: _paths, ...change }) => change)
       .slice(0, 20)
   } catch {
     return []
   }
 }
 
-export async function pushGit(
+export async function getGitChangesSummary(repoPath: string): Promise<string[]> {
+  return (await getGitChanges(repoPath)).map((change) =>
+    `${change.status} ${change.stagingPaths?.join(' -> ') || change.path}`
+  )
+}
+
+function isSafeGitPathspec(pathspec: unknown): pathspec is string {
+  if (typeof pathspec !== 'string' || pathspec.length === 0 || pathspec.trim().length === 0) return false
+  if (pathspec.length > 4096) return false
+  if (/^[A-Za-z]:/.test(pathspec) || pathspec.startsWith('/') || pathspec.startsWith('\\')) return false
+  if (pathspec.startsWith('-') || pathspec.startsWith(':') || pathspec.startsWith('!') || pathspec.startsWith('^')) return false
+  if (Array.from(pathspec).some((character) =>
+    character === '\0' || character === '\r' || character === '\n' ||
+    '\\:*?[]'.includes(character)
+  )) return false
+  if (pathspec.includes('//')) return false
+  if (pathspec.split('/').some((part) => part === '.' || part === '..')) return false
+  return true
+}
+
+function validateSelectedPaths(options: GitPushOptions | undefined): string[] | null {
+  const requestedPaths = options?.selectedPaths
+  if (!Array.isArray(requestedPaths)) return null
+
+  const selectedPaths: string[] = []
+  for (const requestedPath of requestedPaths) {
+    if (!isSafeGitPathspec(requestedPath)) return null
+    if (!selectedPaths.includes(requestedPath)) selectedPaths.push(requestedPath)
+  }
+  return selectedPaths.length > 0 ? selectedPaths : null
+}
+
+function formatGitChanges(changes: GitStatusChange[]): string {
+  return changes
+    .map((change) => `${change.status} ${change.paths.join(' -> ')}`)
+    .join('\n')
+    .slice(0, 4000)
+}
+
+async function pushGitUnlocked(
   repoPath: string,
-  commitMessage?: string
+  commitMessage?: string,
+  options?: GitPushOptions
 ): Promise<SyncResult> {
   const isRepo = await isGitRepository(repoPath)
   if (!isRepo) {
@@ -681,9 +761,42 @@ export async function pushGit(
   }
 
   try {
-    // 1. Se foi informada mensagem de commit, adiciona todos os arquivos e commita
+    // A push without a commit message only sends commits that already exist.
+    // Keep this path free of status/staging calls so it cannot alter the index.
     if (commitMessage && commitMessage.trim()) {
-      await execFileAsync('git', ['add', '-A'], {
+      const selectedPaths = validateSelectedPaths(options)
+      if (!selectedPaths) {
+        return {
+          success: false,
+          message: 'Commit recusado: selecione ao menos um caminho listado nas alterações atuais.',
+        }
+      }
+
+      const currentChanges = await readGitStatusChanges(repoPath)
+      const selectedPathSet = new Set(selectedPaths)
+      const currentPathSet = new Set(currentChanges.flatMap((change) => change.paths))
+      if (selectedPaths.some((selectedPath) => !currentPathSet.has(selectedPath))) {
+        return {
+          success: false,
+          message: 'Commit recusado: os caminhos selecionados não estão mais listados nas alterações atuais.',
+          output: formatGitChanges(currentChanges),
+        }
+      }
+
+      const stagedOutsideSelection = currentChanges.filter((change) => {
+        const indexStatus = change.status[0]
+        const isStaged = indexStatus !== ' ' && indexStatus !== '?'
+        return isStaged && !change.paths.some((changePath) => selectedPathSet.has(changePath))
+      })
+      if (stagedOutsideSelection.length > 0) {
+        return {
+          success: false,
+          message: 'Commit recusado: existem alterações preparadas fora dos caminhos selecionados.',
+          output: formatGitChanges(stagedOutsideSelection),
+        }
+      }
+
+      await execFileAsync('git', ['add', '--', ...selectedPaths], {
         cwd: repoPath,
         timeout: 15000,
         windowsHide: true,
@@ -761,6 +874,20 @@ export async function pushGit(
       output: error.stderr || error.stdout,
     }
   }
+}
+
+export async function pushGit(
+  repoPath: string,
+  commitMessage?: string,
+  options?: GitPushOptions
+): Promise<SyncResult> {
+  let lockKey: string
+  try {
+    lockKey = await getRepositoryLockKey(repoPath)
+  } catch {
+    return { success: false, message: 'Caminho de repositório inválido.' }
+  }
+  return runSerialized(lockKey, () => pushGitUnlocked(repoPath, commitMessage, options))
 }
 
 async function finalizeGitProjectUnlocked(repoPath: string, allowRecreatableIgnored: boolean): Promise<SyncResult> {
@@ -925,6 +1052,6 @@ export async function finalizeGitProject(
   options: { allowRecreatableIgnored?: boolean } = {}
 ): Promise<SyncResult> {
   let key: string
-  try { key = getSyncLockKey(repoPath) } catch { return { success: false, message: 'Caminho de repositório inválido.' } }
+  try { key = await getRepositoryLockKey(repoPath) } catch { return { success: false, message: 'Caminho de repositório inválido.' } }
   return runSerialized(key, () => finalizeGitProjectUnlocked(repoPath, options.allowRecreatableIgnored === true))
 }

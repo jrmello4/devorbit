@@ -237,13 +237,16 @@ const api = {
     record('switchGitBranch', projectPath, branch)
     return syncResult('Fixture branch switch')
   },
-  pushGit: async (projectPath, commitMessage) => {
-    record('pushGit', projectPath, commitMessage)
+  pushGit: async (projectPath, commitMessage, options) => {
+    record('pushGit', projectPath, commitMessage, options)
     return syncResult('Fixture push')
   },
   getGitChanges: async (projectPath) => {
     record('getGitChanges', projectPath)
-    return ['src/fixture.ts', 'README.md']
+    return [
+      { path: 'src/fixture.ts', status: ' M' },
+      { path: 'README.md', status: '??' },
+    ]
   },
   syncAllGit: async () => {
     record('syncAllGit')

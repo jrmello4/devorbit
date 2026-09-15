@@ -1,119 +1,133 @@
 import electron from 'electron'
+import type { IpcRendererEvent } from 'electron'
 const { contextBridge, ipcRenderer } = electron
-import type { DevOrbitAPI, AppConfig, SyncResult } from '../renderer/src/types'
+import type {
+  AppConfig,
+  DevOrbitAPI,
+  IpcEventChannel,
+  IpcInvokeChannel,
+  IpcSendChannel,
+  SyncProgress,
+  TerminalEvent,
+  WebPanelEvent,
+  UpdateState,
+  CodexAuthProgress,
+} from '../renderer/src/types'
+
+const invoke = <T>(channel: IpcInvokeChannel, ...args: unknown[]): Promise<T> =>
+  ipcRenderer.invoke(channel, ...args) as Promise<T>
+
+function subscribe<T>(channel: IpcEventChannel, callback: (payload: T) => void): () => void {
+  const handler = (_event: IpcRendererEvent, payload: T) => callback(payload)
+  ipcRenderer.on(channel, handler)
+  return () => ipcRenderer.removeListener(channel, handler)
+}
+
+const send = (channel: IpcSendChannel, ...args: unknown[]): void => {
+  ipcRenderer.send(channel, ...args)
+}
 
 const api: DevOrbitAPI = {
-  getProjects: () => ipcRenderer.invoke('devorbit:getProjects'),
-  refreshProjects: () => ipcRenderer.invoke('devorbit:refreshProjects'),
-  getOtherDirs: () => ipcRenderer.invoke('devorbit:getOtherDirs'),
-  listProjectFiles: (projectPath: string) => ipcRenderer.invoke('devorbit:listProjectFiles', projectPath),
-  readProjectFile: (projectPath: string, relativePath: string) => ipcRenderer.invoke('devorbit:readProjectFile', projectPath, relativePath),
-  saveProjectFile: (projectPath: string, relativePath: string, content: string) => ipcRenderer.invoke('devorbit:saveProjectFile', projectPath, relativePath, content),
-  syncGit: (projectPath: string) => ipcRenderer.invoke('devorbit:syncGit', projectPath),
+  getProjects: () => invoke('devorbit:getProjects'),
+  refreshProjects: () => invoke('devorbit:refreshProjects'),
+  getOtherDirs: () => invoke('devorbit:getOtherDirs'),
+  listProjectFiles: (projectPath: string) => invoke('devorbit:listProjectFiles', projectPath),
+  readProjectFile: (projectPath: string, relativePath: string) => invoke('devorbit:readProjectFile', projectPath, relativePath),
+  saveProjectFile: (projectPath: string, relativePath: string, content: string) => invoke('devorbit:saveProjectFile', projectPath, relativePath, content),
+  syncGit: (projectPath: string) => invoke('devorbit:syncGit', projectPath),
   getGitBranches: (projectPath: string, refreshRemote?: boolean) =>
-    ipcRenderer.invoke('devorbit:getGitBranches', projectPath, refreshRemote),
+    invoke('devorbit:getGitBranches', projectPath, refreshRemote),
   switchGitBranch: (projectPath: string, branch: string) =>
-    ipcRenderer.invoke('devorbit:switchGitBranch', projectPath, branch),
+    invoke('devorbit:switchGitBranch', projectPath, branch),
   stashSyncGit: (projectPath: string) =>
-    ipcRenderer.invoke('devorbit:stashSyncGit', projectPath),
+    invoke('devorbit:stashSyncGit', projectPath),
   stashSwitchGitBranch: (projectPath: string, branch: string) =>
-    ipcRenderer.invoke('devorbit:stashSwitchGitBranch', projectPath, branch),
-  pushGit: (projectPath: string, commitMessage?: string) =>
-    ipcRenderer.invoke('devorbit:pushGit', projectPath, commitMessage),
+    invoke('devorbit:stashSwitchGitBranch', projectPath, branch),
+  pushGit: (projectPath: string, commitMessage?: string, options?) => options === undefined
+    ? invoke('devorbit:pushGit', projectPath, commitMessage)
+    : invoke('devorbit:pushGit', projectPath, commitMessage, options),
   getGitChanges: (projectPath: string) =>
-    ipcRenderer.invoke('devorbit:getGitChanges', projectPath),
-  syncAllGit: () => ipcRenderer.invoke('devorbit:syncAllGit'),
+    invoke('devorbit:getGitChanges', projectPath),
+  syncAllGit: () => invoke('devorbit:syncAllGit'),
   onSyncProgress: (callback) => {
-    const handler = (_event: any, progress: any) => callback(progress)
-    ipcRenderer.on('devorbit:syncProgress', handler)
-    return () => ipcRenderer.removeListener('devorbit:syncProgress', handler)
+    return subscribe<SyncProgress>('devorbit:syncProgress', callback)
   },
   getGitInitPreview: (projectPath: string, branch?: string) =>
-    ipcRenderer.invoke('devorbit:getGitInitPreview', projectPath, branch),
+    invoke('devorbit:getGitInitPreview', projectPath, branch),
   initGitRepository: (projectPath, options) =>
-    ipcRenderer.invoke('devorbit:initGitRepository', projectPath, options),
+    invoke('devorbit:initGitRepository', projectPath, options),
   cloneGitRepository: (input) =>
-    ipcRenderer.invoke('devorbit:cloneGitRepository', input),
+    invoke('devorbit:cloneGitRepository', input),
   restoreManagedProject: (projectPath: string) =>
-    ipcRenderer.invoke('devorbit:restoreManagedProject', projectPath),
+    invoke('devorbit:restoreManagedProject', projectPath),
   finalizeManagedProject: (projectPath: string, options?: { allowRecreatableIgnored?: boolean }) =>
-    ipcRenderer.invoke('devorbit:finalizeManagedProject', projectPath, options),
+    invoke('devorbit:finalizeManagedProject', projectPath, options),
   startTerminal: (id: string, projectPath: string) =>
-    ipcRenderer.invoke('devorbit:startTerminal', id, projectPath),
+    invoke('devorbit:startTerminal', id, projectPath),
   startCodexTerminal: (id, projectPath, account, cols, rows) =>
-    ipcRenderer.invoke('devorbit:startCodexTerminal', id, projectPath, account, cols, rows),
+    invoke('devorbit:startCodexTerminal', id, projectPath, account, cols, rows),
   resizeTerminal: (id, cols, rows) =>
-    ipcRenderer.invoke('devorbit:resizeTerminal', id, cols, rows),
+    invoke('devorbit:resizeTerminal', id, cols, rows),
   writeTerminal: (id: string, input: string) =>
-    ipcRenderer.invoke('devorbit:writeTerminal', id, input),
+    invoke('devorbit:writeTerminal', id, input),
   stopTerminal: (id: string) =>
-    ipcRenderer.invoke('devorbit:stopTerminal', id),
+    invoke('devorbit:stopTerminal', id),
   onTerminalEvent: (callback) => {
-    const handler = (_event: any, terminalEvent: any) => callback(terminalEvent)
-    ipcRenderer.on('devorbit:terminalEvent', handler)
-    return () => ipcRenderer.removeListener('devorbit:terminalEvent', handler)
+    return subscribe<TerminalEvent>('devorbit:terminalEvent', callback)
   },
   navigateWeb: (url: string) =>
-    ipcRenderer.invoke('devorbit:navigateWeb', url),
+    invoke('devorbit:navigateWeb', url),
   getWebState: () =>
-    ipcRenderer.invoke('devorbit:getWebState'),
-  goBackWeb: () => ipcRenderer.invoke('devorbit:goBackWeb'),
-  goForwardWeb: () => ipcRenderer.invoke('devorbit:goForwardWeb'),
-  reloadWeb: () => ipcRenderer.invoke('devorbit:reloadWeb'),
+    invoke('devorbit:getWebState'),
+  goBackWeb: () => invoke('devorbit:goBackWeb'),
+  goForwardWeb: () => invoke('devorbit:goForwardWeb'),
+  reloadWeb: () => invoke('devorbit:reloadWeb'),
   setWebVisible: (visible: boolean) =>
-    ipcRenderer.invoke('devorbit:setWebVisible', visible),
-  disposeWebPanel: () => ipcRenderer.invoke('devorbit:disposeWebPanel'),
+    invoke('devorbit:setWebVisible', visible),
+  disposeWebPanel: () => invoke('devorbit:disposeWebPanel'),
   setWebBounds: (bounds) =>
-    ipcRenderer.invoke('devorbit:setWebBounds', bounds),
+    invoke('devorbit:setWebBounds', bounds),
   onWebEvent: (callback) => {
-    const handler = (_event: any, webEvent: any) => callback(webEvent)
-    ipcRenderer.on('devorbit:webEvent', handler)
-    return () => ipcRenderer.removeListener('devorbit:webEvent', handler)
+    return subscribe<WebPanelEvent>('devorbit:webEvent', callback)
   },
   launchTool: (tool, projectPath, options) =>
-    ipcRenderer.invoke('devorbit:launchTool', tool, projectPath, options),
+    invoke('devorbit:launchTool', tool, projectPath, options),
   copyProjectContext: (projectPath) =>
-    ipcRenderer.invoke('devorbit:copyProjectContext', projectPath),
-  getConfig: () => ipcRenderer.invoke('devorbit:getConfig'),
-  getUpdateState: () => ipcRenderer.invoke('devorbit:getUpdateState'),
-  downloadUpdate: () => ipcRenderer.invoke('devorbit:downloadUpdate'),
-  installUpdate: () => ipcRenderer.invoke('devorbit:installUpdate'),
+    invoke('devorbit:copyProjectContext', projectPath),
+  getConfig: () => invoke('devorbit:getConfig'),
+  getUpdateState: () => invoke('devorbit:getUpdateState'),
+  downloadUpdate: () => invoke('devorbit:downloadUpdate'),
+  installUpdate: () => invoke('devorbit:installUpdate'),
   onUpdateStatus: (callback) => {
-    const handler = (_event: any, state: any) => callback(state)
-    ipcRenderer.on('devorbit:updateStatus', handler)
-    return () => ipcRenderer.removeListener('devorbit:updateStatus', handler)
+    return subscribe<UpdateState>('devorbit:updateStatus', callback)
   },
-  saveConfig: (config: Partial<AppConfig>) => ipcRenderer.invoke('devorbit:saveConfig', config),
-  exportConfig: () => ipcRenderer.invoke('devorbit:exportConfig'),
-  importConfig: () => ipcRenderer.invoke('devorbit:importConfig'),
-  selectDirectory: () => ipcRenderer.invoke('devorbit:selectDirectory'),
-  testToolPath: (toolPath: string) => ipcRenderer.invoke('devorbit:testToolPath', toolPath),
-  getToolHealth: () => ipcRenderer.invoke('devorbit:getToolHealth'),
+  saveConfig: (config: Partial<AppConfig>) => invoke('devorbit:saveConfig', config),
+  exportConfig: () => invoke('devorbit:exportConfig'),
+  importConfig: () => invoke('devorbit:importConfig'),
+  selectDirectory: () => invoke('devorbit:selectDirectory'),
+  testToolPath: (toolPath: string) => invoke('devorbit:testToolPath', toolPath),
+  getToolHealth: () => invoke('devorbit:getToolHealth'),
   windowControl: (action: 'minimize' | 'maximize' | 'close') =>
-    ipcRenderer.send('devorbit:windowControl', action),
-  getCodexAuthStatus: () => ipcRenderer.invoke('devorbit:getCodexAuthStatus'),
-  startCodexLogin: (account) => ipcRenderer.invoke('devorbit:startCodexLogin', account),
-  cancelCodexLogin: () => ipcRenderer.invoke('devorbit:cancelCodexLogin'),
+    send('devorbit:windowControl', action),
+  getCodexAuthStatus: () => invoke('devorbit:getCodexAuthStatus'),
+  startCodexLogin: (account) => invoke('devorbit:startCodexLogin', account),
+  cancelCodexLogin: () => invoke('devorbit:cancelCodexLogin'),
   onCodexAuthProgress: (callback) => {
-    const handler = (_event: any, progress: any) => callback(progress)
-    ipcRenderer.on('devorbit:codexAuthProgress', handler)
-    return () => {
-      ipcRenderer.removeListener('devorbit:codexAuthProgress', handler)
-    }
+    return subscribe<CodexAuthProgress>('devorbit:codexAuthProgress', callback)
   },
   getProjectMemory: (projectPath) =>
-    ipcRenderer.invoke('devorbit:getProjectMemory', projectPath),
+    invoke('devorbit:getProjectMemory', projectPath),
   saveProjectMemory: (projectPath, content) =>
-    ipcRenderer.invoke('devorbit:saveProjectMemory', projectPath, content),
+    invoke('devorbit:saveProjectMemory', projectPath, content),
   generateMemoryFromGit: (projectPath) =>
-    ipcRenderer.invoke('devorbit:generateMemoryFromGit', projectPath),
-  getUsageState: () => ipcRenderer.invoke('devorbit:getUsageState'),
-  getRealUsage: (force?: boolean) => ipcRenderer.invoke('devorbit:getRealUsage', force),
-  incrementUsage: (target) => ipcRenderer.invoke('devorbit:incrementUsage', target),
-  decrementUsage: (target) => ipcRenderer.invoke('devorbit:decrementUsage', target),
-  resetUsage: (target) => ipcRenderer.invoke('devorbit:resetUsage', target),
+    invoke('devorbit:generateMemoryFromGit', projectPath),
+  getUsageState: () => invoke('devorbit:getUsageState'),
+  getRealUsage: (force?: boolean) => invoke('devorbit:getRealUsage', force),
+  incrementUsage: (target) => invoke('devorbit:incrementUsage', target),
+  decrementUsage: (target) => invoke('devorbit:decrementUsage', target),
+  resetUsage: (target) => invoke('devorbit:resetUsage', target),
   updateUsageLimits: (account, limit, windowHours) =>
-    ipcRenderer.invoke('devorbit:updateUsageLimits', account, limit, windowHours),
+    invoke('devorbit:updateUsageLimits', account, limit, windowHours),
 }
 
 contextBridge.exposeInMainWorld('devorbit', api)

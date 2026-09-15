@@ -6,12 +6,12 @@ import fs from 'node:fs/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { exportConfigJson, importConfigJson, loadConfig, saveConfig } from './config'
 import { listAllNonProjectDirs, scanAllProjects } from './scanner'
-import { syncGit, getGitBranches, switchGitBranch, pushGit, getGitChangesSummary, cloneGitRepository, stashSyncGit, stashSwitchGitBranch, finalizeGitProject, getGitRemoteUrl } from './git'
+import { syncGit, getGitBranches, switchGitBranch, pushGit, getGitChanges, cloneGitRepository, stashSyncGit, stashSwitchGitBranch, finalizeGitProject, getGitRemoteUrl } from './git'
 import { getGitInitPreview, initGitRepository } from './git-init'
 import { ensureAccountDirectories, getAccountLabel, hasValidCodexAuth, resolveCodexCommand } from './account-profiles'
 import { launchTool, copyProjectContext, getToolHealth } from './launcher'
 import { listProjectFiles, readProjectFile, saveProjectFile } from './project-files'
-import { onTerminalEvent, resizeTerminal, startTerminal, stopAllTerminals, stopTerminal, writeTerminal } from './terminal-session'
+import { onTerminalEvent, resizeTerminal, startTerminal, stopAllTerminals, stopTerminal, writeTerminal, type TerminalEvent } from './terminal-session'
 import { attachWebPanel, disposeWebPanel, getWebState, goBackWeb, goForwardWeb, navigateWeb, onWebPanelEvent, reloadWeb, setWebBounds, setWebVisible } from './web-panel'
 import {
   checkCodexAuthStatus,
@@ -35,7 +35,13 @@ import {
 } from './usage'
 import { getRealUsage } from './usage-real'
 import { downloadUpdate, getUpdateState, initializeUpdater, installUpdate } from './updater'
-import type { AppConfig, ManagedProject, SyncResult } from '../renderer/src/types'
+import type {
+  AppConfig,
+  IpcInvokeChannel,
+  IpcSendChannel,
+  ManagedProject,
+  SyncResult,
+} from '../renderer/src/types'
 import {
   assertTrustedIpcSender,
   canonicalizeExistingDirectory,
@@ -51,6 +57,7 @@ import {
   validateProjectDirs,
   validateUsageTarget,
   validateWindowAction,
+  validateGitPushOptions,
   isTrustedRendererUrl,
   type IpcSenderLike,
 } from './validation'
@@ -71,11 +78,30 @@ let mainWindow: BrowserWindowType | null = null
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL)
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 let managedConfigQueue: Promise<void> = Promise.resolve()
-onTerminalEvent((event) => {
-  mainWindow?.webContents.send('devorbit:terminalEvent', event)
-})
+let terminalLifecycleGeneration = 0
+
+function invalidateTerminalLifecycle(): void {
+  terminalLifecycleGeneration += 1
+  stopAllTerminals()
+}
+
+function assertTerminalLifecycle(generation: number): void {
+  if (generation !== terminalLifecycleGeneration) {
+    throw new Error('A janela do DevOrbit foi encerrada antes de iniciar o terminal.')
+  }
+}
+
+function sendTerminalEvent(event: TerminalEvent): void {
+  const window = mainWindow
+  if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return
+  window.webContents.send('devorbit:terminalEvent', event)
+}
+
+onTerminalEvent(sendTerminalEvent)
 onWebPanelEvent((event) => {
-  mainWindow?.webContents.send('devorbit:webEvent', event)
+  const window = mainWindow
+  if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return
+  window.webContents.send('devorbit:webEvent', event)
 })
 
 async function validateCloneParent(input: unknown): Promise<string> {
@@ -143,6 +169,14 @@ function createWindow() {
     },
   })
 
+  const window = mainWindow
+  window.on('close', () => {
+    invalidateTerminalLifecycle()
+  })
+  window.on('closed', () => {
+    if (mainWindow === window) mainWindow = null
+  })
+
   mainWindow.show()
   mainWindow.focus()
 
@@ -152,6 +186,9 @@ function createWindow() {
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   mainWindow.webContents.on('will-navigate', (event, url) => {
     if (!isTrustedRendererUrl(url, PRODUCTION_RENDERER_URL)) event.preventDefault()
+  })
+  mainWindow.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
+    if (isMainFrame && !isInPlace) invalidateTerminalLifecycle()
   })
   mainWindow.webContents.on('will-attach-webview', (event) => {
     event.preventDefault()
@@ -170,6 +207,7 @@ function createWindow() {
 
   mainWindow.webContents.on('render-process-gone', (_event: any, details: any) => {
     console.error('[Renderer Gone]', details)
+    invalidateTerminalLifecycle()
   })
 
   mainWindow.webContents.on('before-input-event', (_event: any, input: any) => {
@@ -203,7 +241,9 @@ if (!hasSingleInstanceLock) {
     setupIpcHandlers()
     createWindow()
     initializeUpdater((state) => {
-      mainWindow?.webContents.send('devorbit:updateStatus', state)
+      const window = mainWindow
+      if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return
+      window.webContents.send('devorbit:updateStatus', state)
     })
 
     app.on('activate', () => {
@@ -213,7 +253,7 @@ if (!hasSingleInstanceLock) {
 }
 
 app.on('before-quit', () => {
-  stopAllTerminals()
+  invalidateTerminalLifecycle()
   disposeWebPanel()
 })
 
@@ -224,7 +264,7 @@ app.on('window-all-closed', () => {
 })
 
 function registerIpcHandler(
-  channel: string,
+  channel: IpcInvokeChannel,
   handler: (event: IpcSenderLike, ...args: any[]) => unknown,
 ): void {
   ipcMain.handle(channel, async (event, ...args) => {
@@ -234,7 +274,7 @@ function registerIpcHandler(
 }
 
 function registerIpcListener(
-  channel: string,
+  channel: IpcSendChannel,
   handler: (event: IpcSenderLike, ...args: any[]) => unknown,
 ): void {
   ipcMain.on(channel, (event, ...args) => {
@@ -300,17 +340,22 @@ function setupIpcHandlers() {
   // Subir alterações para o GitHub (Commit & Push)
   registerIpcHandler(
     'devorbit:pushGit',
-    async (_event, projectPath: string, commitMessage?: string): Promise<SyncResult> => {
+    async (_event, projectPath: string, commitMessage?: unknown, options?: unknown): Promise<SyncResult> => {
       if (commitMessage !== undefined && typeof commitMessage !== 'string') {
         throw new Error('Mensagem de commit inválida.')
       }
-      return await pushGit(await validateProjectPath(projectPath), commitMessage)
+      const safeOptions = validateGitPushOptions(options)
+      return await pushGit(
+        await validateProjectPath(projectPath),
+        commitMessage,
+        safeOptions,
+      )
     }
   )
 
   // Obter arquivos alterados recentemente
-  registerIpcHandler('devorbit:getGitChanges', async (_event, projectPath: string): Promise<string[]> => {
-    return await getGitChangesSummary(await validateProjectPath(projectPath))
+  registerIpcHandler('devorbit:getGitChanges', async (_event, projectPath: string) => {
+    return await getGitChanges(await validateProjectPath(projectPath))
   })
 
   // Inicializar e vincular um projeto que ainda não possui Git
@@ -423,12 +468,6 @@ function setupIpcHandlers() {
         const project = repositories[index]
         try {
           orderedResults[index] = [project.path, await syncGit(project.path)]
-          completed += 1
-          mainWindow?.webContents.send('devorbit:syncProgress', {
-            path: project.path,
-            done: completed,
-            total: repositories.length,
-          })
         } catch (error: unknown) {
           // Keep the batch useful even if an unexpected error escapes a single
           // repository operation. The renderer can then report partial failure.
@@ -437,6 +476,13 @@ function setupIpcHandlers() {
             success: false,
             message: `Erro ao sincronizar: ${message}`,
           }]
+        } finally {
+          completed += 1
+          mainWindow?.webContents.send('devorbit:syncProgress', {
+            path: project.path,
+            done: completed,
+            total: repositories.length,
+          })
         }
       }
     }
@@ -480,7 +526,10 @@ function setupIpcHandlers() {
 
   registerIpcHandler('devorbit:startTerminal', async (_event, id: unknown, projectPath: string) => {
     if (typeof id !== 'string' || !/^[a-z0-9_-]{1,64}$/i.test(id)) throw new Error('Identificador de terminal inválido.')
-    return await startTerminal(id, await validateProjectPath(projectPath))
+    const generation = terminalLifecycleGeneration
+    const safePath = await validateProjectPath(projectPath)
+    assertTerminalLifecycle(generation)
+    return await startTerminal(id, safePath)
   })
 
   registerIpcHandler('devorbit:startCodexTerminal', async (
@@ -492,9 +541,11 @@ function setupIpcHandlers() {
     rows?: unknown,
   ) => {
     if (typeof id !== 'string' || !/^[a-z0-9_-]{1,64}$/i.test(id)) throw new Error('Identificador de terminal inválido.')
+    const generation = terminalLifecycleGeneration
     const safeAccount = validateCodexAccount(account)
     const safePath = await validateProjectPath(projectPath)
     const config = await loadConfig()
+    assertTerminalLifecycle(generation)
     const { codexHome } = await ensureAccountDirectories(safeAccount)
     const accountLabel = getAccountLabel(safeAccount, {
       account1: config.chatGptAccount1Name,
@@ -512,6 +563,7 @@ function setupIpcHandlers() {
     const safeCols = cols === undefined ? 120 : validateFiniteNumber(cols, 'Colunas do terminal', { minimum: 40, integer: true })
     const safeRows = rows === undefined ? 32 : validateFiniteNumber(rows, 'Linhas do terminal', { minimum: 12, integer: true })
     const codexCommand = await resolveCodexCommand(config.customPaths.codex)
+    assertTerminalLifecycle(generation)
     if (/[%!]/.test(codexCommand)) {
       return { success: false, message: 'O caminho configurado do Codex contém caracteres que o terminal não pode executar com segurança.' }
     }
@@ -524,6 +576,7 @@ function setupIpcHandlers() {
     const args = isScript ? ['/d', '/q', '/k', 'call "' + codexCommand + '"'] : []
     let result
     try {
+      assertTerminalLifecycle(generation)
       result = await startTerminal(id, safePath, {
         command,
         args,
@@ -593,8 +646,18 @@ function setupIpcHandlers() {
       width: validateFiniteNumber(value.width, 'Largura'),
       height: validateFiniteNumber(value.height, 'Altura'),
     }
+    const contentKeys = ['contentX', 'contentY', 'contentWidth', 'contentHeight']
+    const hasContentBounds = contentKeys.some((key) => value[key] !== undefined)
+    const safeContentBounds = hasContentBounds
+      ? {
+          contentX: validateFiniteNumber(value.contentX, 'contentX'),
+          contentY: validateFiniteNumber(value.contentY, 'contentY'),
+          contentWidth: validateFiniteNumber(value.contentWidth, 'contentWidth'),
+          contentHeight: validateFiniteNumber(value.contentHeight, 'contentHeight'),
+        }
+      : undefined
     if ((safeBounds.width > 0 && safeBounds.height > 0) && mainWindow) attachWebPanel(mainWindow)
-    setWebBounds(safeBounds)
+    setWebBounds({ ...safeBounds, ...(safeContentBounds || {}) })
     return { success: true }
   })
 
@@ -765,4 +828,3 @@ function setupIpcHandlers() {
     } else if (safeAction === 'close') mainWindow.close()
   })
 }
-
