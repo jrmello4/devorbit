@@ -38,7 +38,7 @@ const labels: Record<CardKind, { label: string; icon: React.ReactNode }> = {
   browser: { label: 'Navegador do projeto', icon: <Globe size={13} /> },
   notes: { label: 'Notas e handoff', icon: <StickyNote size={13} /> },
 }
-export const WorkspaceCanvas: React.FC<{ project: Project; workbench: React.ReactNode; browser: React.ReactNode }> = ({ project, workbench, browser }) => {
+export const WorkspaceCanvas: React.FC<{ project: Project; workbench: React.ReactNode; browser?: React.ReactNode }> = ({ project, workbench, browser }) => {
   const [state, setState] = useState<StoredCanvas>(() => read(project.id))
   const [drag, setDrag] = useState<{ id: CardKind; sx: number; sy: number; card: Card } | null>(null)
   const [resize, setResize] = useState<{ id: CardKind; sx: number; sy: number; card: Card } | null>(null)
@@ -102,7 +102,7 @@ export const WorkspaceCanvas: React.FC<{ project: Project; workbench: React.Reac
   }, [resize, flushPersist, schedulePersist, updateState])
   return <div className="workspace-canvas" data-canvas-project-id={project.id}>
     <div className="workspace-canvas-grid" />
-    {state.cards.map((card) => <section key={card.id} className={'workspace-canvas-card canvas-' + card.id} data-canvas-card={card.id} style={{ left: card.x, top: card.y, width: card.width, height: card.height, zIndex: card.z }}>
+    {state.cards.filter((card) => card.id !== 'browser' || browser).map((card) => <section key={card.id} className={'workspace-canvas-card canvas-' + card.id} data-canvas-card={card.id} style={{ left: card.x, top: card.y, width: card.width, height: card.height, zIndex: card.z }}>
       <header><strong>{labels[card.id].icon}{labels[card.id].label}</strong><button data-canvas-drag-handle type="button" aria-label={'Mover ' + labels[card.id].label} onPointerDown={(event) => { event.preventDefault(); setDrag({ id: card.id, sx: event.clientX, sy: event.clientY, card }) }}><Grip size={14} /></button></header>
       <div className="workspace-canvas-card-content">{card.id === 'workbench' ? workbench : card.id === 'browser' ? browser : <textarea data-canvas-note-editor value={state.note} onChange={(event) => updateState((current) => ({ ...current, note: event.target.value.slice(0, 12000) }))} placeholder="Tarefa, decisões, próximos passos…" />}</div>
       <button className="workspace-canvas-resize" data-canvas-resize-handle type="button" aria-label={'Redimensionar ' + labels[card.id].label} onPointerDown={(event) => { event.preventDefault(); setResize({ id: card.id, sx: event.clientX, sy: event.clientY, card }) }}><Maximize2 size={12} /></button>

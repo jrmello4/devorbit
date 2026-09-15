@@ -324,7 +324,7 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
         </div>
       </header>
 
-      {isCanvas ? <WorkspaceCanvas project={project} workbench={canvasWorkbench} browser={canvasBrowser} /> : <>
+      {isCanvas ? <WorkspaceCanvas project={project} workbench={canvasWorkbench} browser={layout.webVisible ? canvasBrowser : undefined} /> : <>
       <div className="workspace-editor-stack">
         <WorkspaceEditor
           projectPath={project.path}

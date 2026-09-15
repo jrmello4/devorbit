@@ -227,6 +227,11 @@ async function inspectProjectInteractions(window, viewport) {
       Math.abs(bounds.height - Math.round(Math.max(0, bottom - top))) <= 1
   })()`, `${viewport.label} canvas web bounds`)
   recordPass(viewport.label, 'painel web nativo acompanha o viewport atual do canvas')
+  await clickButtonByText(window, (node) => node.getAttribute('title') === 'Mostrar ou ocultar navegador', `${viewport.label} canvas web hide`)
+  await waitFor(window, `document.querySelectorAll('.workspace-canvas [data-canvas-card]').length === 2 && !document.querySelector('[data-canvas-card="browser"]')`, `${viewport.label} canvas browser hidden`)
+  await clickButtonByText(window, (node) => node.getAttribute('title') === 'Mostrar ou ocultar navegador', `${viewport.label} canvas web restore`)
+  await waitFor(window, `document.querySelectorAll('.workspace-canvas [data-canvas-card]').length === 3 && document.querySelector('[data-canvas-card="browser"]')`, `${viewport.label} canvas browser restored`)
+  recordPass(viewport.label, 'botão Web remove e restaura o cartão do navegador no canvas')
   const terminalIds = await evaluate(window, `Array.from(window.__devorbitVerifyFixture.getCalls())
     .filter((call) => call.name === 'startTerminal' || call.name === 'startCodexTerminal')
     .map((call) => call.args[0])`)
