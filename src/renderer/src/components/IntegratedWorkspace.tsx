@@ -6,6 +6,7 @@ import {
 import type { Project, WebPanelEvent } from '../types'
 import { WorkspaceEditor, type WorkspaceEditorContext } from './WorkspaceEditor'
 import { WorkspaceTerminal } from './WorkspaceTerminal'
+import { WorkspaceCanvas } from './WorkspaceCanvas'
 import './IntegratedWorkspace.css'
 
 interface IntegratedWorkspaceProps {
@@ -74,6 +75,7 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
   const [isEditorDirty, setIsEditorDirty] = useState(false)
   const suppressNativeWeb = isWebSuppressed || isSuspended
   const [layout, setLayout] = useState<WorkspaceLayout>(() => readLayout(project.id))
+  const [isCanvas, setIsCanvas] = useState(() => window.localStorage.getItem('devorbit:workspace-mode:' + project.id) === 'canvas')
   const [dragging, setDragging] = useState<'browser' | 'terminal' | null>(null)
   const terminalId = useMemo(
     () => 'workspace-' + project.id.replace(/[^a-z0-9_-]/gi, '-').slice(0, 48),
@@ -127,6 +129,10 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
   useEffect(() => {
     try { window.localStorage.setItem(layoutKey(project.id), JSON.stringify(layout)) } catch { /* opcional */ }
   }, [layout, project.id])
+
+  useEffect(() => {
+    try { window.localStorage.setItem('devorbit:workspace-mode:' + project.id, isCanvas ? 'canvas' : 'grid') } catch { /* opcional */ }
+  }, [isCanvas, project.id])
 
   useEffect(() => {
     if (suppressNativeWeb) return
@@ -248,6 +254,20 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
     onClose()
   }
 
+  const canvasWorkbench = (
+    <div className="workspace-editor-stack">
+      <WorkspaceEditor projectPath={project.path} onNotify={onNotify} onContextChange={setEditorContext} onDirtyChange={(dirty) => { setIsEditorDirty(dirty); onDirtyChange?.(dirty) }} />
+      {layout.terminalVisible && <WorkspaceTerminal projectPath={project.path} terminalId={terminalId + '-c'} codexAccount={codexAccount} onNotify={onNotify} onRequestCodexAuth={onRequestCodexAuth} />}
+    </div>
+  )
+  const canvasBrowser = (
+    <aside className="workspace-browser-panel" aria-label="Pesquisa web">
+      <div className="workspace-panel-heading browser-heading"><div><strong><Globe size={14} aria-hidden="true" /> Pesquisa web</strong><span title={webTitle}>{webTitle}</span></div><div className="browser-actions"><button type="button" className="workspace-icon-button" onClick={() => void moveWebHistory(-1)} disabled={webHistory.index === 0} aria-label="Voltar na pesquisa web" title="Voltar"><ArrowLeft size={14} aria-hidden="true" /></button><button type="button" className="workspace-icon-button" onClick={() => void moveWebHistory(1)} disabled={webHistory.index >= webHistory.entries.length - 1} aria-label="Avançar na pesquisa web" title="Avançar"><ArrowRight size={14} aria-hidden="true" /></button><button type="button" className="workspace-icon-button" onClick={() => void window.devorbit.reloadWeb()} aria-label="Recarregar pesquisa web" title="Recarregar"><RefreshCw size={14} aria-hidden="true" /></button></div></div>
+      <form className="workspace-browser-form" onSubmit={(event) => void navigateBrowser(event)}><label className="sr-only" htmlFor="workspace-canvas-web-url">Endereço da página web</label><input id="workspace-canvas-web-url" value={webUrl} onChange={(event) => setWebUrl(event.target.value)} spellCheck={false} autoComplete="off" /><button type="submit" className="workspace-send-button" aria-label="Navegar" title="Navegar"><Check size={14} aria-hidden="true" /></button></form>
+      <div ref={webViewportRef} className="workspace-web-viewport">{webError && <div className="workspace-web-message"><AlertCircle size={18} aria-hidden="true" /><strong>Não foi possível carregar</strong><span>{webError}</span></div>}</div>
+    </aside>
+  )
+
   return (
     <main
       className={'integrated-workspace' + (dragging ? ' is-resizing is-resizing-' + dragging : '')}
@@ -263,6 +283,9 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
           <div><strong>{project.name}</strong><span title={project.path}>{project.path}</span></div>
         </div>
         <div className="integrated-toolbar-actions">
+          <button type="button" className={'workspace-tool-button' + (isCanvas ? ' active' : '')} onClick={() => setIsCanvas((current) => !current)} aria-pressed={isCanvas} aria-label={isCanvas ? 'Voltar ao layout integrado' : 'Abrir canvas'} title={isCanvas ? 'Voltar ao layout integrado' : 'Abrir canvas'}>
+            <Code2 size={14} aria-hidden="true" /><span>{isCanvas ? 'Layout' : 'Canvas'}</span>
+          </button>
           <button type="button" className={'workspace-tool-button' + (layout.terminalVisible ? ' active' : '')} onClick={() => setLayout((current) => ({ ...current, terminalVisible: !current.terminalVisible }))} aria-pressed={layout.terminalVisible} title="Mostrar ou ocultar terminal">
             <Terminal size={14} aria-hidden="true" /><span>Terminal</span>
           </button>
@@ -278,6 +301,7 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
         </div>
       </header>
 
+      {isCanvas ? <WorkspaceCanvas project={project} workbench={canvasWorkbench} browser={canvasBrowser} /> : <>
       <div className="workspace-editor-stack">
         <WorkspaceEditor
           projectPath={project.path}
@@ -327,6 +351,7 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
           <button type="button" className="workspace-resize-handle vertical" onPointerDown={(event) => startDrag('browser', event)} aria-label="Redimensionar pesquisa web" title="Arraste para redimensionar a pesquisa web"><GripVertical size={15} aria-hidden="true" /></button>
         </>
       )}
+      </>}
     </main>
   )
 }
