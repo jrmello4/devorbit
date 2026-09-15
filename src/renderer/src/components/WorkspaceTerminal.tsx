@@ -36,12 +36,25 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
   const completedTaskRef = useRef<string | null>(null)
   const deliveringTaskRef = useRef<string | null>(null)
   const reportedResultsRef = useRef(new Set<string>())
+  // Every start replaces the PTY behind this terminal id. Keep a local token so
+  // a late response from the initial CMD startup cannot repaint a newer Codex
+  // session as a shell session.
+  const terminalStartTokenRef = useRef(0)
+  const terminalModeRef = useRef<TerminalMode>('shell')
+  const onNotifyRef = useRef(onNotify)
+  const onRequestCodexAuthRef = useRef(onRequestCodexAuth)
+  const onAgentResultRef = useRef(onAgentResult)
+  onNotifyRef.current = onNotify
+  onRequestCodexAuthRef.current = onRequestCodexAuth
+  onAgentResultRef.current = onAgentResult
   const [terminalState, setTerminalState] = useState<TerminalState>('starting')
   const [terminalMode, setTerminalMode] = useState<TerminalMode>('shell')
   const [isStartingCodex, setIsStartingCodex] = useState(false)
   const [lastDetectedUrl, setLastDetectedUrl] = useState('')
 
   const startShell = useCallback(async () => {
+    const startToken = ++terminalStartTokenRef.current
+    terminalModeRef.current = 'shell'
     setTerminalMode('shell')
     setTerminalState('starting')
     try {
@@ -49,20 +62,25 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
         terminalId,
         projectPath,
       )
-      terminalRef.current?.clear()
-      terminalRef.current?.writeln('\x1b[90mDevOrbit terminal PTY pronto.\x1b[0m')
-      setTerminalState('ready')
+      if (startToken === terminalStartTokenRef.current) {
+        terminalRef.current?.clear()
+        terminalRef.current?.writeln('\x1b[90mDevOrbit terminal PTY pronto.\x1b[0m')
+        setTerminalState('ready')
+      }
       return result
     } catch (error) {
+      if (startToken !== terminalStartTokenRef.current) return null
       setTerminalState('error')
       const message = error instanceof Error ? error.message : String(error)
       terminalRef.current?.writeln('\r\n\x1b[31m[erro ao iniciar: ' + message + ']\x1b[0m')
-      onNotify('Não foi possível iniciar o terminal interno: ' + message, 'error')
+      onNotifyRef.current('Não foi possível iniciar o terminal interno: ' + message, 'error')
       return null
     }
-  }, [onNotify, projectPath, terminalId])
+  }, [projectPath, terminalId])
 
   const startCodex = useCallback(async () => {
+    const startToken = ++terminalStartTokenRef.current
+    terminalModeRef.current = 'codex'
     setIsStartingCodex(true)
     setTerminalState('starting')
     try {
@@ -74,26 +92,32 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
         terminalRef.current?.rows,
       )
       if (!result.success) {
+        if (startToken !== terminalStartTokenRef.current) return result
+        terminalModeRef.current = 'shell'
+        setTerminalMode('shell')
         setTerminalState(result.needsAuth ? 'ready' : 'error')
-        if (result.message) onNotify(result.message, result.needsAuth ? 'info' : 'error')
-        if (result.needsAuth) onRequestCodexAuth?.(codexAccount)
+        if (result.message) onNotifyRef.current(result.message, result.needsAuth ? 'info' : 'error')
+        if (result.needsAuth) onRequestCodexAuthRef.current?.(codexAccount)
         return result
       }
-      setTerminalMode('codex')
-      terminalRef.current?.clear()
-      terminalRef.current?.writeln('\x1b[90mDevOrbit iniciou o Codex nesta sessão.\x1b[0m')
-      setTerminalState('ready')
+      if (startToken === terminalStartTokenRef.current) {
+        setTerminalMode('codex')
+        terminalRef.current?.clear()
+        terminalRef.current?.writeln('\x1b[90mDevOrbit iniciou o Codex nesta sessão.\x1b[0m')
+        setTerminalState('ready')
+      }
       return result
     } catch (error) {
+      if (startToken !== terminalStartTokenRef.current) return null
       setTerminalState('error')
       const message = error instanceof Error ? error.message : String(error)
       terminalRef.current?.writeln('\r\n\x1b[31m[erro ao iniciar o Codex: ' + message + ']\x1b[0m')
-      onNotify('Não foi possível iniciar o Codex no terminal: ' + message, 'error')
+      onNotifyRef.current('Não foi possível iniciar o Codex no terminal: ' + message, 'error')
       return null
     } finally {
       setIsStartingCodex(false)
     }
-  }, [codexAccount, onNotify, onRequestCodexAuth, projectPath, terminalId])
+  }, [codexAccount, projectPath, terminalId])
 
   useEffect(() => {
     const container = containerRef.current
@@ -167,7 +191,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
         const result = outputSnapshotRef.current.match(/DEVORBIT_RESULT:\s*([^\r\n]+)/i)?.[1]?.trim()
         if (result && !reportedResultsRef.current.has(result)) {
           reportedResultsRef.current.add(result)
-          onAgentResult?.(result.slice(0, 1000))
+          onAgentResultRef.current?.(result.slice(0, 1000))
         }
         terminal.write(event.data)
       } else if (event.type === 'exit') {
@@ -180,18 +204,20 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
     })
 
     let alive = true
+    const initialStartToken = ++terminalStartTokenRef.current
+    terminalModeRef.current = 'shell'
     void window.devorbit.startTerminal(terminalId, projectPath)
       .then(() => {
-        if (!alive) return
+        if (!alive || initialStartToken !== terminalStartTokenRef.current || terminalModeRef.current !== 'shell') return
         terminal.writeln('\x1b[90mDevOrbit terminal PTY pronto em ' + projectPath + '\x1b[0m')
         setTerminalState('ready')
       })
       .catch((error) => {
-        if (!alive) return
+        if (!alive || initialStartToken !== terminalStartTokenRef.current) return
         const message = error instanceof Error ? error.message : String(error)
         terminal.writeln('\r\n\x1b[31m[erro ao iniciar: ' + message + ']\x1b[0m')
         setTerminalState('error')
-        onNotify('Não foi possível iniciar o terminal interno: ' + message, 'error')
+        onNotifyRef.current('Não foi possível iniciar o terminal interno: ' + message, 'error')
       })
 
     return () => {
@@ -204,7 +230,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
       fitAddonRef.current = null
       void window.devorbit.stopTerminal(terminalId)
     }
-  }, [onAgentResult, onNotify, projectPath, terminalId])
+  }, [projectPath, terminalId])
 
   useEffect(() => {
     if (!agentTask || completedTaskRef.current === agentTask.id || deliveringTaskRef.current === agentTask.id) return
@@ -216,13 +242,13 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
       const written = await window.devorbit.writeTerminal(terminalId, agentTask.prompt + '\r')
       if (!cancelled && written.success) {
         completedTaskRef.current = agentTask.id
-        onNotify('Tarefa enviada ao agente.', 'success')
+        onNotifyRef.current('Tarefa enviada ao agente.', 'success')
       }
       deliveringTaskRef.current = null
     }
     void deliver()
     return () => { cancelled = true }
-  }, [agentTask, onNotify, startCodex, terminalId, terminalMode])
+  }, [agentTask, startCodex, terminalId, terminalMode])
 
   const terminalStateRef = useRef<TerminalState>(terminalState)
   terminalStateRef.current = terminalState
@@ -230,8 +256,8 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
   const openDetectedLink = async () => {
     if (!lastDetectedUrl) return
     const result = await window.devorbit.navigateWeb(lastDetectedUrl)
-    if (result.success) onNotify('Link do terminal aberto no painel Web.', 'success')
-    else onNotify(result.message || 'Não foi possível abrir o link no painel Web.', 'error')
+    if (result.success) onNotifyRef.current('Link do terminal aberto no painel Web.', 'success')
+    else onNotifyRef.current(result.message || 'Não foi possível abrir o link no painel Web.', 'error')
   }
 
   const restartTerminal = async () => {
