@@ -10,7 +10,6 @@ interface WorkspaceTerminalProps {
   terminalId: string
   codexAccount: 'account1' | 'account2'
   onNotify: (message: string, type?: 'success' | 'error' | 'info') => void
-  isSuspended?: boolean
   onRequestCodexAuth?: (account: 'account1' | 'account2') => void
 }
 
@@ -24,7 +23,6 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
   terminalId,
   codexAccount,
   onNotify,
-  isSuspended = false,
   onRequestCodexAuth,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -92,10 +90,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
 
   useEffect(() => {
     const container = containerRef.current
-    if (!container || isSuspended) {
-      setTerminalState('stopped')
-      return
-    }
+    if (!container) return
 
     const terminal = new XTerm({
       cursorBlink: true,
@@ -197,7 +192,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
       fitAddonRef.current = null
       void window.devorbit.stopTerminal(terminalId)
     }
-  }, [isSuspended, onNotify, projectPath, terminalId])
+  }, [onNotify, projectPath, terminalId])
 
   const terminalStateRef = useRef<TerminalState>(terminalState)
   terminalStateRef.current = terminalState

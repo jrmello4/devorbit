@@ -8,6 +8,7 @@ const { contextBridge } = require('electron')
 // API so this check can exercise the UI in isolation from user state.
 const baseTime = Date.UTC(2026, 8, 11, 12, 0, 0)
 const calls = []
+const webListeners = new Set()
 
 const record = (name, ...args) => {
   calls.push({ name, args })
@@ -313,6 +314,7 @@ const api = {
   onTerminalEvent: () => () => {},
   navigateWeb: async (url) => {
     record('navigateWeb', url)
+    for (const listener of webListeners) listener({ type: 'navigated', url, title: url })
     return { success: true, url }
   },
   getWebState: async () => ({
@@ -331,7 +333,10 @@ const api = {
     record('setWebBounds', bounds)
     return { success: true }
   },
-  onWebEvent: () => () => {},
+  onWebEvent: (callback) => {
+    webListeners.add(callback)
+    return () => webListeners.delete(callback)
+  },
   launchTool: async (tool, projectPath, options) => {
     record('launchTool', tool, projectPath, options)
     return { success: true, message: `Fixture launch: ${tool}` }

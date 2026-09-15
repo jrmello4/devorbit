@@ -1,7 +1,6 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import React, { Suspense, useState, useEffect, useCallback, useRef } from 'react'
 import { Header } from './components/Header'
 import { ProjectGrid } from './components/ProjectGrid'
-import { IntegratedWorkspace } from './components/IntegratedWorkspace'
 import { SettingsModal } from './components/SettingsModal'
 import { GitPushModal } from './components/GitPushModal'
 import { CodexAuthModal } from './components/CodexAuthModal'
@@ -25,6 +24,8 @@ import type {
 } from './types'
 import { CheckCircle2, AlertCircle, Info, X, FolderKanban, ChartNoAxesCombined, Settings, ArrowRightLeft, GitPullRequest, PanelLeftClose, PanelLeftOpen, Wrench, LayoutDashboard } from 'lucide-react'
 
+const IntegratedWorkspace = React.lazy(() => import('./components/IntegratedWorkspace').then((module) => ({ default: module.IntegratedWorkspace })))
+
 export const App: React.FC = () => {
   const [projects, setProjects] = useState<Project[]>([])
   const [otherDirs, setOtherDirs] = useState<OtherDir[]>([])
@@ -37,6 +38,7 @@ export const App: React.FC = () => {
   const [activeBranchProject, setActiveBranchProject] = useState<Project | null>(null)
   const [activeWorkspaceProject, setActiveWorkspaceProject] = useState<Project | null>(null)
   const [workspaceProjects, setWorkspaceProjects] = useState<Project[]>([])
+  const [workspaceDirty, setWorkspaceDirty] = useState<Record<string, boolean>>({})
   const [search, setSearch] = useState('')
   const [workspaceView, setWorkspaceView] = useState<'projects' | 'usage' | 'workspace'>('projects')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -489,10 +491,25 @@ export const App: React.FC = () => {
     if (!activeWorkspaceProject) return
     const remaining = workspaceProjects.filter((item) => item.id !== activeWorkspaceProject.id)
     setWorkspaceProjects(remaining)
+    setWorkspaceDirty((current) => {
+      const { [activeWorkspaceProject.id]: _closedProject, ...remainingDirty } = current
+      return remainingDirty
+    })
     const nextProject = remaining[remaining.length - 1]
     setActiveWorkspaceProject(nextProject || null)
     if (!nextProject) setWorkspaceView('projects')
   }
+
+  useEffect(() => {
+    const warnAboutDrafts = (event: BeforeUnloadEvent) => {
+      if (!Object.values(workspaceDirty).some(Boolean)) return
+      if (window.confirm('Há arquivos com alterações não salvas. Fechar o DevOrbit e descartar esses rascunhos?')) return
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', warnAboutDrafts)
+    return () => window.removeEventListener('beforeunload', warnAboutDrafts)
+  }, [workspaceDirty])
 
   const handleProjectAccountChange = async (project: Project, account: 'account1' | 'account2') => {
     if (!window.devorbit || !config) return
@@ -568,7 +585,7 @@ export const App: React.FC = () => {
                   onClick={() => selectWorkspaceProject(workspaceProject)}
                   title={workspaceProject.path}
                 >
-                  <span>{workspaceProject.name}</span>
+                  <span>{workspaceDirty[workspaceProject.id] ? '• ' : ''}{workspaceProject.name}</span>
                   <small>{workspaceProject.git.branch || 'local'}</small>
                 </button>
               ))}
@@ -585,6 +602,7 @@ export const App: React.FC = () => {
               className="workspace-tab-pane"
               hidden={activeWorkspaceProject?.id !== workspaceProject.id}
             >
+              <Suspense fallback={<div className="workspace-loading" role="status">Carregando ambiente integrado…</div>}>
               <IntegratedWorkspace
                 project={workspaceProject}
                 onClose={closeIntegratedWorkspace}
@@ -593,7 +611,9 @@ export const App: React.FC = () => {
                 isSuspended={activeWorkspaceProject?.id !== workspaceProject.id}
                 onRequestCodexAuth={setAuthModalAccount}
                 isWebSuppressed={isWorkspaceWebSuppressed || activeWorkspaceProject?.id !== workspaceProject.id}
+                onDirtyChange={(dirty) => setWorkspaceDirty((current) => current[workspaceProject.id] === dirty ? current : { ...current, [workspaceProject.id]: dirty })}
               />
+              </Suspense>
             </div>
           ))}
         </div>
@@ -809,7 +829,5 @@ export const App: React.FC = () => {
 }
 
 export default App
-
-
 
 

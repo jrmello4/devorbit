@@ -16,12 +16,17 @@ interface IntegratedWorkspaceProps {
   isWebSuppressed?: boolean
   isSuspended?: boolean
   onRequestCodexAuth?: (account: 'account1' | 'account2') => void
+  onDirtyChange?: (dirty: boolean) => void
 }
 interface WorkspaceLayout {
   rightWidth: number
   terminalHeight: number
   terminalVisible: boolean
   webVisible: boolean
+}
+interface WebHistory {
+  entries: Array<{ url: string; title: string }>
+  index: number
 }
 
 const DEFAULT_LAYOUT: WorkspaceLayout = {
@@ -56,12 +61,15 @@ function readLayout(id: string): WorkspaceLayout {
 }
 
 export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
-  project, onClose, onNotify, codexAccount = 'account1', isWebSuppressed = false, isSuspended = false, onRequestCodexAuth,
+  project, onClose, onNotify, codexAccount = 'account1', isWebSuppressed = false, isSuspended = false, onRequestCodexAuth, onDirtyChange,
 }) => {
   const [webUrl, setWebUrl] = useState('https://www.google.com/')
   const [webTitle, setWebTitle] = useState('Navegador')
   const [webLoading, setWebLoading] = useState(false)
   const [webError, setWebError] = useState('')
+  const [webHistory, setWebHistory] = useState<WebHistory>({
+    entries: [{ url: 'https://www.google.com/', title: 'Navegador' }], index: 0,
+  })
   const [editorContext, setEditorContext] = useState<WorkspaceEditorContext | null>(null)
   const [isEditorDirty, setIsEditorDirty] = useState(false)
   const suppressNativeWeb = isWebSuppressed || isSuspended
@@ -72,29 +80,56 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
     [project.id],
   )
   const webViewportRef = useRef<HTMLDivElement>(null)
+  const restoreWebOnActivateRef = useRef(true)
+  const requestedHistoryIndexRef = useRef<number | null>(null)
   const dragRef = useRef({
     startX: 0, startY: 0, rightWidth: layout.rightWidth, terminalHeight: layout.terminalHeight,
   })
   useEffect(() => {
+    if (isSuspended) restoreWebOnActivateRef.current = true
+  }, [isSuspended])
+
+  useEffect(() => {
+    // The BrowserView is a single native resource. Suspended tabs stay mounted
+    // to preserve their editor state, but must not observe or control it.
+    if (suppressNativeWeb) return
     const unsubscribe = window.devorbit.onWebEvent((event: WebPanelEvent) => {
-      setWebUrl(event.url || 'https://www.google.com/')
-      if (event.title) setWebTitle(event.title)
+      const nextUrl = event.url || 'https://www.google.com/'
+      const nextTitle = event.title || 'Navegador'
+      setWebUrl(nextUrl)
+      setWebTitle(nextTitle)
+      if (event.type === 'navigated') {
+        setWebHistory((current) => {
+          const requestedIndex = requestedHistoryIndexRef.current
+          if (requestedIndex !== null && current.entries[requestedIndex]?.url === nextUrl) {
+            requestedHistoryIndexRef.current = null
+            return { ...current, index: requestedIndex }
+          }
+          if (current.entries[current.index]?.url === nextUrl) {
+            const entries = [...current.entries]
+            entries[current.index] = { url: nextUrl, title: nextTitle }
+            return { ...current, entries }
+          }
+          const entries = [...current.entries.slice(0, current.index + 1), { url: nextUrl, title: nextTitle }]
+          return { entries, index: entries.length - 1 }
+        })
+      }
       setWebLoading(event.type === 'loading')
       setWebError(event.type === 'error' ? event.message || 'Falha ao carregar esta página.' : '')
     })
-    void window.devorbit.getWebState().then((state) => {
-      setWebUrl(state.url || 'https://www.google.com/')
-      setWebTitle(state.title || 'Navegador')
-    }).catch(() => undefined)
-    void window.devorbit.setWebVisible(layout.webVisible && !suppressNativeWeb)
+    if (restoreWebOnActivateRef.current) {
+      restoreWebOnActivateRef.current = false
+      void window.devorbit.navigateWeb(webUrl).catch(() => undefined)
+    }
     return unsubscribe
-  }, [suppressNativeWeb, layout.webVisible])
+  }, [suppressNativeWeb])
 
   useEffect(() => {
     try { window.localStorage.setItem(layoutKey(project.id), JSON.stringify(layout)) } catch { /* opcional */ }
   }, [layout, project.id])
 
   useEffect(() => {
+    if (suppressNativeWeb) return
     const viewport = webViewportRef.current
     if (!viewport) return
     const updateBounds = () => {
@@ -180,7 +215,29 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
       setWebLoading(false)
       setWebError(result.message || 'URL não permitida.')
       onNotify(result.message || 'Não foi possível navegar para esta URL.', 'error')
-    } else if (result.url) setWebUrl(result.url)
+    } else if (result.url) {
+      setWebUrl(result.url)
+      setWebHistory((current) => {
+        if (current.entries[current.index]?.url === result.url) return current
+        const entries = [...current.entries.slice(0, current.index + 1), { url: result.url as string, title: result.url as string }]
+        return { entries, index: entries.length - 1 }
+      })
+    }
+  }
+
+  const moveWebHistory = async (direction: -1 | 1) => {
+    const nextIndex = webHistory.index + direction
+    const entry = webHistory.entries[nextIndex]
+    if (!entry) return
+    setWebLoading(true)
+    requestedHistoryIndexRef.current = nextIndex
+    const result = await window.devorbit.navigateWeb(entry.url)
+    if (!result.success) {
+      requestedHistoryIndexRef.current = null
+      setWebLoading(false)
+      onNotify(result.message || 'Não foi possível navegar no histórico.', 'error')
+      return
+    }
   }
 
   const closeWorkspace = () => {
@@ -226,7 +283,10 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
           projectPath={project.path}
           onNotify={onNotify}
           onContextChange={setEditorContext}
-          onDirtyChange={setIsEditorDirty}
+          onDirtyChange={(dirty) => {
+            setIsEditorDirty(dirty)
+            onDirtyChange?.(dirty)
+          }}
         />
 
         {layout.terminalVisible && (
@@ -237,7 +297,6 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
               terminalId={terminalId}
               codexAccount={codexAccount}
               onNotify={onNotify}
-              isSuspended={isSuspended}
               onRequestCodexAuth={onRequestCodexAuth}
             />
           </>
@@ -250,8 +309,8 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
             <div className="workspace-panel-heading browser-heading">
               <div><strong><Globe size={14} aria-hidden="true" /> Pesquisa web</strong><span title={webTitle}>{webTitle}</span></div>
               <div className="browser-actions">
-                <button type="button" className="workspace-icon-button" onClick={() => void window.devorbit.goBackWeb()} aria-label="Voltar na pesquisa web" title="Voltar"><ArrowLeft size={14} aria-hidden="true" /></button>
-                <button type="button" className="workspace-icon-button" onClick={() => void window.devorbit.goForwardWeb()} aria-label="Avançar na pesquisa web" title="Avançar"><ArrowRight size={14} aria-hidden="true" /></button>
+                <button type="button" className="workspace-icon-button" onClick={() => void moveWebHistory(-1)} disabled={webHistory.index === 0} aria-label="Voltar na pesquisa web" title="Voltar"><ArrowLeft size={14} aria-hidden="true" /></button>
+                <button type="button" className="workspace-icon-button" onClick={() => void moveWebHistory(1)} disabled={webHistory.index >= webHistory.entries.length - 1} aria-label="Avançar na pesquisa web" title="Avançar"><ArrowRight size={14} aria-hidden="true" /></button>
                 <button type="button" className="workspace-icon-button" onClick={() => void window.devorbit.reloadWeb()} aria-label="Recarregar pesquisa web" title="Recarregar"><RefreshCw size={14} aria-hidden="true" /></button>
                 <span className={'browser-loading-dot' + (webLoading ? ' loading' : '')} aria-label={webLoading ? 'Carregando página' : 'Página pronta'} />
               </div>

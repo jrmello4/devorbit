@@ -186,6 +186,14 @@ async function inspectProjectInteractions(window, viewport) {
   await waitFor(window, `document.querySelectorAll('.project-list .project-row').length === 1`, `${viewport.label} multi-project search`)
   await clickButtonByText(window, (node) => node.classList.contains('workspace-open-all'), `${viewport.label} second workspace launch`)
   await waitFor(window, `document.querySelectorAll('.workspace-tabs .workspace-tab').length >= 2`, `${viewport.label} multiple workspace tabs`)
+  await evaluate(window, `window.__devorbitVerifyFixture.resetCalls()`)
+  await clickButtonByText(window, (node) => node.classList.contains('workspace-tab') && /Fixture 02/.test(node.innerText), `${viewport.label} first workspace tab`)
+  await waitFor(window, `document.querySelector('.workspace-tab.active')?.innerText.includes('Fixture 02')`, `${viewport.label} first workspace tab active`)
+  const webVisibilityCalls = await evaluate(window, `new Promise((resolve) => {
+    window.setTimeout(() => resolve(window.__devorbitVerifyFixture.getCalls()
+      .filter((call) => call.name === 'setWebVisible').map((call) => call.args[0])), 50)
+  })`)
+  assert(webVisibilityCalls.length > 0 && webVisibilityCalls.at(-1) === true, `${viewport.label}: painel web da aba ativa foi ocultado (${JSON.stringify(webVisibilityCalls)})`)
   recordPass(viewport.label, 'multiple projects use workspace tabs with inactive sessions suspended')
 
   await clickButtonByText(window, (node) => /contas e uso/i.test(node.innerText), `${viewport.label} usage navigation from workspace`)
