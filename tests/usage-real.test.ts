@@ -100,4 +100,42 @@ describe('Codex real usage adapter', () => {
     expect(result.accounts.account1.message).toContain('não autenticada')
     expect(fetchMock).not.toHaveBeenCalled()
   })
+
+  it('shares concurrent forced refreshes instead of querying twice per account', async () => {
+    await writeAuth('account1')
+    await writeAuth('account2')
+    let resolveResponse: ((value: unknown) => void) | undefined
+    const responsePromise = new Promise((resolve) => { resolveResponse = resolve })
+    fetchMock.mockImplementation(() => responsePromise)
+
+    const first = getRealUsage(true)
+    const second = getRealUsage(true)
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+
+    resolveResponse?.({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        plan_type: 'plus',
+        rate_limit: { primary_window: { used_percent: 8, limit_window_seconds: 18000 } },
+      }),
+    })
+    await expect(Promise.all([first, second])).resolves.toHaveLength(2)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('reports invalid provider JSON as an account error', async () => {
+    await writeAuth('account1')
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      body: null,
+      text: async () => '{invalid-json',
+    })
+
+    const result = await getRealUsage(true)
+
+    expect(result.accounts.account1.status).toBe('error')
+    expect(result.accounts.account1.message).toContain('JSON')
+  })
 })

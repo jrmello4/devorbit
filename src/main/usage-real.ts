@@ -13,6 +13,7 @@ const CODEX_SCOPE = 'openid profile email'
 const REQUEST_TIMEOUT_MS = 12_000
 const REFRESH_BUFFER_MS = 5 * 60 * 1000
 const AUTH_FILE_MAX_BYTES = 2 * 1024 * 1024
+export const USAGE_RESPONSE_MAX_BYTES = 1 * 1024 * 1024
 
 type AccountId = 'account1' | 'account2'
 
@@ -128,20 +129,78 @@ async function atomicallyWriteAuthFile(file: string, value: Record<string, unkno
   }
 }
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('tempo limite excedido')), timeoutMs)
-    promise.then(
-      (value) => {
-        clearTimeout(timer)
-        resolve(value)
-      },
-      (error) => {
-        clearTimeout(timer)
-        reject(error)
+async function fetchJsonWithTimeout(
+  url: string,
+  init: RequestInit,
+  maxBytes = USAGE_RESPONSE_MAX_BYTES
+): Promise<{ response: Response; payload: unknown }> {
+  const controller = new AbortController()
+  let timeoutTriggered = false
+  let sizeLimitTriggered = false
+  const timer = setTimeout(() => {
+    timeoutTriggered = true
+    controller.abort()
+  }, REQUEST_TIMEOUT_MS)
+
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal })
+    const headers = response.headers as Headers | undefined
+    const contentLength = Number(headers?.get('content-length') || 0)
+    if (contentLength > maxBytes) {
+      sizeLimitTriggered = true
+      controller.abort()
+      throw new Error('resposta da OpenAI excede o limite permitido')
+    }
+
+    let rawBody: string
+    if (response.body) {
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let received = 0
+      let body = ''
+      try {
+        while (true) {
+          const chunk = await reader.read()
+          if (chunk.done) break
+          received += chunk.value.byteLength
+          if (received > maxBytes) {
+            sizeLimitTriggered = true
+            controller.abort()
+            throw new Error('resposta da OpenAI excede o limite permitido')
+          }
+          body += decoder.decode(chunk.value, { stream: true })
+        }
+        rawBody = body + decoder.decode()
+      } finally {
+        reader.releaseLock()
       }
-    )
-  })
+    } else {
+      const compatibleResponse = response as Response & { json?: () => Promise<unknown> }
+      if (typeof response.text === 'function') {
+        rawBody = await response.text()
+      } else if (typeof compatibleResponse.json === 'function') {
+        rawBody = JSON.stringify(await compatibleResponse.json())
+      } else {
+        throw new Error('resposta da OpenAI sem corpo')
+      }
+      if (Buffer.byteLength(rawBody, 'utf8') > maxBytes) {
+        sizeLimitTriggered = true
+        throw new Error('resposta da OpenAI excede o limite permitido')
+      }
+    }
+
+    try {
+      return { response, payload: JSON.parse(rawBody) as unknown }
+    } catch {
+      throw new Error('resposta JSON da OpenAI inválida')
+    }
+  } catch (error: unknown) {
+    if (timeoutTriggered) throw new Error('tempo limite excedido')
+    if (sizeLimitTriggered) throw new Error('resposta da OpenAI excede o limite permitido')
+    throw error
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 function parseResetAt(window: Record<string, unknown>, nowMs: number): number | undefined {
@@ -234,8 +293,8 @@ async function fetchUsagePayload(credentials: AuthCredentials): Promise<{ payloa
     'User-Agent': 'codex-cli',
   }
   if (credentials.accountId) headers['ChatGPT-Account-Id'] = credentials.accountId
-  const response = await withTimeout(fetch(CODEX_USAGE_URL, { headers }), REQUEST_TIMEOUT_MS)
-  if (response.ok) return { payload: await response.json(), credentials }
+  const { response, payload } = await fetchJsonWithTimeout(CODEX_USAGE_URL, { headers })
+  if (response.ok) return { payload, credentials }
   throw new UsageRequestError(`consulta recusada (${response.status})`, response.status)
 }
 
@@ -312,8 +371,7 @@ async function fetchAccountUsage(account: AccountId): Promise<RealAccountUsage> 
 async function refreshCredentialsForAccount(document: AuthDocument, account: AccountId): Promise<AuthCredentials> {
   if (!document.credentials.refreshToken) throw new Error('token de atualização ausente')
 
-  const response = await withTimeout(
-    fetch(CODEX_TOKEN_URL, {
+  const { response, payload } = await fetchJsonWithTimeout(CODEX_TOKEN_URL, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -322,11 +380,9 @@ async function refreshCredentialsForAccount(document: AuthDocument, account: Acc
         refresh_token: document.credentials.refreshToken,
         scope: CODEX_SCOPE,
       }),
-    }),
-    REQUEST_TIMEOUT_MS
-  )
+  })
   if (!response.ok) throw new Error(`refresh recusado (${response.status})`)
-  const body: unknown = await response.json()
+  const body: unknown = payload
   if (!isRecord(body) || !nonEmptyString(body.access_token)) throw new Error('resposta de refresh inválida')
 
   const expiresIn = finiteNumber(body.expires_in)
@@ -344,25 +400,39 @@ async function refreshCredentialsForAccount(document: AuthDocument, account: Acc
   if (next.idToken) target.id_token = next.idToken
   if (next.expiresAt) target.expires_at = next.expiresAt
   updated.last_refresh = new Date().toISOString()
-  await atomicallyWriteAuthFile(document.filePath, updated).catch(() => undefined)
+  await atomicallyWriteAuthFile(document.filePath, updated).catch((error: unknown) => {
+    console.warn(
+      '[Codex usage] Falha ao persistir credenciais atualizadas:',
+      error instanceof Error ? error.message : 'erro desconhecido'
+    )
+  })
   return next
 }
 
 let cachedUsage: RealUsageState | undefined
 let cachedAt = 0
+let usageRequestInFlight: Promise<RealUsageState> | null = null
 
-export async function getRealUsage(force = false): Promise<RealUsageState> {
-  if (!force && cachedUsage && Date.now() - cachedAt < 30_000) return cachedUsage
-  const [account1, account2] = await Promise.all([
+export function getRealUsage(force = false): Promise<RealUsageState> {
+  if (!force && cachedUsage && Date.now() - cachedAt < 30_000) return Promise.resolve(cachedUsage)
+  if (usageRequestInFlight) return usageRequestInFlight
+
+  const operation = Promise.all([
     fetchAccountUsage('account1'),
     fetchAccountUsage('account2'),
-  ])
-  const result: RealUsageState = {
-    source: 'codex-oauth',
-    fetchedAt: new Date().toISOString(),
-    accounts: { account1, account2 },
-  }
-  cachedUsage = result
-  cachedAt = Date.now()
-  return result
+  ]).then(([account1, account2]) => {
+    const result: RealUsageState = {
+      source: 'codex-oauth',
+      fetchedAt: new Date().toISOString(),
+      accounts: { account1, account2 },
+    }
+    cachedUsage = result
+    cachedAt = Date.now()
+    return result
+  })
+  const trackedOperation = operation.finally(() => {
+    if (usageRequestInFlight === trackedOperation) usageRequestInFlight = null
+  })
+  usageRequestInFlight = trackedOperation
+  return trackedOperation
 }
