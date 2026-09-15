@@ -88,7 +88,11 @@ jobs:
           "RELEASE_VERSION=$tagVersion" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Criar release para a versão
-        run: gh release create "$env:RELEASE_TAG" --target "$env:GITHUB_SHA" --title "DevOrbit $env:RELEASE_VERSION" --notes "Atualização do DevOrbit."
+        run: |
+          gh release view "$env:RELEASE_TAG" 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create "$env:RELEASE_TAG" --target "$env:GITHUB_SHA" --title "DevOrbit $env:RELEASE_VERSION" --notes "Atualização do DevOrbit."
+          }
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ github.ref_name }}
