@@ -124,3 +124,4 @@ jobs:
           gh release upload "$env:RELEASE_TAG" release/latest-portable.yml --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
