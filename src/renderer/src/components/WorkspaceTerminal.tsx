@@ -11,6 +11,8 @@ interface WorkspaceTerminalProps {
   codexAccount: 'account1' | 'account2'
   onNotify: (message: string, type?: 'success' | 'error' | 'info') => void
   onRequestCodexAuth?: (account: 'account1' | 'account2') => void
+  agentTask?: { id: string; prompt: string }
+  onAgentResult?: (result: string) => void
 }
 
 type TerminalState = 'starting' | 'ready' | 'stopped' | 'error'
@@ -24,11 +26,16 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
   codexAccount,
   onNotify,
   onRequestCodexAuth,
+  agentTask,
+  onAgentResult,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<XTerm | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const outputSnapshotRef = useRef('')
+  const completedTaskRef = useRef<string | null>(null)
+  const deliveringTaskRef = useRef<string | null>(null)
+  const reportedResultsRef = useRef(new Set<string>())
   const [terminalState, setTerminalState] = useState<TerminalState>('starting')
   const [terminalMode, setTerminalMode] = useState<TerminalMode>('shell')
   const [isStartingCodex, setIsStartingCodex] = useState(false)
@@ -157,6 +164,11 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
         outputSnapshotRef.current = (outputSnapshotRef.current + event.data).slice(-MAX_SNAPSHOT_LENGTH)
         const detectedUrl = outputSnapshotRef.current.match(/https:\/\/[^\s"'<>`]+/i)?.[0]?.replace(/[),.;]+$/, '')
         if (detectedUrl) setLastDetectedUrl(detectedUrl)
+        const result = outputSnapshotRef.current.match(/DEVORBIT_RESULT:\s*([^\r\n]+)/i)?.[1]?.trim()
+        if (result && !reportedResultsRef.current.has(result)) {
+          reportedResultsRef.current.add(result)
+          onAgentResult?.(result.slice(0, 1000))
+        }
         terminal.write(event.data)
       } else if (event.type === 'exit') {
         terminal.writeln('\r\n\x1b[90m[processo encerrado: ' + String(event.code ?? '') + ']\x1b[0m')
@@ -192,7 +204,25 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
       fitAddonRef.current = null
       void window.devorbit.stopTerminal(terminalId)
     }
-  }, [onNotify, projectPath, terminalId])
+  }, [onAgentResult, onNotify, projectPath, terminalId])
+
+  useEffect(() => {
+    if (!agentTask || completedTaskRef.current === agentTask.id || deliveringTaskRef.current === agentTask.id) return
+    let cancelled = false
+    const deliver = async () => {
+      deliveringTaskRef.current = agentTask.id
+      const ready = terminalMode === 'codex' ? { success: true } : await startCodex()
+      if (cancelled || !ready?.success) { deliveringTaskRef.current = null; return }
+      const written = await window.devorbit.writeTerminal(terminalId, agentTask.prompt + '\r')
+      if (!cancelled && written.success) {
+        completedTaskRef.current = agentTask.id
+        onNotify('Tarefa enviada ao agente.', 'success')
+      }
+      deliveringTaskRef.current = null
+    }
+    void deliver()
+    return () => { cancelled = true }
+  }, [agentTask, onNotify, startCodex, terminalId, terminalMode])
 
   const terminalStateRef = useRef<TerminalState>(terminalState)
   terminalStateRef.current = terminalState

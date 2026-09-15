@@ -4,6 +4,12 @@ Hub desktop para projetos locais, Git e ferramentas de desenvolvimento. O
 aplicativo é voltado para Windows e usa Electron, Vite, React, TypeScript e
 Tailwind CSS.
 
+## Ambiente de execução
+
+O **CMD do Windows é o terminal primário** do DevOrbit, inclusive para sessões
+do Codex e agentes no canvas. WSL, Docker e SSH não são pré-requisitos: podem
+ser adicionados futuramente apenas quando um projeto exigir esse ambiente.
+
 ## Requisitos
 
 - Windows 10/11 x64 para executar os artefatos distribuídos;

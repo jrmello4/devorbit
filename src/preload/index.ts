@@ -68,6 +68,10 @@ const api: DevOrbitAPI = {
     invoke('devorbit:restoreManagedProject', projectPath),
   finalizeManagedProject: (projectPath: string, options?: { allowRecreatableIgnored?: boolean }) =>
     invoke('devorbit:finalizeManagedProject', projectPath, options),
+  createAgentWorktree: (projectPath: string, agentId: string) =>
+    invoke('devorbit:createAgentWorktree', projectPath, agentId),
+  integrateAgentWorktree: (projectPath: string, branch: string, worktreePath: string) =>
+    invoke('devorbit:integrateAgentWorktree', projectPath, branch, worktreePath),
   startTerminal: (id: string, projectPath: string) =>
     invoke('devorbit:startTerminal', id, projectPath),
   startCodexTerminal: (id, projectPath, account, cols, rows) =>

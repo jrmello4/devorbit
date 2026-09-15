@@ -156,6 +156,8 @@ export type IpcInvokeChannel =
   | 'devorbit:getGitChanges' | 'devorbit:syncAllGit' | 'devorbit:getGitInitPreview'
   | 'devorbit:initGitRepository' | 'devorbit:cloneGitRepository' | 'devorbit:restoreManagedProject'
   | 'devorbit:finalizeManagedProject' | 'devorbit:startTerminal' | 'devorbit:startCodexTerminal'
+  | 'devorbit:createAgentWorktree'
+  | 'devorbit:integrateAgentWorktree'
   | 'devorbit:resizeTerminal' | 'devorbit:writeTerminal' | 'devorbit:stopTerminal'
   | 'devorbit:navigateWeb' | 'devorbit:getWebState' | 'devorbit:goBackWeb'
   | 'devorbit:goForwardWeb' | 'devorbit:reloadWeb' | 'devorbit:setWebVisible'
@@ -362,6 +364,8 @@ export interface DevOrbitAPI {
   cloneGitRepository: (input: GitCloneInput) => Promise<GitCloneResult>
   restoreManagedProject: (projectPath: string) => Promise<GitCloneResult>
   finalizeManagedProject: (projectPath: string, options?: { allowRecreatableIgnored?: boolean }) => Promise<SyncResult>
+  createAgentWorktree: (projectPath: string, agentId: string) => Promise<{ path: string; branch: string }>
+  integrateAgentWorktree: (projectPath: string, branch: string, worktreePath: string) => Promise<SyncResult>
   startTerminal: (id: string, projectPath: string) => Promise<{ id: string; pid: number | undefined }>
   startCodexTerminal: (
     id: string,

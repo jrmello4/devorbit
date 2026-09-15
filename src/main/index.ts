@@ -6,7 +6,7 @@ import fs from 'node:fs/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { exportConfigJson, importConfigJson, loadConfig, saveConfig } from './config'
 import { listAllNonProjectDirs, scanAllProjects } from './scanner'
-import { syncGit, getGitBranches, switchGitBranch, pushGit, getGitChanges, cloneGitRepository, stashSyncGit, stashSwitchGitBranch, finalizeGitProject, getGitRemoteUrl } from './git'
+import { syncGit, getGitBranches, switchGitBranch, pushGit, getGitChanges, cloneGitRepository, stashSyncGit, stashSwitchGitBranch, finalizeGitProject, getGitRemoteUrl, createAgentWorktree, integrateAgentWorktree } from './git'
 import { getGitInitPreview, initGitRepository } from './git-init'
 import { ensureAccountDirectories, getAccountLabel, hasValidCodexAuth, resolveCodexCommand } from './account-profiles'
 import { launchTool, copyProjectContext, getToolHealth } from './launcher'
@@ -540,6 +540,18 @@ function setupIpcHandlers() {
 
   registerIpcHandler('devorbit:deleteProjectEntry', async (_event, projectPath: string, relativePath: unknown, options?: { recursive?: unknown }) => {
     return await deleteProjectEntry(await validateProjectPath(projectPath), relativePath, options)
+  })
+
+  registerIpcHandler('devorbit:createAgentWorktree', async (_event, projectPath: string, agentId: unknown) => {
+    if (typeof agentId !== 'string' || !/^[a-z0-9_-]{1,48}$/i.test(agentId)) throw new Error('Identificador de agente inválido.')
+    const safePath = await canonicalizeExistingDirectory(projectPath)
+    return await createAgentWorktree(safePath, agentId)
+  })
+  registerIpcHandler('devorbit:integrateAgentWorktree', async (_event, projectPath: string, branch: unknown, worktreePath: unknown) => {
+    if (typeof branch !== 'string' || typeof worktreePath !== 'string') throw new Error('Dados de worktree inválidos.')
+    const safePath = await canonicalizeExistingDirectory(projectPath)
+    const safeWorktree = await canonicalizeExistingDirectory(worktreePath)
+    return await integrateAgentWorktree(safePath, branch, safeWorktree)
   })
 
   registerIpcHandler('devorbit:startTerminal', async (_event, id: unknown, projectPath: string) => {

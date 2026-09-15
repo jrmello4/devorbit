@@ -225,7 +225,7 @@ async function inspectProjectInteractions(window, viewport) {
   if (!canvasAlreadyOpen) await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Abrir canvas', `${viewport.label} canvas launch`)
   await waitFor(window, `document.querySelectorAll('.workspace-canvas [data-canvas-card]').length === 3`, `${viewport.label} canvas cards`)
   const canvasCards = await evaluate(window, `Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card]')).map((node) => node.getAttribute('data-canvas-card')).sort().join(',')`)
-  assert(canvasCards === 'browser,notes,workbench', `${viewport.label}: cards do canvas incompletos (${canvasCards})`)
+  assert(canvasCards === 'browser,note,workbench', `${viewport.label}: cards do canvas incompletos (${canvasCards})`)
   await waitFor(window, `(() => {
     const viewport = document.querySelector('.workspace-canvas .workspace-web-viewport')
     const boundsCall = Array.from(window.__devorbitVerifyFixture.getCalls()).filter((call) => call.name === 'setWebBounds').at(-1)
@@ -282,8 +282,8 @@ async function inspectProjectInteractions(window, viewport) {
     const raw = id ? window.localStorage.getItem('devorbit:workspace-canvas:' + id) : null
     if (!canvas || !raw) return false
     const saved = JSON.parse(raw)
-    const card = saved.cards?.find((item) => item.id === 'workbench')
-    return card && Number(card.width) === Number.parseFloat(canvas.querySelector('[data-canvas-card="workbench"]').style.width)
+    const card = saved.nodes?.find((item) => item.id === 'workbench')
+    return saved.version === 2 && card && Number(card.width) === Number.parseFloat(canvas.querySelector('[data-canvas-card="workbench"]').style.width)
   })()`, `${viewport.label} canvas geometry persistence`)
   await evaluate(window, `(function () {
     const note = document.querySelector('[data-canvas-note-editor]')
@@ -295,6 +295,14 @@ async function inspectProjectInteractions(window, viewport) {
   })()`)
   await waitFor(window, `document.querySelector('[data-canvas-note-editor]').value === 'handoff persistente'`, `${viewport.label} canvas notes`)
   recordPass(viewport.label, 'canvas com cartões, arraste, redimensionamento e notas locais')
+  await clickButtonByText(window, (node) => node.closest('.workspace-canvas-toolbar') && /Agente/.test(node.innerText), `${viewport.label} agent node creation`)
+  await waitFor(window, `document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]').length === 1`, `${viewport.label} agent canvas node`)
+  await waitFor(window, `Array.from(window.__devorbitVerifyFixture.getCalls()).some((call) => call.name === 'startTerminal' && String(call.args[0]).startsWith('agent-'))`, `${viewport.label} agent terminal`)
+  recordPass(viewport.label, 'canvas cria agente com terminal independente')
+  await clickButtonByText(window, (node) => node.closest('.workspace-canvas-toolbar') && /Squad/.test(node.innerText), `${viewport.label} squad template`)
+  await waitFor(window, `document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]').length === 5 && document.querySelectorAll('.workspace-canvas [data-canvas-card="note"]').length >= 2`, `${viewport.label} squad canvas nodes`)
+  await waitFor(window, `document.querySelectorAll('.workspace-canvas-connections path').length >= 4`, `${viewport.label} squad task connections`)
+  recordPass(viewport.label, 'template cria squad conectado a uma nota de tarefa')
   await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Voltar ao layout integrado', `${viewport.label} canvas close`)
   await waitFor(window, `!document.querySelector('.workspace-canvas')`, `${viewport.label} grid layout restore`)
   await clickButtonByText(window, (node) => node.getAttribute('title') === 'Projetos', `${viewport.label} multi-project navigation`)

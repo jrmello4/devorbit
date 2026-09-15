@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertCircle, ArrowLeft, ArrowRight, Check, Code2, Globe, GripVertical,
   RefreshCw, Send, Terminal, X,
@@ -6,7 +6,7 @@ import {
 import type { Project, WebPanelEvent } from '../types'
 import { WorkspaceEditor, type WorkspaceEditorContext } from './WorkspaceEditor'
 import { WorkspaceTerminal } from './WorkspaceTerminal'
-import { WorkspaceCanvas } from './WorkspaceCanvas'
+import { WorkspaceCanvas, type CanvasNode } from './WorkspaceCanvas'
 import './IntegratedWorkspace.css'
 
 interface IntegratedWorkspaceProps {
@@ -77,10 +77,44 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
   const [layout, setLayout] = useState<WorkspaceLayout>(() => readLayout(project.id))
   const [isCanvas, setIsCanvas] = useState(() => window.localStorage.getItem('devorbit:workspace-mode:' + project.id) === 'canvas')
   const [dragging, setDragging] = useState<'browser' | 'terminal' | null>(null)
+  const [agentTasks, setAgentTasks] = useState<Record<string, { id: string; prompt: string }>>({})
+  const [agentWorktrees, setAgentWorktrees] = useState<Record<string, { path: string; branch: string }>>({})
   const terminalId = useMemo(
     () => 'workspace-' + project.id.replace(/[^a-z0-9_-]/gi, '-').slice(0, 48),
     [project.id],
   )
+  const queueAgentTask = useCallback((node: CanvasNode, prompt: string) => {
+    setAgentTasks((current) => ({ ...current, [node.id]: { id: 'task-' + Date.now().toString(36), prompt } }))
+    onNotify('Tarefa encaminhada para ' + node.title + '.', 'info')
+  }, [onNotify])
+  const isolateAgent = useCallback(async (node: CanvasNode) => {
+    try {
+      const result = await window.devorbit.createAgentWorktree(project.path, node.id)
+      setAgentWorktrees((current) => ({ ...current, [node.id]: result }))
+      onNotify(node.title + ' isolado na branch ' + result.branch + '.', 'success')
+    } catch (error) {
+      onNotify('Não foi possível isolar o agente: ' + (error instanceof Error ? error.message : String(error)), 'error')
+    }
+  }, [onNotify, project.path])
+  const reviewAgent = useCallback(async (node: CanvasNode) => {
+    const worktree = agentWorktrees[node.id]
+    if (!worktree) return
+    try {
+      const changes = await window.devorbit.getGitChanges(worktree.path)
+      onNotify(changes.length ? node.title + ': ' + changes.length + ' arquivo(s) alterado(s): ' + changes.slice(0, 4).map((change) => change.path).join(', ') : node.title + ': nenhuma alteração pendente.', 'info')
+    } catch (error) { onNotify('Não foi possível revisar: ' + (error instanceof Error ? error.message : String(error)), 'error') }
+  }, [agentWorktrees, onNotify])
+  const mergeAgent = useCallback(async (node: CanvasNode) => {
+    const worktree = agentWorktrees[node.id]
+    if (!worktree || !window.confirm('Integrar ' + worktree.branch + ' no projeto principal? O worktree será removido após o merge.')) return
+    try {
+      await window.devorbit.integrateAgentWorktree(project.path, worktree.branch, worktree.path)
+      setAgentWorktrees((current) => { const next = { ...current }; delete next[node.id]; return next })
+      onNotify(node.title + ' integrado ao projeto principal.', 'success')
+    } catch (error) { onNotify('Não foi possível integrar: ' + (error instanceof Error ? error.message : String(error)), 'error') }
+  }, [agentWorktrees, onNotify, project.path])
+  useEffect(() => { setAgentTasks({}) }, [project.id])
+  useEffect(() => { setAgentWorktrees({}) }, [project.id])
   const webViewportRef = useRef<HTMLDivElement>(null)
   const restoreWebOnActivateRef = useRef(true)
   const requestedHistoryIndexRef = useRef<number | null>(null)
@@ -324,7 +358,7 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
         </div>
       </header>
 
-      {isCanvas ? <WorkspaceCanvas project={project} workbench={canvasWorkbench} browser={layout.webVisible ? canvasBrowser : undefined} /> : <>
+      {isCanvas ? <WorkspaceCanvas project={project} workbench={canvasWorkbench} browser={layout.webVisible ? canvasBrowser : undefined} agentAccount={codexAccount} onSendAgentTask={queueAgentTask} onCreateAgentWorktree={(node) => void isolateAgent(node)} renderAgent={(node: CanvasNode, onAgentResult) => <><div className="canvas-agent-review"><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void reviewAgent(node)}>Alterações</button><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void mergeAgent(node)}>Integrar</button></div><WorkspaceTerminal projectPath={agentWorktrees[node.id]?.path || project.path} terminalId={'agent-' + project.id.replace(/[^a-z0-9_-]/gi, '-').slice(0, 32) + '-' + node.id.slice(-18)} codexAccount={node.account || codexAccount} agentTask={agentTasks[node.id]} onAgentResult={onAgentResult} onNotify={onNotify} onRequestCodexAuth={onRequestCodexAuth} /></>} /> : <>
       <div className="workspace-editor-stack">
         <WorkspaceEditor
           projectPath={project.path}

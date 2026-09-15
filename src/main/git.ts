@@ -165,6 +165,45 @@ export async function getGitStatus(repoPath: string, refreshRemote = false): Pro
   }
 }
 
+export async function createAgentWorktree(repoPath: string, agentId: string): Promise<{ path: string; branch: string }> {
+  if (!/^[a-z0-9_-]{1,48}$/i.test(agentId)) throw new Error('Identificador de agente inválido.')
+  if (!await isGitRepository(repoPath)) throw new Error('O projeto não é um repositório Git.')
+  const lockKey = await getRepositoryLockKey(repoPath)
+  return await runSerialized(lockKey, async () => {
+    const { stdout: dirty } = await execFileAsync('git', ['status', '--porcelain'], { cwd: repoPath, timeout: 8000, windowsHide: true })
+    if (dirty.trim()) throw new Error('Salve, faça commit ou stash das alterações antes de isolar um agente.')
+    const root = await fs.realpath(repoPath)
+    const worktreeRoot = path.join(path.dirname(root), '.devorbit-worktrees')
+    const target = path.join(worktreeRoot, path.basename(root) + '-' + agentId.toLowerCase())
+    try { await fs.access(target); throw new Error('Já existe um worktree para este agente: ' + target) } catch (error) { if (error instanceof Error && error.message.startsWith('Já existe')) throw error }
+    await fs.mkdir(worktreeRoot, { recursive: true })
+    const branch = 'devorbit/' + agentId.toLowerCase()
+    try {
+      await execFileAsync('git', ['worktree', 'add', '-b', branch, target, 'HEAD'], { cwd: root, timeout: 30000, windowsHide: true })
+    } catch (error) {
+      try { await execFileAsync('git', ['worktree', 'add', target, branch], { cwd: root, timeout: 30000, windowsHide: true }) } catch { throw error }
+    }
+    return { path: target, branch }
+  })
+}
+
+export async function integrateAgentWorktree(repoPath: string, branch: string, worktreePath: string): Promise<SyncResult> {
+  if (!/^devorbit\/[a-z0-9_-]{1,48}$/i.test(branch)) throw new Error('Branch de agente inválida.')
+  const lockKey = await getRepositoryLockKey(repoPath)
+  return await runSerialized(lockKey, async () => {
+    const { stdout: dirty } = await execFileAsync('git', ['status', '--porcelain'], { cwd: repoPath, timeout: 8000, windowsHide: true })
+    if (dirty.trim()) throw new Error('O projeto principal possui alterações pendentes.')
+    const hasNodeManifest = await fs.access(path.join(worktreePath, 'package.json')).then(() => true).catch(() => false)
+    if (hasNodeManifest) {
+      try { await execFileAsync('npm', ['test', '--', '--run'], { cwd: worktreePath, timeout: 120000, windowsHide: true }) }
+      catch { throw new Error('Os testes do worktree falharam; a integração foi bloqueada.') }
+    }
+    await execFileAsync('git', ['merge', '--no-ff', '--no-edit', branch], { cwd: repoPath, timeout: 30000, windowsHide: true })
+    await execFileAsync('git', ['worktree', 'remove', worktreePath], { cwd: repoPath, timeout: 30000, windowsHide: true })
+    return { success: true, message: 'Branch integrada e worktree removido.' }
+  })
+}
+
 export async function getGitRemoteUrl(repoPath: string): Promise<string | null> {
   if (!await isGitRepository(repoPath)) return null
   try {

@@ -44,6 +44,8 @@ const expectedApiKeys = [
   'cloneGitRepository',
   'restoreManagedProject',
   'finalizeManagedProject',
+  'createAgentWorktree',
+  'integrateAgentWorktree',
   'startTerminal',
   'startCodexTerminal',
   'resizeTerminal',
