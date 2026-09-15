@@ -22,7 +22,7 @@ import type {
   SyncResult,
   UpdateState,
 } from './types'
-import { CheckCircle2, AlertCircle, Info, X, FolderKanban, ChartNoAxesCombined, Settings, ArrowRightLeft, GitPullRequest, PanelLeftClose, PanelLeftOpen, Wrench, LayoutDashboard } from 'lucide-react'
+import { CheckCircle2, AlertCircle, Info, X, FolderKanban, ChartNoAxesCombined, Settings, ArrowRightLeft, GitPullRequest, PanelLeftClose, PanelLeftOpen, Wrench, LayoutDashboard, RefreshCw } from 'lucide-react'
 
 const IntegratedWorkspace = React.lazy(() => import('./components/IntegratedWorkspace').then((module) => ({ default: module.IntegratedWorkspace })))
 
@@ -44,6 +44,7 @@ export const App: React.FC = () => {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
+  const [bootstrapError, setBootstrapError] = useState('')
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [isSyncingAll, setIsSyncingAll] = useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
@@ -193,6 +194,8 @@ export const App: React.FC = () => {
   }, [])
 
   const loadData = useCallback(async () => {
+    setIsLoading(true)
+    setBootstrapError('')
     console.log('[App] loadData called. window.devorbit available:', Boolean(window.devorbit))
     try {
       if (window.devorbit) {
@@ -211,11 +214,15 @@ export const App: React.FC = () => {
         setAuthStatus(loadedAuth)
         setUsageState(loadedUsage)
       } else {
+        const message = 'O preload do DevOrbit não foi carregado. Reinicie o aplicativo e tente novamente.'
         console.warn('[App] window.devorbit is UNDEFINED! Preload failed or contextIsolation issue.')
+        setBootstrapError(message)
       }
     } catch (err: any) {
       console.error('[App] Error in loadData:', err)
-      notify(`Erro ao carregar projetos: ${err.message}`, 'error')
+      const message = err instanceof Error ? err.message : String(err || 'erro desconhecido')
+      setBootstrapError(`Não foi possível iniciar o workspace: ${message}`)
+      notify(`Erro ao carregar projetos: ${message}`, 'error')
     } finally {
       setIsLoading(false)
     }
@@ -226,8 +233,8 @@ export const App: React.FC = () => {
   }, [loadData])
 
   useEffect(() => {
-    if (!isLoading) void loadRealUsage()
-  }, [isLoading, loadRealUsage])
+    if (!isLoading && !bootstrapError) void loadRealUsage()
+  }, [bootstrapError, isLoading, loadRealUsage])
 
   // Refresh projects on demand
   const handleRefresh = async () => {
@@ -619,6 +626,27 @@ export const App: React.FC = () => {
     isSettingsOpen || isToolHealthOpen || authModalAccount || pushProject || gitInitProject || isCloneOpen ||
     activeMemoryProject || activeBranchProject || isCommandPaletteOpen || isUpdateModalOpen
   )
+
+  if (bootstrapError) {
+    return (
+      <main className="min-h-screen bg-[#f5f5f2] px-6 py-16 text-stone-900" role="alert">
+        <div className="mx-auto flex max-w-lg flex-col items-center rounded-xl border border-red-200 bg-white p-8 text-center shadow-sm">
+          <AlertCircle aria-hidden="true" className="h-10 w-10 text-red-700" />
+          <h1 className="mt-4 text-xl font-semibold">Não foi possível iniciar o DevOrbit</h1>
+          <p className="mt-3 text-sm leading-6 text-stone-600">{bootstrapError}</p>
+          <button
+            type="button"
+            className="mt-6 inline-flex items-center gap-2 rounded-md bg-[#3e562f] px-4 py-2 text-sm font-semibold text-white hover:bg-[#304624] disabled:cursor-wait disabled:opacity-60"
+            onClick={() => void loadData()}
+            disabled={isLoading}
+          >
+            <RefreshCw aria-hidden="true" className={isLoading ? 'h-4 w-4 motion-safe:animate-spin' : 'h-4 w-4'} />
+            {isLoading ? 'Tentando novamente…' : 'Tentar novamente'}
+          </button>
+        </div>
+      </main>
+    )
+  }
 
   return (
     <div className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
