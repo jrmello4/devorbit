@@ -545,7 +545,8 @@ export const WorkspaceCanvas: React.FC<{
           ),
         }));
       }
-      if (gesture.type === "resize" && gesture.id)
+      if (gesture.type === "resize" && gesture.id && gesture.nodes?.[0]) {
+        const initial = gesture.nodes[0];
         update((current) => ({
           ...current,
           nodes: current.nodes.map((node) =>
@@ -554,14 +555,15 @@ export const WorkspaceCanvas: React.FC<{
               : {
                   ...node,
                   width: snap(
-                    clamp(node.width + dx / current.viewport.zoom, 220, 1100),
+                    clamp(initial.width + dx / current.viewport.zoom, 220, 1100),
                   ),
                   height: snap(
-                    clamp(node.height + dy / current.viewport.zoom, 150, 850),
+                    clamp(initial.height + dy / current.viewport.zoom, 150, 850),
                   ),
                 },
           ),
         }));
+      }
     };
     const up = () => {
       flush();
@@ -956,6 +958,7 @@ export const WorkspaceCanvas: React.FC<{
                     sx: event.clientX,
                     sy: event.clientY,
                     id: node.id,
+                    nodes: [node],
                   });
                 }}
               >
