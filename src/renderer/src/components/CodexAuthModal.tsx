@@ -100,11 +100,16 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
     }
   }
 
-  const handleCopyUrl = () => {
+  const handleCopyUrl = async () => {
     if (!authUrl) return
-    navigator.clipboard.writeText(authUrl)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2500)
+    try {
+      await navigator.clipboard.writeText(authUrl)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2500)
+    } catch (err: unknown) {
+      setCopied(false)
+      setBrowserReopenError(`Não foi possível copiar o link de autorização: ${err instanceof Error ? err.message : String(err)}`)
+    }
   }
 
   const handleOpenBrowserAgain = async () => {

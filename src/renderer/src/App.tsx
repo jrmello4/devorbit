@@ -134,41 +134,51 @@ export const App: React.FC = () => {
 
   const handleInstallUpdate = async () => {
     if (!window.devorbit) return
-    await window.devorbit.installUpdate()
+    try {
+      await window.devorbit.installUpdate()
+    } catch (err: unknown) {
+      notify(`Não foi possível instalar a atualização: ${err instanceof Error ? err.message : String(err)}`, 'error')
+    }
   }
 
   // Load initial data
-  const loadAuthStatus = useCallback(async () => {
+  const loadAuthStatus = useCallback(async (): Promise<boolean> => {
     try {
       if (window.devorbit) {
         const status = await window.devorbit.getCodexAuthStatus()
         setAuthStatus(status)
+        return true
       }
     } catch (err: any) {
       console.error('Falha ao carregar status do Codex:', err)
     }
+    return false
   }, [])
 
-  const loadUsage = useCallback(async () => {
+  const loadUsage = useCallback(async (): Promise<boolean> => {
     try {
       if (window.devorbit) {
         const usage = await window.devorbit.getUsageState()
         setUsageState(usage)
+        return true
       }
     } catch (err: any) {
       console.error('Falha ao carregar uso:', err)
     }
+    return false
   }, [])
 
-  const loadRealUsage = useCallback(async (force = false) => {
+  const loadRealUsage = useCallback(async (force = false): Promise<boolean> => {
     try {
       if (window.devorbit) {
         const usage = await window.devorbit.getRealUsage(force)
         setRealUsage(usage)
+        return true
       }
     } catch (err: any) {
       console.error('Falha ao carregar uso real da OpenAI:', err)
     }
+    return false
   }, [])
 
   const applyProjects = useCallback((nextProjects: Project[]) => {
@@ -224,7 +234,7 @@ export const App: React.FC = () => {
     setIsRefreshing(true)
     try {
       if (window.devorbit) {
-        const [refreshed, refreshedOtherDirs] = await Promise.all([
+        const [refreshed, refreshedOtherDirs, authLoaded, usageLoaded, realUsageLoaded] = await Promise.all([
           window.devorbit.refreshProjects(),
           window.devorbit.getOtherDirs(),
           loadAuthStatus(),
@@ -233,7 +243,13 @@ export const App: React.FC = () => {
         ])
         applyProjects(refreshed)
         setOtherDirs(refreshedOtherDirs)
-        notify('Lista de projetos atualizada!', 'success')
+        const allDataLoaded = authLoaded && usageLoaded && realUsageLoaded
+        notify(
+          allDataLoaded
+            ? 'Lista de projetos atualizada!'
+            : 'Projetos atualizados, mas alguns dados não puderam ser carregados.',
+          allDataLoaded ? 'success' : 'error'
+        )
       }
     } catch (err: any) {
       notify(`Erro ao atualizar: ${err.message}`, 'error')
@@ -285,6 +301,7 @@ export const App: React.FC = () => {
       setUsageState(updated)
     } catch (err: any) {
       console.error(err)
+      notify(`Não foi possível incrementar o uso: ${err instanceof Error ? err.message : String(err)}`, 'error')
     }
   }
 
@@ -295,6 +312,7 @@ export const App: React.FC = () => {
       setUsageState(updated)
     } catch (err: any) {
       console.error(err)
+      notify(`Não foi possível reduzir o uso: ${err instanceof Error ? err.message : String(err)}`, 'error')
     }
   }
 
@@ -306,6 +324,7 @@ export const App: React.FC = () => {
       notify(`Janela de uso de ${target === 'account1' ? 'Conta 1' : 'Conta 2'} zerada!`, 'success')
     } catch (err: any) {
       console.error(err)
+      notify(`Não foi possível zerar o uso: ${err instanceof Error ? err.message : String(err)}`, 'error')
     }
   }
 
@@ -317,14 +336,18 @@ export const App: React.FC = () => {
       notify(`Limite de ${account === 'account1' ? 'Conta 1' : 'Conta 2'} atualizado para ${limit}!`, 'info')
     } catch (err: any) {
       console.error(err)
+      notify(`Não foi possível atualizar o limite: ${err instanceof Error ? err.message : String(err)}`, 'error')
     }
   }
 
   const handleRefreshRealUsage = async () => {
     setIsRefreshingRealUsage(true)
     try {
-      await loadRealUsage(true)
-      notify('Uso real do Codex atualizado.', 'success')
+      const loaded = await loadRealUsage(true)
+      notify(
+        loaded ? 'Uso real do Codex atualizado.' : 'Não foi possível atualizar o uso real do Codex.',
+        loaded ? 'success' : 'error'
+      )
     } finally {
       setIsRefreshingRealUsage(false)
     }

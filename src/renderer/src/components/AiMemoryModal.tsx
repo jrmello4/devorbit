@@ -107,12 +107,17 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
     }
   }
 
-  const handleCopyHandoff = () => {
+  const handleCopyHandoff = async () => {
     if (!content) return
-    navigator.clipboard.writeText(content)
-    setCopied(true)
-    onNotify('Handoff da IA copiado para a área de transferência!', 'success')
-    setTimeout(() => setCopied(false), 2500)
+    try {
+      await navigator.clipboard.writeText(content)
+      setCopied(true)
+      onNotify('Handoff da IA copiado para a área de transferência!', 'success')
+      setTimeout(() => setCopied(false), 2500)
+    } catch (err: unknown) {
+      setCopied(false)
+      onNotify(`Não foi possível copiar o handoff: ${err instanceof Error ? err.message : String(err)}`, 'error')
+    }
   }
 
   const insertSnippet = (title: string, placeholder: string) => {
