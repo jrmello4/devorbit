@@ -295,6 +295,9 @@ export interface AccountUsage {
   windowDurationHours: number
 }
 
+export const MIN_USAGE_LIMIT = 5
+export const MAX_USAGE_LIMIT = 200
+
 export type RealUsageStatus = 'ready' | 'not_configured' | 'error'
 
 export interface RealUsageMetric {

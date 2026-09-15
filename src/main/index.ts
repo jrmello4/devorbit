@@ -59,6 +59,8 @@ import {
   validateWindowAction,
   validateGitPushOptions,
   isTrustedRendererUrl,
+  MAX_USAGE_LIMIT,
+  MIN_USAGE_LIMIT,
   type IpcSenderLike,
 } from './validation'
 
@@ -809,7 +811,7 @@ function setupIpcHandlers() {
       windowHours?: number
     ) => {
       const safeAccount = validateCodexAccount(account)
-      const safeLimit = validateFiniteNumber(limit, 'Limite de uso', { minimum: 1, integer: true })
+      const safeLimit = validateFiniteNumber(limit, 'Limite de uso', { minimum: MIN_USAGE_LIMIT, maximum: MAX_USAGE_LIMIT, integer: true })
       const safeWindowHours = windowHours === undefined
         ? undefined
         : validateFiniteNumber(windowHours, 'Janela de uso', { minimum: 1 })

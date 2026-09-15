@@ -1,6 +1,7 @@
 import path from 'node:path'
 import os from 'node:os'
 import fs from 'node:fs/promises'
+import { MAX_USAGE_LIMIT, MIN_USAGE_LIMIT } from '../renderer/src/types'
 
 export interface AccountUsage {
   used: number
@@ -70,18 +71,20 @@ function finiteNumber(value: unknown, fallback: number): number {
 function normalizeAccountUsage(value: unknown, fallback: AccountUsage): AccountUsage {
   const source = isRecord(value) ? value : {}
   const used = Math.max(0, Math.floor(finiteNumber(source.used, fallback.used)))
-  const limit = Math.max(1, Math.floor(finiteNumber(source.limit, fallback.limit)))
+  const limit = Math.min(MAX_USAGE_LIMIT, Math.max(MIN_USAGE_LIMIT, Math.floor(finiteNumber(source.limit, fallback.limit))))
   const windowDurationHours = Math.max(
     1,
     finiteNumber(source.windowDurationHours, fallback.windowDurationHours)
   )
   const windowStartValue = finiteNumber(source.windowStart, 0)
 
+  const normalizedUsed = windowStartValue <= 0 && used >= limit ? 0 : used
+
   return {
-    used,
+    used: normalizedUsed,
     limit,
     windowDurationHours,
-    ...(windowStartValue > 0 ? { windowStart: windowStartValue } : {}),
+    ...(windowStartValue > 0 && normalizedUsed > 0 ? { windowStart: windowStartValue } : {}),
   }
 }
 
@@ -290,7 +293,7 @@ export async function updateUsageLimits(
     const normalizedWindow = Number.isFinite(windowHours)
       ? windowHours
       : current.windowDurationHours
-    current.limit = Math.max(1, normalizedLimit)
+    current.limit = Math.min(MAX_USAGE_LIMIT, Math.max(MIN_USAGE_LIMIT, normalizedLimit))
     current.windowDurationHours = Math.max(1, normalizedWindow)
   })
 }

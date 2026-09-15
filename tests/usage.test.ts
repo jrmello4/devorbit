@@ -44,7 +44,7 @@ describe('usage tracker persistence', () => {
 
     const state = await getUsageState()
 
-    expect(state.account1).toMatchObject({ used: 0, limit: 1, windowDurationHours: 1 })
+    expect(state.account1).toMatchObject({ used: 0, limit: 5, windowDurationHours: 1 })
     expect(state.account1.windowStart).toBeUndefined()
     expect(state.account2).toMatchObject({ used: 0, limit: 40, windowDurationHours: 3 })
     expect(state.antigravity.sessionCount).toBe(3)
@@ -58,5 +58,24 @@ describe('usage tracker persistence', () => {
     expect(reservations.filter(Boolean)).toHaveLength(40)
     expect(reservations.filter((reserved) => !reserved)).toHaveLength(10)
     expect((await getUsageState()).account1.used).toBe(40)
+  })
+
+  it('recovers a full account that has no window start before reserving', async () => {
+    const usageFile = path.join(temporaryHome, '.devorbit', 'usage.json')
+    await fs.mkdir(path.dirname(usageFile), { recursive: true })
+    await fs.writeFile(
+      usageFile,
+      JSON.stringify({
+        account1: { used: 40, limit: 40, windowDurationHours: 3 },
+        account2: { used: 0, limit: 40, windowDurationHours: 3 },
+        antigravity: { sessionCount: 0 },
+      })
+    )
+
+    const normalized = await getUsageState()
+    expect(normalized.account1).toMatchObject({ used: 0, limit: 40 })
+    expect(normalized.account1.windowStart).toBeUndefined()
+    await expect(tryReserveUsage('account1')).resolves.toBe(true)
+    expect((await getUsageState()).account1.used).toBe(1)
   })
 })

@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import type { AppConfig, ManagedProject } from '../renderer/src/types'
+import { MAX_USAGE_LIMIT, MIN_USAGE_LIMIT, type AppConfig, type ManagedProject } from '../renderer/src/types'
 
 const execFileAsync = promisify(execFile)
 
@@ -130,18 +130,21 @@ export function validateGitPushOptions(value: unknown): GitPushRequest {
 export function validateFiniteNumber(
   value: unknown,
   label: string,
-  { minimum = 0, integer = false }: { minimum?: number; integer?: boolean } = {}
+  { minimum = 0, maximum = Number.POSITIVE_INFINITY, integer = false }: { minimum?: number; maximum?: number; integer?: boolean } = {}
 ): number {
   if (
     typeof value !== 'number' ||
     !Number.isFinite(value) ||
     value < minimum ||
+    value > maximum ||
     (integer && !Number.isInteger(value))
   ) {
     throw new Error(`${label} inválido.`)
   }
   return value
 }
+
+export { MAX_USAGE_LIMIT, MIN_USAGE_LIMIT }
 
 export function validateHttpsUrl(value: unknown): string {
   if (typeof value !== 'string' || value.length > MAX_PROJECT_DIR_LENGTH) {

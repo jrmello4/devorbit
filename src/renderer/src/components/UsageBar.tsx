@@ -12,6 +12,7 @@ import {
   Settings2,
   Sparkles,
 } from 'lucide-react'
+import { MAX_USAGE_LIMIT, MIN_USAGE_LIMIT } from '../types'
 import type {
   AccountUsage,
   AppConfig,
@@ -77,11 +78,38 @@ export const UsageBar: React.FC<UsageBarProps> = ({
   isRefreshingRealUsage = false,
 }) => {
   const [now, setNow] = useState(Date.now())
+  const [limitDrafts, setLimitDrafts] = useState<Record<AccountKey, string>>({ account1: '', account2: '' })
+  const [limitErrors, setLimitErrors] = useState<Record<AccountKey, string>>({ account1: '', account2: '' })
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 10000)
     return () => clearInterval(timer)
   }, [])
+
+  useEffect(() => {
+    if (!usage) return
+    setLimitDrafts({
+      account1: String(usage.account1.limit),
+      account2: String(usage.account2.limit),
+    })
+    setLimitErrors({ account1: '', account2: '' })
+  }, [usage?.account1.limit, usage?.account2.limit])
+
+  const commitLimit = async (accountKey: AccountKey) => {
+    if (!usage) return
+    const rawValue = limitDrafts[accountKey].trim()
+    const parsed = Number(rawValue)
+    if (!rawValue || !Number.isInteger(parsed) || parsed < MIN_USAGE_LIMIT || parsed > MAX_USAGE_LIMIT) {
+      setLimitErrors((current) => ({
+        ...current,
+        [accountKey]: `Use um número inteiro entre ${MIN_USAGE_LIMIT} e ${MAX_USAGE_LIMIT}.`,
+      }))
+      return
+    }
+
+    setLimitErrors((current) => ({ ...current, [accountKey]: '' }))
+    if (parsed !== usage[accountKey].limit) await onUpdateLimit(accountKey, parsed)
+  }
 
   const getRemainingTime = (account: AccountUsage) => {
     if (!account.windowStart || account.used === 0) return null
@@ -298,18 +326,28 @@ export const UsageBar: React.FC<UsageBarProps> = ({
               id={`usage-limit-${accountKey}`}
               name={`usage-limit-${accountKey}`}
               type="number"
-              min="5"
-              max="200"
+              min={MIN_USAGE_LIMIT}
+              max={MAX_USAGE_LIMIT}
               inputMode="numeric"
-              value={account.limit}
-              onChange={(event) => void onUpdateLimit(
-                accountKey,
-                Number.parseInt(event.currentTarget.value, 10) || 40
-              )}
+              value={limitDrafts[accountKey] ?? String(account.limit)}
+              onChange={(event) => {
+                setLimitDrafts((current) => ({ ...current, [accountKey]: event.currentTarget.value }))
+                setLimitErrors((current) => ({ ...current, [accountKey]: '' }))
+              }}
+              onBlur={() => void commitLimit(accountKey)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter') return
+                event.preventDefault()
+                void commitLimit(accountKey)
+              }}
+              aria-invalid={Boolean(limitErrors[accountKey])}
+              aria-describedby={limitErrors[accountKey] ? `usage-limit-error-${accountKey}` : undefined}
             />
             <span>sessões</span>
           </div>
-          <p>Janela local: {account.windowDurationHours || 3} horas.</p>
+          {limitErrors[accountKey]
+            ? <p id={`usage-limit-error-${accountKey}`} className="text-red-700" role="alert">{limitErrors[accountKey]}</p>
+            : <p>Janela local: {account.windowDurationHours || 3} horas.</p>}
         </div>
       </article>
     )

@@ -10,6 +10,8 @@ import {
   validateGitPushOptions,
   validateHttpsUrl,
   validateLaunchTool,
+  MAX_USAGE_LIMIT,
+  MIN_USAGE_LIMIT,
   validateProjectDirs,
   validateUsageTarget,
   validateWindowAction,
@@ -98,6 +100,9 @@ describe('IPC input validation', () => {
     expect(() => validateFiniteNumber(1.5, 'Quantidade', { integer: true })).toThrow(
       'Quantidade inválido'
     )
+    expect(validateFiniteNumber(MAX_USAGE_LIMIT, 'Limite', { minimum: MIN_USAGE_LIMIT, maximum: MAX_USAGE_LIMIT, integer: true })).toBe(MAX_USAGE_LIMIT)
+    expect(() => validateFiniteNumber(MAX_USAGE_LIMIT + 1, 'Limite', { minimum: MIN_USAGE_LIMIT, maximum: MAX_USAGE_LIMIT, integer: true })).toThrow('Limite inválido')
+    expect(() => validateFiniteNumber(MIN_USAGE_LIMIT - 1, 'Limite', { minimum: MIN_USAGE_LIMIT, maximum: MAX_USAGE_LIMIT, integer: true })).toThrow('Limite inválido')
   })
 
   it('canonicalizes project directories and removes duplicate paths', async () => {
