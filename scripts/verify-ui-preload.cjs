@@ -278,13 +278,15 @@ const api = {
       message: 'Fixture init',
     }
   },
-  listProjectFiles: async (projectPath) => {
-    record('listProjectFiles', projectPath)
-    return [
-      { path: 'src', name: 'src', kind: 'directory' },
-      { path: 'src\\fixture.ts', name: 'fixture.ts', kind: 'file', size: 28, editable: true },
-      { path: 'README.md', name: 'README.md', kind: 'file', size: 18, editable: true },
-    ]
+  listProjectFiles: async (projectPath, relativeDirectory) => {
+    record('listProjectFiles', projectPath, relativeDirectory)
+    const entries = relativeDirectory === 'src'
+      ? [{ path: 'src\\fixture.ts', name: 'fixture.ts', kind: 'file', size: 28, editable: true }]
+      : [
+        { path: 'src', name: 'src', kind: 'directory' },
+        { path: 'README.md', name: 'README.md', kind: 'file', size: 18, editable: true },
+      ]
+    return { entries, truncated: false }
   },
   readProjectFile: async (projectPath, relativePath) => {
     record('readProjectFile', projectPath, relativePath)

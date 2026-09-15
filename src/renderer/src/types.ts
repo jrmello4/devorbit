@@ -64,6 +64,11 @@ export interface ProjectFileEntry {
   editable?: boolean
 }
 
+export interface ProjectFileTree {
+  entries: ProjectFileEntry[]
+  truncated: boolean
+}
+
 export interface ProjectFileContent {
   path: string
   content: string
@@ -332,7 +337,7 @@ export interface DevOrbitAPI {
   getProjects: () => Promise<Project[]>
   refreshProjects: () => Promise<Project[]>
   getOtherDirs: () => Promise<OtherDir[]>
-  listProjectFiles: (projectPath: string) => Promise<ProjectFileEntry[]>
+  listProjectFiles: (projectPath: string, relativeDirectory?: string) => Promise<ProjectFileTree>
   readProjectFile: (projectPath: string, relativePath: string) => Promise<ProjectFileContent>
   saveProjectFile: (projectPath: string, relativePath: string, content: string) => Promise<ProjectFileContent>
   syncGit: (projectPath: string) => Promise<SyncResult>

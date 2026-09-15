@@ -31,7 +31,9 @@ const api: DevOrbitAPI = {
   getProjects: () => invoke('devorbit:getProjects'),
   refreshProjects: () => invoke('devorbit:refreshProjects'),
   getOtherDirs: () => invoke('devorbit:getOtherDirs'),
-  listProjectFiles: (projectPath: string) => invoke('devorbit:listProjectFiles', projectPath),
+  listProjectFiles: (projectPath: string, relativeDirectory?: string) => relativeDirectory === undefined
+    ? invoke('devorbit:listProjectFiles', projectPath)
+    : invoke('devorbit:listProjectFiles', projectPath, relativeDirectory),
   readProjectFile: (projectPath: string, relativePath: string) => invoke('devorbit:readProjectFile', projectPath, relativePath),
   saveProjectFile: (projectPath: string, relativePath: string, content: string) => invoke('devorbit:saveProjectFile', projectPath, relativePath, content),
   syncGit: (projectPath: string) => invoke('devorbit:syncGit', projectPath),

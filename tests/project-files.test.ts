@@ -34,16 +34,39 @@ describe('project file workspace', () => {
   it('lists a bounded editable tree and ignores generated or private directories', async () => {
     const root = await createProject()
     const entries = await listProjectFiles(root)
-    const paths = entries.map((entry) => entry.path)
+    const paths = entries.entries.map((entry) => entry.path)
 
     expect(paths).toContain('README.md')
-    expect(paths).toContain(path.join('src', 'index.ts'))
+    expect(paths).toContain('src')
+    expect(paths).not.toContain(path.join('src', 'index.ts'))
     expect(paths).not.toContain(path.join('node_modules', 'ignored.js'))
     expect(paths).not.toContain(path.join('.git', 'config'))
-    expect(entries.find((entry) => entry.path === 'README.md')).toMatchObject({
+    expect(entries.entries.find((entry) => entry.path === 'README.md')).toMatchObject({
       kind: 'file',
       editable: true,
     })
+    expect(entries.truncated).toBe(false)
+  })
+
+  it('lista os filhos de um diretório sob demanda', async () => {
+    const root = await createProject()
+    const entries = await listProjectFiles(root, 'src')
+
+    expect(entries.entries.map((entry) => entry.path)).toEqual([path.join('src', 'index.ts')])
+    expect(entries.truncated).toBe(false)
+  })
+
+  it('marca uma pasta quando a listagem atinge o limite por chamada', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'devorbit-files-large-'))
+    temporaryDirectories.push(root)
+    await Promise.all(Array.from({ length: 601 }, (_, index) => (
+      fs.writeFile(path.join(root, `file-${String(index).padStart(3, '0')}.txt`), 'x')
+    )))
+
+    const entries = await listProjectFiles(root)
+
+    expect(entries.entries).toHaveLength(600)
+    expect(entries.truncated).toBe(true)
   })
 
   it('reads and atomically saves a file inside the project', async () => {

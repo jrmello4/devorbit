@@ -512,8 +512,8 @@ function setupIpcHandlers() {
     }
   )
 
-  registerIpcHandler('devorbit:listProjectFiles', async (_event, projectPath: string) => {
-    return await listProjectFiles(await validateProjectPath(projectPath))
+  registerIpcHandler('devorbit:listProjectFiles', async (_event, projectPath: string, relativeDirectory?: unknown) => {
+    return await listProjectFiles(await validateProjectPath(projectPath), relativeDirectory)
   })
 
   registerIpcHandler('devorbit:readProjectFile', async (_event, projectPath: string, relativePath: unknown) => {

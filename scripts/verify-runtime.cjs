@@ -136,7 +136,7 @@ async function main() {
         configuredRoot: config.projectDirs.includes(${JSON.stringify(monitoredRoot)}),
         projectPath: project.path,
         projectName: project.name,
-        hasReadme: entries.some((entry) => entry.path === 'README.md'),
+        hasReadme: entries.entries.some((entry) => entry.path === 'README.md'),
         before: before.content,
         after: after.content,
         invalidPathRejected,

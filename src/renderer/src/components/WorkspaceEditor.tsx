@@ -76,6 +76,12 @@ function fileDepth(filePath: string): number {
   return Math.max(0, filePath.replaceAll('\\', '/').split('/').length - 1)
 }
 
+function isDescendantPath(candidate: string, parent: string): boolean {
+  const normalizedCandidate = candidate.replaceAll('\\', '/')
+  const normalizedParent = parent.replaceAll('\\', '/').replace(/\/$/, '')
+  return normalizedCandidate.startsWith(normalizedParent + '/')
+}
+
 function formatBytes(size?: number): string {
   if (size === undefined) return ''
   if (size < 1024) return size + ' B'
@@ -190,6 +196,9 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
   onDirtyChange,
 }) => {
   const [files, setFiles] = useState<ProjectFileEntry[]>([])
+  const [expandedDirectories, setExpandedDirectories] = useState<Set<string>>(() => new Set())
+  const [truncatedDirectories, setTruncatedDirectories] = useState<Set<string>>(() => new Set())
+  const [loadingDirectories, setLoadingDirectories] = useState<Set<string>>(() => new Set())
   const [tabs, setTabs] = useState<EditorTab[]>([])
   const [activePath, setActivePath] = useState('')
   const [isLoadingFiles, setIsLoadingFiles] = useState(true)
@@ -317,17 +326,89 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
     }
   }, [focusEditor, onNotify, projectPath, updateLoadingPath])
 
+  const loadDirectory = useCallback(async (relativeDirectory: string) => {
+    if (loadingDirectories.has(relativeDirectory)) return
+    setLoadingDirectories((current) => new Set(current).add(relativeDirectory))
+
+    try {
+      const tree = await window.devorbit.listProjectFiles(
+        projectPath,
+        relativeDirectory || undefined,
+      )
+      if (projectPathRef.current !== projectPath) return
+
+      setFiles((current) => {
+        if (!relativeDirectory) return tree.entries
+        if (current.some((entry) => entry.path === relativeDirectory && expandedDirectories.has(relativeDirectory))) {
+          return current
+        }
+        const directoryIndex = current.findIndex((entry) => entry.path === relativeDirectory)
+        if (directoryIndex < 0) return current
+        const next = current.slice()
+        next.splice(directoryIndex + 1, 0, ...tree.entries)
+        return next
+      })
+      setTruncatedDirectories((current) => {
+        const next = new Set(current)
+        if (tree.truncated) next.add(relativeDirectory)
+        else next.delete(relativeDirectory)
+        return next
+      })
+      if (relativeDirectory) {
+        setExpandedDirectories((current) => new Set(current).add(relativeDirectory))
+      }
+    } catch (error) {
+      if (projectPathRef.current === projectPath) {
+        const message = errorMessage(error)
+        setFileError(message)
+        onNotify('Não foi possível ler a pasta ' + (relativeDirectory || 'raiz') + ': ' + message, 'error')
+      }
+    } finally {
+      setLoadingDirectories((current) => {
+        const next = new Set(current)
+        next.delete(relativeDirectory)
+        return next
+      })
+    }
+  }, [expandedDirectories, loadingDirectories, onNotify, projectPath])
+
+  const toggleDirectory = useCallback((entry: ProjectFileEntry) => {
+    if (entry.kind !== 'directory') return
+    if (expandedDirectories.has(entry.path)) {
+      setExpandedDirectories((current) => {
+        const next = new Set(current)
+        for (const directory of next) {
+          if (directory === entry.path || isDescendantPath(directory, entry.path)) next.delete(directory)
+        }
+        return next
+      })
+      setFiles((current) => current.filter((candidate) => !isDescendantPath(candidate.path, entry.path)))
+      setTruncatedDirectories((current) => {
+        const next = new Set(current)
+        for (const directory of next) {
+          if (directory === entry.path || isDescendantPath(directory, entry.path)) next.delete(directory)
+        }
+        return next
+      })
+      return
+    }
+    void loadDirectory(entry.path)
+  }, [expandedDirectories, loadDirectory])
+
   const loadFiles = useCallback(async () => {
     setIsLoadingFiles(true)
     setFileError('')
 
     try {
-      const entries = await window.devorbit.listProjectFiles(projectPath)
+      const tree = await window.devorbit.listProjectFiles(projectPath)
       if (projectPathRef.current !== projectPath) return
-      setFiles(entries)
+      setFiles(tree.entries)
+      setExpandedDirectories(new Set())
+      setLoadingDirectories(new Set())
+      setTruncatedDirectories(tree.truncated ? new Set(['']) : new Set())
 
       if (!activePathRef.current) {
-        const initialFile = preferredFile(entries)
+        const initialFile = preferredFile(tree.entries)
         if (initialFile) void openFile(initialFile)
       }
     } catch (error) {
@@ -350,6 +431,9 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
     activePathRef.current = ''
     openingPathsRef.current.clear()
     setFiles([])
+    setExpandedDirectories(new Set())
+    setTruncatedDirectories(new Set())
+    setLoadingDirectories(new Set())
     setTabs([])
     setActivePath('')
     setLoadingPaths(new Set())
@@ -575,24 +659,37 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
           {!isLoadingFiles && files.map((entry) => {
             const isOpen = tabs.some((tab) => tab.path === entry.path)
             const isLoading = loadingPaths.has(entry.path)
+            const isDirectory = entry.kind === 'directory'
+            const isExpanded = expandedDirectories.has(entry.path)
+            const isDirectoryLoading = loadingDirectories.has(entry.path)
             return (
               <button
                 type="button"
                 key={entry.path}
                 className={'workspace-file-row' + (activePath === entry.path ? ' selected' : '') + (entry.kind === 'directory' ? ' directory' : '')}
                 style={{ paddingLeft: 10 + fileDepth(entry.path) * 12 }}
-                onClick={() => void openFile(entry)}
-                disabled={entry.kind === 'directory' || entry.editable === false || isLoading}
+                onClick={() => isDirectory ? toggleDirectory(entry) : void openFile(entry)}
+                disabled={isDirectory ? isDirectoryLoading : entry.editable === false || isLoading}
                 title={entry.editable === false ? 'Arquivo somente leitura ou binário' : entry.path}
                 aria-current={activePath === entry.path ? 'page' : undefined}
-                aria-busy={isLoading}
+                aria-busy={isDirectory ? isDirectoryLoading : isLoading}
+                aria-expanded={isDirectory ? isExpanded : undefined}
               >
-                {entry.kind === 'directory' ? <Folder size={14} aria-hidden="true" /> : <FileText size={14} aria-hidden="true" />}
+                {isDirectory
+                  ? <><ChevronDown size={13} aria-hidden="true" style={{ transform: isExpanded ? 'rotate(0deg)' : 'rotate(-90deg)' }} /><Folder size={14} aria-hidden="true" /></>
+                  : <FileText size={14} aria-hidden="true" />}
                 <span>{entry.name}</span>
                 {entry.kind === 'file' && <small>{isOpen ? 'aberto' : formatBytes(entry.size)}</small>}
               </button>
             )
           })}
+          {!isLoadingFiles && truncatedDirectories.size > 0 && (
+            <p className="workspace-muted" role="status">
+              {truncatedDirectories.has('')
+                ? 'A raiz do projeto tem mais de 600 itens; alguns não foram exibidos.'
+                : 'Uma pasta tem mais de 600 itens; alguns não foram exibidos.'}
+            </p>
+          )}
         </div>
         {fileError && <p className="workspace-error workspace-file-error" role="alert"><AlertCircle size={13} aria-hidden="true" />{fileError}</p>}
       </aside>

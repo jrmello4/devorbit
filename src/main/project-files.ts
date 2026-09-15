@@ -3,7 +3,6 @@ import path from 'node:path'
 
 export const MAX_PROJECT_FILE_BYTES = 1_500_000
 export const MAX_PROJECT_TREE_ENTRIES = 600
-const MAX_TREE_DEPTH = 4
 const IGNORED_DIRECTORIES = new Set([
   '.git',
   'node_modules',
@@ -32,6 +31,11 @@ export interface ProjectFileContent {
   size: number
 }
 
+export interface ProjectFileTree {
+  entries: ProjectFileEntry[]
+  truncated: boolean
+}
+
 function normalizeRelativePath(value: unknown): string {
   if (typeof value !== 'string' || !value.trim() || value.includes('\0')) {
     throw new Error('Caminho de arquivo inválido.')
@@ -47,6 +51,28 @@ function normalizeRelativePath(value: unknown): string {
     normalized.startsWith('..\\')
   ) {
     throw new Error('O arquivo precisa estar dentro do projeto.')
+  }
+
+  return normalized
+}
+
+function normalizeRelativeDirectory(value: unknown): string {
+  if (value === undefined || value === null || value === '') return ''
+  if (typeof value !== 'string' || value.includes('\0')) {
+    throw new Error('Diretório de arquivos inválido.')
+  }
+
+  const normalized = path.normalize(value.trim())
+  if (
+    normalized === '.' ||
+    path.isAbsolute(normalized) ||
+    normalized === '..' ||
+    normalized.startsWith('..' + path.sep) ||
+    normalized.startsWith('../') ||
+    normalized.startsWith('..\\')
+  ) {
+    if (normalized === '.') return ''
+    throw new Error('O diretório precisa estar dentro do projeto.')
   }
 
   return normalized
@@ -81,6 +107,27 @@ async function resolveProjectFile(projectPath: string, relativePath: unknown): P
   return { root, file }
 }
 
+async function resolveProjectDirectory(
+  projectPath: string,
+  relativeDirectory: unknown
+): Promise<{ root: string; directory: string; relativeDirectory: string }> {
+  const root = await resolveProjectRoot(projectPath)
+  const normalized = normalizeRelativeDirectory(relativeDirectory)
+  const candidate = path.resolve(root, normalized || '.')
+  assertInside(root, candidate)
+
+  const directory = await fs.realpath(candidate)
+  assertInside(root, directory)
+  const stats = await fs.stat(directory)
+  if (!stats.isDirectory()) throw new Error('O diretório selecionado não é uma pasta.')
+
+  return {
+    root,
+    directory,
+    relativeDirectory: path.relative(root, directory),
+  }
+}
+
 function decodeText(buffer: Buffer): string {
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(buffer)
@@ -93,47 +140,45 @@ function isEditableName(name: string): boolean {
   return !/\.(?:png|jpe?g|gif|webp|ico|svgz|pdf|zip|7z|rar|exe|dll|bin|db|sqlite)$/i.test(name)
 }
 
-export async function listProjectFiles(projectPath: string): Promise<ProjectFileEntry[]> {
-  const root = await resolveProjectRoot(projectPath)
+export async function listProjectFiles(projectPath: string, relativeDirectory?: unknown): Promise<ProjectFileTree> {
+  const { root, directory, relativeDirectory: baseDirectory } = await resolveProjectDirectory(projectPath, relativeDirectory)
   const result: ProjectFileEntry[] = []
+  let truncated = false
 
-  async function visit(directory: string, relativeDirectory: string, depth: number): Promise<void> {
-    if (result.length >= MAX_PROJECT_TREE_ENTRIES) return
+  const entries = await fs.readdir(directory, { withFileTypes: true })
+  entries.sort((left, right) => {
+    if (left.isDirectory() !== right.isDirectory()) return left.isDirectory() ? -1 : 1
+    return left.name.localeCompare(right.name, 'pt-BR', { sensitivity: 'base' })
+  })
 
-    const entries = await fs.readdir(directory, { withFileTypes: true })
-    entries.sort((left, right) => {
-      if (left.isDirectory() !== right.isDirectory()) return left.isDirectory() ? -1 : 1
-      return left.name.localeCompare(right.name, 'pt-BR', { sensitivity: 'base' })
-    })
-
-    for (const entry of entries) {
-      if (result.length >= MAX_PROJECT_TREE_ENTRIES) return
-      if (!entry.name || entry.name === '.' || entry.name === '..') continue
-      if (entry.isDirectory() && IGNORED_DIRECTORIES.has(entry.name.toLowerCase())) continue
-      if (entry.isSymbolicLink()) continue
-
-      const relativePath = relativeDirectory ? path.join(relativeDirectory, entry.name) : entry.name
-      const absolutePath = path.join(directory, entry.name)
-      if (entry.isDirectory()) {
-        result.push({ path: relativePath, name: entry.name, kind: 'directory' })
-        if (depth < MAX_TREE_DEPTH) await visit(absolutePath, relativePath, depth + 1)
-        continue
-      }
-      if (!entry.isFile()) continue
-
-      const stats = await fs.stat(absolutePath)
-      result.push({
-        path: relativePath,
-        name: entry.name,
-        kind: 'file',
-        size: stats.size,
-        editable: stats.size <= MAX_PROJECT_FILE_BYTES && isEditableName(entry.name),
-      })
+  for (const entry of entries) {
+    if (!entry.name || entry.name === '.' || entry.name === '..') continue
+    if (entry.isDirectory() && IGNORED_DIRECTORIES.has(entry.name.toLowerCase())) continue
+    if (entry.isSymbolicLink()) continue
+    if (result.length >= MAX_PROJECT_TREE_ENTRIES) {
+      truncated = true
+      break
     }
+
+    const relativePath = baseDirectory ? path.join(baseDirectory, entry.name) : entry.name
+    const absolutePath = path.join(directory, entry.name)
+    if (entry.isDirectory()) {
+      result.push({ path: relativePath, name: entry.name, kind: 'directory' })
+      continue
+    }
+    if (!entry.isFile()) continue
+
+    const stats = await fs.stat(absolutePath)
+    result.push({
+      path: relativePath,
+      name: entry.name,
+      kind: 'file',
+      size: stats.size,
+      editable: stats.size <= MAX_PROJECT_FILE_BYTES && isEditableName(entry.name),
+    })
   }
 
-  await visit(root, '', 0)
-  return result
+  return { entries: result, truncated }
 }
 
 export async function readProjectFile(projectPath: string, relativePath: unknown): Promise<ProjectFileContent> {
