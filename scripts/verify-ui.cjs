@@ -180,11 +180,41 @@ async function inspectProjectInteractions(window, viewport) {
   }))()`)
   assert(Object.values(workspaceFeatures).every(Boolean), `${viewport.label}: recursos do workspace incompletos (${JSON.stringify(workspaceFeatures)})`)
   recordPass(viewport.label, 'editor com abas/busca/contexto, terminal PTY e controles web visíveis')
+  const dirtyEditor = await evaluate(window, `(() => {
+    const editor = document.querySelector('textarea.workspace-editor')
+    if (!editor || editor.disabled) return false
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set
+    setter.call(editor, editor.value + String.fromCharCode(10) + '// rascunho de verificacao')
+    editor.dispatchEvent(new Event('input', { bubbles: true }))
+    editor.dispatchEvent(new Event('change', { bubbles: true }))
+    return true
+  })()`)
+  assert(dirtyEditor, `${viewport.label}: editor indisponível para verificar rascunho`)
+  await waitFor(window, `Boolean(document.querySelector('.editor-dirty'))`, `${viewport.label} editor dirty state`)
+  await evaluate(window, `(() => {
+    window.__devorbitVerifyConfirmCalls = 0
+    window.confirm = () => { window.__devorbitVerifyConfirmCalls += 1; return false }
+    return true
+  })()`)
+  await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Abrir canvas', `${viewport.label} guarded canvas launch`)
+  await waitFor(window, `!document.querySelector('.workspace-canvas')`, `${viewport.label} guarded canvas mode`)
+  const modeGuard = await evaluate(window, `({
+    confirmCalls: window.__devorbitVerifyConfirmCalls || 0,
+    canvas: Boolean(document.querySelector('.workspace-canvas')),
+  })`)
+  assert(modeGuard.confirmCalls > 0 && !modeGuard.canvas, `${viewport.label}: troca de layout ignorou rascunho (${JSON.stringify(modeGuard)})`)
+  recordPass(viewport.label, 'troca de layout confirma rascunhos e preserva o modo atual quando cancelada')
+  await evaluate(window, `(() => { window.confirm = () => true; return true })()`)
   const canvasAlreadyOpen = await evaluate(window, `Boolean(document.querySelector('.workspace-canvas'))`)
   if (!canvasAlreadyOpen) await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Abrir canvas', `${viewport.label} canvas launch`)
   await waitFor(window, `document.querySelectorAll('.workspace-canvas [data-canvas-card]').length === 3`, `${viewport.label} canvas cards`)
   const canvasCards = await evaluate(window, `Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card]')).map((node) => node.getAttribute('data-canvas-card')).sort().join(',')`)
   assert(canvasCards === 'browser,notes,workbench', `${viewport.label}: cards do canvas incompletos (${canvasCards})`)
+  const terminalIds = await evaluate(window, `Array.from(window.__devorbitVerifyFixture.getCalls())
+    .filter((call) => call.name === 'startTerminal' || call.name === 'startCodexTerminal')
+    .map((call) => call.args[0])`)
+  assert(terminalIds.length >= 2 && new Set(terminalIds).size === 1, `${viewport.label}: terminal perdeu o ID ao trocar para o canvas (${JSON.stringify(terminalIds)})`)
+  recordPass(viewport.label, 'canvas reinicia o terminal usando o mesmo identificador de sessão')
   const canvasInteractions = await evaluate(window, `(function () {
     const workbench = document.querySelector('[data-canvas-card="workbench"]')
     const dragHandle = workbench?.querySelector('[data-canvas-drag-handle]')
@@ -359,6 +389,9 @@ async function runViewport(viewport) {
     window.webContents.on('render-process-gone', (_event, details) => {
       rendererErrors.push(`${viewport.label}: renderer gone ${JSON.stringify(details)}`)
     })
+    // Each viewport is a fresh UI run. Clear persisted layout/canvas state
+    // before the page initializes so one viewport cannot affect the next.
+    await window.webContents.session.clearStorageData({ storages: ['localstorage'] })
     await window.loadFile(rendererEntry)
     await waitFor(window, `Boolean(document.querySelector('.project-workspace') && document.querySelector('.project-row'))`, `${viewport.label} renderer bootstrap`)
     await inspectShell(window, viewport)

@@ -254,10 +254,18 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
     onClose()
   }
 
+  const toggleWorkspaceMode = () => {
+    const warning = isEditorDirty
+      ? 'Há alterações não salvas. Trocar o layout descarta esses rascunhos e reinicia o terminal. Continuar mesmo assim?'
+      : 'Trocar o layout reinicia o terminal interno. Continuar?'
+    if (!window.confirm(warning)) return
+    setIsCanvas((current) => !current)
+  }
+
   const canvasWorkbench = (
     <div className="workspace-editor-stack">
       <WorkspaceEditor projectPath={project.path} onNotify={onNotify} onContextChange={setEditorContext} onDirtyChange={(dirty) => { setIsEditorDirty(dirty); onDirtyChange?.(dirty) }} />
-      {layout.terminalVisible && <WorkspaceTerminal projectPath={project.path} terminalId={terminalId + '-c'} codexAccount={codexAccount} onNotify={onNotify} onRequestCodexAuth={onRequestCodexAuth} />}
+      {layout.terminalVisible && <WorkspaceTerminal projectPath={project.path} terminalId={terminalId} codexAccount={codexAccount} onNotify={onNotify} onRequestCodexAuth={onRequestCodexAuth} />}
     </div>
   )
   const canvasBrowser = (
@@ -283,7 +291,7 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
           <div><strong>{project.name}</strong><span title={project.path}>{project.path}</span></div>
         </div>
         <div className="integrated-toolbar-actions">
-          <button type="button" className={'workspace-tool-button' + (isCanvas ? ' active' : '')} onClick={() => setIsCanvas((current) => !current)} aria-pressed={isCanvas} aria-label={isCanvas ? 'Voltar ao layout integrado' : 'Abrir canvas'} title={isCanvas ? 'Voltar ao layout integrado' : 'Abrir canvas'}>
+          <button type="button" className={'workspace-tool-button' + (isCanvas ? ' active' : '')} onClick={toggleWorkspaceMode} aria-pressed={isCanvas} aria-label={isCanvas ? 'Voltar ao layout integrado' : 'Abrir canvas'} title={isCanvas ? 'Voltar ao layout integrado' : 'Abrir canvas'}>
             <Code2 size={14} aria-hidden="true" /><span>{isCanvas ? 'Layout' : 'Canvas'}</span>
           </button>
           <button type="button" className={'workspace-tool-button' + (layout.terminalVisible ? ' active' : '')} onClick={() => setLayout((current) => ({ ...current, terminalVisible: !current.terminalVisible }))} aria-pressed={layout.terminalVisible} title="Mostrar ou ocultar terminal">
