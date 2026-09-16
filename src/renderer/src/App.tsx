@@ -26,6 +26,10 @@ import { CheckCircle2, AlertCircle, Info, X, FolderKanban, ChartNoAxesCombined, 
 
 const IntegratedWorkspace = React.lazy(() => import('./components/IntegratedWorkspace').then((module) => ({ default: module.IntegratedWorkspace })))
 
+export function isDevOrbitBridgeAvailable(): boolean {
+  return typeof window !== 'undefined' && Boolean(window.devorbit)
+}
+
 export const App: React.FC = () => {
   const [projects, setProjects] = useState<Project[]>([])
   const [otherDirs, setOtherDirs] = useState<OtherDir[]>([])
@@ -708,6 +712,39 @@ export const App: React.FC = () => {
           </button>
         </div>
       </main>
+    )
+  }
+
+  if (!isDevOrbitBridgeAvailable()) {
+    return (
+      <div className="renderer-fallback" role="alert">
+        <div className="renderer-fallback__panel">
+          <span className="renderer-fallback__icon" aria-hidden="true">
+            <AlertCircle />
+          </span>
+          <h1 className="renderer-fallback__title">
+            A ponte local do DevOrbit não está disponível
+          </h1>
+          <p className="renderer-fallback__message">
+            O aplicativo abriu sem a ponte de comunicação com o sistema (preload). Recarregue para
+            tentar novamente; se o erro persistir, reinstale o DevOrbit.
+          </p>
+          <button
+            type="button"
+            className="renderer-fallback__reload"
+            onClick={() => window.location.reload()}
+          >
+            Recarregar
+          </button>
+          <details className="renderer-fallback__details">
+            <summary>Detalhes técnicos</summary>
+            <pre className="renderer-fallback__pre">
+              window.devorbit não foi exposto pelo preload. Abra o aplicativo pelo DevOrbit (não em
+              um navegador comum) e confirme que o preload compilado está presente.
+            </pre>
+          </details>
+        </div>
+      </div>
     )
   }
 

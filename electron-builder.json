@@ -15,7 +15,8 @@
     "releaseType": "release"
   },
   "directories": {
-    "output": "release"
+    "output": "release",
+    "buildResources": "build"
   },
   "files": [
     "dist/**/*",
@@ -23,6 +24,7 @@
     "package.json"
   ],
   "win": {
+    "icon": "build/icon.ico",
     "target": [
       {
         "target": "nsis",

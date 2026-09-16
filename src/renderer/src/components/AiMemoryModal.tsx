@@ -22,6 +22,37 @@ interface AiMemoryModalProps {
   onNotify: (message: string, type?: 'success' | 'error' | 'info') => void
 }
 
+export function appendGitMemory(existingContent: string, generatedDraft: string): string {
+  const trimmedDraft = (generatedDraft || '').trim()
+  const trimmedExisting = (existingContent || '').trim()
+
+  if (!trimmedDraft && !trimmedExisting) {
+    return ''
+  }
+
+  if (!trimmedDraft) {
+    return existingContent
+  }
+
+  if (!trimmedExisting) {
+    return trimmedDraft
+  }
+
+  if (trimmedExisting.includes(trimmedDraft)) {
+    return existingContent
+  }
+
+  if (trimmedExisting.endsWith('---')) {
+    return `${trimmedExisting}\n\n${trimmedDraft}`
+  }
+
+  if (trimmedDraft.startsWith('---')) {
+    return `${trimmedExisting}\n\n${trimmedDraft}`
+  }
+
+  return `${trimmedExisting}\n\n---\n\n${trimmedDraft}`
+}
+
 export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
   isOpen,
   project,
@@ -72,6 +103,14 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
     onClose()
   }
 
+  const handleReload = async () => {
+    if (isLoading || isSaving || isGenerating) return
+    if (isDirty && !window.confirm('Descartar as alterações não salvas e recarregar a memória do disco?')) {
+      return
+    }
+    await loadMemory()
+  }
+
   const handleSave = async () => {
     setIsSaving(true)
     try {
@@ -96,9 +135,20 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
     try {
       const drafted = await window.devorbit?.generateMemoryFromGit(project.path)
       if (drafted) {
-        setContent(drafted)
-        setIsDirty(true)
-        onNotify('Handoff rascunhado a partir dos dados do Git!', 'info')
+        const hadContent = content.trim().length > 0
+        const updated = appendGitMemory(content, drafted)
+
+        if (hadContent && updated === content && drafted.trim().length > 0) {
+          onNotify('O resumo gerado pelo Git já está presente na memória.', 'info')
+        } else {
+          setContent(updated)
+          setIsDirty(true)
+          if (hadContent) {
+            onNotify('Handoff do Git anexado à memória existente, preservando suas anotações!', 'info')
+          } else {
+            onNotify('Handoff rascunhado a partir dos dados do Git!', 'info')
+          }
+        }
       }
     } catch (err: any) {
       onNotify(`Falha ao gerar pelo Git: ${err.message}`, 'error')
@@ -121,7 +171,10 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
   }
 
   const insertSnippet = (title: string, placeholder: string) => {
-    setContent((prev) => `${prev.trim()}\n\n### ${title}\n- ${placeholder}\n`)
+    setContent((prev) => {
+      const trimmed = prev.trim()
+      return trimmed ? `${trimmed}\n\n### ${title}\n- ${placeholder}\n` : `### ${title}\n- ${placeholder}\n`
+    })
     setIsDirty(true)
   }
 
@@ -224,7 +277,7 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
           <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
-              onClick={() => void loadMemory()}
+              onClick={() => void handleReload()}
               disabled={isLoading || isSaving || isGenerating}
               className="flex items-center gap-1.5 rounded-[6px] border border-stone-300 bg-white px-3 py-1 text-xs font-semibold text-stone-700 transition-colors hover:bg-[#eceee7] disabled:cursor-wait disabled:opacity-50"
               title="Reler a memória e recalcular se ela está desatualizada em relação ao Git"
@@ -238,7 +291,8 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
               onClick={handleGenerateFromGit}
               disabled={isGenerating}
               className="flex items-center gap-1.5 px-3 py-1 rounded-[6px] text-xs font-semibold bg-[#edf3e8] text-[#3e562f] border border-[#bdcfb0] hover:bg-[#e3ecdc] transition-colors cursor-pointer disabled:opacity-50"
-              title="Analisa branches, commits recentes e arquivos alterados para rascunhar o handoff"
+              title="Analisa branches, commits recentes e arquivos alterados para rascunhar o handoff. Preserva anotações existentes."
+              aria-label="Puxar handoff do Git (preserva anotações existentes)"
             >
               <Sparkles aria-hidden="true" className={`w-3.5 h-3.5 ${isGenerating ? 'motion-safe:animate-spin' : ''}`} />
               <span>{isGenerating ? 'Puxando...' : 'Puxar do Git'}</span>

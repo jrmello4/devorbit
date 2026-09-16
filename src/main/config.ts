@@ -13,6 +13,13 @@ const MAX_CUSTOM_PATH_LENGTH = 4096
 const MAX_PROJECT_DIRS = 16
 const CUSTOM_PATH_KEYS = ['brave', 'chrome', 'mimo', 'agy', 'codex', 'opencode', 'claude', 'gemini', 'aider', 'customAgent', 'vscode', 'wt'] as const
 let configOperationQueue: Promise<void> = Promise.resolve()
+const CORRUPT_CONFIG_BACKUP_SUFFIX = '.corrupt.bak'
+
+export type ConfigRecoveryState = {
+  recovered: true
+  reason: 'invalid-json' | 'unreadable'
+  backupPath: string
+}
 
 const defaultConfig: AppConfig = {
   projectDirs: [
@@ -63,6 +70,8 @@ function normalizeManagedProjects(value: unknown): ManagedProject[] {
   }
   return result.slice(0, 500)
 }
+
+let lastConfigRecoveryState: ConfigRecoveryState | null = null
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -173,6 +182,73 @@ function getConfigPath(): string {
   }
 }
 
+function getCorruptConfigBackupPath(filePath: string): string {
+  return `${filePath}${CORRUPT_CONFIG_BACKUP_SUFFIX}`
+}
+
+function isFileNotFoundError(error: unknown): boolean {
+  return isRecord(error) && error.code === 'ENOENT'
+}
+
+async function preserveCorruptConfig(filePath: string): Promise<string> {
+  const backupPath = getCorruptConfigBackupPath(filePath)
+  try {
+    await fs.copyFile(filePath, backupPath)
+  } catch {
+    throw new Error('Nao foi possivel preservar a configuracao invalida antes da recuperacao segura.')
+  }
+  return backupPath
+}
+
+type PersistedConfigResult = {
+  config: AppConfig
+  shouldPersist: boolean
+  recovery?: Omit<ConfigRecoveryState, 'recovered'>
+}
+
+async function readPersistedConfig(filePath: string): Promise<PersistedConfigResult> {
+  lastConfigRecoveryState = null
+
+  let content: string
+  try {
+    content = await fs.readFile(filePath, 'utf-8')
+  } catch (error) {
+    if (isFileNotFoundError(error)) {
+      return { config: normalizeConfig(defaultConfig), shouldPersist: true }
+    }
+
+    const backupPath = await preserveCorruptConfig(filePath)
+    return {
+      config: normalizeConfig(defaultConfig),
+      shouldPersist: true,
+      recovery: { reason: 'unreadable', backupPath },
+    }
+  }
+
+  try {
+    return { config: normalizeConfig(JSON.parse(content)), shouldPersist: false }
+  } catch {
+    const backupPath = await preserveCorruptConfig(filePath)
+    return {
+      config: normalizeConfig(defaultConfig),
+      shouldPersist: true,
+      recovery: { reason: 'invalid-json', backupPath },
+    }
+  }
+}
+
+function recordConfigRecovery(recovery: Omit<ConfigRecoveryState, 'recovered'>): void {
+  lastConfigRecoveryState = { recovered: true, ...recovery }
+  const reason = recovery.reason === 'invalid-json' ? 'JSON invalido' : 'arquivo ilegivel'
+  console.warn(
+    `[DevOrbit config] Recuperacao concluida: ${reason} preservado antes da gravacao dos defaults.`
+  )
+}
+
+export function getConfigRecoveryState(): ConfigRecoveryState | null {
+  return lastConfigRecoveryState ? { ...lastConfigRecoveryState } : null
+}
+
 async function atomicallyWriteConfig(file: string, config: AppConfig): Promise<void> {
   const temporaryFile = `${file}.${process.pid}.${Date.now()}.tmp`
   let renamed = false
@@ -206,15 +282,12 @@ export async function loadConfig(): Promise<AppConfig> {
     return normalizeConfig(JSON.parse(content))
   } catch {
     return enqueueConfigOperation(async () => {
-      // Another initial load may have created the file while this call was
-      // waiting for the queue. Re-read before deciding to initialize it.
-      try {
-        const content = await fs.readFile(filePath, 'utf-8')
-        return normalizeConfig(JSON.parse(content))
-      } catch {
-        await atomicallyWriteConfig(filePath, defaultConfig)
-        return normalizeConfig(defaultConfig)
+      const persisted = await readPersistedConfig(filePath)
+      if (persisted.shouldPersist) {
+        await atomicallyWriteConfig(filePath, persisted.config)
+        if (persisted.recovery) recordConfigRecovery(persisted.recovery)
       }
+      return persisted.config
     })
   }
 }
@@ -222,14 +295,9 @@ export async function loadConfig(): Promise<AppConfig> {
 export async function saveConfig(updates: Partial<AppConfig>): Promise<AppConfig> {
   const filePath = getConfigPath()
   return enqueueConfigOperation(async () => {
-    const current = await (async () => {
-      try {
-        const content = await fs.readFile(filePath, 'utf-8')
-        return normalizeConfig(JSON.parse(content))
-      } catch {
-        return normalizeConfig(defaultConfig)
-      }
-    })()
+    const persisted = await readPersistedConfig(filePath)
+    const current = persisted.config
+    if (persisted.recovery) recordConfigRecovery(persisted.recovery)
 
     const merged = normalizeConfig({
       ...current,

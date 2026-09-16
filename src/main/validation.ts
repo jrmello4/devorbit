@@ -330,6 +330,20 @@ export async function canonicalizeExistingDirectory(
   return canonical
 }
 
+export function isPathWithinRoot(candidate: string, canonicalRoot: string): boolean {
+  const normalize = (value: string): string =>
+    process.platform === 'win32' ? value.toLowerCase() : value
+  if (normalize(candidate) === normalize(canonicalRoot)) return true
+
+  const relative = path.relative(canonicalRoot, candidate)
+  return (
+    relative !== '' &&
+    relative !== '..' &&
+    !relative.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relative)
+  )
+}
+
 export async function validateProjectDirs(value: unknown): Promise<string[]> {
   if (!Array.isArray(value)) throw new Error('Pastas de projeto inválidas.')
   if (value.length > MAX_PROJECT_DIRS) {

@@ -174,6 +174,35 @@ async function detectProjectMetadata(dirPath: string): Promise<ProjectMetadata> 
   return { techs, packageManager, scripts }
 }
 
+async function inspectProjectDirectory(
+  realProjectPath: string,
+  displayName: string,
+  parentDir: string,
+  refreshRemote: boolean,
+  treatAsProject: boolean
+): Promise<Project | null> {
+  const stats = await fs.stat(realProjectPath)
+  if (!stats.isDirectory()) return null
+
+  const hasGit = await isGitRepository(realProjectPath)
+  const metadata = await detectProjectMetadata(realProjectPath)
+  if (!treatAsProject && !hasGit && metadata.techs.length === 0) return null
+
+  const git = await getGitStatus(realProjectPath, refreshRemote)
+  return {
+    id: Buffer.from(realProjectPath).toString('base64'),
+    name: displayName,
+    path: realProjectPath,
+    parentDir,
+    lastModified: stats.mtimeMs,
+    techs: metadata.techs,
+    packageManager: metadata.packageManager,
+    scripts: metadata.scripts,
+    git,
+    lifecycle: 'local',
+  }
+}
+
 export async function scanDirectoryForProjects(rootDir: string, refreshRemote = false): Promise<Project[]> {
   try {
     // Resolve the configured root once. Apart from avoiding repeated I/O, this
@@ -186,6 +215,7 @@ export async function scanDirectoryForProjects(rootDir: string, refreshRemote = 
         !entry.name.startsWith('.') &&
         !IGNORED_DIRS.has(entry.name)
     )
+    const treatChildrenAsProjects = rootDir.toLowerCase().endsWith('projects')
 
     const inspected = await mapWithConcurrency(
       candidateEntries,
@@ -235,7 +265,24 @@ export async function scanDirectoryForProjects(rootDir: string, refreshRemote = 
       }
     )
 
-    return inspected.filter((project): project is Project => project !== null)
+    const projects = inspected.filter((project): project is Project => project !== null)
+
+    try {
+      const rootProject = await inspectProjectDirectory(
+        realRoot,
+        path.basename(realRoot),
+        path.basename(path.dirname(realRoot)),
+        refreshRemote,
+        false
+      )
+      if (rootProject && !projects.some((project) => project.path === rootProject.path)) {
+        projects.unshift(rootProject)
+      }
+    } catch (error) {
+      console.error(`Falha ao inspecionar a raiz ${realRoot}:`, error)
+    }
+
+    return projects
   } catch (error) {
     console.error(`Erro ao ler diretório ${rootDir}:`, error)
     return []

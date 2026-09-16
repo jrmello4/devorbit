@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react'
-import { Folder, FolderX, FolderOpen, GitBranch, GitPullRequest, SlidersHorizontal, ArrowDown, Circle, ArrowUpDown } from 'lucide-react'
+import { Folder, FolderX, FolderOpen, GitBranch, GitPullRequest, SlidersHorizontal, ArrowDown, ArrowUp, Circle, ArrowUpDown } from 'lucide-react'
 import { ProjectCard } from './ProjectCard'
 import type { Project, OtherDir, AppConfig } from '../types'
 interface ProjectGridProps {
@@ -62,20 +62,34 @@ export const ProjectGrid: React.FC<ProjectGridProps> = (props) => {
       (!tech || p.techs.some(t => t.id === tech))
   }).sort((a,b) => sort === 'recent' ? b.lastModified - a.lastModified : a.name.localeCompare(b.name)), [projects, search, filter, tech, sort])
   const selected = filtered.find(p => p.id === selectedId) ?? filtered[0]
+  const attentionCount = useMemo(() => projects.filter((project) =>
+    project.git.isRepo && (project.git.behind > 0 || project.git.ahead > 0 || project.git.hasChanges),
+  ).length, [projects])
+  const withoutGitCount = useMemo(() => projects.filter((project) => !project.git.isRepo).length, [projects])
   return (
     <main className="project-workspace" aria-busy={isLoading}>
       <section className="project-master" aria-label="Lista de projetos">
-        <div className="master-heading"><h1>Projetos</h1><span className="count-badge">{projects.length}</span>{onOpenClone && <button className="icon-button" title="Clonar repositório por link" aria-label="Clonar repositório por link" onClick={onOpenClone}><GitPullRequest size={14} /></button>}</div>
+        <div className="master-heading">
+          <div className="master-heading-copy">
+            <div className="master-heading-title"><h1>Projetos</h1><span className="count-badge" aria-label={`${projects.length} projetos`}>{projects.length}</span></div>
+            <span className="master-heading-summary" aria-live="polite">
+              {projects.length ? `${projects.length} projetos` : 'Nenhum projeto monitorado'}
+              {attentionCount > 0 && ` · ${attentionCount} com atenção`}
+              {withoutGitCount > 0 && ` · ${withoutGitCount} sem Git`}
+            </span>
+          </div>
+          {onOpenClone && <button type="button" className="clone-button" title="Clonar repositório por link" aria-label="Clonar repositório por link" onClick={onOpenClone}><GitPullRequest size={14} aria-hidden="true" /><span>Clonar</span></button>}
+        </div>
         <div className="project-filters">
-          <label><SlidersHorizontal size={14}/><span className="sr-only">Filtrar status Git</span><select value={filter} onChange={e => setFilter(e.target.value)}><option value="all">Todos os projetos</option><option value="pull">Pull pendente</option><option value="modified">Com alterações</option><option value="no-git">Sem Git</option></select></label>
-          <div className="filter-secondary"><label><span className="sr-only">Filtrar tecnologia</span><select value={tech} onChange={e => setTech(e.target.value)}><option value="">Todas as tecnologias</option>{techs.map(([id,label]) => <option key={id} value={id}>{label}</option>)}</select></label><button className="icon-button" title={sort === 'name' ? 'Ordenar por modificação recente' : 'Ordenar por nome'} aria-label={sort === 'name' ? 'Ordenar por modificação recente' : 'Ordenar por nome'} onClick={() => setSort(sort === 'name' ? 'recent' : 'name')}><ArrowUpDown size={14}/></button></div>
+          <label><SlidersHorizontal size={14} aria-hidden="true"/><span className="sr-only">Filtrar status Git</span><select value={filter} onChange={e => setFilter(e.target.value)}><option value="all">Todos os projetos</option><option value="pull">Pull pendente</option><option value="modified">Com alterações</option><option value="no-git">Sem Git</option></select></label>
+          <div className="filter-secondary"><label><span className="sr-only">Filtrar tecnologia</span><select value={tech} onChange={e => setTech(e.target.value)}><option value="">Todas as tecnologias</option>{techs.map(([id,label]) => <option key={id} value={id}>{label}</option>)}</select></label><button type="button" className="icon-button" title={sort === 'name' ? 'Ordenar por modificação recente' : 'Ordenar por nome'} aria-label={sort === 'name' ? 'Ordenar por modificação recente' : 'Ordenar por nome'} onClick={() => setSort(sort === 'name' ? 'recent' : 'name')}><ArrowUpDown size={14} aria-hidden="true"/></button></div>
         </div>
         <div className="project-list" aria-label="Selecionar projeto">
           {isLoading && !projects.length ? <p className="list-message" role="status">Lendo projetos…</p> : filtered.map(p => (
-            <button key={p.id} className={`project-row ${selected?.id === p.id ? 'selected' : ''}`} aria-pressed={selected?.id === p.id} onClick={() => setSelectedId(p.id)}>
-              <span className="project-row-icon"><Folder size={17}/></span>
-              <span className="project-row-copy"><strong title={p.name}>{p.name}</strong><span title={p.path}>{p.parentDir}</span><small>{p.lifecycle === 'archived' ? 'Arquivado · pronto para baixar' : p.git.isRepo ? <><GitBranch size={11}/><span>{p.git.branch || 'Sem commits'}</span></> : 'Sem repositório'}</small></span>
-              {p.git.behind > 0 ? <span className="row-status" title={`${p.git.behind} commits para receber`}><ArrowDown size={12}/>{p.git.behind}</span> : p.git.hasChanges ? <span className="row-status warning" title="Alterações locais"><Circle size={8} fill="currentColor"/></span> : null}
+            <button type="button" key={p.id} className={`project-row ${selected?.id === p.id ? 'selected' : ''}`} aria-pressed={selected?.id === p.id} onClick={() => setSelectedId(p.id)}>
+              <span className="project-row-icon"><Folder size={17} aria-hidden="true"/></span>
+              <span className="project-row-copy"><strong title={p.name}>{p.name}</strong><span title={p.path}>{p.parentDir}</span><small>{p.lifecycle === 'archived' ? 'Arquivado · pronto para baixar' : p.git.isRepo ? <><GitBranch size={11} aria-hidden="true"/><span>{p.git.branch || 'Sem commits'}</span></> : 'Sem repositório'}</small></span>
+              {p.git.behind > 0 ? <span className="row-status" title={`${p.git.behind} commits para receber`}><ArrowDown size={12} aria-hidden="true"/>{p.git.behind}</span> : p.git.hasChanges ? <span className="row-status warning" title="Alterações locais"><Circle size={8} fill="currentColor" aria-hidden="true"/></span> : p.git.ahead > 0 ? <span className="row-status" title={`${p.git.ahead} commits para enviar`}><ArrowUp size={12} aria-hidden="true"/>{p.git.ahead}</span> : null}
             </button>
           ))}
           {!isLoading && !filtered.length && <p className="list-message">{projects.length ? 'Nenhum resultado para estes filtros.' : 'Nenhuma pasta adicionada.'}</p>}
@@ -86,10 +100,10 @@ export const ProjectGrid: React.FC<ProjectGridProps> = (props) => {
             <p className="list-message">Sem Git ou manifesto — abra a pasta ou adicione Git.</p>
             {visibleOtherDirs.map((dir) => (
               <div key={dir.path} className="project-row">
-                <span className="project-row-icon"><Folder size={17} /></span>
+                <span className="project-row-icon"><Folder size={17} aria-hidden="true" /></span>
                 <span className="project-row-copy"><strong title={dir.name}>{dir.name}</strong><span title={dir.path}>{dir.parentDir}</span></span>
-                <button className="icon-button" title={`Adicionar Git em ${dir.name}`} aria-label={`Adicionar Git em ${dir.name}`} onClick={() => handleAddGit(dir)}><GitBranch size={14} /></button>
-                <button className="icon-button" title={`Abrir pasta ${dir.name}`} aria-label={`Abrir pasta ${dir.name}`} onClick={() => void handleOpenFolder(dir)}><FolderOpen size={14} /></button>
+                <button type="button" className="icon-button" title={`Adicionar Git em ${dir.name}`} aria-label={`Adicionar Git em ${dir.name}`} onClick={() => handleAddGit(dir)}><GitBranch size={14} aria-hidden="true" /></button>
+                <button type="button" className="icon-button" title={`Abrir pasta ${dir.name}`} aria-label={`Abrir pasta ${dir.name}`} onClick={() => void handleOpenFolder(dir)}><FolderOpen size={14} aria-hidden="true" /></button>
               </div>
             ))}
           </div>
@@ -97,7 +111,7 @@ export const ProjectGrid: React.FC<ProjectGridProps> = (props) => {
         <div className="master-footer" role="status">{filtered.length} de {projects.length} projetos<span>{sort === 'name' ? 'Nome A–Z' : 'Mais recentes'}</span></div>
       </section>
       <section className="project-detail" aria-label="Projeto selecionado">
-        {selected ? <ProjectCard key={selected.id} {...props} project={selected} config={config}/> : <div className="workspace-empty"><FolderX size={36} strokeWidth={1.2}/><h2>{isLoading ? 'Preparando seu workspace' : projects.length ? 'Nenhum projeto encontrado' : 'Seu próximo projeto começa aqui'}</h2><p>{isLoading ? 'Lendo pastas e verificando o Git.' : projects.length ? 'Altere a busca ou os filtros para continuar.' : 'Adicione uma pasta para reunir projetos, ferramentas e contexto em um só lugar.'}</p>{!isLoading && !projects.length && <button className="primary-button" onClick={onOpenSettings}>Adicionar pasta de projetos</button>}{!isLoading && projects.length > 0 && (filter !== 'all' || tech) && <button className="secondary-button" onClick={() => {setFilter('all'); setTech('')}}>Limpar filtros</button>}</div>}
+        {selected ? <ProjectCard key={selected.id} {...props} project={selected} config={config}/> : <div className="workspace-empty"><span className="workspace-empty-kicker">{isLoading ? 'Preparando seu workspace' : projects.length ? 'Ajuste sua busca' : 'Primeiro passo'}</span>{projects.length ? <FolderX size={36} strokeWidth={1.2} aria-hidden="true" /> : <FolderOpen size={36} strokeWidth={1.2} aria-hidden="true" />}<h2>{isLoading ? 'Preparando seu workspace' : projects.length ? 'Nenhum projeto encontrado' : 'Seu próximo projeto começa aqui'}</h2><p>{isLoading ? 'Lendo pastas e verificando o Git.' : projects.length ? 'Altere a busca ou os filtros para continuar.' : 'Adicione uma pasta para abrir seu primeiro projeto e começar a trabalhar.'}</p>{!isLoading && !projects.length && onOpenSettings && <button type="button" className="primary-button" onClick={onOpenSettings}>Adicionar uma pasta</button>}{!isLoading && projects.length > 0 && (filter !== 'all' || tech) && <button type="button" className="secondary-button" onClick={() => {setFilter('all'); setTech('')}}>Limpar filtros</button>}</div>}
       </section>
     </main>
   )

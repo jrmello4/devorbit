@@ -45,6 +45,7 @@ import type {
 import {
   assertTrustedIpcSender,
   canonicalizeExistingDirectory,
+  isPathWithinRoot,
   validateCodexAccount,
   validateAgentProvider,
   validateConfigUpdates,
@@ -76,7 +77,36 @@ process.env.VITE_PUBLIC = process.env.VITE_DEV_SERVER_URL
 
 let mainWindow: BrowserWindowType | null = null
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL)
-const hasSingleInstanceLock = app.requestSingleInstanceLock()
+const SMOKE_FLAG = '--devorbit-smoke'
+
+function getCliArgValue(name: string): string | undefined {
+  const prefix = `${name}=`
+  const match = process.argv.find((arg) => arg.startsWith(prefix))
+  return match ? match.slice(prefix.length) : undefined
+}
+
+const isSmokeRun = process.argv.includes(SMOKE_FLAG)
+let smokeStartupError: string | null = null
+
+if (isSmokeRun) {
+  const smokeTemp = getCliArgValue('--devorbit-smoke-temp')
+  const smokeUserData = getCliArgValue('--devorbit-smoke-userdata')
+  if (
+    !smokeTemp ||
+    !smokeUserData ||
+    !isPathWithinRoot(path.resolve(smokeUserData), path.resolve(smokeTemp))
+  ) {
+    smokeStartupError = 'userData de smoke fora do diretório temporário esperado'
+  } else {
+    try {
+      app.setPath('userData', smokeUserData)
+    } catch (error: any) {
+      smokeStartupError = `falha ao definir userData de smoke: ${error?.message || error}`
+    }
+  }
+}
+
+const hasSingleInstanceLock = isSmokeRun ? true : app.requestSingleInstanceLock()
 let managedConfigQueue: Promise<void> = Promise.resolve()
 let terminalLifecycleGeneration = 0
 
@@ -122,15 +152,14 @@ onWebPanelEvent((event) => {
   window.webContents.send('devorbit:webEvent', event)
 })
 
+
 async function validateCloneParent(input: unknown): Promise<string> {
   const candidate = await canonicalizeExistingDirectory(input, 'Pasta de destino')
   const config = await loadConfig()
   const allowed = (await Promise.all(config.projectDirs.map(async (root) => {
     try {
       const canonicalRoot = await canonicalizeExistingDirectory(root, 'Pasta monitorada')
-      if (candidate === canonicalRoot) return true
-      const relative = path.relative(canonicalRoot, candidate)
-      return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative)
+      return isPathWithinRoot(candidate, canonicalRoot)
     } catch { return false }
   }))).some(Boolean)
   if (!allowed) throw new Error('A pasta de destino não pertence a uma pasta monitorada.')
@@ -143,8 +172,7 @@ async function validateProjectPath(input: unknown): Promise<string> {
   const allowed = (await Promise.all(config.projectDirs.map(async (root) => {
     try {
       const canonicalRoot = await canonicalizeExistingDirectory(root, 'Pasta monitorada')
-      const relative = path.relative(canonicalRoot, candidate)
-      return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative)
+      return isPathWithinRoot(candidate, canonicalRoot)
     } catch { return false }
   }))).some(Boolean)
   if (!allowed) throw new Error('O projeto não pertence a uma pasta monitorada.')
@@ -245,7 +273,140 @@ function createWindow() {
   }
 }
 
-if (!hasSingleInstanceLock) {
+async function verifyPackagedRenderer(target: BrowserWindowType): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    target.webContents.once('did-finish-load', () => resolve())
+    target.webContents.once(
+      'did-fail-load',
+      (_event: unknown, errorCode: number, description: string, url: string) => {
+        reject(new Error(`falha ao carregar ${url}: ${description} (${errorCode})`))
+      }
+    )
+    target.loadFile(path.join(RENDERER_DIST, 'index.html')).catch(reject)
+  })
+
+  const deadline = Date.now() + 20_000
+  let state: { hasBridge: boolean; hasShell: boolean; hasFallback: boolean } | null = null
+  while (Date.now() < deadline) {
+    state = await target.webContents.executeJavaScript(
+      `(() => ({
+        hasBridge: typeof window.devorbit === 'object' && window.devorbit !== null,
+        hasShell: Boolean(document.querySelector('.app-shell')),
+        hasFallback: Boolean(document.querySelector('.renderer-fallback')),
+      }))()`,
+      true
+    )
+    if (state && state.hasBridge && (state.hasShell || state.hasFallback)) break
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+
+  if (!state || !state.hasBridge) throw new Error('preload não expôs window.devorbit')
+  if (!state.hasShell) {
+    throw new Error(
+      state.hasFallback
+        ? 'renderer exibiu o estado de ponte ausente'
+        : 'renderer não montou o workspace (.app-shell ausente)'
+    )
+  }
+
+  const probe = await target.webContents.executeJavaScript(
+    `window.devorbit.getConfig()
+      .then((config) => ({ ok: true, hasProjectDirs: Array.isArray(config && config.projectDirs) }))
+      .catch((error) => ({ ok: false, message: String((error && error.message) || error) }))`,
+    true
+  )
+  if (!probe.ok) throw new Error(`invoke IPC falhou: ${probe.message}`)
+  if (!probe.hasProjectDirs) throw new Error('getConfig retornou payload inesperado')
+}
+
+async function runPackagedSmokeTest(): Promise<void> {
+  const smokeTemp = getCliArgValue('--devorbit-smoke-temp')
+  const smokeResult = getCliArgValue('--devorbit-smoke-result')
+  const smokeToken = getCliArgValue('--devorbit-smoke-token')
+  const expectedVersion = getCliArgValue('--devorbit-smoke-version')
+  const canWriteResult = Boolean(
+    smokeTemp && smokeResult && isPathWithinRoot(path.resolve(smokeResult), path.resolve(smokeTemp))
+  )
+
+  const emit = async (
+    success: boolean,
+    error?: string,
+    evidence?: Record<string, boolean>
+  ): Promise<void> => {
+    if (canWriteResult && smokeResult) {
+      try {
+        await fs.writeFile(
+          smokeResult,
+          JSON.stringify({
+            kind: 'devorbit-packaged-smoke',
+            success,
+            version: app.getVersion(),
+            token: smokeToken,
+            error,
+            ...evidence,
+          }),
+          'utf8'
+        )
+      } catch (error: any) {
+        console.error('[smoke] falha ao gravar o marcador de resultado:', error?.message || error)
+      }
+    }
+    console.log(`[smoke] ${success ? 'OK' : 'FALHA'}${error ? `: ${error}` : ''}`)
+    app.exit(success ? 0 : 1)
+  }
+
+  if (smokeStartupError) return emit(false, smokeStartupError)
+  if (!app.isPackaged) return emit(false, 'o modo smoke exige um aplicativo empacotado')
+  if (!expectedVersion || !smokeToken) return emit(false, 'argumentos de smoke ausentes')
+  if (!canWriteResult) {
+    return emit(false, 'resultado de smoke fora do diretório temporário esperado')
+  }
+  if (app.getVersion() !== expectedVersion) {
+    return emit(
+      false,
+      `versão empacotada ${app.getVersion()} diferente da esperada ${expectedVersion}`
+    )
+  }
+
+  let smokeWindow: BrowserWindowType | null = null
+  let timeoutHandle: NodeJS.Timeout | null = null
+  try {
+    setupIpcHandlers()
+
+    smokeWindow = new BrowserWindow({
+      show: false,
+      width: 1024,
+      height: 700,
+      webPreferences: {
+        preload: path.join(__dirname, '../preload/index.cjs'),
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+      },
+    })
+
+    const timedOut = new Promise<never>((_resolve, reject) => {
+      timeoutHandle = setTimeout(
+        () => reject(new Error('timeout aguardando o renderer empacotado')),
+        30_000
+      )
+    })
+
+    await Promise.race([timedOut, verifyPackagedRenderer(smokeWindow)])
+    return await emit(true, undefined, { renderer: true, preload: true, ipc: true })
+  } catch (error: any) {
+    return await emit(false, `smoke falhou: ${error?.message || error}`)
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle)
+    if (smokeWindow && !smokeWindow.isDestroyed()) smokeWindow.destroy()
+  }
+}
+
+if (isSmokeRun) {
+  app.whenReady().then(() => {
+    void runPackagedSmokeTest()
+  })
+} else if (!hasSingleInstanceLock) {
   app.quit()
 } else {
   app.on('second-instance', () => {
@@ -277,6 +438,7 @@ app.on('before-quit', () => {
 })
 
 app.on('window-all-closed', () => {
+  if (isSmokeRun) return
   if (process.platform !== 'darwin') {
     app.quit()
   }

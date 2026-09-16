@@ -201,6 +201,36 @@ async function openCmdSession(
   }
 }
 
+async function openUrlInDefaultBrowser(
+  url: string,
+  browserName: string
+): Promise<{ success: boolean; message?: string }> {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return { success: false, message: 'URL inválida para abrir no navegador padrão.' }
+  }
+  if (parsed.protocol !== 'https:') {
+    return {
+      success: false,
+      message: 'Apenas URLs HTTPS podem ser abertas no navegador padrão.',
+    }
+  }
+
+  try {
+    await shell.openExternal(parsed.toString())
+  } catch (error: any) {
+    return {
+      success: false,
+      message: `Não foi possível abrir o navegador padrão: ${
+        error?.message || 'erro desconhecido'
+      }. Instale o ${browserName} ou ajuste o caminho em Configurações.`,
+    }
+  }
+  return { success: true }
+}
+
 async function resolveCommandPath(command?: string): Promise<string | null> {
   const trimmed = command?.trim()
   if (!trimmed) return null
@@ -357,7 +387,12 @@ export async function launchTool(
         const url = options?.url || 'https://chatgpt.com'
         const chromePath = await resolveBrowserPath(account, custom.chrome)
         if (!chromePath) {
-          return { success: false, message: 'Google Chrome não foi encontrado. Ajuste o caminho em Configurações ou instale o navegador.' }
+          const fallback = await openUrlInDefaultBrowser(url, 'Google Chrome')
+          if (!fallback.success) return fallback
+          return {
+            success: true,
+            message: 'Google Chrome não foi encontrado. O ChatGPT foi aberto no navegador padrão, sem o perfil isolado. Instale o Chrome ou ajuste o caminho em Configurações.',
+          }
         }
         // A telemetria de quotas é somente leitura via OAuth (usage-real.ts).
         // Abrir o navegador nunca é bloqueado por contador local.
@@ -371,7 +406,12 @@ export async function launchTool(
         const url = options?.url || 'https://chatgpt.com'
         const bravePath = await resolveBrowserPath(account, custom.brave)
         if (!bravePath) {
-          return { success: false, message: 'Brave não foi encontrado. Ajuste o caminho em Configurações ou instale o navegador.' }
+          const fallback = await openUrlInDefaultBrowser(url, 'Brave')
+          if (!fallback.success) return fallback
+          return {
+            success: true,
+            message: 'Brave não foi encontrado. O ChatGPT foi aberto no navegador padrão, sem o perfil isolado. Instale o Brave ou ajuste o caminho em Configurações.',
+          }
         }
         await spawnDetached(bravePath, getBrowserLaunchArgs(browserProfile, url))
         return { success: true, message: `ChatGPT aberto no Brave (${getAccountLabel(account, { account2: config.chatGptAccount2Name })})!` }

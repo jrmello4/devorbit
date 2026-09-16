@@ -168,6 +168,7 @@ export interface SyncResult {
   success: boolean
   message: string
   output?: string
+  commitCreated?: boolean
 }
 
 export interface GitChange {

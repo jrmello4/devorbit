@@ -52,12 +52,13 @@ type LaunchTool =
   | 'terminal'
   | 'folder'
 
-
 function formatProjectDate(value: number): string {
   const date = new Date(value)
   if (!Number.isFinite(date.getTime())) return 'data desconhecida'
   return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(date)
 }
+
+type NextActionState = 'setup' | 'pull' | 'push' | 'clean'
 export const ProjectCard: React.FC<ProjectCardProps> = ({
   project,
   config,
@@ -156,11 +157,6 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
   const hasLocalChanges = git.isRepo && git.hasChanges
   const hasRemoteChanges = git.isRepo && git.ahead > 0
   const changedFiles = git.modifiedCount + git.untrackedCount
-  const primaryAction = needsPull
-    ? 'pull'
-    : hasLocalChanges || hasRemoteChanges
-      ? 'push'
-      : 'pull'
   const activeAccount = config?.activeChatGptAccount || 'account1'
   const projectAccount = config?.projectAccounts?.[project.id] || activeAccount
   const activeAccountLabel =
@@ -188,6 +184,73 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
           : git.hasChanges
             ? 'Existem arquivos locais fora do último commit.'
             : 'Branch local alinhado ao remoto.'
+
+  const nextActionState: NextActionState = !git.isRepo
+    ? 'setup'
+    : needsPull
+      ? 'pull'
+      : hasLocalChanges || hasRemoteChanges
+        ? 'push'
+        : 'clean'
+
+  const nextActionTitle =
+    nextActionState === 'setup'
+      ? 'Configurar repositório Git'
+      : nextActionState === 'pull'
+        ? 'Puxar mudanças do remoto'
+        : nextActionState === 'push'
+          ? hasLocalChanges
+            ? 'Enviar alterações locais'
+            : 'Enviar commits locais'
+          : 'Tudo sincronizado'
+
+  const nextActionDescription =
+    nextActionState === 'setup'
+      ? 'Esta pasta ainda não é um repositório Git. Adicione o Git para versionar e sincronizar o projeto.'
+      : nextActionState === 'pull'
+        ? hasLocalChanges
+          ? `${git.behind} commit(s) remoto(s) e ${changedFiles} arquivo(s) local(is). Use "Stash + puxar" para preservar tudo.`
+          : `${git.behind} commit(s) remoto(s) à frente. Atualize o branch local antes de continuar.`
+        : nextActionState === 'push'
+          ? hasLocalChanges
+            ? `${changedFiles > 0 ? changedFiles + ' arquivo(s)' : 'Alterações locais'} fora do último commit${
+                git.ahead > 0 ? ' e ' + git.ahead + ' commit(s) local(is)' : ''
+              }.`
+            : `${git.ahead} commit(s) local(is) à frente do remoto.`
+          : 'Branch local alinhado ao remoto. Nada para enviar ou puxar agora.'
+
+  const deliveryMeta = !git.isRepo
+    ? 'Configuração pendente'
+    : hasLocalChanges
+      ? changedFiles > 0
+        ? `${changedFiles} arquivo(s) local(is)`
+        : 'Alterações locais'
+      : git.behind > 0
+        ? `${git.behind} atrás`
+        : git.ahead > 0
+          ? `${git.ahead} à frente`
+          : 'Alinhado'
+
+  const lastModifiedLabel =
+    Number.isFinite(project.lastModified) && project.lastModified > 0
+      ? new Date(project.lastModified).toLocaleDateString('pt-BR')
+      : null
+
+  const facts: { label: string; value: string }[] = []
+  facts.push({ label: 'Branch', value: git.isRepo ? branchLabel : 'Sem Git' })
+  facts.push({ label: 'Conta ativa', value: activeAccountLabel })
+  if (lastModifiedLabel) {
+    facts.push({ label: 'Última alteração', value: lastModifiedLabel })
+  }
+  if (git.isRepo && hasLocalChanges) {
+    facts.push({
+      label: 'Arquivos locais',
+      value: changedFiles > 0 ? String(changedFiles) : 'Sim',
+    })
+  }
+  if (git.isRepo && git.lastSyncTime) {
+    facts.push({ label: 'Último sync', value: git.lastSyncTime })
+  }
 
   const renderToolButton = (
     tool: LaunchTool,
@@ -283,7 +346,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
         </div>
       </header>
 
-      <div className="detail-status-strip" role="status" aria-live="polite">
+      <div className="detail-status-strip">
         <div className="detail-branch-summary">
           <GitBranch aria-hidden="true" />
           <button
@@ -336,16 +399,122 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
           )}
         </div>
 
-        <p className="detail-status-description" title={git.statusMessage || statusDescription}>
+        <p
+          className="detail-status-description"
+          role="status"
+          aria-live="polite"
+          title={git.statusMessage || statusDescription}
+        >
           {git.statusMessage || statusDescription}
         </p>
       </div>
 
       <div className="detail-main">
-        <div className="detail-primary-column">
-          <section className="work-section" aria-labelledby={'workspace-actions-' + project.id}>
+        <section
+          className="detail-next"
+          data-state={nextActionState}
+          aria-labelledby={'next-action-' + project.id}
+          aria-describedby={'next-action-desc-' + project.id}
+        >
+          <div className="detail-next-main">
+            <span className="detail-next-icon" aria-hidden="true">
+              {nextActionState === 'pull' ? (
+                <RefreshCw />
+              ) : nextActionState === 'push' ? (
+                <UploadCloud />
+              ) : nextActionState === 'clean' ? (
+                <Check />
+              ) : (
+                <GitBranch />
+              )}
+            </span>
+            <div className="detail-next-copy">
+              <span className="detail-next-eyebrow">Próxima ação</span>
+              <h3 id={'next-action-' + project.id} className="detail-next-title">
+                {nextActionTitle}
+              </h3>
+              <p id={'next-action-desc-' + project.id} className="detail-next-description">
+                {nextActionDescription}
+              </p>
+            </div>
+          </div>
+
+          <div className="detail-next-action">
+            {nextActionState === 'setup' && (
+              <button
+                type="button"
+                onClick={() => onOpenGitInit(project)}
+                className="detail-next-button"
+                title="Criar um repositório Git nesta pasta"
+              >
+                <GitBranch aria-hidden="true" />
+                <span>Adicionar Git</span>
+              </button>
+            )}
+            {nextActionState === 'pull' && (
+              <button
+                type="button"
+                onClick={handleSync}
+                disabled={isSyncing}
+                aria-busy={isSyncing}
+                className="detail-next-button"
+                title="Executar git pull para trazer a versão mais recente"
+              >
+                <RefreshCw
+                  className={isSyncing ? 'work-icon-spinning' : ''}
+                  aria-hidden="true"
+                />
+                <span>{isSyncing ? 'Puxando...' : 'Puxar mudanças'}</span>
+              </button>
+            )}
+            {nextActionState === 'push' && (
+              <button
+                type="button"
+                onClick={() => onOpenPushModal(project)}
+                className="detail-next-button"
+                title="Subir alterações locais para o GitHub"
+              >
+                <UploadCloud aria-hidden="true" />
+                <span>{git.hasChanges ? 'Enviar alterações' : 'Enviar commits'}</span>
+              </button>
+            )}
+            {nextActionState === 'clean' && (
+              <button
+                type="button"
+                onClick={handleSync}
+                disabled={isSyncing}
+                aria-busy={isSyncing}
+                className="detail-next-button"
+                title="Executar git pull para confirmar a versão mais recente"
+              >
+                <RefreshCw
+                  className={isSyncing ? 'work-icon-spinning' : ''}
+                  aria-hidden="true"
+                />
+                <span>{isSyncing ? 'Atualizando...' : 'Atualizar'}</span>
+              </button>
+            )}
+          </div>
+
+          {facts.length > 0 && (
+            <dl className="detail-next-facts">
+              {facts.map((fact) => (
+                <div key={fact.label} className="detail-next-fact">
+                  <dt>{fact.label}</dt>
+                  <dd title={fact.value}>{fact.value}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
+        </section>
+
+        <div className="detail-columns">
+          <section
+            className="work-section detail-domain detail-domain--workspace"
+            aria-labelledby={'workspace-actions-' + project.id}
+          >
             <div className="work-section-heading">
-              <h3 id={'workspace-actions-' + project.id}>Abrir workspace</h3>
+              <h3 id={'workspace-actions-' + project.id}>Workspace</h3>
               <span className="work-section-meta">Atalhos principais</span>
             </div>
             <div className="work-primary-actions">
@@ -419,93 +588,87 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
             </div>
           </section>
 
-          <section className="work-section" aria-labelledby={'git-actions-' + project.id}>
+          <section
+            className="work-section detail-domain detail-domain--delivery"
+            aria-labelledby={'git-actions-' + project.id}
+          >
             <div className="work-section-heading">
-              <h3 id={'git-actions-' + project.id}>Git e contexto</h3>
-              <span className="work-section-meta">{git.isRepo ? branchLabel : 'Configuração pendente'}</span>
+              <h3 id={'git-actions-' + project.id}>Entrega e contexto</h3>
+              <span className="work-section-meta">{deliveryMeta}</span>
             </div>
 
-            <div className="work-inline-actions">
-              {isArchived ? (
-                <p className="work-section-note">O conteúdo foi liberado do computador. O cadastro e o link do GitHub continuam disponíveis para restaurar quando quiser.</p>
-              ) : git.isRepo ? (
-                <>
+            {isArchived ? (
+              <p className="work-section-note">O conteúdo foi liberado do computador. O cadastro e o link do GitHub continuam disponíveis para restaurar quando quiser.</p>
+            ) : git.isRepo ? (
+              <div className="work-inline-actions">
+                {nextActionState !== 'pull' && nextActionState !== 'clean' && (
                   <button
                     type="button"
                     onClick={handleSync}
                     disabled={isSyncing}
                     aria-busy={isSyncing}
-                    className={
-                      primaryAction === 'pull'
-                        ? 'work-button work-button-primary'
-                        : 'work-button'
-                    }
+                    className="work-button"
                     title="Executar git pull para trazer a versão mais recente"
                   >
                     <RefreshCw className={isSyncing ? 'work-icon-spinning' : ''} aria-hidden="true" />
                     <span>{isSyncing ? 'Puxando...' : needsPull ? 'Puxar mudanças' : 'Atualizar'}</span>
                   </button>
-                  {hasLocalChanges && onStashSync && (
-                    <button
-                      type="button"
-                      onClick={handleStashSync}
-                      disabled={isStashing || isSyncing}
-                      aria-busy={isStashing}
-                      className="work-button"
-                      title="Guarda as alterações em stash, faz pull e restaura tudo"
-                    >
-                      <RefreshCw className={isStashing ? 'work-icon-spinning' : ''} aria-hidden="true" />
-                      <span>{isStashing ? 'Sincronizando...' : 'Stash + puxar'}</span>
-                    </button>
-                  )}
+                )}
+                {nextActionState !== 'push' && (
                   <button
                     type="button"
                     onClick={() => onOpenPushModal(project)}
-                    className={
-                      primaryAction === 'push'
-                        ? 'work-button work-button-primary'
-                        : 'work-button'
-                    }
+                    className="work-button"
                     title="Subir alterações locais para o GitHub"
                   >
                     <UploadCloud aria-hidden="true" />
-                    <span>{git.hasChanges ? 'Enviar alterações' : git.ahead > 0 ? 'Enviar commits' : 'Push'}</span>
+                    <span>
+                      {git.hasChanges ? 'Enviar alterações' : git.ahead > 0 ? 'Enviar commits' : 'Push'}
+                    </span>
                   </button>
-                </>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => onOpenGitInit(project)}
-                  className="work-button work-button-primary"
-                  title="Criar um repositório Git nesta pasta"
-                >
-                  <GitBranch aria-hidden="true" />
-                  <span>Adicionar Git</span>
-                </button>
-              )}
+                )}
+                {hasLocalChanges && onStashSync && (
+                  <button
+                    type="button"
+                    onClick={handleStashSync}
+                    disabled={isStashing || isSyncing}
+                    aria-busy={isStashing}
+                    className="work-button"
+                    title="Guarda as alterações em stash, faz pull e restaura tudo"
+                  >
+                    <RefreshCw className={isStashing ? 'work-icon-spinning' : ''} aria-hidden="true" />
+                    <span>{isStashing ? 'Sincronizando...' : 'Stash + puxar'}</span>
+                  </button>
+                )}
+                {!isArchived && onFinalizeProject && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (isLifecycleBusy) return
+                      const confirmed = window.confirm(
+                        'O DevOrbit só libera a pasta depois de confirmar que ela está limpa e sincronizada com o GitHub. A cópia local e dependências recriáveis como node_modules serão removidas; arquivos ignorados importantes bloqueiam a operação. O cadastro do projeto permanecerá. Continuar?'
+                      )
+                      if (!confirmed) return
+                      setIsLifecycleBusy(true)
+                      try { await onFinalizeProject(project) } finally { setIsLifecycleBusy(false) }
+                    }}
+                    disabled={isLifecycleBusy}
+                    aria-busy={isLifecycleBusy}
+                    className="work-button"
+                    title="Remover a cópia local depois de confirmar que está sincronizada"
+                  >
+                    <Archive aria-hidden="true" />
+                    <span>{isLifecycleBusy ? 'Liberando...' : 'Finalizar e liberar espaço'}</span>
+                  </button>
+                )}
+              </div>
+            ) : (
+              <p className="work-section-note">
+                Adicione o Git para versionar e sincronizar este projeto.
+              </p>
+            )}
 
-              {!isArchived && git.isRepo && onFinalizeProject && (
-                <button
-                  type="button"
-                  onClick={async () => {
-                    if (isLifecycleBusy) return
-                    const confirmed = window.confirm(
-                      'O DevOrbit só libera a pasta depois de confirmar que ela está limpa e sincronizada com o GitHub. A cópia local e dependências recriáveis como node_modules serão removidas; arquivos ignorados importantes bloqueiam a operação. O cadastro do projeto permanecerá. Continuar?'
-                    )
-                    if (!confirmed) return
-                    setIsLifecycleBusy(true)
-                    try { await onFinalizeProject(project) } finally { setIsLifecycleBusy(false) }
-                  }}
-                  disabled={isLifecycleBusy}
-                  aria-busy={isLifecycleBusy}
-                  className="work-button"
-                  title="Remover a cópia local depois de confirmar que está sincronizada"
-                >
-                  <Archive aria-hidden="true" />
-                  <span>{isLifecycleBusy ? 'Liberando...' : 'Finalizar e liberar espaço'}</span>
-                </button>
-              )}
-
+            <div className="work-inline-actions work-inline-actions-secondary">
               <button
                 type="button"
                 onClick={handleCopyContext}
@@ -526,86 +689,84 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                 <span>Memória</span>
               </button>
             </div>
-
-            <p className="work-section-note">{statusDescription}</p>
           </section>
+
+          <div className="detail-tools-group detail-domain detail-domain--assistants">
+            <section className="work-section" aria-labelledby={'ai-tools-' + project.id}>
+              <div className="work-section-heading">
+                <h3 id={'ai-tools-' + project.id}>Assistentes IA</h3>
+                <label className="work-account-control">
+                  <span>Conta</span>
+                  <select
+                    value={projectAccount}
+                    onChange={(event) => {
+                      const nextAccount = event.target.value === 'account2' ? 'account2' : 'account1'
+                      void onProjectAccountChange?.(project, nextAccount)
+                    }}
+                    disabled={!onProjectAccountChange || isOpeningWorkspace}
+                    aria-label={`Conta do Codex para ${project.name}`}
+                  >
+                    <option value="account1">{config?.chatGptAccount1Name || 'Conta 1'}</option>
+                    <option value="account2">{config?.chatGptAccount2Name || 'Conta 2'}</option>
+                  </select>
+                </label>
+              </div>
+              <div className="work-tool-grid">
+                {renderToolButton(
+                  'codex-desktop',
+                  Bot,
+                  'Codex App',
+                  'Aplicativo',
+                  'Abrir no aplicativo oficial OpenAI Codex Desktop'
+                )}
+                {renderToolButton(
+                  'codex-cli',
+                  Terminal,
+                  'Codex ' + (projectAccount === 'account2' ? '#2' : '#1'),
+                  'CLI · ' + activeAccountLabel,
+                  'Abrir Codex CLI no terminal conectado com ' + activeAccountLabel
+                )}
+                {renderToolButton(
+                  'agy',
+                  Sparkles,
+                  'Antigravity',
+                  'Gemini · CLI',
+                  'Abrir no Antigravity CLI (Gemini) no Windows Terminal'
+                )}
+                {renderToolButton(
+                  'mimo',
+                  Bot,
+                  'MiMo AI',
+                  'Xiaomi',
+                  'Abrir no Xiaomi MiMo AI'
+                )}
+              </div>
+            </section>
+
+            <section className="work-section" aria-labelledby={'browser-tools-' + project.id}>
+              <div className="work-section-heading">
+                <h3 id={'browser-tools-' + project.id}>Navegadores</h3>
+                <span className="work-section-meta">ChatGPT por conta</span>
+              </div>
+              <div className="work-tool-grid">
+                {renderToolButton(
+                  'chrome',
+                  Globe,
+                  'Chrome #1',
+                  'Conta 1',
+                  'Abrir ChatGPT no Google Chrome (Conta 1)'
+                )}
+                {renderToolButton(
+                  'brave',
+                  Globe,
+                  'Brave #2',
+                  'Conta 2',
+                  'Abrir ChatGPT no Brave (Conta 2)'
+                )}
+              </div>
+            </section>
+          </div>
         </div>
-
-        <aside className="detail-tools-column">
-          <section className="work-section" aria-labelledby={'ai-tools-' + project.id}>
-            <div className="work-section-heading">
-              <h3 id={'ai-tools-' + project.id}>Assistentes IA</h3>
-              <label className="work-account-control">
-                <span>Conta</span>
-                <select
-                  value={projectAccount}
-                  onChange={(event) => {
-                    const nextAccount = event.target.value === 'account2' ? 'account2' : 'account1'
-                    void onProjectAccountChange?.(project, nextAccount)
-                  }}
-                  disabled={!onProjectAccountChange || isOpeningWorkspace}
-                  aria-label={`Conta do Codex para ${project.name}`}
-                >
-                  <option value="account1">{config?.chatGptAccount1Name || 'Conta 1'}</option>
-                  <option value="account2">{config?.chatGptAccount2Name || 'Conta 2'}</option>
-                </select>
-              </label>
-            </div>
-            <div className="work-tool-grid">
-              {renderToolButton(
-                'codex-desktop',
-                Bot,
-                'Codex App',
-                'Aplicativo',
-                'Abrir no aplicativo oficial OpenAI Codex Desktop'
-              )}
-              {renderToolButton(
-                'codex-cli',
-                Terminal,
-                'Codex ' + (projectAccount === 'account2' ? '#2' : '#1'),
-                'CLI · ' + activeAccountLabel,
-                'Abrir Codex CLI no terminal conectado com ' + activeAccountLabel
-              )}
-              {renderToolButton(
-                'agy',
-                Sparkles,
-                'Antigravity',
-                'Gemini · CLI',
-                'Abrir no Antigravity CLI (Gemini) no Windows Terminal'
-              )}
-              {renderToolButton(
-                'mimo',
-                Bot,
-                'MiMo AI',
-                'Xiaomi',
-                'Abrir no Xiaomi MiMo AI'
-              )}
-            </div>
-          </section>
-
-          <section className="work-section" aria-labelledby={'browser-tools-' + project.id}>
-            <div className="work-section-heading">
-              <h3 id={'browser-tools-' + project.id}>Navegadores</h3>
-              <span className="work-section-meta">ChatGPT por conta</span>
-            </div>
-            <div className="work-tool-grid">
-              {renderToolButton(
-                'chrome',
-                Globe,
-                'Chrome #1',
-                'Conta 1',
-                'Abrir ChatGPT no Google Chrome (Conta 1)'
-              )}
-              {renderToolButton(
-                'brave',
-                Globe,
-                'Brave #2',
-                'Conta 2',
-                'Abrir ChatGPT no Brave (Conta 2)'
-              )}
-            </div>
-          </section>
-        </aside>
       </div>
     </article>
   )

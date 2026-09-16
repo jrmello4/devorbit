@@ -13,7 +13,13 @@ vi.mock('electron', () => ({
   },
 }))
 
-import { exportConfigJson, importConfigJson, loadConfig, saveConfig } from '../src/main/config'
+import {
+  exportConfigJson,
+  getConfigRecoveryState,
+  importConfigJson,
+  loadConfig,
+  saveConfig,
+} from '../src/main/config'
 
 let temporaryUserData = ''
 
@@ -51,6 +57,59 @@ describe('config persistence hardening', () => {
     expect(config.chatGptAccount1Name).toBe('Conta 1 (Principal)')
     expect(config.customPaths.codex).toBe('codex.cmd')
     expect(config.customPaths.wt).toBe('wt.exe')
+    expect(getConfigRecoveryState()).toBeNull()
+  })
+
+  it('preserves invalid JSON before writing valid defaults', async () => {
+    const invalidContent = '{"privateToken":"local-secret"'
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    await fs.writeFile(path.join(temporaryUserData, 'config.json'), invalidContent)
+
+    const config = await loadConfig()
+    const backup = await fs.readFile(
+      path.join(temporaryUserData, 'config.json.corrupt.bak'),
+      'utf-8'
+    )
+    const persisted = JSON.parse(
+      await fs.readFile(path.join(temporaryUserData, 'config.json'), 'utf-8')
+    )
+    const recovery = getConfigRecoveryState()
+
+    expect(persisted).toEqual(config)
+    expect(backup).toBe(invalidContent)
+    expect(recovery).toMatchObject({ recovered: true, reason: 'invalid-json' })
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Recuperacao concluida'))
+    expect(warn.mock.calls.flat().join(' ')).not.toContain('local-secret')
+  })
+
+  it('backs up invalid JSON before saveConfig recovers it', async () => {
+    const invalidContent = '{invalid'
+    await fs.writeFile(path.join(temporaryUserData, 'config.json'), invalidContent)
+
+    const saved = await saveConfig({ projectDirs: [] })
+    const backup = await fs.readFile(
+      path.join(temporaryUserData, 'config.json.corrupt.bak'),
+      'utf-8'
+    )
+
+    expect(saved.projectDirs).toEqual([])
+    expect(backup).toBe(invalidContent)
+    expect(getConfigRecoveryState()).toMatchObject({
+      recovered: true,
+      reason: 'invalid-json',
+      backupPath: path.join(temporaryUserData, 'config.json.corrupt.bak'),
+    })
+  })
+
+  it('does not overwrite invalid JSON when its backup cannot be created', async () => {
+    const invalidContent = '{invalid-and-should-remain'
+    const configPath = path.join(temporaryUserData, 'config.json')
+    await fs.writeFile(configPath, invalidContent)
+    await fs.mkdir(`${configPath}.corrupt.bak`)
+
+    await expect(loadConfig()).rejects.toThrow('preservar a configuracao invalida')
+    expect(await fs.readFile(configPath, 'utf-8')).toBe(invalidContent)
+    expect(getConfigRecoveryState()).toBeNull()
   })
 
   it('persists a valid Codex account selection per project', async () => {
