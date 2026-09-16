@@ -3,7 +3,7 @@ import {
   AlertCircle, ArrowLeft, ArrowRight, Check, Code2, Globe, GripVertical,
   RefreshCw, Send, Terminal, X,
 } from 'lucide-react'
-import type { Project, WebPanelEvent } from '../types'
+import type { AgentProvider, AgentProviderId, Project, ToolHealth, WebPanelEvent } from '../types'
 import { WorkspaceEditor, type WorkspaceEditorContext } from './WorkspaceEditor'
 import { WorkspaceTerminal } from './WorkspaceTerminal'
 import { WorkspaceCanvas, type CanvasNode } from './WorkspaceCanvas'
@@ -37,6 +37,7 @@ const MIN_RIGHT_WIDTH = 300
 const MAX_RIGHT_WIDTH = 680
 const MIN_TERMINAL_HEIGHT = 150
 const MAX_TERMINAL_HEIGHT = 420
+const AGENT_PROVIDER_IDS: AgentProviderId[] = ['codex', 'opencode', 'claude', 'gemini', 'aider', 'agy', 'custom']
 
 function layoutKey(id: string): string {
   return 'devorbit:workspace-layout:' + id
@@ -78,14 +79,17 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
   const [isCanvas, setIsCanvas] = useState(() => window.localStorage.getItem('devorbit:workspace-mode:' + project.id) === 'canvas')
   const [dragging, setDragging] = useState<'browser' | 'terminal' | null>(null)
   const [agentTasks, setAgentTasks] = useState<Record<string, { id: string; prompt: string }>>({})
+  const [agentProviders, setAgentProviders] = useState<AgentProvider[]>([])
   const [agentWorktrees, setAgentWorktrees] = useState<Record<string, { path: string; branch: string }>>({})
   const terminalId = useMemo(
     () => 'workspace-' + project.id.replace(/[^a-z0-9_-]/gi, '-').slice(0, 48),
     [project.id],
   )
   const queueAgentTask = useCallback((node: CanvasNode, prompt: string) => {
-    setAgentTasks((current) => ({ ...current, [node.id]: { id: 'task-' + Date.now().toString(36), prompt } }))
+    const taskId = 'task-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7)
+    setAgentTasks((current) => ({ ...current, [node.id]: { id: taskId, prompt } }))
     onNotify('Tarefa encaminhada para ' + node.title + '.', 'info')
+    return taskId
   }, [onNotify])
   const isolateAgent = useCallback(async (node: CanvasNode) => {
     try {
@@ -115,6 +119,22 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
   }, [agentWorktrees, onNotify, project.path])
   useEffect(() => { setAgentTasks({}) }, [project.id])
   useEffect(() => { setAgentWorktrees({}) }, [project.id])
+  useEffect(() => {
+    if (!isCanvas) {
+      setAgentProviders([])
+      return
+    }
+    let alive = true
+    void window.devorbit.getToolHealth().then((items) => {
+      if (!alive) return
+      setAgentProviders(items
+        .filter((item): item is ToolHealth & { id: AgentProviderId } => AGENT_PROVIDER_IDS.includes(item.id as AgentProviderId))
+        .map((item) => ({ ...item, id: item.id as AgentProviderId, command: item.path || item.id })))
+    }).catch(() => {
+      if (alive) setAgentProviders([])
+    })
+    return () => { alive = false }
+  }, [isCanvas, project.id])
   const webViewportRef = useRef<HTMLDivElement>(null)
   const restoreWebOnActivateRef = useRef(true)
   const requestedHistoryIndexRef = useRef<number | null>(null)
@@ -324,7 +344,6 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
       <div ref={webViewportRef} className="workspace-web-viewport">{webError && <div className="workspace-web-message"><AlertCircle size={18} aria-hidden="true" /><strong>Não foi possível carregar</strong><span>{webError}</span></div>}</div>
     </aside>
   )
-
   return (
     <main
       className={'integrated-workspace' + (dragging ? ' is-resizing is-resizing-' + dragging : '')}
@@ -358,7 +377,7 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
         </div>
       </header>
 
-      {isCanvas ? <WorkspaceCanvas project={project} workbench={canvasWorkbench} browser={layout.webVisible ? canvasBrowser : undefined} agentAccount={codexAccount} onSendAgentTask={queueAgentTask} onCreateAgentWorktree={(node) => void isolateAgent(node)} renderAgent={(node: CanvasNode, onAgentResult) => <div className="canvas-agent-terminal"><div className="canvas-agent-review"><span>Worktree</span><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void reviewAgent(node)}>Alterações</button><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void mergeAgent(node)}>Integrar</button></div><WorkspaceTerminal projectPath={agentWorktrees[node.id]?.path || project.path} terminalId={'agent-' + project.id.replace(/[^a-z0-9_-]/gi, '-').slice(0, 32) + '-' + node.id.slice(-18)} codexAccount={node.account || codexAccount} agentTask={agentTasks[node.id]} onAgentResult={onAgentResult} onNotify={onNotify} onRequestCodexAuth={onRequestCodexAuth} /></div>} /> : <>
+      {isCanvas ? <WorkspaceCanvas project={project} workbench={canvasWorkbench} browser={layout.webVisible ? canvasBrowser : undefined} agentAccount={codexAccount} agentProviders={agentProviders} onSendAgentTask={queueAgentTask} onCreateAgentWorktree={(node) => void isolateAgent(node)} renderAgent={(node: CanvasNode, onAgentResult, onAgentTaskFailure) => <div className="canvas-agent-terminal"><div className="canvas-agent-review"><span>Worktree</span><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void reviewAgent(node)}>Alterações</button><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void mergeAgent(node)}>Integrar</button></div><WorkspaceTerminal projectPath={agentWorktrees[node.id]?.path || project.path} terminalId={'agent-' + project.id.replace(/[^a-z0-9_-]/gi, '-').slice(0, 32) + '-' + node.id.slice(-18)} codexAccount={node.account || codexAccount} provider={node.provider || 'codex'} agentTask={agentTasks[node.id]} onAgentResult={onAgentResult} onAgentTaskFailure={onAgentTaskFailure} onNotify={onNotify} onRequestCodexAuth={onRequestCodexAuth} /></div>} /> : <>
       <div className="workspace-editor-stack">
         <WorkspaceEditor
           projectPath={project.path}

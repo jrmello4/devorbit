@@ -10,6 +10,7 @@ import { syncGit, getGitBranches, switchGitBranch, pushGit, getGitChanges, clone
 import { getGitInitPreview, initGitRepository } from './git-init'
 import { ensureAccountDirectories, getAccountLabel, hasValidCodexAuth, resolveCodexCommand } from './account-profiles'
 import { launchTool, copyProjectContext, getToolHealth } from './launcher'
+import { resolveAgentProviderCommand } from './agent-providers'
 import { createProjectDirectory, createProjectFile, deleteProjectEntry, listProjectFiles, moveProjectEntry, readProjectFile, saveProjectFile } from './project-files'
 import { onTerminalEvent, resizeTerminal, startTerminal, stopAllTerminals, stopTerminal, writeTerminal, type TerminalEvent } from './terminal-session'
 import { attachWebPanel, disposeWebPanel, getWebState, goBackWeb, goForwardWeb, navigateWeb, onWebPanelEvent, reloadWeb, setWebBounds, setWebVisible } from './web-panel'
@@ -46,6 +47,7 @@ import {
   assertTrustedIpcSender,
   canonicalizeExistingDirectory,
   validateCodexAccount,
+  validateAgentProvider,
   validateConfigUpdates,
   validateFiniteNumber,
   validateLaunchOptions,
@@ -623,6 +625,55 @@ function setupIpcHandlers() {
       ...result,
       account: safeAccount,
       message: 'Codex conectado no terminal interno (' + accountLabel + ').',
+    }
+  })
+
+  registerIpcHandler('devorbit:startAgentTerminal', async (
+    _event,
+    id: unknown,
+    projectPath: string,
+    provider: unknown,
+    cols?: unknown,
+    rows?: unknown,
+  ) => {
+    if (typeof id !== 'string' || !/^[a-z0-9_-]{1,64}$/i.test(id)) throw new Error('Identificador de terminal inválido.')
+    const generation = terminalLifecycleGeneration
+    const safeProvider = validateAgentProvider(provider)
+    if (safeProvider === 'codex') {
+      return {
+        success: false,
+        provider: safeProvider,
+        message: 'O Codex usa o fluxo de conta do DevOrbit; selecione uma conta Codex ou outro provedor.',
+      }
+    }
+    const safePath = await validateProjectPath(projectPath)
+    const config = await loadConfig()
+    assertTerminalLifecycle(generation)
+    const resolved = await resolveAgentProviderCommand(config, safeProvider)
+    if (!resolved.path) {
+      return { success: false, provider: safeProvider, message: resolved.message }
+    }
+    if (/[%!]/.test(resolved.path)) {
+      return { success: false, provider: safeProvider, message: 'O caminho do provedor contém caracteres que o terminal não pode executar com segurança.' }
+    }
+    const safeCols = cols === undefined ? 120 : validateFiniteNumber(cols, 'Colunas do terminal', { minimum: 40, integer: true })
+    const safeRows = rows === undefined ? 32 : validateFiniteNumber(rows, 'Linhas do terminal', { minimum: 12, integer: true })
+    const isScript = /\.(?:cmd|bat)$/i.test(resolved.path)
+    const command = isScript ? (process.env.ComSpec || 'cmd.exe') : resolved.path
+    const args = isScript ? ['/d', '/q', '/k', 'call "' + resolved.path + '"'] : []
+    assertTerminalLifecycle(generation)
+    const result = await startTerminal(id, safePath, {
+      command,
+      args,
+      cols: safeCols,
+      rows: safeRows,
+    })
+    return {
+      success: true,
+      ...result,
+      provider: safeProvider,
+      command: resolved.path,
+      message: safeProvider + ' iniciado no terminal interno. Se precisar, autentique pelo próprio CLI.',
     }
   })
 

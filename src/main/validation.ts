@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { MAX_USAGE_LIMIT, MIN_USAGE_LIMIT, type AppConfig, type ManagedProject } from '../renderer/src/types'
+import { MAX_USAGE_LIMIT, MIN_USAGE_LIMIT, type AgentProviderId, type AppConfig, type ManagedProject } from '../renderer/src/types'
 
 const execFileAsync = promisify(execFile)
 
@@ -25,6 +25,12 @@ export const LAUNCH_TOOLS = [
 
 export type LaunchToolName = (typeof LAUNCH_TOOLS)[number]
 export type CodexAccount = 'account1' | 'account2'
+export function validateAgentProvider(value: unknown): AgentProviderId {
+  if (typeof value === 'string' && (AGENT_PROVIDER_IDS as readonly string[]).includes(value)) {
+    return value as AgentProviderId
+  }
+  throw new Error('Provedor de agente inválido.')
+}
 export type UsageTarget = CodexAccount | 'antigravity'
 export type WindowAction = 'minimize' | 'maximize' | 'close'
 
@@ -37,9 +43,16 @@ const CUSTOM_PATH_KEYS = [
   'mimo',
   'agy',
   'codex',
+  'opencode',
+  'claude',
+  'gemini',
+  'aider',
+  'customAgent',
   'vscode',
   'wt',
 ] as const
+
+const AGENT_PROVIDER_IDS = ['codex', 'opencode', 'claude', 'gemini', 'aider', 'agy', 'custom'] as const
 
 type CustomPathKey = (typeof CUSTOM_PATH_KEYS)[number]
 

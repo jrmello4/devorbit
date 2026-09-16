@@ -6,8 +6,12 @@
   background: #eef1eb;
   isolation: isolate;
   user-select: none;
+  cursor: grab;
+  touch-action: none;
+  overscroll-behavior: contain;
 }
-.workspace-canvas.is-panning {
+.workspace-canvas.is-panning,
+.workspace-canvas.is-dragging {
   cursor: grabbing;
 }
 .workspace-canvas-grid {
@@ -17,6 +21,7 @@
   background-image: radial-gradient(#c7d0c1 1px, transparent 1.3px);
   background-size: 20px 20px;
   opacity: 0.82;
+  pointer-events: none;
 }
 .workspace-canvas-world {
   position: absolute;
@@ -40,6 +45,12 @@
   stroke-dasharray: 7 5;
   filter: drop-shadow(0 1px 1px rgba(58, 83, 45, 0.2));
   animation: canvas-link-flow 1.5s linear infinite;
+}
+.workspace-canvas-connections .workspace-canvas-connection-preview {
+  stroke: #d28f36;
+  stroke-width: 3;
+  stroke-dasharray: 8 6;
+  animation: none;
 }
 @keyframes canvas-link-flow {
   to {
@@ -90,8 +101,10 @@
   padding: 0 8px;
   border-bottom: 1px solid #d9e1d4;
   background: #f8faf6;
-  cursor: default;
+  cursor: grab;
+  touch-action: none;
 }
+.workspace-canvas-card > header:active { cursor: grabbing; }
 .workspace-canvas-card strong {
   display: flex;
   align-items: center;
@@ -140,9 +153,76 @@
   background: #fff;
   font: 600 10px system-ui;
 }
+.canvas-agent-role select:nth-child(2) { max-width: 112px; }
 .canvas-agent-role select:last-child { width: 32px; }
 .workspace-canvas-card header button.canvas-send-task { cursor: pointer; color: #49743a; }
 .workspace-canvas-card header button.canvas-send-task:disabled { opacity: .38; cursor: not-allowed; }
+.canvas-agent-progress {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 4px;
+  max-width: 118px;
+  overflow: hidden;
+  color: #5b7252;
+  font: 600 9px/1 system-ui;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.canvas-agent-progress i {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #8a9c82;
+}
+.canvas-agent-progress.progress-running i { background: #d28f36; animation: canvas-agent-pulse 1.2s ease-in-out infinite; }
+.canvas-agent-progress.progress-completed i { background: #658f4c; }
+.canvas-agent-progress.progress-blocked { color: #a04d40; }
+.canvas-agent-progress.progress-blocked i { background: #b75b4b; }
+.canvas-agent-progress.progress-queued { color: #778675; }
+@keyframes canvas-agent-pulse {
+  50% { opacity: .35; transform: scale(.72); }
+}
+.canvas-port {
+  position: absolute;
+  top: 50%;
+  z-index: 5;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  place-items: center;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #8ba77b;
+  box-shadow: 0 1px 5px rgba(48, 70, 42, .3);
+  transform: translateY(-50%);
+  cursor: crosshair;
+  touch-action: none;
+}
+.canvas-port span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #fff;
+}
+.canvas-port-source { right: 6px; }
+.canvas-port-target { left: 6px; background: #68869b; }
+.canvas-port:hover,
+.canvas-port:focus-visible,
+.canvas-port.is-active,
+.canvas-port.is-available {
+  background: #d28f36;
+  box-shadow: 0 0 0 3px rgba(210, 143, 54, .25), 0 2px 7px rgba(48, 70, 42, .35);
+}
+.canvas-port:disabled {
+  opacity: .45;
+  cursor: default;
+}
+.workspace-canvas-card.is-connecting .canvas-port-source {
+  background: #d28f36;
+}
 .canvas-agent-result { position: absolute; right: 26px; bottom: 5px; left: 8px; overflow: hidden; color: #617357; font-size: 10px; white-space: nowrap; text-overflow: ellipsis; pointer-events: none; }
 .canvas-agent-empty { display: grid; place-items: center; height: 100%; color: #708069; font-size: 12px; }
 .canvas-agent-terminal { display: flex; height: 100%; min-height: 0; flex-direction: column; background: #20251e; }
@@ -263,8 +343,68 @@
   font-size: 10px;
   pointer-events: none;
 }
+.workspace-canvas-connection-status {
+  position: absolute;
+  z-index: 101;
+  left: 12px;
+  bottom: 48px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(440px, calc(100% - 24px));
+  padding: 7px 10px;
+  border: 1px solid #e1bd82;
+  border-radius: 6px;
+  color: #77501f;
+  background: rgba(255, 249, 235, .97);
+  box-shadow: 0 4px 14px rgba(93, 67, 28, .14);
+  font-size: 10px;
+  pointer-events: none;
+}
+.workspace-canvas-orchestration-status {
+  position: absolute;
+  z-index: 101;
+  left: 12px;
+  bottom: 86px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(460px, calc(100% - 24px));
+  padding: 8px 11px;
+  border: 1px solid #d5b46f;
+  border-radius: 7px;
+  color: #735321;
+  background: rgba(255, 249, 235, .98);
+  box-shadow: 0 4px 15px rgba(93, 67, 28, .15);
+  font-size: 10px;
+  pointer-events: none;
+}
+.workspace-canvas-orchestration-status > span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+.workspace-canvas-orchestration-status strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-canvas-orchestration-status small { color: #987744; font-size: 9px; }
+.workspace-canvas-orchestration-status.orchestration-complete {
+  border-color: #abc19f;
+  color: #45643b;
+  background: rgba(244, 250, 241, .98);
+}
+.workspace-canvas-orchestration-status.orchestration-complete small { color: #698061; }
+.workspace-canvas-orchestration-status.orchestration-blocked {
+  border-color: #dfafa7;
+  color: #9b4036;
+  background: rgba(255, 246, 244, .98);
+}
+.workspace-canvas-orchestration-status.orchestration-blocked small { color: #aa675d; }
 .workspace-canvas-minimap { position: absolute; z-index: 100; right: 12px; bottom: 48px; width: 174px; height: 112px; overflow: hidden; border: 1px solid #c7d3c0; border-radius: 8px; background: rgba(255,255,255,.94); box-shadow: 0 4px 15px rgba(40,57,34,.14); }
-.workspace-canvas-minimap svg { display: block; width: 100%; height: 100%; cursor: crosshair; background: #edf2e9; }
+.workspace-canvas-minimap svg { display: block; width: 100%; height: 100%; cursor: crosshair; background: #edf2e9; touch-action: none; }
 .minimap-node { fill: #94ac87; stroke: #628256; stroke-width: 14px; }.minimap-node.agent { fill: #d4b56f; stroke: #a58335; }.minimap-node.note { fill: #b5c6ab; }.minimap-viewport { fill: rgba(101,143,76,.12); stroke: #527941; stroke-width: 20px; }
 .workspace-canvas-delete {
   position: absolute;

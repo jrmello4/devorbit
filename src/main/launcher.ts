@@ -24,6 +24,7 @@ import {
   tryReserveUsage,
   type UsageTarget,
 } from './usage'
+import { getAgentProviderHealth } from './agent-providers'
 
 const execFileAsync = promisify(execFile)
 
@@ -226,6 +227,7 @@ export async function getToolHealth(config: AppConfig): Promise<ToolHealth[]> {
     resolveAntigravityCommand(custom.agy),
     resolveCommandPath(custom.mimo || path.join(os.homedir(), 'AppData', 'Local', 'Programs', 'Xiaomi MiMo AI', 'Xiaomi MiMo AI.exe')),
   ])
+  const agentHealth = await getAgentProviderHealth(config)
 
   return [
     {
@@ -281,6 +283,7 @@ export async function getToolHealth(config: AppConfig): Promise<ToolHealth[]> {
       path: mimoPath || custom.mimo,
       message: mimoPath ? 'Aplicativo MiMo AI pronto.' : 'MiMo AI não foi encontrado.',
     },
+    ...agentHealth.filter((item) => item.id !== 'codex' && item.id !== 'agy'),
   ]
 }
 async function reserveUsage(target: UsageTarget): Promise<boolean> {

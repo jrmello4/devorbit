@@ -3,7 +3,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Terminal as XTerm } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { Code2, Globe, RefreshCw, Terminal as TerminalIcon } from 'lucide-react'
-import type { TerminalEvent } from '../types'
+import type { AgentProviderId, TerminalEvent } from '../types'
 
 interface WorkspaceTerminalProps {
   projectPath: string
@@ -11,14 +11,26 @@ interface WorkspaceTerminalProps {
   codexAccount: 'account1' | 'account2'
   onNotify: (message: string, type?: 'success' | 'error' | 'info') => void
   onRequestCodexAuth?: (account: 'account1' | 'account2') => void
+  provider?: AgentProviderId
   agentTask?: { id: string; prompt: string }
-  onAgentResult?: (result: string) => void
+  onAgentResult?: (result: string, taskId?: string) => void
+  onAgentTaskFailure?: (taskId: string, message: string) => void
 }
 
 type TerminalState = 'starting' | 'ready' | 'stopped' | 'error'
-type TerminalMode = 'shell' | 'codex'
+type TerminalMode = 'shell' | 'codex' | 'agent'
 
 const MAX_SNAPSHOT_LENGTH = 40_000
+const CODEX_READY_FALLBACK_MS = 750
+const providerLabels: Record<AgentProviderId, string> = {
+  codex: 'Codex',
+  opencode: 'OpenCode',
+  claude: 'Claude Code',
+  gemini: 'Gemini CLI',
+  aider: 'Aider',
+  agy: 'Antigravity',
+  custom: 'Agente local',
+}
 
 export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
   projectPath,
@@ -26,13 +38,16 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
   codexAccount,
   onNotify,
   onRequestCodexAuth,
+  provider = 'codex',
   agentTask,
   onAgentResult,
+  onAgentTaskFailure,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<XTerm | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const outputSnapshotRef = useRef('')
+  const outputSnapshotOffsetRef = useRef(0)
   const completedTaskRef = useRef<string | null>(null)
   const deliveringTaskRef = useRef<string | null>(null)
   const reportedResultsRef = useRef(new Set<string>())
@@ -41,21 +56,61 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
   // session as a shell session.
   const terminalStartTokenRef = useRef(0)
   const terminalModeRef = useRef<TerminalMode>('shell')
+  const activeProviderRef = useRef<AgentProviderId | null>(null)
   const fitTerminalRef = useRef<() => void>(() => undefined)
   const onNotifyRef = useRef(onNotify)
   const onRequestCodexAuthRef = useRef(onRequestCodexAuth)
   const onAgentResultRef = useRef(onAgentResult)
+  const onAgentTaskFailureRef = useRef(onAgentTaskFailure)
+  const activeTaskRef = useRef<string | null>(null)
+  const reportedTaskFailuresRef = useRef(new Set<string>())
+  const terminalDataWaitersRef = useRef(new Set<() => void>())
   onNotifyRef.current = onNotify
   onRequestCodexAuthRef.current = onRequestCodexAuth
   onAgentResultRef.current = onAgentResult
+  onAgentTaskFailureRef.current = onAgentTaskFailure
   const [terminalState, setTerminalState] = useState<TerminalState>('starting')
   const [terminalMode, setTerminalMode] = useState<TerminalMode>('shell')
   const [isStartingCodex, setIsStartingCodex] = useState(false)
   const [lastDetectedUrl, setLastDetectedUrl] = useState('')
+  const terminalStateRef = useRef<TerminalState>(terminalState)
+  terminalStateRef.current = terminalState
+
+  const reportTaskFailure = useCallback((taskId: string, message: string) => {
+    if (reportedTaskFailuresRef.current.has(taskId)) return
+    reportedTaskFailuresRef.current.add(taskId)
+    if (activeTaskRef.current === taskId) activeTaskRef.current = null
+    onNotifyRef.current('A tarefa automática do agente foi bloqueada: ' + message, 'error')
+    onAgentTaskFailureRef.current?.(taskId, message)
+  }, [])
+
+  const waitForTerminalData = useCallback(() => {
+    let settled = false
+    let timeoutId: number | null = null
+    let resolvePromise: (receivedData: boolean) => void = () => undefined
+    const finish = (receivedData: boolean) => {
+      if (settled) return
+      settled = true
+      if (timeoutId !== null) window.clearTimeout(timeoutId)
+      terminalDataWaitersRef.current.delete(onData)
+      resolvePromise(receivedData)
+    }
+    const onData = () => finish(true)
+    const promise = new Promise<boolean>((resolve) => {
+      resolvePromise = resolve
+      terminalDataWaitersRef.current.add(onData)
+      timeoutId = window.setTimeout(() => finish(false), CODEX_READY_FALLBACK_MS)
+    })
+    return { promise, cancel: () => finish(false) }
+  }, [])
 
   const startShell = useCallback(async () => {
     const startToken = ++terminalStartTokenRef.current
     terminalModeRef.current = 'shell'
+    activeProviderRef.current = null
+    outputSnapshotRef.current = ''
+    outputSnapshotOffsetRef.current = 0
+    reportedResultsRef.current.clear()
     setTerminalMode('shell')
     setTerminalState('starting')
     try {
@@ -82,8 +137,13 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
   const startCodex = useCallback(async () => {
     const startToken = ++terminalStartTokenRef.current
     terminalModeRef.current = 'codex'
+    activeProviderRef.current = 'codex'
+    outputSnapshotRef.current = ''
+    outputSnapshotOffsetRef.current = 0
+    reportedResultsRef.current.clear()
     setIsStartingCodex(true)
     setTerminalState('starting')
+    const readySignal = waitForTerminalData()
     try {
       const result = await window.devorbit.startCodexTerminal(
         terminalId,
@@ -93,7 +153,9 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
         terminalRef.current?.rows,
       )
       if (!result.success) {
+        readySignal.cancel()
         if (startToken !== terminalStartTokenRef.current) return result
+        activeProviderRef.current = null
         terminalModeRef.current = 'shell'
         setTerminalMode('shell')
         setTerminalState(result.needsAuth ? 'ready' : 'error')
@@ -101,6 +163,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
         if (result.needsAuth) onRequestCodexAuthRef.current?.(codexAccount)
         return result
       }
+      await readySignal.promise
       if (startToken === terminalStartTokenRef.current) {
         setTerminalMode('codex')
         terminalRef.current?.clear()
@@ -121,16 +184,73 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
       }
       return result
     } catch (error) {
+      readySignal.cancel()
       if (startToken !== terminalStartTokenRef.current) return null
+      activeProviderRef.current = null
       setTerminalState('error')
       const message = error instanceof Error ? error.message : String(error)
       terminalRef.current?.writeln('\r\n\x1b[31m[erro ao iniciar o Codex: ' + message + ']\x1b[0m')
       onNotifyRef.current('Não foi possível iniciar o Codex no terminal: ' + message, 'error')
       return null
     } finally {
+      readySignal.cancel()
       setIsStartingCodex(false)
     }
-  }, [codexAccount, projectPath, terminalId])
+  }, [codexAccount, projectPath, terminalId, waitForTerminalData])
+
+  const startAgent = useCallback(async () => {
+    if (provider === 'codex') return startCodex()
+    const startToken = ++terminalStartTokenRef.current
+    terminalModeRef.current = 'agent'
+    activeProviderRef.current = provider
+    outputSnapshotRef.current = ''
+    outputSnapshotOffsetRef.current = 0
+    reportedResultsRef.current.clear()
+    setIsStartingCodex(true)
+    setTerminalState('starting')
+    const readySignal = waitForTerminalData()
+    try {
+      const result = await window.devorbit.startAgentTerminal(
+        terminalId,
+        projectPath,
+        provider,
+        terminalRef.current?.cols,
+        terminalRef.current?.rows,
+      )
+      if (!result.success) {
+        readySignal.cancel()
+        if (startToken !== terminalStartTokenRef.current) return result
+        activeProviderRef.current = null
+        terminalModeRef.current = 'shell'
+        setTerminalMode('shell')
+        setTerminalState('error')
+        if (result.message) onNotifyRef.current(result.message, 'error')
+        return result
+      }
+      await readySignal.promise
+      if (startToken === terminalStartTokenRef.current) {
+        setTerminalMode('agent')
+        terminalRef.current?.clear()
+        terminalRef.current?.writeln('\x1b[90mDevOrbit iniciou o agente local nesta sessão.\x1b[0m')
+        setTerminalState('ready')
+      }
+      return result
+    } catch (error) {
+      readySignal.cancel()
+      if (startToken !== terminalStartTokenRef.current) return null
+      activeProviderRef.current = null
+      terminalModeRef.current = 'shell'
+      setTerminalMode('shell')
+      setTerminalState('error')
+      const message = error instanceof Error ? error.message : String(error)
+      terminalRef.current?.writeln('\r\n\x1b[31m[erro ao iniciar o agente: ' + message + ']\x1b[0m')
+      onNotifyRef.current('Não foi possível iniciar o agente local: ' + message, 'error')
+      return null
+    } finally {
+      readySignal.cancel()
+      setIsStartingCodex(false)
+    }
+  }, [projectPath, provider, startCodex, terminalId, waitForTerminalData])
 
   useEffect(() => {
     const container = containerRef.current
@@ -199,21 +319,38 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
     const unsubscribe = window.devorbit.onTerminalEvent((event: TerminalEvent) => {
       if (event.id !== terminalId) return
       if (event.type === 'data' && event.data) {
-        outputSnapshotRef.current = (outputSnapshotRef.current + event.data).slice(-MAX_SNAPSHOT_LENGTH)
+        for (const waiter of Array.from(terminalDataWaitersRef.current)) waiter()
+        const nextSnapshot = outputSnapshotRef.current + event.data
+        const removedLength = Math.max(0, nextSnapshot.length - MAX_SNAPSHOT_LENGTH)
+        if (removedLength > 0) outputSnapshotOffsetRef.current += removedLength
+        outputSnapshotRef.current = nextSnapshot.slice(-MAX_SNAPSHOT_LENGTH)
         const detectedUrl = outputSnapshotRef.current.match(/https:\/\/[^\s"'<>`]+/i)?.[0]?.replace(/[),.;]+$/, '')
         if (detectedUrl) setLastDetectedUrl(detectedUrl)
-        const result = outputSnapshotRef.current.match(/DEVORBIT_RESULT:\s*([^\r\n]+)/i)?.[1]?.trim()
-        if (result && !reportedResultsRef.current.has(result)) {
-          reportedResultsRef.current.add(result)
-          onAgentResultRef.current?.(result.slice(0, 1000))
+        const resultMatches = Array.from(outputSnapshotRef.current.matchAll(/DEVORBIT_RESULT:[ \t]*([^\r\n]+)(?:\r\n|\n|\r)/gi))
+        const latestResult = resultMatches[resultMatches.length - 1]
+        const result = latestResult?.[1]?.trim()
+        if (result && latestResult?.index !== undefined) {
+          // Use the marker's absolute stream offset so identical results from
+          // different orchestration stages are still delivered independently.
+          const resultKey = `${outputSnapshotOffsetRef.current + latestResult.index}:${result}`
+          if (!reportedResultsRef.current.has(resultKey)) {
+            reportedResultsRef.current.add(resultKey)
+            const taskId = activeTaskRef.current || undefined
+            activeTaskRef.current = null
+            onAgentResultRef.current?.(result.slice(0, 1000), taskId)
+          }
         }
         terminal.write(event.data)
       } else if (event.type === 'exit') {
         terminal.writeln('\r\n\x1b[90m[processo encerrado: ' + String(event.code ?? '') + ']\x1b[0m')
         setTerminalState('stopped')
+        const taskId = activeTaskRef.current
+        if (taskId) reportTaskFailure(taskId, 'O processo do agente foi encerrado antes de devolver um resultado.')
       } else if (event.type === 'error') {
         terminal.writeln('\r\n\x1b[31m[erro: ' + (event.data || 'falha desconhecida') + ']\x1b[0m')
         setTerminalState('error')
+        const taskId = activeTaskRef.current
+        if (taskId) reportTaskFailure(taskId, event.data || 'O terminal do agente encontrou um erro.')
       }
     })
 
@@ -252,21 +389,42 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
     let cancelled = false
     const deliver = async () => {
       deliveringTaskRef.current = agentTask.id
-      const ready = terminalMode === 'codex' ? { success: true } : await startCodex()
-      if (cancelled || !ready?.success) { deliveringTaskRef.current = null; return }
-      const written = await window.devorbit.writeTerminal(terminalId, agentTask.prompt + '\r')
-      if (!cancelled && written.success) {
-        completedTaskRef.current = agentTask.id
-        onNotifyRef.current('Tarefa enviada ao agente.', 'success')
+      try {
+        const expectedMode = provider === 'codex' ? 'codex' : 'agent'
+        const ready = activeProviderRef.current === provider && terminalModeRef.current === expectedMode && terminalStateRef.current === 'ready'
+          ? { success: true }
+          : await startAgent()
+        if (cancelled) return
+        if (!ready?.success) {
+          reportTaskFailure(agentTask.id, ready?.message || 'O Codex não ficou disponível para receber a tarefa.')
+          return
+        }
+        activeTaskRef.current = agentTask.id
+        const written = await window.devorbit.writeTerminal(terminalId, agentTask.prompt + '\r')
+        if (!written.success) {
+          reportTaskFailure(agentTask.id, 'O terminal do agente recusou a tarefa.')
+          return
+        }
+        if (!cancelled) {
+          completedTaskRef.current = agentTask.id
+          onNotifyRef.current('Tarefa enviada ao agente.', 'success')
+        } else if (activeTaskRef.current === agentTask.id) {
+          activeTaskRef.current = null
+        }
+      } catch (error) {
+        if (!cancelled) {
+          reportTaskFailure(agentTask.id, error instanceof Error ? error.message : String(error))
+        }
+      } finally {
+        deliveringTaskRef.current = null
       }
-      deliveringTaskRef.current = null
     }
     void deliver()
-    return () => { cancelled = true }
-  }, [agentTask, startCodex, terminalId, terminalMode])
-
-  const terminalStateRef = useRef<TerminalState>(terminalState)
-  terminalStateRef.current = terminalState
+    return () => {
+      cancelled = true
+      if (activeTaskRef.current === agentTask.id && completedTaskRef.current !== agentTask.id) activeTaskRef.current = null
+    }
+  }, [agentTask, provider, reportTaskFailure, startAgent, terminalId])
 
   const openDetectedLink = async () => {
     if (!lastDetectedUrl) return
@@ -277,6 +435,8 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
 
   const restartTerminal = async () => {
     outputSnapshotRef.current = ''
+    outputSnapshotOffsetRef.current = 0
+    reportedResultsRef.current.clear()
     await startShell()
   }
 
@@ -287,7 +447,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
           <strong><TerminalIcon size={14} aria-hidden="true" /> Terminal interno</strong>
           <span className={'terminal-status ' + terminalState}>
             <i />
-            {terminalState === 'ready' ? (terminalMode === 'codex' ? 'Codex ativo' : 'Pronto')
+            {terminalState === 'ready' ? (terminalMode === 'codex' ? 'Codex ativo' : terminalMode === 'agent' ? providerLabels[provider] + ' ativo' : 'Pronto')
               : terminalState === 'starting' ? 'Iniciando'
               : terminalState === 'error' ? 'Erro' : 'Encerrado'}
           </span>

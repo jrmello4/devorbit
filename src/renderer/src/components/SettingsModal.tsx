@@ -26,6 +26,14 @@ interface SettingsModalProps {
   onOpenAuthModal?: (account: 'account1' | 'account2') => void
 }
 
+const AGENT_PATH_FIELDS: Array<{ key: 'opencode' | 'claude' | 'gemini' | 'aider' | 'customAgent'; label: string; hint: string }> = [
+  { key: 'opencode', label: 'OpenCode', hint: 'opencode.cmd / opencode.exe' },
+  { key: 'claude', label: 'Claude Code', hint: 'claude.cmd / claude.exe' },
+  { key: 'gemini', label: 'Gemini CLI', hint: 'gemini.cmd / gemini.exe' },
+  { key: 'aider', label: 'Aider', hint: 'aider.cmd / aider.exe' },
+  { key: 'customAgent', label: 'Outro CLI', hint: 'Comando ou caminho do agente' },
+]
+
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
   suspended = false,
@@ -372,7 +380,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 Executáveis e Ferramentas Detectadas
               </h3>
             <p className="text-xs text-stone-600 mb-3">
-              Ajuste os executáveis usados para abrir ferramentas. Codex e Antigravity sempre iniciam no Prompt de Comando.
+              Os CLIs do canvas são detectados automaticamente no PATH e iniciados no terminal interno. O DevOrbit nunca copia credenciais entre provedores.
             </p>
 
             <div className="space-y-2 text-xs">
@@ -393,6 +401,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div className="flex items-start gap-2">
                   <input id="tool-path-agy" value={customPaths.agy || ''} onChange={(event) => updateCustomPath('agy', event.target.value)} className="mt-1.5 w-full rounded-[5px] border border-stone-300 bg-white px-2.5 py-1.5 font-mono text-xs text-stone-800 focus:border-[#3e562f] focus:outline-none focus:ring-1 focus:ring-[#3e562f]/30" />
                   {renderToolTestButton('agy')}
+                </div>
+              </div>
+
+              <div className="rounded-lg bg-[#f3f7f0] border border-[#d8e3d2] p-3">
+                <div className="flex items-center gap-2 text-stone-700 font-medium">
+                  <Bot className="w-3.5 h-3.5 text-[#3e562f]" /> Agentes locais do canvas
+                </div>
+                <p className="mt-1 text-[11px] text-stone-500">
+                  O DevOrbit procura automaticamente estes CLIs no PATH. Preencha um caminho apenas quando ele estiver instalado fora do PATH.
+                </p>
+                <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                  {AGENT_PATH_FIELDS.map((field) => (
+                    <div key={field.key}>
+                      <label htmlFor={'tool-path-' + field.key} className="text-[11px] font-semibold text-stone-600">{field.label}</label>
+                      <div className="flex items-start gap-2">
+                        <input id={'tool-path-' + field.key} value={customPaths[field.key] || ''} placeholder={field.hint} onChange={(event) => updateCustomPath(field.key, event.target.value)} className="mt-1.5 w-full rounded-[5px] border border-stone-300 bg-white px-2.5 py-1.5 font-mono text-xs text-stone-800 focus:border-[#3e562f] focus:outline-none focus:ring-1 focus:ring-[#3e562f]/30" />
+                        {renderToolTestButton(field.key)}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
 

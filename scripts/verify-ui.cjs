@@ -28,7 +28,11 @@ function recordPass(viewport, message) {
 }
 
 async function evaluate(window, expression) {
-  return await window.webContents.executeJavaScript(`(${expression})`, true)
+  try {
+    return await window.webContents.executeJavaScript(`(${expression})`, true)
+  } catch (error) {
+    throw new Error(`Renderer evaluation failed: ${expression} (${error && error.message ? error.message : error})`)
+  }
 }
 
 async function waitFor(window, expression, label, timeoutMs = 10_000) {
@@ -76,6 +80,157 @@ async function setSelectValue(window, selector, value) {
     return true
   })()`)
   assert(changed, `select não encontrado (${selector})`)
+}
+
+async function verifyCoordinatorOrchestration(window, viewport) {
+  const taskContent = 'Tarefa automatizada de ponta a ponta: executar a mudança e validar a entrega.'
+  const noteUpdated = await evaluate(window, `(function () {
+    const card = Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card="note"]'))
+      .find((node) => node.querySelector('textarea[data-canvas-note-editor][aria-label="Plano da tarefa"]'))
+    const editor = card?.querySelector('textarea[data-canvas-note-editor]')
+    if (!editor) return false
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set
+    setter.call(editor, ${JSON.stringify(taskContent)})
+    editor.dispatchEvent(new Event('input', { bubbles: true }))
+    editor.dispatchEvent(new Event('change', { bubbles: true }))
+    return true
+  })()`)
+  assert(noteUpdated, `${viewport.label}: nota Plano da tarefa não encontrada`)
+  await waitFor(window, `Array.from(document.querySelectorAll('textarea[data-canvas-note-editor]')).some((editor) => editor.getAttribute('aria-label') === 'Plano da tarefa' && editor.value === ${JSON.stringify(taskContent)})`, `${viewport.label} tarefa do squad`)
+  await waitFor(window, `Array.from(document.querySelectorAll('[aria-label="Provedor do agente"] option')).some((option) => option.value === 'opencode' && !option.disabled)`, `${viewport.label} OpenCode detectado no canvas`)
+  const providerChanged = await evaluate(window, `(() => {
+    const card = Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]'))
+      .find((node) => node.querySelector('select')?.value === 'Implementação')
+    const select = card?.querySelector('[aria-label="Provedor do agente"]')
+    if (!select) return false
+    select.value = 'opencode'
+    select.dispatchEvent(new Event('change', { bubbles: true }))
+    return select.value === 'opencode'
+  })()`)
+  assert(providerChanged, `${viewport.label}: não foi possível selecionar OpenCode no agente de Implementação`)
+  recordPass(viewport.label, 'canvas detecta OpenCode e permite escolher o provedor por agente')
+
+  await evaluate(window, `window.__devorbitVerifyFixture.resetCalls()`)
+  const clickedCoordinator = await evaluate(window, `(() => {
+    const card = Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]'))
+      .find((node) => node.querySelector('select')?.value === 'Coordenador')
+    const send = card?.querySelector('[data-agent-send]')
+    if (!send || send.disabled) return false
+    send.click()
+    return true
+  })()`)
+  assert(clickedCoordinator, `${viewport.label}: botão do Coordenador não encontrado ou desabilitado`)
+  await waitFor(window, `Array.from(document.querySelectorAll('[data-agent-send]')).every((button) => button.disabled)`, `${viewport.label} bloqueio de envios manuais durante orquestração`)
+
+  const planning = await waitFor(window, `(() => Array.from(window.__devorbitVerifyFixture.getCalls())
+    .filter((call) => call.name === 'writeTerminal')
+    .find((call) => String(call.args[1]).includes('Você atua como Coordenador neste projeto') && String(call.args[1]).includes('primeira etapa automática')))()`, `${viewport.label} prompt de planejamento do Coordenador`)
+  assert(String(planning.args[1]).includes(taskContent), `${viewport.label}: planejamento não recebeu a nota da tarefa`)
+
+  const emitResult = async (terminalId, result, label, fragmented = false) => {
+    if (fragmented) {
+      const splitAt = Math.max(1, Math.floor(result.length / 2))
+      const firstEvent = JSON.stringify({ id: terminalId, type: 'data', data: `\r\nDEVORBIT_RESULT: ${result.slice(0, splitAt)}` })
+      await evaluate(window, `(() => {
+        window.__devorbitVerifyFixture.emitTerminalEvent(${firstEvent})
+        return true
+      })()`)
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      const premature = await evaluate(window, `Array.from(window.__devorbitVerifyFixture.getCalls())
+        .filter((call) => call.name === 'writeTerminal')
+        .some((call) => String(call.args[1]).includes('Você atua como Implementação neste projeto'))`)
+      assert(!premature, `${viewport.label}: resultado fragmentado avançou antes da quebra de linha`)
+      const finalEvent = JSON.stringify({ id: terminalId, type: 'data', data: `${result.slice(splitAt)}\r\n` })
+      await evaluate(window, `(() => {
+        window.__devorbitVerifyFixture.emitTerminalEvent(${finalEvent})
+        return true
+      })()`)
+      return
+    }
+    const event = JSON.stringify({ id: terminalId, type: 'data', data: `\r\nDEVORBIT_RESULT: ${result}\r\n` })
+    const emitted = await evaluate(window, `(() => {
+      window.__devorbitVerifyFixture.emitTerminalEvent(${event})
+      return true
+    })()`)
+    assert(emitted, `${viewport.label}: não foi possível emitir ${label}`)
+  }
+
+  const planResult = 'plano coordenado aprovado'
+  await emitResult(planning.args[0], planResult, 'o plano', true)
+  const implementation = await waitFor(window, `(() => Array.from(window.__devorbitVerifyFixture.getCalls())
+    .filter((call) => call.name === 'writeTerminal')
+     .find((call) => String(call.args[1]).includes('Você atua como Implementação neste projeto') && String(call.args[1]).includes(${JSON.stringify(planResult)})))()`, `${viewport.label} prompt de Implementação`)
+  const implementationStart = await waitFor(window, `(() => Array.from(window.__devorbitVerifyFixture.getCalls())
+    .filter((call) => call.name === 'startAgentTerminal')
+    .find((call) => call.args[2] === 'opencode'))()`, `${viewport.label} inicialização do OpenCode`)
+  assert(implementationStart.args[0] === implementation.args[0], `${viewport.label}: OpenCode iniciou um terminal diferente do agente`)
+
+  const implementationResult = 'implementacao concluida'
+  await emitResult(implementation.args[0], implementationResult, 'o resultado da Implementação')
+  const review = await waitFor(window, `(() => Array.from(window.__devorbitVerifyFixture.getCalls())
+    .filter((call) => call.name === 'writeTerminal')
+    .find((call) => String(call.args[1]).includes('Você atua como Revisão neste projeto') && String(call.args[1]).includes(${JSON.stringify(planResult)}) && String(call.args[1]).includes(${JSON.stringify(implementationResult)})))()`, `${viewport.label} prompt de Revisão`)
+
+  const reviewResult = 'revisao aprovada'
+  await emitResult(review.args[0], reviewResult, 'o resultado da Revisão')
+  const tests = await waitFor(window, `(() => Array.from(window.__devorbitVerifyFixture.getCalls())
+    .filter((call) => call.name === 'writeTerminal')
+    .find((call) => String(call.args[1]).includes('Você atua como Testes neste projeto') && String(call.args[1]).includes(${JSON.stringify(planResult)}) && String(call.args[1]).includes(${JSON.stringify(implementationResult)}) && String(call.args[1]).includes(${JSON.stringify(reviewResult)})))()`, `${viewport.label} prompt de Testes`)
+
+  const testsResult = 'testes automatizados aprovados'
+  await emitResult(tests.args[0], testsResult, 'o resultado dos Testes')
+  const finalCoordinator = await waitFor(window, `(() => Array.from(window.__devorbitVerifyFixture.getCalls())
+    .filter((call) => call.name === 'writeTerminal')
+    .find((call) => String(call.args[1]).includes('Coordenador na etapa final') && String(call.args[1]).includes(${JSON.stringify(planResult)}) && String(call.args[1]).includes(${JSON.stringify(implementationResult)}) && String(call.args[1]).includes(${JSON.stringify(reviewResult)}) && String(call.args[1]).includes(${JSON.stringify(testsResult)})))()`, `${viewport.label} prompt final do Coordenador`)
+
+  await emitResult(finalCoordinator.args[0], 'execucao completa e validada', 'o resultado final')
+  await waitFor(window, `Boolean(document.querySelector('.workspace-canvas-orchestration-status[data-orchestration-phase="complete"]'))`, `${viewport.label} conclusão da orquestração`)
+
+  const writes = await evaluate(window, `Array.from(window.__devorbitVerifyFixture.getCalls())
+    .filter((call) => call.name === 'writeTerminal')
+    .map((call) => ({ id: call.args[0], prompt: String(call.args[1]) }))`)
+  const stages = [planning, implementation, review, tests, finalCoordinator]
+  const indexes = stages.map((stage) => writes.findIndex((write) => write.id === stage.args[0] && write.prompt === String(stage.args[1])))
+  assert(writes.length === stages.length && indexes.every((index) => index >= 0) && indexes.every((index, indexPosition) => indexPosition === 0 || index > indexes[indexPosition - 1]), `${viewport.label}: sequência de prompts inesperada (${JSON.stringify({ writes: writes.length, indexes })})`)
+  const status = await evaluate(window, `(() => {
+    const node = document.querySelector('.workspace-canvas-orchestration-status')
+    return { phase: node?.getAttribute('data-orchestration-phase'), text: node?.innerText || '' }
+  })()`)
+  assert(status.phase === 'complete' && status.text.includes('conclu'), `${viewport.label}: status final inesperado (${JSON.stringify(status)})`)
+  await evaluate(window, `window.__devorbitVerifyFixture.resetCalls()`)
+  const blockedRunStarted = await evaluate(window, `(() => {
+    const card = Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]'))
+      .find((node) => node.querySelector('select')?.value === 'Coordenador')
+    const send = card?.querySelector('[data-agent-send]')
+    if (!send || send.disabled) return false
+    send.click()
+    return true
+  })()`)
+  assert(blockedRunStarted, `${viewport.label}: second coordinator run did not start`)
+  const blockedPlanning = await waitFor(window, `Array.from(window.__devorbitVerifyFixture.getCalls())
+    .filter((call) => call.name === 'writeTerminal').at(-1)`, `${viewport.label} second coordinator planning`)
+  await emitResult(blockedPlanning.args[0], 'BLOQUEADO: dependency missing', 'the agent block')
+  await waitFor(window, `document.querySelector('.workspace-canvas-orchestration-status[data-orchestration-phase="blocked"]')`, `${viewport.label} explicit stage block`)
+  const writesAfterBlock = await evaluate(window, `window.__devorbitVerifyFixture.getCalls()
+    .filter((call) => call.name === 'writeTerminal').length`)
+  assert(writesAfterBlock === 1, `${viewport.label}: a blocked result advanced the queue`)
+  recordPass(viewport.label, 'BLOQUEADO result stops the queue and shows blocked state')
+
+  await evaluate(window, `window.__devorbitVerifyFixture.resetCalls()`)
+  await evaluate(window, `window.__devorbitVerifyFixture.setWriteTerminalFailure(true)`)
+  const failedRunStarted = await evaluate(window, `(() => {
+    const card = Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]'))
+      .find((node) => node.querySelector('select')?.value === 'Coordenador')
+    const send = card?.querySelector('[data-agent-send]')
+    if (!send || send.disabled) return false
+    send.click()
+    return true
+  })()`)
+  assert(failedRunStarted, `${viewport.label}: delivery failure run did not start`)
+  await waitFor(window, `document.querySelector('.workspace-canvas-orchestration-status[data-orchestration-phase="blocked"]')`, `${viewport.label} agent delivery failure`)
+  await evaluate(window, `window.__devorbitVerifyFixture.setWriteTerminalFailure(false)`)
+  recordPass(viewport.label, 'terminal write failure blocks the orchestration')
+  recordPass(viewport.label, 'um clique no Coordenador executa planejamento, Implementação, Revisão, Testes e consolidação final')
 }
 
 async function key(window, keyName, options = {}) {
@@ -266,6 +421,140 @@ async function inspectProjectInteractions(window, viewport) {
   await new Promise((resolve) => setTimeout(resolve, 0))
   await evaluate(window, `(() => { window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: 132, clientY: 124 })); window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: 132, clientY: 124 })); return true })()`)
   await waitFor(window, `Number.parseFloat(document.querySelector('[data-canvas-card="workbench"]').style.left) > ${canvasInteractions.beforeLeft}`, `${viewport.label} canvas drag`)
+  const headerDrag = await evaluate(window, `(function () {
+    const workbench = document.querySelector('[data-canvas-card="workbench"]')
+    const header = workbench?.querySelector('header strong')
+    if (!workbench || !header) return false
+    const beforeTop = Number.parseFloat(workbench.style.top)
+    header.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 31, clientX: 220, clientY: 120 }))
+    return { beforeTop }
+  })()`)
+  assert(headerDrag, `${viewport.label}: cabeçalho arrastável do canvas ausente`)
+  await evaluate(window, `(() => { window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 31, clientX: 220, clientY: 164 })); window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 31, clientX: 220, clientY: 164 })); return true })()`)
+  await waitFor(window, `Number.parseFloat(document.querySelector('[data-canvas-card="workbench"]').style.top) > ${headerDrag.beforeTop}`, `${viewport.label} canvas header drag`)
+  recordPass(viewport.label, 'cabeçalho inteiro move o quadro no canvas')
+
+  const groupSelection = await evaluate(window, `(function () {
+    const workbench = document.querySelector('[data-canvas-card="workbench"]')
+    const note = document.querySelector('[data-canvas-card="note"]')
+    const noteHeader = note?.querySelector('header strong')
+    if (!workbench || !note || !noteHeader) return false
+    noteHeader.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 33, ctrlKey: true, clientX: 820, clientY: 120 }))
+    noteHeader.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0, pointerId: 33, ctrlKey: true, clientX: 820, clientY: 120 }))
+    return true
+  })()`)
+  assert(groupSelection, `${viewport.label}: cabeçalhos para seleção múltipla ausentes`)
+  await waitFor(window, `document.querySelectorAll('.workspace-canvas-card.is-selected').length === 2`, `${viewport.label} canvas multi selection`)
+  const groupDrag = await evaluate(window, `(function () {
+    const workbench = document.querySelector('[data-canvas-card="workbench"]')
+    const note = document.querySelector('[data-canvas-card="note"]')
+    const header = workbench?.querySelector('header strong')
+    if (!workbench || !note || !header) return false
+    const before = { workbench: Number.parseFloat(workbench.style.left), note: Number.parseFloat(note.style.left) }
+    header.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 34, clientX: 220, clientY: 164 }))
+    return { before }
+  })()`)
+  assert(groupDrag, `${viewport.label}: arraste da seleção múltipla indisponível`)
+  await evaluate(window, `(() => { window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 34, clientX: 260, clientY: 164 })); window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 34, clientX: 260, clientY: 164 })); return true })()`)
+  await waitFor(window, `(() => { const workbench = document.querySelector('[data-canvas-card="workbench"]'); const note = document.querySelector('[data-canvas-card="note"]'); return Number.parseFloat(workbench.style.left) > ${groupDrag.before.workbench} && Number.parseFloat(note.style.left) > ${groupDrag.before.note} })()`, `${viewport.label} canvas group drag`)
+  recordPass(viewport.label, 'Ctrl seleciona vários quadros e o arraste move o grupo')
+
+  const viewportBeforePan = await evaluate(window, `(function () {
+    const canvas = document.querySelector('.workspace-canvas')
+    const world = document.querySelector('.workspace-canvas-world')
+    const id = canvas?.getAttribute('data-canvas-project-id')
+    const saved = id ? JSON.parse(window.localStorage.getItem('devorbit:workspace-canvas:' + id)) : null
+    if (!world || !saved) return false
+    world.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 32, clientX: 1180, clientY: 690 }))
+    return saved.viewport
+  })()`)
+  assert(viewportBeforePan, `${viewport.label}: viewport do canvas indisponível`)
+  await evaluate(window, `(() => { window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 32, clientX: 1220, clientY: 720 })); window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 32, clientX: 1220, clientY: 720 })); return true })()`)
+  await waitFor(window, `(() => { const canvas = document.querySelector('.workspace-canvas'); const raw = window.localStorage.getItem('devorbit:workspace-canvas:' + canvas.getAttribute('data-canvas-project-id')); const viewport = JSON.parse(raw).viewport; return viewport.x > ${viewportBeforePan.x} && viewport.y > ${viewportBeforePan.y} })()`, `${viewport.label} canvas blank pan`)
+
+  const wheelNavigation = await evaluate(window, `(function () {
+    const canvas = document.querySelector('.workspace-canvas')
+    const id = canvas?.getAttribute('data-canvas-project-id')
+    const before = id ? JSON.parse(window.localStorage.getItem('devorbit:workspace-canvas:' + id)).viewport : null
+    if (!canvas || !before) return false
+    canvas.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaX: 16, deltaY: 24 }))
+    return { id, before }
+  })()`)
+  assert(wheelNavigation, `${viewport.label}: navegação por roda indisponível`)
+  await waitFor(window, `(() => { const viewport = JSON.parse(window.localStorage.getItem('devorbit:workspace-canvas:${wheelNavigation.id}')).viewport; return viewport.x === ${wheelNavigation.before.x - 16} && viewport.y === ${wheelNavigation.before.y - 24} })()`, `${viewport.label} canvas wheel pan`)
+
+  const cursorZoom = await evaluate(window, `(function () {
+    const canvas = document.querySelector('.workspace-canvas')
+    const id = canvas?.getAttribute('data-canvas-project-id')
+    const before = id ? JSON.parse(window.localStorage.getItem('devorbit:workspace-canvas:' + id)).viewport : null
+    if (!canvas || !before) return false
+    const rect = canvas.getBoundingClientRect()
+    const clientX = rect.left + rect.width * .7
+    const clientY = rect.top + rect.height * .6
+    const localX = clientX - rect.left
+    const localY = clientY - rect.top
+    const worldX = (localX - before.x) / before.zoom
+    const worldY = (localY - before.y) / before.zoom
+    canvas.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, ctrlKey: true, deltaY: -120, clientX, clientY }))
+    return { id, beforeZoom: before.zoom, localX, localY, worldX, worldY }
+  })()`)
+  assert(cursorZoom, `${viewport.label}: zoom do canvas indisponível`)
+  await waitFor(window, `JSON.parse(window.localStorage.getItem('devorbit:workspace-canvas:${cursorZoom.id}')).viewport.zoom > ${cursorZoom.beforeZoom}`, `${viewport.label} canvas cursor zoom`)
+  const cursorZoomAfter = await evaluate(window, `(() => { const viewport = JSON.parse(window.localStorage.getItem('devorbit:workspace-canvas:${cursorZoom.id}')).viewport; return { viewport, worldX: (${cursorZoom.localX} - viewport.x) / viewport.zoom, worldY: (${cursorZoom.localY} - viewport.y) / viewport.zoom } })()`)
+  assert(Math.abs(cursorZoomAfter.worldX - cursorZoom.worldX) < .1 && Math.abs(cursorZoomAfter.worldY - cursorZoom.worldY) < .1, `${viewport.label}: zoom não preservou o ponto sob o cursor (${JSON.stringify({ before: cursorZoom, after: cursorZoomAfter })})`)
+  recordPass(viewport.label, 'fundo, roda e zoom no cursor navegam pelo canvas')
+
+  const manualLink = await evaluate(window, `(function () {
+    const source = document.querySelector('[data-canvas-card="note"] [data-canvas-port="source"]')
+    const target = document.querySelector('[data-canvas-card="browser"] [data-canvas-port="target"]')
+    const canvas = document.querySelector('.workspace-canvas')
+    const id = canvas?.getAttribute('data-canvas-project-id')
+    if (!source || !target || !id) return false
+    source.click()
+    return { id }
+  })()`)
+  assert(manualLink, `${viewport.label}: portas de conexão do canvas ausentes`)
+  await waitFor(window, `!document.querySelector('[data-canvas-card="browser"] [data-canvas-port="target"]').disabled`, `${viewport.label} canvas connection target`)
+  await evaluate(window, `document.querySelector('[data-canvas-card="browser"] [data-canvas-port="target"]').click()`)
+  await waitFor(window, `JSON.parse(window.localStorage.getItem('devorbit:workspace-canvas:${manualLink.id}')).connections.length === 1`, `${viewport.label} canvas manual connection`)
+  await evaluate(window, `document.querySelector('[data-canvas-card="note"] [data-canvas-port="source"]').click()`)
+  await waitFor(window, `!document.querySelector('[data-canvas-card="browser"] [data-canvas-port="target"]').disabled`, `${viewport.label} duplicate connection target`)
+  await evaluate(window, `document.querySelector('[data-canvas-card="browser"] [data-canvas-port="target"]').click()`)
+  await waitFor(window, `!document.querySelector('.workspace-canvas-connection-status')`, `${viewport.label} duplicate connection complete`)
+  const duplicateLinks = await evaluate(window, `JSON.parse(window.localStorage.getItem('devorbit:workspace-canvas:${manualLink.id}')).connections.length`)
+  assert(duplicateLinks === 1, `${viewport.label}: conexão duplicada foi criada (${duplicateLinks})`)
+  await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Encaixar conteúdo no canvas', `${viewport.label} canvas fit before cancel`)
+  const cancelSetup = await evaluate(window, `(function () {
+    const source = document.querySelector('[data-canvas-card="note"] [data-canvas-port="source"]')
+    const target = document.querySelector('[data-canvas-card="workbench"] [data-canvas-port="target"]')
+    const rect = target.getBoundingClientRect()
+    source.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 77, clientX: 800, clientY: 200 }))
+    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)?.closest('[data-canvas-port="target"]')
+    if (hit !== target) return false
+    window.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true, pointerId: 77, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 }))
+    return true
+  })()`)
+  assert(cancelSetup, `${viewport.label}: porta não ligada não ficou visível para pointercancel`)
+  await waitFor(window, `!document.querySelector('.workspace-canvas-connection-status')`, `${viewport.label} canvas pointer cancel`)
+  const cancelledLinks = await evaluate(window, `JSON.parse(window.localStorage.getItem('devorbit:workspace-canvas:${manualLink.id}')).connections.length`)
+  assert(cancelledLinks === 1, `${viewport.label}: pointercancel criou conexão (${cancelledLinks})`)
+  await evaluate(window, `document.querySelector('[data-canvas-card="note"] [data-canvas-port="source"]').click()`)
+  await waitFor(window, `Boolean(document.querySelector('.workspace-canvas-connection-status'))`, `${viewport.label} canvas pending connection`)
+  window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'ESCAPE' })
+  window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'ESCAPE' })
+  await waitFor(window, `!document.querySelector('.workspace-canvas-connection-status')`, `${viewport.label} canvas cancel connection`)
+  await evaluate(window, `(function () {
+    const header = document.querySelector('[data-canvas-card="browser"] header strong')
+    if (!header) return false
+    header.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 78, clientX: 400, clientY: 300 }))
+    return true
+  })()`)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  await evaluate(window, `(() => { window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 78, clientX: 10000, clientY: 10000 })); window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 78, clientX: 10000, clientY: 10000 })); return true })()`)
+  await waitFor(window, `(() => { const browser = document.querySelector('[data-canvas-card="browser"]'); return Number.parseFloat(browser.style.left) > 4000 && Number.parseFloat(browser.style.top) > 2500 })()`, `${viewport.label} canvas extreme placement`)
+  await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Encaixar conteúdo no canvas', `${viewport.label} canvas fit`)
+  await waitFor(window, `(() => { const viewport = JSON.parse(window.localStorage.getItem('devorbit:workspace-canvas:${manualLink.id}')).viewport; const canvas = document.querySelector('.workspace-canvas').getBoundingClientRect(); const cards = Array.from(document.querySelectorAll('.workspace-canvas-card')).map((card) => card.getBoundingClientRect()); return viewport.zoom >= .08 && viewport.zoom <= 1.6 && cards.every((card) => card.left >= canvas.left - 1 && card.top >= canvas.top - 1 && card.right <= canvas.right + 1 && card.bottom <= canvas.bottom + 1) })()`, `${viewport.label} canvas fit bounds`)
+  recordPass(viewport.label, 'portas ligam quadros sem duplicar e Escape cancela a ligação')
   await evaluate(window, `(function () {
     const workbench = document.querySelector('[data-canvas-card="workbench"]')
     const resizeHandle = workbench?.querySelector('[data-canvas-resize-handle]')
@@ -308,6 +597,7 @@ async function inspectProjectInteractions(window, viewport) {
   await waitFor(window, `document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]').length === 4 && document.querySelectorAll('.workspace-canvas [data-canvas-card="note"]').length >= 2`, `${viewport.label} squad canvas nodes`)
   await waitFor(window, `document.querySelectorAll('.workspace-canvas-connections path').length >= 4`, `${viewport.label} squad task connections`)
   recordPass(viewport.label, 'template cria squad conectado a uma nota de tarefa')
+  await verifyCoordinatorOrchestration(window, viewport)
   await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Voltar ao layout integrado', `${viewport.label} canvas close`)
   await waitFor(window, `!document.querySelector('.workspace-canvas')`, `${viewport.label} grid layout restore`)
   await clickButtonByText(window, (node) => node.getAttribute('title') === 'Projetos', `${viewport.label} multi-project navigation`)
@@ -380,13 +670,13 @@ async function inspectMemory(window, viewport) {
 
 async function inspectToolHealth(window, viewport) {
   await clickButtonByText(window, (node) => node.getAttribute('title') === 'Diagnosticar ferramentas instaladas', `${viewport.label} tool health navigation`)
-  await waitFor(window, `(() => { const dialog = document.querySelector('[role="dialog"]'); return Boolean(dialog?.querySelector('#tool-health-title') && dialog.querySelectorAll('article').length === 7 && dialog.contains(document.activeElement)) })()`, `${viewport.label} tool health dialog`)
+  await waitFor(window, `(() => { const dialog = document.querySelector('[role="dialog"]'); return Boolean(dialog?.querySelector('#tool-health-title') && dialog.querySelectorAll('article').length === 12 && dialog.contains(document.activeElement)) })()`, `${viewport.label} tool health dialog`)
   const health = await evaluate(window, `(() => ({
     title: document.querySelector('#tool-health-title')?.innerText,
     tools: document.querySelectorAll('[role="dialog"] article').length,
     missing: Array.from(document.querySelectorAll('[role="dialog"] article')).filter((article) => article.innerText.includes('Não encontrado')).length,
   }))()`)
-  assert(health.title === 'Diagnóstico de ferramentas' && health.tools === 7 && health.missing === 1, `${viewport.label}: diagnóstico incompleto (${JSON.stringify(health)})`)
+  assert(health.title === 'Diagnóstico de ferramentas' && health.tools === 12 && health.missing === 4, `${viewport.label}: diagnóstico incompleto (${JSON.stringify(health)})`)
   recordPass(viewport.label, 'tool health dialog lists all launchers and their states')
   await key(window, 'Escape')
   await waitFor(window, `!document.querySelector('[role="dialog"] #tool-health-title')`, `${viewport.label} tool health Escape`)

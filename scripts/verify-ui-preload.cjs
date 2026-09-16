@@ -9,6 +9,7 @@ const { contextBridge } = require('electron')
 const baseTime = Date.UTC(2026, 8, 11, 12, 0, 0)
 const calls = []
 const webListeners = new Set()
+const terminalListeners = new Set()
 
 const record = (name, ...args) => {
   calls.push({ name, args })
@@ -126,6 +127,8 @@ let config = {
     wt: 'C:\\Fixture\\Terminal\\wt.exe',
   },
 }
+
+let writeTerminalFailure = false
 
 let usage = {
   account1: {
@@ -320,19 +323,26 @@ const api = {
     record('startCodexTerminal', id, projectPath, account, cols, rows)
     return { success: true, id, pid: 1235, account, message: 'Fixture Codex connected' }
   },
+  startAgentTerminal: async (id, projectPath, provider, cols, rows) => {
+    record('startAgentTerminal', id, projectPath, provider, cols, rows)
+    return { success: true, id, pid: 1236, provider, message: 'Fixture local agent connected' }
+  },
   resizeTerminal: async (id, cols, rows) => {
     record('resizeTerminal', id, cols, rows)
     return { success: true }
   },
   writeTerminal: async (id, input) => {
     record('writeTerminal', id, input)
-    return { success: true }
+    return { success: !writeTerminalFailure }
   },
   stopTerminal: async (id) => {
     record('stopTerminal', id)
     return { success: true }
   },
-  onTerminalEvent: () => () => {},
+  onTerminalEvent: (callback) => {
+    terminalListeners.add(callback)
+    return () => terminalListeners.delete(callback)
+  },
   navigateWeb: async (url) => {
     record('navigateWeb', url)
     for (const listener of webListeners) listener({ type: 'navigated', url, title: url })
@@ -368,10 +378,15 @@ const api = {
       { id: 'terminal', label: 'Terminal', state: 'ready', path: 'C:\\Fixture\\Terminal\\wt.exe', message: 'Windows Terminal pronto.' },
       { id: 'vscode', label: 'VS Code', state: 'ready', path: 'C:\\Fixture\\VSCode\\code.exe', message: 'Editor pronto.' },
       { id: 'codex', label: 'Codex CLI', state: 'ready', path: 'C:\\Fixture\\Codex\\codex.exe', message: 'CLI pronto.' },
+      { id: 'opencode', label: 'OpenCode', state: 'ready', path: 'C:\\Fixture\\OpenCode\\opencode.cmd', message: 'CLI pronto.' },
+      { id: 'claude', label: 'Claude Code', state: 'ready', path: 'C:\\Fixture\\Claude\\claude.cmd', message: 'CLI pronto.' },
+      { id: 'gemini', label: 'Gemini CLI', state: 'missing', message: 'Gemini CLI não foi encontrado.' },
+      { id: 'aider', label: 'Aider', state: 'missing', message: 'Aider não foi encontrado.' },
       { id: 'agy', label: 'Antigravity', state: 'missing', message: 'Antigravity não foi encontrado.' },
       { id: 'brave', label: 'Brave', state: 'ready', path: 'C:\\Fixture\\Brave\\brave.exe', message: 'Navegador pronto.' },
       { id: 'chrome', label: 'Chrome', state: 'ready', path: 'C:\\Fixture\\Chrome\\chrome.exe', message: 'Navegador pronto.' },
       { id: 'mimo', label: 'MiMo AI', state: 'fallback', path: 'C:\\Fixture\\MiMo\\mimo.exe', message: 'Alternativa disponível.' },
+      { id: 'custom', label: 'Outro CLI', state: 'missing', message: 'Configure um caminho para o agente personalizado.' },
     ]
   },
   copyProjectContext: async (projectPath) => {
@@ -482,5 +497,11 @@ contextBridge.exposeInMainWorld('__devorbitVerifyFixture', {
   getCalls: () => copy(calls),
   resetCalls: () => {
     calls.length = 0
+  },
+  emitTerminalEvent: (event) => {
+    for (const listener of terminalListeners) listener(copy(event))
+  },
+  setWriteTerminalFailure: (value) => {
+    writeTerminalFailure = Boolean(value)
   },
 })

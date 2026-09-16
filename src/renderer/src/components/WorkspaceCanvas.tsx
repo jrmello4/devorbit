@@ -21,7 +21,7 @@ import {
   Trash2,
   Unlink,
 } from "lucide-react";
-import type { Project } from "../types";
+import type { AgentProvider, AgentProviderId, Project } from "../types";
 import "./WorkspaceCanvas.css";
 
 type NodeKind = "workbench" | "browser" | "note" | "agent";
@@ -38,6 +38,7 @@ export interface CanvasNode {
   content?: string;
   role?: AgentRole;
   account?: "account1" | "account2";
+  provider?: AgentProviderId;
 }
 interface CanvasConnection {
   id: string;
@@ -49,6 +50,64 @@ interface CanvasState {
   nodes: CanvasNode[];
   connections: CanvasConnection[];
   viewport: { x: number; y: number; zoom: number };
+}
+interface ConnectionDraft {
+  from: string;
+  x: number;
+  y: number;
+  pointerId: number;
+}
+interface CanvasGesture {
+  type: "drag" | "resize" | "pan";
+  sx: number;
+  sy: number;
+  nodes?: CanvasNode[];
+  viewport?: CanvasState["viewport"];
+  id?: string;
+  pointerId: number;
+}
+type OrchestrationPhase =
+  | "planning"
+  | "specialist"
+  | "finalizing"
+  | "complete"
+  | "blocked";
+type AgentProgressState = "queued" | "running" | "completed" | "blocked";
+interface AgentProgress {
+  state: AgentProgressState;
+  label: string;
+}
+interface OrchestrationNote {
+  id: string;
+  title: string;
+  content: string;
+}
+interface OrchestrationAgent {
+  id: string;
+  title: string;
+  role: AgentRole;
+  notes: OrchestrationNote[];
+}
+interface OrchestrationResult {
+  agentId: string;
+  title: string;
+  role: AgentRole;
+  content: string;
+}
+interface OrchestrationRun {
+  id: string;
+  projectId: string;
+  coordinatorId: string;
+  coordinatorTitle: string;
+  notes: OrchestrationNote[];
+  specialists: OrchestrationAgent[];
+  phase: OrchestrationPhase;
+  specialistIndex: number;
+  expectedAgentId: string;
+  expectedTaskId?: string;
+  plan: string;
+  results: OrchestrationResult[];
+  lastHandledResult?: string;
 }
 interface LegacyCanvas {
   cards?: Array<{
@@ -64,7 +123,7 @@ interface LegacyCanvas {
 
 const WORLD_WIDTH = 5200;
 const WORLD_HEIGHT = 3400;
-const MIN_ZOOM = 0.45;
+const MIN_ZOOM = 0.08;
 const MAX_ZOOM = 1.6;
 const GRID = 20;
 const fixedKinds = new Set<NodeKind>(["workbench", "browser"]);
@@ -121,10 +180,56 @@ const nodeId = () =>
   Date.now().toString(36) +
   "-" +
   Math.random().toString(36).slice(2, 7);
+const orchestrationRoleOrder: AgentRole[] = [
+  "Implementação",
+  "Revisão",
+  "Testes",
+];
+const orchestrationResultInstruction =
+  "Esta etapa faz parte de uma orquestração automática. Ao concluir, imprima uma única linha iniciada por DEVORBIT_RESULT: e seguida de um resumo objetivo. Use DEVORBIT_RESULT: CONCLUIDO: para uma etapa concluída; se não puder continuar, use DEVORBIT_RESULT: BLOQUEADO: e explique o motivo. Não aguarde outro clique para encaminhar a próxima etapa.";
+const orchestrationRunId = () =>
+  "orchestration-" +
+  Date.now().toString(36) +
+  "-" +
+    Math.random().toString(36).slice(2, 7);
+const agentProviderIds: AgentProviderId[] = [
+  "codex",
+  "opencode",
+  "claude",
+  "gemini",
+  "aider",
+  "agy",
+  "custom",
+];
+const fallbackAgentProvider: AgentProvider = {
+  id: "codex",
+  label: "Codex CLI",
+  command: "codex",
+  state: "ready",
+  message: "Codex CLI pronto.",
+};
+function isAgentProviderId(value: unknown): value is AgentProviderId {
+  return typeof value === "string" && agentProviderIds.includes(value as AgentProviderId);
+}
+const connectionPath = (from: CanvasNode, toX: number, toY: number) => {
+  const x1 = from.x + from.width;
+  const y1 = from.y + from.height / 2;
+  const distance = Math.abs(toX - x1);
+  const curve = Math.max(70, distance * 0.4);
+  if (toX >= x1)
+    return `M ${x1} ${y1} C ${x1 + curve} ${y1}, ${toX - curve} ${toY}, ${toX} ${toY}`;
+  return `M ${x1} ${y1} C ${x1 + curve} ${y1}, ${toX + curve} ${toY}, ${toX} ${toY}`;
+};
 function sanitizeNode(
   value: Partial<CanvasNode>,
   fallback: CanvasNode,
 ): CanvasNode {
+  const width = Number.isFinite(value.width)
+    ? clamp(value.width as number, 220, 1100)
+    : fallback.width;
+  const height = Number.isFinite(value.height)
+    ? clamp(value.height as number, 150, 850)
+    : fallback.height;
   return {
     id: typeof value.id === "string" ? value.id : fallback.id,
     kind:
@@ -139,17 +244,13 @@ function sanitizeNode(
         ? value.title.slice(0, 80)
         : fallback.title,
     x: Number.isFinite(value.x)
-      ? clamp(value.x as number, -WORLD_WIDTH, WORLD_WIDTH)
+      ? clamp(value.x as number, 0, WORLD_WIDTH - width)
       : fallback.x,
     y: Number.isFinite(value.y)
-      ? clamp(value.y as number, -WORLD_HEIGHT, WORLD_HEIGHT)
+      ? clamp(value.y as number, 0, WORLD_HEIGHT - height)
       : fallback.y,
-    width: Number.isFinite(value.width)
-      ? clamp(value.width as number, 220, 1100)
-      : fallback.width,
-    height: Number.isFinite(value.height)
-      ? clamp(value.height as number, 150, 850)
-      : fallback.height,
+    width,
+    height,
     z: Number.isFinite(value.z) ? (value.z as number) : fallback.z,
     content:
       typeof value.content === "string"
@@ -168,6 +269,9 @@ function sanitizeNode(
         : value.account === "account1"
           ? "account1"
           : fallback.account,
+    provider: isAgentProviderId(value.provider)
+      ? value.provider
+      : fallback.provider || "codex",
   };
 }
 function read(id: string): CanvasState {
@@ -246,19 +350,127 @@ function read(id: string): CanvasState {
   return fallback;
 }
 
+function connectedNotes(state: CanvasState, nodeIdValue: string): OrchestrationNote[] {
+  const noteIds = new Set(
+    state.connections
+      .filter(
+        (connection) =>
+          connection.from === nodeIdValue || connection.to === nodeIdValue,
+      )
+      .map((connection) =>
+        connection.from === nodeIdValue ? connection.to : connection.from,
+      ),
+  );
+  return state.nodes
+    .filter(
+      (node) =>
+        node.kind === "note" &&
+        noteIds.has(node.id) &&
+        Boolean(node.content?.trim()),
+    )
+    .map((node) => ({
+      id: node.id,
+      title: node.title,
+      content: node.content!.trim(),
+    }));
+}
+
+function orchestrationAgentRole(node: CanvasNode): AgentRole {
+  return node.role === "Revisão" || node.role === "Testes"
+    ? node.role
+    : "Implementação";
+}
+
+function discoverSpecialists(
+  state: CanvasState,
+  coordinator: CanvasNode,
+  notes: OrchestrationNote[],
+): OrchestrationAgent[] {
+  const noteIds = new Set(notes.map((note) => note.id));
+  const directlyConnected = new Set(
+    state.connections
+      .filter(
+        (connection) =>
+          connection.from === coordinator.id || connection.to === coordinator.id,
+      )
+      .map((connection) =>
+        connection.from === coordinator.id ? connection.to : connection.from,
+      ),
+  );
+  const noteConnectedAgentIds = new Set(
+    state.connections.flatMap((connection) => {
+      if (!noteIds.has(connection.from) && !noteIds.has(connection.to)) return [];
+      return [connection.from, connection.to];
+    }),
+  );
+  return state.nodes
+    .filter(
+      (node) =>
+        node.kind === "agent" &&
+        node.id !== coordinator.id &&
+        node.role !== "Coordenador" &&
+        (directlyConnected.has(node.id) || noteConnectedAgentIds.has(node.id)),
+    )
+    .map((node) => ({
+      id: node.id,
+      title: node.title,
+      role: orchestrationAgentRole(node),
+      notes: connectedNotes(state, node.id),
+    }))
+    .sort((left, right) => {
+      const leftOrder = orchestrationRoleOrder.indexOf(left.role);
+      const rightOrder = orchestrationRoleOrder.indexOf(right.role);
+      return leftOrder - rightOrder;
+    });
+}
+
+function mergeOrchestrationNotes(
+  ...groups: OrchestrationNote[][]
+): OrchestrationNote[] {
+  const notes = new Map<string, OrchestrationNote>();
+  groups.flat().forEach((note) => notes.set(note.id, note));
+  return [...notes.values()];
+}
+
+function formatOrchestrationNotes(notes: OrchestrationNote[]): string {
+  return notes
+    .map((note) => `\n## ${note.title}\n${note.content}`)
+    .join("\n");
+}
+
+function formatOrchestrationResults(results: OrchestrationResult[]): string {
+  if (!results.length) return "Nenhum resultado de agente foi recebido ainda.";
+  return results
+    .map(
+      (result) =>
+        `\n### ${result.role} — ${result.title}\n${result.content}`,
+    )
+    .join("\n");
+}
+
+function isBlockedOrchestrationResult(result: string): boolean {
+  return /^\s*(?:\[\s*)?(?:BLOQUEADO|BLOCKED|FALHA|FAILURE|ERRO|ERROR)\s*(?:\]|:|-)/i.test(result);
+}
+
 export const WorkspaceCanvas: React.FC<{
   project: Project;
   workbench: React.ReactNode;
   browser?: React.ReactNode;
   agentAccount?: "account1" | "account2";
-  renderAgent?: (node: CanvasNode, onResult: (result: string) => void) => React.ReactNode;
-  onSendAgentTask?: (node: CanvasNode, prompt: string) => void;
+  agentProviders?: AgentProvider[];
+  renderAgent?: (
+    node: CanvasNode,
+    onResult: (result: string, taskId?: string) => void,
+    onTaskFailure: (taskId: string, message: string) => void,
+  ) => React.ReactNode;
+  onSendAgentTask?: (node: CanvasNode, prompt: string) => string | undefined;
   onCreateAgentWorktree?: (node: CanvasNode) => void;
 }> = ({
   project,
   workbench,
   browser,
   agentAccount = "account1",
+  agentProviders = [],
   renderAgent,
   onSendAgentTask,
   onCreateAgentWorktree,
@@ -266,17 +478,24 @@ export const WorkspaceCanvas: React.FC<{
   const [canvas, setCanvas] = useState<CanvasState>(() => read(project.id));
   const [selected, setSelected] = useState<string[]>([]);
   const [connectFrom, setConnectFrom] = useState<string | null>(null);
-  const [gesture, setGesture] = useState<{
-    type: "drag" | "resize" | "pan";
-    sx: number;
-    sy: number;
-    nodes?: CanvasNode[];
-    viewport?: CanvasState["viewport"];
-    id?: string;
-  } | null>(null);
+  const [gesture, setGesture] = useState<CanvasGesture | null>(null);
+  const [connectionDraft, setConnectionDraft] = useState<ConnectionDraft | null>(null);
+  const [orchestration, setOrchestration] = useState<OrchestrationRun | null>(
+    null,
+  );
+  const [agentProgress, setAgentProgress] = useState<
+    Record<string, AgentProgress>
+  >({});
   const canvasRef = useRef(canvas);
+  const orchestrationRef = useRef<OrchestrationRun | null>(null);
+  const providerOptions = agentProviders.length ? agentProviders : [fallbackAgentProvider];
+  const defaultAgentProvider = providerOptions.find((provider) => provider.state === "ready")?.id || "codex";
   const viewportRef = useRef<HTMLDivElement>(null);
   const persistTimerRef = useRef<number | null>(null);
+  const gestureCaptureRef = useRef<HTMLElement | null>(null);
+  const connectionDraftRef = useRef<ConnectionDraft | null>(null);
+  const minimapPointerRef = useRef<number | null>(null);
+  const spaceHeldRef = useRef(false);
   const persist = useCallback(
     (value: CanvasState) => {
       try {
@@ -319,6 +538,12 @@ export const WorkspaceCanvas: React.FC<{
     setCanvas(next);
     setSelected([]);
     setConnectFrom(null);
+    connectionDraftRef.current = null;
+    setConnectionDraft(null);
+    setGesture(null);
+    orchestrationRef.current = null;
+    setOrchestration(null);
+    setAgentProgress({});
   }, [project.id]);
   useEffect(() => {
     window.addEventListener("pagehide", flush);
@@ -327,32 +552,48 @@ export const WorkspaceCanvas: React.FC<{
       flush();
     };
   }, [flush]);
+  const connectNodes = useCallback(
+    (from: string | null, to: string) => {
+      if (!from || from === to) {
+        if (from === to) {
+          setConnectFrom(null);
+          connectionDraftRef.current = null;
+          setConnectionDraft(null);
+        }
+        return;
+      }
+      update(
+        (current) =>
+          current.connections.some(
+            (connection) =>
+              (connection.from === from && connection.to === to) ||
+              (connection.from === to && connection.to === from),
+          )
+            ? current
+            : {
+                ...current,
+                connections: [
+                  ...current.connections,
+                  {
+                    id: "link-" + Date.now().toString(36),
+                    from,
+                    to,
+                  },
+                ],
+              },
+        true,
+      );
+      connectionDraftRef.current = null;
+      setConnectionDraft(null);
+      setConnectFrom(null);
+      setSelected([to]);
+    },
+    [update],
+  );
   const selectNode = useCallback(
     (id: string, additive = false) => {
-      if (connectFrom && connectFrom !== id) {
-        update(
-          (current) =>
-            current.connections.some(
-              (connection) =>
-                (connection.from === connectFrom && connection.to === id) ||
-                (connection.from === id && connection.to === connectFrom),
-            )
-              ? current
-              : {
-                  ...current,
-                  connections: [
-                    ...current.connections,
-                    {
-                      id: "link-" + Date.now().toString(36),
-                      from: connectFrom,
-                      to: id,
-                    },
-                  ],
-                },
-          true,
-        );
-        setConnectFrom(null);
-        setSelected([id]);
+      if (connectFrom) {
+        connectNodes(connectFrom, id);
         return;
       }
       setSelected((current) =>
@@ -363,7 +604,7 @@ export const WorkspaceCanvas: React.FC<{
           : [id],
       );
     },
-    [connectFrom, update],
+    [connectFrom, connectNodes],
   );
   const addNote = useCallback(() => {
     const rect = viewportRef.current?.getBoundingClientRect();
@@ -410,6 +651,7 @@ export const WorkspaceCanvas: React.FC<{
             title: "Agente de implementação",
             role: "Implementação",
             account: agentAccount,
+            provider: defaultAgentProvider,
             x,
             y,
             width: 500,
@@ -421,7 +663,7 @@ export const WorkspaceCanvas: React.FC<{
       true,
     );
     setSelected([id]);
-  }, [agentAccount, update]);
+  }, [agentAccount, defaultAgentProvider, update]);
   const createSquad = useCallback(() => {
     const rect = viewportRef.current?.getBoundingClientRect();
     const view = canvasRef.current.viewport;
@@ -430,7 +672,7 @@ export const WorkspaceCanvas: React.FC<{
     const noteId = nodeId();
     const roles: AgentRole[] = ["Coordenador", "Implementação", "Revisão", "Testes"];
     const agents = roles.map((role, index) => ({
-      id: nodeId(), kind: "agent" as const, title: "Agente: " + role, role, account: agentAccount,
+      id: nodeId(), kind: "agent" as const, title: "Agente: " + role, role, account: agentAccount, provider: defaultAgentProvider,
       x: originX + 390 + (index % 2) * 430, y: originY + Math.floor(index / 2) * 300,
       width: 500, height: 340, z: index + 2,
     }));
@@ -440,7 +682,7 @@ export const WorkspaceCanvas: React.FC<{
       connections: [...current.connections, ...agents.map((agent) => ({ id: "link-" + noteId + "-" + agent.id, from: noteId, to: agent.id }))],
     }), true);
     setSelected([noteId, ...agents.map((agent) => agent.id)]);
-  }, [agentAccount, update]);
+  }, [agentAccount, defaultAgentProvider, update]);
   const deleteNodes = useCallback((ids: string[]) => {
     const removable = new Set(
       ids.filter((id) =>
@@ -498,24 +740,188 @@ export const WorkspaceCanvas: React.FC<{
     update(() => fresh, true);
     setSelected([]);
     setConnectFrom(null);
+    connectionDraftRef.current = null;
+    setConnectionDraft(null);
   }, [update]);
-  const zoom = useCallback(
-    (amount: number) =>
+  const pointerToWorld = useCallback((clientX: number, clientY: number) => {
+    const host = viewportRef.current?.getBoundingClientRect();
+    const view = canvasRef.current.viewport;
+    return {
+      x: (clientX - (host?.left || 0) - view.x) / view.zoom,
+      y: (clientY - (host?.top || 0) - view.y) / view.zoom,
+    };
+  }, []);
+  const zoomAt = useCallback(
+    (amount: number, clientX?: number, clientY?: number) =>
       update(
-        (current) => ({
-          ...current,
-          viewport: {
-            ...current.viewport,
-            zoom: clamp(current.viewport.zoom + amount, MIN_ZOOM, MAX_ZOOM),
-          },
-        }),
+        (current) => {
+          const host = viewportRef.current?.getBoundingClientRect();
+          const localX =
+            (clientX ?? (host?.left || 0) + (host?.width || 900) / 2) -
+            (host?.left || 0);
+          const localY =
+            (clientY ?? (host?.top || 0) + (host?.height || 650) / 2) -
+            (host?.top || 0);
+          const nextZoom = clamp(
+            current.viewport.zoom + amount,
+            MIN_ZOOM,
+            MAX_ZOOM,
+          );
+          if (nextZoom === current.viewport.zoom) return current;
+          const worldX =
+            (localX - current.viewport.x) / current.viewport.zoom;
+          const worldY =
+            (localY - current.viewport.y) / current.viewport.zoom;
+          return {
+            ...current,
+            viewport: {
+              zoom: nextZoom,
+              x: localX - worldX * nextZoom,
+              y: localY - worldY * nextZoom,
+            },
+          };
+        },
         true,
       ),
     [update],
   );
+  const zoom = useCallback((amount: number) => zoomAt(amount), [zoomAt]);
+  useEffect(() => {
+    const host = viewportRef.current;
+    if (!host) return;
+    const onWheel = (event: WheelEvent) => {
+      const target = event.target as Element;
+      if (
+        !event.ctrlKey &&
+        !event.metaKey &&
+        target.closest(".workspace-canvas-card-content")
+      )
+        return;
+      event.preventDefault();
+      if (event.ctrlKey || event.metaKey) {
+        zoomAt(
+          event.deltaY > 0 ? -0.1 : 0.1,
+          event.clientX,
+          event.clientY,
+        );
+        return;
+      }
+      update((current) => ({
+        ...current,
+        viewport: {
+          ...current.viewport,
+          x: current.viewport.x - event.deltaX,
+          y: current.viewport.y - event.deltaY,
+        },
+      }));
+    };
+    host.addEventListener("wheel", onWheel, { passive: false });
+    return () => host.removeEventListener("wheel", onWheel);
+  }, [update, zoomAt]);
+  const fitCanvas = useCallback(() => {
+    const host = viewportRef.current?.getBoundingClientRect();
+    const nodes = canvasRef.current.nodes.filter(
+      (node) => node.kind !== "browser" || browser,
+    );
+    if (!host || !nodes.length) return;
+    const padding = 100;
+    const minX = Math.min(...nodes.map((node) => node.x));
+    const minY = Math.min(...nodes.map((node) => node.y));
+    const maxX = Math.max(...nodes.map((node) => node.x + node.width));
+    const maxY = Math.max(...nodes.map((node) => node.y + node.height));
+    const width = Math.max(1, maxX - minX + padding * 2);
+    const height = Math.max(1, maxY - minY + padding * 2);
+    const nextZoom = clamp(
+      Math.min(host.width / width, host.height / height),
+      MIN_ZOOM,
+      MAX_ZOOM,
+    );
+    update(
+      (current) => ({
+        ...current,
+        viewport: {
+          zoom: nextZoom,
+          x: (host.width - (maxX - minX) * nextZoom) / 2 - minX * nextZoom,
+          y: (host.height - (maxY - minY) * nextZoom) / 2 - minY * nextZoom,
+        },
+      }),
+      true,
+    );
+  }, [browser, update]);
+  const beginGesture = useCallback(
+    (
+      event: React.PointerEvent<HTMLElement>,
+      next: Omit<CanvasGesture, "pointerId">,
+    ) => {
+      gestureCaptureRef.current = event.currentTarget;
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        /* Synthetic events and inactive pointers cannot be captured. */
+      }
+      setGesture({ ...next, pointerId: event.pointerId });
+    },
+    [],
+  );
+  const startPan = useCallback(
+    (event: React.PointerEvent<HTMLElement>) => {
+      if (event.button !== 0 && event.button !== 1 && !spaceHeldRef.current)
+        return;
+      event.preventDefault();
+      event.stopPropagation();
+      beginGesture(event, {
+        type: "pan",
+        sx: event.clientX,
+        sy: event.clientY,
+        viewport: canvasRef.current.viewport,
+      });
+    },
+    [beginGesture],
+  );
+  const startNodeDrag = useCallback(
+    (event: React.PointerEvent<HTMLElement>, node: CanvasNode) => {
+      if (event.button !== 0 || spaceHeldRef.current) {
+        if (event.button === 1 || spaceHeldRef.current) startPan(event);
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.ctrlKey || event.metaKey) {
+        selectNode(node.id, true);
+        return;
+      }
+      const ids = selected.includes(node.id) ? selected : [node.id];
+      if (!selected.includes(node.id)) setSelected([node.id]);
+      const nodes = ids
+        .map((id) => canvasRef.current.nodes.find((item) => item.id === id))
+        .filter((item): item is CanvasNode => Boolean(item));
+      beginGesture(event, {
+        type: "drag",
+        sx: event.clientX,
+        sy: event.clientY,
+        nodes,
+      });
+    },
+    [beginGesture, selectNode, selected, startPan],
+  );
+  const startResize = useCallback(
+    (event: React.PointerEvent<HTMLElement>, node: CanvasNode) => {
+      event.preventDefault();
+      event.stopPropagation();
+      beginGesture(event, {
+        type: "resize",
+        sx: event.clientX,
+        sy: event.clientY,
+        id: node.id,
+        nodes: [node],
+      });
+    },
+    [beginGesture],
+  );
   useEffect(() => {
     if (!gesture) return;
     const move = (event: PointerEvent) => {
+      if (event.pointerId !== gesture.pointerId) return;
       const dx = event.clientX - gesture.sx;
       const dy = event.clientY - gesture.sy;
       if (gesture.type === "pan" && gesture.viewport)
@@ -528,12 +934,26 @@ export const WorkspaceCanvas: React.FC<{
           },
         }));
       if (gesture.type === "drag" && gesture.nodes) {
-        const worldX = dx / canvasRef.current.viewport.zoom;
-        const worldY = dy / canvasRef.current.viewport.zoom;
+        const worldX = dx / (gesture.viewport?.zoom || canvasRef.current.viewport.zoom);
+        const worldY = dy / (gesture.viewport?.zoom || canvasRef.current.viewport.zoom);
+        const raw = gesture.nodes.map((node) => ({
+          node,
+          x: snap(node.x + worldX),
+          y: snap(node.y + worldY),
+        }));
+        const minX = Math.min(...raw.map((item) => item.x));
+        const minY = Math.min(...raw.map((item) => item.y));
+        const maxX = Math.max(...raw.map((item) => item.x + item.node.width));
+        const maxY = Math.max(...raw.map((item) => item.y + item.node.height));
+        const offsetX = minX < 0 ? -minX : maxX > WORLD_WIDTH ? WORLD_WIDTH - maxX : 0;
+        const offsetY = minY < 0 ? -minY : maxY > WORLD_HEIGHT ? WORLD_HEIGHT - maxY : 0;
         const moved = new Map(
-          gesture.nodes.map((node) => [
+          raw.map(({ node, x, y }) => [
             node.id,
-            { x: snap(node.x + worldX), y: snap(node.y + worldY) },
+            {
+              x: clamp(x + offsetX, 0, WORLD_WIDTH - node.width),
+              y: clamp(y + offsetY, 0, WORLD_HEIGHT - node.height),
+            },
           ]),
         );
         update((current) => ({
@@ -559,31 +979,92 @@ export const WorkspaceCanvas: React.FC<{
               : {
                   ...node,
                   width: snap(
-                    clamp(initial.width + dx / current.viewport.zoom, 220, 1100),
+                    clamp(
+                      initial.width + dx / (gesture.viewport?.zoom || current.viewport.zoom),
+                      220,
+                      Math.min(1100, WORLD_WIDTH - initial.x),
+                    ),
                   ),
                   height: snap(
-                    clamp(initial.height + dy / current.viewport.zoom, 150, 850),
+                    clamp(
+                      initial.height + dy / (gesture.viewport?.zoom || current.viewport.zoom),
+                      150,
+                      Math.min(850, WORLD_HEIGHT - initial.y),
+                    ),
                   ),
                 },
           ),
         }));
       }
     };
-    const up = () => {
+    const finish = (event: PointerEvent) => {
+      if (event.pointerId !== gesture.pointerId) return;
+      try {
+        gestureCaptureRef.current?.releasePointerCapture(event.pointerId);
+      } catch {
+        /* The pointer may already have been released by the browser. */
+      }
+      gestureCaptureRef.current = null;
       flush();
       setGesture(null);
     };
     window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", finish);
     return () => {
       window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", finish);
     };
   }, [flush, gesture, update]);
   useEffect(() => {
+    const move = (event: PointerEvent) => {
+      const draft = connectionDraftRef.current;
+      if (!draft || event.pointerId !== draft.pointerId) return;
+      const point = pointerToWorld(event.clientX, event.clientY);
+      const next = { ...draft, x: point.x, y: point.y };
+      connectionDraftRef.current = next;
+      setConnectionDraft(next);
+    };
+    const finish = (event: PointerEvent) => {
+      const draft = connectionDraftRef.current;
+      if (!draft || event.pointerId !== draft.pointerId) return;
+      const target = document
+        .elementFromPoint?.(event.clientX, event.clientY)
+        ?.closest<HTMLElement>('[data-canvas-port="target"]');
+      const to = target?.dataset.canvasNodeId || null;
+      connectionDraftRef.current = null;
+      setConnectionDraft(null);
+      if (to) connectNodes(draft.from, to);
+    };
+    const cancel = (event: PointerEvent) => {
+      const draft = connectionDraftRef.current;
+      if (!draft || event.pointerId !== draft.pointerId) return;
+      connectionDraftRef.current = null;
+      setConnectionDraft(null);
+      setConnectFrom(null);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", cancel);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", cancel);
+    };
+  }, [connectNodes, pointerToWorld]);
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
-      if (target?.closest("input, textarea, [contenteditable=true]")) return;
+      const isEditable = Boolean(
+        target?.closest("input, textarea, [contenteditable=true]"),
+      );
+      if (event.code === "Space" && !isEditable) {
+        spaceHeldRef.current = true;
+        if (target === viewportRef.current) event.preventDefault();
+        return;
+      }
+      if (isEditable) return;
       if (event.key === "Delete" || event.key === "Backspace") {
         event.preventDefault();
         deleteSelected();
@@ -613,15 +1094,52 @@ export const WorkspaceCanvas: React.FC<{
       if (event.key === "Escape") {
         setSelected([]);
         setConnectFrom(null);
+        connectionDraftRef.current = null;
+        setConnectionDraft(null);
+        setGesture(null);
       }
     };
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.code === "Space") spaceHeldRef.current = false;
+    };
+    const onWindowBlur = () => {
+      spaceHeldRef.current = false;
+      connectionDraftRef.current = null;
+      setConnectionDraft(null);
+      setGesture(null);
+    };
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onWindowBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onWindowBlur);
+    };
   }, [deleteSelected, duplicateSelected, update, zoom]);
   const nodeMap = useMemo(
     () => new Map(canvas.nodes.map((node) => [node.id, node])),
     [canvas.nodes],
   );
+  const orchestrationActive = Boolean(
+    orchestration &&
+      orchestration.phase !== "complete" &&
+      orchestration.phase !== "blocked",
+  );
+  const orchestrationTarget = orchestration
+    ? nodeMap.get(orchestration.expectedAgentId)
+    : undefined;
+  const orchestrationStatusText = orchestration
+    ? orchestration.phase === "planning"
+      ? "Coordenador preparando o plano"
+      : orchestration.phase === "specialist"
+        ? `Executando ${orchestrationTarget?.role || "agente especialista"}`
+        : orchestration.phase === "finalizing"
+          ? "Coordenador consolidando resultados"
+          : orchestration.phase === "blocked"
+            ? "Orquestração interrompida"
+            : "Orquestração concluída"
+    : "";
   const deletableSelection = selected.filter((id) => {
     const node = nodeMap.get(id);
     return node && !fixedKinds.has(node.kind);
@@ -639,64 +1157,569 @@ export const WorkspaceCanvas: React.FC<{
       true,
     );
   };
-  const sendAgentTask = (agent: CanvasNode) => {
-    const linkedNotes = canvas.connections
-      .filter((link) => link.from === agent.id || link.to === agent.id)
-      .map((link) => nodeMap.get(link.from === agent.id ? link.to : link.from))
-      .filter((node): node is CanvasNode => Boolean(node?.kind === "note" && node.content?.trim()));
-    if (!linkedNotes.length || !onSendAgentTask) return;
-    const prompt = [
-      `Você atua como ${agent.role || "Implementação"} neste projeto.`,
-      "Execute a tarefa usando o contexto conectado abaixo.",
-      ...linkedNotes.map((note) => `\n## ${note.title}\n${note.content}`),
-      "\nAo terminar, imprima uma única linha no formato: DEVORBIT_RESULT: resumo objetivo do que foi feito, validado ou bloqueado.",
-    ].join("\n");
-    onSendAgentTask(agent, prompt);
-    update((current) => ({ ...current, nodes: current.nodes.map((node) => node.id === agent.id ? { ...node, content: "Tarefa enviada agora" } : node) }), true);
-  };
-  const reportAgentResult = (agentId: string, result: string) => {
-    update((current) => ({ ...current, nodes: current.nodes.map((node) => node.id === agentId ? { ...node, content: result } : node) }), true);
-  };
-  const moveFromMinimap = (event: React.PointerEvent<SVGSVGElement>) => {
+  const commitOrchestration = useCallback((next: OrchestrationRun | null) => {
+    orchestrationRef.current = next;
+    setOrchestration(next);
+  }, []);
+  const dispatchAgentTask = useCallback(
+    (
+      agent: CanvasNode,
+      prompt: string,
+      progress?: AgentProgress,
+    ): string | null => {
+      if (!onSendAgentTask) return null;
+      if (progress) {
+        setAgentProgress((current) => ({ ...current, [agent.id]: progress }));
+      }
+      const taskId = onSendAgentTask(agent, prompt);
+      if (!taskId) return null;
+      update(
+        (current) => ({
+          ...current,
+          nodes: current.nodes.map((node) =>
+            node.id === agent.id
+              ? { ...node, content: progress?.label || "Tarefa enviada agora" }
+              : node,
+          ),
+        }),
+        true,
+      );
+      return taskId;
+    },
+    [onSendAgentTask, update],
+  );
+  const markOrchestrationBlocked = useCallback(
+    (run: OrchestrationRun, agentId: string) => {
+      const next = { ...run, phase: "blocked" as const, expectedAgentId: agentId };
+      commitOrchestration(next);
+      setAgentProgress((current) => ({
+        ...current,
+        [agentId]: { state: "blocked", label: "Agente indisponível" },
+      }));
+    },
+    [commitOrchestration],
+  );
+  const dispatchOrchestrationTask = useCallback(
+    (
+      run: OrchestrationRun,
+      agent: CanvasNode,
+      prompt: string,
+      progress: AgentProgress,
+    ): boolean => {
+      const taskId = dispatchAgentTask(agent, prompt, progress);
+      if (!taskId) {
+        markOrchestrationBlocked(run, agent.id);
+        return false;
+      }
+      commitOrchestration({ ...run, expectedTaskId: taskId });
+      return true;
+    },
+    [commitOrchestration, dispatchAgentTask, markOrchestrationBlocked],
+  );
+  const reportAgentTaskFailure = useCallback(
+    (agentId: string, taskId: string, message: string) => {
+      const run = orchestrationRef.current;
+      if (
+        !run ||
+        run.projectId !== project.id ||
+        run.phase === "complete" ||
+        run.phase === "blocked" ||
+        run.expectedAgentId !== agentId ||
+        (run.expectedTaskId !== undefined && run.expectedTaskId !== taskId)
+      )
+        return;
+      markOrchestrationBlocked(
+        { ...run, lastHandledResult: `failure:${taskId}:${message}` },
+        agentId,
+      );
+    },
+    [markOrchestrationBlocked, project.id],
+  );
+  const startCoordinatorOrchestration = useCallback(
+    (coordinator: CanvasNode) => {
+      const previous = orchestrationRef.current;
+      if (
+        previous &&
+        previous.phase !== "complete" &&
+        previous.phase !== "blocked"
+      )
+        return;
+      if (!onSendAgentTask) return;
+      const current = canvasRef.current;
+      const currentCoordinator = current.nodes.find(
+        (node) => node.id === coordinator.id && node.kind === "agent",
+      );
+      if (!currentCoordinator) return;
+      const notes = connectedNotes(current, currentCoordinator.id);
+      if (!notes.length) return;
+      const specialists = discoverSpecialists(
+        current,
+        currentCoordinator,
+        notes,
+      );
+      const run: OrchestrationRun = {
+        id: orchestrationRunId(),
+        projectId: project.id,
+        coordinatorId: currentCoordinator.id,
+        coordinatorTitle: currentCoordinator.title,
+        notes,
+        specialists,
+        phase: "planning",
+        specialistIndex: -1,
+        expectedAgentId: currentCoordinator.id,
+        plan: "",
+        results: [],
+      };
+      commitOrchestration(run);
+      setAgentProgress({
+        [currentCoordinator.id]: {
+          state: "running",
+          label: "Planejando tarefa",
+        },
+        ...Object.fromEntries(
+          specialists.map((specialist) => [specialist.id, {
+            state: "queued" as const,
+            label: "Aguardando coordenador",
+          }]),
+        ),
+      });
+      const specialistRoles = specialists.length
+        ? specialists.map((specialist) => specialist.role).join(" → ")
+        : "nenhuma etapa especialista; o coordenador concluirá sozinho";
+      const prompt = [
+        `Você atua como Coordenador neste projeto (${currentCoordinator.title}).`,
+        "Esta é a primeira etapa automática de uma execução em sequência.",
+        "Analise a tarefa conectada, transforme-a em um plano executável e defina critérios claros para implementação, revisão e testes.",
+        `As próximas etapas automáticas são: ${specialistRoles}.`,
+        "Não aguarde outro clique para encaminhar o trabalho: o aplicativo fará isso quando você devolver o plano.",
+        "## Tarefa e contexto conectado",
+        formatOrchestrationNotes(notes),
+        orchestrationResultInstruction,
+      ].join("\n");
+      dispatchOrchestrationTask(run, currentCoordinator, prompt, {
+        state: "running",
+        label: "Planejando tarefa",
+      });
+    },
+    [
+      commitOrchestration,
+      dispatchOrchestrationTask,
+      markOrchestrationBlocked,
+      onSendAgentTask,
+      project.id,
+    ],
+  );
+  const sendAgentTask = useCallback(
+    (agent: CanvasNode) => {
+      const currentRun = orchestrationRef.current;
+      if (
+        currentRun &&
+        currentRun.phase !== "complete" &&
+        currentRun.phase !== "blocked"
+      )
+        return;
+      if (agent.role === "Coordenador") {
+        startCoordinatorOrchestration(agent);
+        return;
+      }
+      const current = canvasRef.current;
+      const currentAgent = current.nodes.find(
+        (node) => node.id === agent.id && node.kind === "agent",
+      );
+      if (!currentAgent || !onSendAgentTask) return;
+      const linkedNotes = connectedNotes(current, currentAgent.id);
+      if (!linkedNotes.length) return;
+      setAgentProgress((progress) => {
+        const next = { ...progress };
+        delete next[currentAgent.id];
+        return next;
+      });
+      const prompt = [
+        `Você atua como ${currentAgent.role || "Implementação"} neste projeto.`,
+        "Execute a tarefa usando o contexto conectado abaixo.",
+        formatOrchestrationNotes(linkedNotes),
+        orchestrationResultInstruction,
+      ].join("\n");
+      dispatchAgentTask(currentAgent, prompt);
+    },
+    [
+      dispatchAgentTask,
+      onSendAgentTask,
+      startCoordinatorOrchestration,
+    ],
+  );
+  const reportAgentResult = useCallback(
+    (agentId: string, result: string, taskId?: string) => {
+      const normalizedResult = result.trim().slice(0, 1000);
+      update(
+        (current) => ({
+          ...current,
+          nodes: current.nodes.map((node) =>
+            node.id === agentId
+              ? { ...node, content: normalizedResult }
+              : node,
+          ),
+        }),
+        true,
+      );
+      if (!normalizedResult) return;
+      const run = orchestrationRef.current;
+      if (
+        !run ||
+        run.projectId !== project.id ||
+        run.phase === "complete" ||
+        run.phase === "blocked" ||
+        run.expectedAgentId !== agentId ||
+        (run.expectedTaskId !== undefined && run.expectedTaskId !== taskId)
+      )
+        return;
+      const resultKey = `${run.id}:${run.phase}:${agentId}:${taskId || "legacy"}:${normalizedResult}`;
+      if (run.lastHandledResult === resultKey) return;
+
+      if (isBlockedOrchestrationResult(normalizedResult)) {
+        markOrchestrationBlocked(
+          { ...run, lastHandledResult: resultKey },
+          agentId,
+        );
+        return;
+      }
+
+      if (run.phase === "planning") {
+        const planRun = {
+          ...run,
+          plan: normalizedResult,
+          lastHandledResult: resultKey,
+        };
+        setAgentProgress((current) => ({
+          ...current,
+          [agentId]: { state: "completed", label: "Plano concluído" },
+        }));
+        if (!run.specialists.length) {
+          const finalRun: OrchestrationRun = {
+            ...planRun,
+            phase: "finalizing",
+            expectedAgentId: run.coordinatorId,
+            expectedTaskId: undefined,
+          };
+          setAgentProgress((current) => ({
+            ...current,
+            [agentId]: {
+              state: "running",
+              label: "Executando tarefa",
+            },
+          }));
+          const coordinatorNode = canvasRef.current.nodes.find(
+            (node) => node.id === run.coordinatorId && node.kind === "agent",
+          );
+          const finalPrompt = [
+            `Você atua como Coordenador neste projeto (${run.coordinatorTitle}).`,
+            "Não há especialistas conectados. Execute agora todo o plano que você preparou e entregue o resultado final.",
+            "Faça as alterações, validações e correções necessárias sem aguardar outro clique.",
+            "## Tarefa e contexto conectado",
+            formatOrchestrationNotes(run.notes),
+            "## Plano preparado",
+            normalizedResult,
+            orchestrationResultInstruction,
+          ].join("\n");
+          if (
+            !coordinatorNode ||
+            !dispatchOrchestrationTask(finalRun, coordinatorNode, finalPrompt, {
+              state: "running",
+              label: "Executando tarefa",
+            })
+          ) {
+            markOrchestrationBlocked(finalRun, run.coordinatorId);
+          }
+          return;
+        }
+        const firstSpecialist = run.specialists[0];
+        const nextRun: OrchestrationRun = {
+          ...planRun,
+          phase: "specialist",
+          specialistIndex: 0,
+          expectedAgentId: firstSpecialist.id,
+          expectedTaskId: undefined,
+        };
+        setAgentProgress((current) => ({
+          ...current,
+          [firstSpecialist.id]: {
+            state: "running",
+            label: `${firstSpecialist.role} em execução`,
+          },
+        }));
+        const specialistNotes = mergeOrchestrationNotes(
+          run.notes,
+          firstSpecialist.notes,
+        );
+        const specialistPrompt = [
+          `Você atua como ${firstSpecialist.role} neste projeto (${firstSpecialist.title}).`,
+          "Esta é a próxima etapa automática; execute sua parte sem aguardar novos cliques.",
+          "Use o plano do coordenador e o contexto da tarefa para produzir uma entrega concreta.",
+          "## Tarefa e contexto conectado",
+          formatOrchestrationNotes(specialistNotes),
+          "## Plano do coordenador",
+          nextRun.plan,
+          "## Resultados anteriores",
+          formatOrchestrationResults(nextRun.results),
+          orchestrationResultInstruction,
+        ].join("\n");
+        const firstSpecialistNode = canvasRef.current.nodes.find(
+          (node) => node.id === firstSpecialist.id && node.kind === "agent",
+        );
+        if (
+          !firstSpecialistNode ||
+          !dispatchOrchestrationTask(
+            nextRun,
+            firstSpecialistNode,
+            specialistPrompt,
+            {
+              state: "running",
+              label: `${firstSpecialist.role} em execução`,
+            },
+          )
+        ) {
+          markOrchestrationBlocked(nextRun, firstSpecialist.id);
+        }
+        return;
+      }
+
+      if (run.phase === "specialist") {
+        const specialist = run.specialists[run.specialistIndex];
+        if (!specialist || specialist.id !== agentId) return;
+        const nextResults = [
+          ...run.results,
+          {
+            agentId,
+            title: specialist.title,
+            role: specialist.role,
+            content: normalizedResult,
+          },
+        ];
+        const specialistRun = {
+          ...run,
+          results: nextResults,
+          lastHandledResult: resultKey,
+        };
+        setAgentProgress((current) => ({
+          ...current,
+          [agentId]: { state: "completed", label: "Etapa concluída" },
+        }));
+        const nextSpecialist = run.specialists[run.specialistIndex + 1];
+        if (nextSpecialist) {
+          const nextRun: OrchestrationRun = {
+            ...specialistRun,
+            specialistIndex: run.specialistIndex + 1,
+            expectedAgentId: nextSpecialist.id,
+            expectedTaskId: undefined,
+          };
+          setAgentProgress((current) => ({
+            ...current,
+            [nextSpecialist.id]: {
+              state: "running",
+              label: `${nextSpecialist.role} em execução`,
+            },
+          }));
+          const specialistNotes = mergeOrchestrationNotes(
+            run.notes,
+            nextSpecialist.notes,
+          );
+          const specialistPrompt = [
+            `Você atua como ${nextSpecialist.role} neste projeto (${nextSpecialist.title}).`,
+            "Esta é a próxima etapa automática; execute sua parte sem aguardar novos cliques.",
+            "Considere o plano do coordenador e todos os resultados anteriores antes de trabalhar.",
+            "## Tarefa e contexto conectado",
+            formatOrchestrationNotes(specialistNotes),
+            "## Plano do coordenador",
+            nextRun.plan,
+            "## Resultados anteriores",
+            formatOrchestrationResults(nextRun.results),
+            orchestrationResultInstruction,
+          ].join("\n");
+          const nextSpecialistNode = canvasRef.current.nodes.find(
+            (node) => node.id === nextSpecialist.id && node.kind === "agent",
+          );
+          if (
+            !nextSpecialistNode ||
+            !dispatchOrchestrationTask(
+              nextRun,
+              nextSpecialistNode,
+              specialistPrompt,
+              {
+                state: "running",
+                label: `${nextSpecialist.role} em execução`,
+              },
+            )
+          ) {
+            markOrchestrationBlocked(nextRun, nextSpecialist.id);
+          }
+          return;
+        }
+        const finalRun: OrchestrationRun = {
+          ...specialistRun,
+          phase: "finalizing",
+          expectedAgentId: run.coordinatorId,
+          expectedTaskId: undefined,
+        };
+        setAgentProgress((current) => ({
+          ...current,
+          [run.coordinatorId]: {
+            state: "running",
+            label: "Consolidando resultados",
+          },
+        }));
+        const finalPrompt = [
+          `Você é o Coordenador na etapa final deste projeto (${run.coordinatorTitle}).`,
+          "Esta etapa automática encerra a execução. Consolide o plano e os resultados dos especialistas, valide o que foi entregue e registre pendências ou bloqueios restantes.",
+          "## Tarefa e contexto conectado",
+          formatOrchestrationNotes(run.notes),
+          "## Plano original",
+          run.plan,
+          "## Resultados dos especialistas",
+          formatOrchestrationResults(nextResults),
+          orchestrationResultInstruction,
+        ].join("\n");
+        const coordinator = canvasRef.current.nodes.find(
+          (node) => node.id === run.coordinatorId && node.kind === "agent",
+        );
+        if (
+          !coordinator ||
+          !dispatchOrchestrationTask(finalRun, coordinator, finalPrompt, {
+            state: "running",
+            label: "Consolidando resultados",
+          })
+        ) {
+          markOrchestrationBlocked(finalRun, run.coordinatorId);
+        }
+        return;
+      }
+
+      if (run.phase === "finalizing") {
+        const completeRun: OrchestrationRun = {
+          ...run,
+          phase: "complete",
+          lastHandledResult: resultKey,
+        };
+        commitOrchestration(completeRun);
+        setAgentProgress((current) => ({
+          ...current,
+          [agentId]: {
+            state: "completed",
+            label: "Orquestração concluída",
+          },
+        }));
+      }
+    },
+    [
+      commitOrchestration,
+      dispatchAgentTask,
+      markOrchestrationBlocked,
+      project.id,
+      update,
+    ],
+  );
+  const startConnection = useCallback(
+    (event: React.PointerEvent<HTMLButtonElement>, node: CanvasNode) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const point = pointerToWorld(event.clientX, event.clientY);
+      const draft = { from: node.id, x: point.x, y: point.y, pointerId: event.pointerId };
+      connectionDraftRef.current = draft;
+      setConnectionDraft(draft);
+      setConnectFrom(node.id);
+    },
+    [pointerToWorld],
+  );
+  const chooseConnectionSource = useCallback((id: string) => {
+    connectionDraftRef.current = null;
+    setConnectionDraft(null);
+    setConnectFrom(id);
+  }, []);
+  const moveFromMinimap = useCallback((event: React.PointerEvent<SVGSVGElement>) => {
     const map = event.currentTarget.getBoundingClientRect();
     const host = viewportRef.current?.getBoundingClientRect();
     if (!host) return;
     const worldX = ((event.clientX - map.left) / map.width) * WORLD_WIDTH;
     const worldY = ((event.clientY - map.top) / map.height) * WORLD_HEIGHT;
-    update((current) => ({ ...current, viewport: { ...current.viewport, x: host.width / 2 - worldX * current.viewport.zoom, y: host.height / 2 - worldY * current.viewport.zoom } }), true);
-  };
+    update(
+      (current) => ({
+        ...current,
+        viewport: {
+          ...current.viewport,
+          x: host.width / 2 - worldX * current.viewport.zoom,
+          y: host.height / 2 - worldY * current.viewport.zoom,
+        },
+      }),
+      true,
+    );
+  }, [update]);
+  const startMinimapNavigation = useCallback(
+    (event: React.PointerEvent<SVGSVGElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      minimapPointerRef.current = event.pointerId;
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        /* Synthetic events and inactive pointers cannot be captured. */
+      }
+      moveFromMinimap(event);
+    },
+    [moveFromMinimap],
+  );
+  const continueMinimapNavigation = useCallback(
+    (event: React.PointerEvent<SVGSVGElement>) => {
+      if (minimapPointerRef.current !== event.pointerId) return;
+      event.preventDefault();
+      moveFromMinimap(event);
+    },
+    [moveFromMinimap],
+  );
+  const finishMinimapNavigation = useCallback(
+    (event: React.PointerEvent<SVGSVGElement>) => {
+      if (minimapPointerRef.current !== event.pointerId) return;
+      minimapPointerRef.current = null;
+      try {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      } catch {
+        /* The pointer may already have been released by the browser. */
+      }
+    },
+    [],
+  );
   return (
     <div
       ref={viewportRef}
       className={
-        "workspace-canvas v2" + (gesture?.type === "pan" ? " is-panning" : "")
+        "workspace-canvas v2" +
+        (gesture?.type === "pan" ? " is-panning" : "") +
+        (gesture?.type === "drag" ? " is-dragging" : "") +
+        (connectFrom ? " is-connection-pending" : "")
       }
       data-canvas-project-id={project.id}
+      tabIndex={0}
+      aria-label="Área de trabalho do canvas"
       onPointerDown={(event) => {
+        const target = event.target as Element;
         if (
-          event.target !== event.currentTarget &&
-          !(event.target as HTMLElement).classList.contains(
-            "workspace-canvas-grid",
+          target.closest(
+            ".workspace-canvas-card, .workspace-canvas-toolbar, .workspace-canvas-minimap",
           )
         )
           return;
-        if (event.button === 1 || event.shiftKey) {
-          event.preventDefault();
-          setGesture({
-            type: "pan",
-            sx: event.clientX,
-            sy: event.clientY,
-            viewport: canvas.viewport,
-          });
-        } else {
+        if (
+          event.target !== event.currentTarget &&
+          !target.classList.contains("workspace-canvas-grid") &&
+          !target.classList.contains("workspace-canvas-world") &&
+          !target.classList.contains("workspace-canvas-connections")
+        )
+          return;
+        if (event.button === 0) {
           setSelected([]);
           setConnectFrom(null);
+          connectionDraftRef.current = null;
+          setConnectionDraft(null);
         }
-      }}
-      onWheel={(event) => {
-        if (!event.ctrlKey && !event.metaKey) return;
-        event.preventDefault();
-        zoom(event.deltaY > 0 ? -0.1 : 0.1);
+        startPan(event);
       }}
     >
       <div className="workspace-canvas-grid" />
@@ -761,6 +1784,14 @@ export const WorkspaceCanvas: React.FC<{
         </button>
         <button
           type="button"
+          onClick={fitCanvas}
+          aria-label="Encaixar conteúdo no canvas"
+          title="Encaixar conteúdo no canvas"
+        >
+          <Maximize2 size={14} />
+        </button>
+        <button
+          type="button"
           onClick={resetCanvas}
           title="Restaurar layout inicial"
         >
@@ -776,18 +1807,13 @@ export const WorkspaceCanvas: React.FC<{
         }}
         onPointerDown={(event) => {
           if (event.target !== event.currentTarget) return;
-          if (event.button === 1 || event.shiftKey) {
-            event.preventDefault();
-            setGesture({
-              type: "pan",
-              sx: event.clientX,
-              sy: event.clientY,
-              viewport: canvas.viewport,
-            });
-          } else {
+          if (event.button === 0) {
             setSelected([]);
             setConnectFrom(null);
+            connectionDraftRef.current = null;
+            setConnectionDraft(null);
           }
+          startPan(event);
         }}
       >
         <svg
@@ -800,18 +1826,23 @@ export const WorkspaceCanvas: React.FC<{
             const from = nodeMap.get(connection.from);
             const to = nodeMap.get(connection.to);
             if (!from || !to) return null;
-            const x1 = from.x + from.width;
-            const y1 = from.y + from.height / 2;
-            const x2 = to.x;
-            const y2 = to.y + to.height / 2;
-            const curve = Math.max(70, Math.abs(x2 - x1) * 0.4);
             return (
               <path
                 key={connection.id}
-                d={`M ${x1} ${y1} C ${x1 + curve} ${y1}, ${x2 - curve} ${y2}, ${x2} ${y2}`}
+                d={connectionPath(from, to.x, to.y + to.height / 2)}
               />
             );
           })}
+          {connectionDraft && nodeMap.get(connectionDraft.from) && (
+            <path
+              className="workspace-canvas-connection-preview"
+              d={connectionPath(
+                nodeMap.get(connectionDraft.from)!,
+                connectionDraft.x,
+                connectionDraft.y,
+              )}
+            />
+          )}
         </svg>
         {canvas.nodes
           .filter((node) => node.kind !== "browser" || browser)
@@ -822,27 +1853,94 @@ export const WorkspaceCanvas: React.FC<{
                 "workspace-canvas-card canvas-" +
                 node.kind +
                 (selected.includes(node.id) ? " is-selected" : "") +
-                (connectFrom === node.id ? " is-connecting" : "")
+                (connectFrom === node.id ? " is-connecting" : "") +
+                (agentProgress[node.id]
+                  ? " has-agent-progress progress-" + agentProgress[node.id].state
+                  : "")
               }
               data-canvas-card={node.kind}
-              data-canvas-node-id={node.id}
-              style={{
-                left: node.x,
+                data-canvas-node-id={node.id}
+                style={{
+                  left: node.x,
                 top: node.y,
                 width: node.width,
                 height: node.height,
                 zIndex: node.z,
               }}
               onPointerDown={(event) => {
+                if (event.button === 1 || spaceHeldRef.current) {
+                  startPan(event);
+                  return;
+                }
                 event.stopPropagation();
                 selectNode(node.id, event.ctrlKey || event.metaKey);
               }}
             >
-              <header>
+              <button
+                type="button"
+                className={
+                  "canvas-port canvas-port-source" +
+                  (connectFrom === node.id ? " is-active" : "")
+                }
+                data-canvas-port="source"
+                data-canvas-node-id={node.id}
+                aria-label={"Iniciar conexão a partir de " + node.title}
+                aria-pressed={connectFrom === node.id}
+                onPointerDown={(event) => startConnection(event, node)}
+                onClick={() => chooseConnectionSource(node.id)}
+              >
+                <span aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                className={
+                  "canvas-port canvas-port-target" +
+                  (connectFrom && connectFrom !== node.id ? " is-available" : "")
+                }
+                data-canvas-port="target"
+                data-canvas-node-id={node.id}
+                aria-label={"Conectar a " + node.title}
+                disabled={!connectFrom || connectFrom === node.id}
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                }}
+                onClick={() => connectNodes(connectFrom, node.id)}
+              >
+                <span aria-hidden="true" />
+              </button>
+              <header
+                onPointerDown={(event) => {
+                  const target = event.target as Element;
+                  if (
+                    target.closest(
+                      "button, input, select, textarea, a, [contenteditable=true]",
+                    )
+                  )
+                    return;
+                  startNodeDrag(event, node);
+                }}
+              >
                 <strong>
                   {nodeMeta[node.kind].icon}
                   {node.title}
                 </strong>
+                {node.kind === "agent" && agentProgress[node.id] && (
+                  <span
+                    className={
+                      "canvas-agent-progress progress-" +
+                      agentProgress[node.id].state
+                    }
+                    data-agent-progress={agentProgress[node.id].state}
+                    role="status"
+                    aria-label={
+                      "Status da tarefa: " + agentProgress[node.id].label
+                    }
+                  >
+                    <i aria-hidden="true" />
+                    {agentProgress[node.id].label}
+                  </span>
+                )}
                 {node.kind === "agent" && (
                   <button type="button" className="canvas-send-task" title="Criar worktree isolado" aria-label={"Isolar " + node.title} onPointerDown={(event) => event.stopPropagation()} onClick={() => onCreateAgentWorktree?.(node)}>WT</button>
                 )}
@@ -869,6 +1967,28 @@ export const WorkspaceCanvas: React.FC<{
                       <option>Coordenador</option><option>Implementação</option><option>Revisão</option><option>Testes</option>
                     </select>
                     <select
+                      value={node.provider || "codex"}
+                      aria-label="Provedor do agente"
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onChange={(event) =>
+                        update(
+                          (current) => ({
+                            ...current,
+                            nodes: current.nodes.map((item) =>
+                              item.id === node.id ? { ...item, provider: event.target.value as AgentProviderId } : item,
+                            ),
+                          }),
+                          true,
+                        )
+                      }
+                    >
+                      {providerOptions.map((provider) => (
+                        <option key={provider.id} value={provider.id} disabled={provider.state !== "ready"}>
+                          {provider.label}{provider.state !== "ready" ? " (não encontrado)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                    <select
                       value={node.account || agentAccount}
                       aria-label="Conta Codex"
                       onPointerDown={(event) => event.stopPropagation()}
@@ -890,9 +2010,17 @@ export const WorkspaceCanvas: React.FC<{
                   <button
                     type="button"
                     className="canvas-send-task"
+                    data-agent-send
                     aria-label={"Enviar tarefa para " + node.title}
-                    title="Enviar as notas conectadas ao agente"
-                    disabled={!canvas.connections.some((link) => (link.from === node.id || link.to === node.id) && nodeMap.get(link.from === node.id ? link.to : link.from)?.kind === "note")}
+                    title={
+                      node.role === "Coordenador"
+                        ? "Iniciar orquestração com as notas conectadas"
+                        : "Enviar as notas conectadas ao agente"
+                    }
+                    disabled={
+                      orchestrationActive || connectedNotes(canvas, node.id).length === 0 ||
+                      !providerOptions.some((provider) => provider.id === (node.provider || "codex") && provider.state === "ready")
+                    }
                     onPointerDown={(event) => event.stopPropagation()}
                     onClick={() => sendAgentTask(node)}
                   ><Send size={13} /></button>
@@ -913,22 +2041,7 @@ export const WorkspaceCanvas: React.FC<{
                   className="canvas-drag"
                   aria-label={"Mover " + node.title}
                   onPointerDown={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    if (!selected.includes(node.id)) setSelected([node.id]);
-                    const nodes = (
-                      selected.includes(node.id) ? selected : [node.id]
-                    )
-                      .map((id) =>
-                        canvasRef.current.nodes.find((item) => item.id === id),
-                      )
-                      .filter((item): item is CanvasNode => Boolean(item));
-                    setGesture({
-                      type: "drag",
-                      sx: event.clientX,
-                      sy: event.clientY,
-                      nodes,
-                    });
+                    startNodeDrag(event, node);
                   }}
                 >
                   <Grip size={14} />
@@ -940,7 +2053,7 @@ export const WorkspaceCanvas: React.FC<{
                 ) : node.kind === "browser" ? (
                   browser
                 ) : node.kind === "agent" ? (
-                  <>{renderAgent?.(node, (result) => reportAgentResult(node.id, result)) || <div className="canvas-agent-empty">Terminal do agente indisponível.</div>}{node.content && <div className="canvas-agent-result" title={node.content}>{node.content}</div>}</>
+                  <>{renderAgent?.(node, (result, taskId) => reportAgentResult(node.id, result, taskId), (taskId, message) => reportAgentTaskFailure(node.id, taskId, message)) || <div className="canvas-agent-empty">Terminal do agente indisponível.</div>}{node.content && <div className="canvas-agent-result" title={node.content}>{node.content}</div>}</>
                 ) : (
                   <textarea
                     data-canvas-note-editor
@@ -969,15 +2082,7 @@ export const WorkspaceCanvas: React.FC<{
                 type="button"
                 aria-label={"Redimensionar " + node.title}
                 onPointerDown={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  setGesture({
-                    type: "resize",
-                    sx: event.clientX,
-                    sy: event.clientY,
-                    id: node.id,
-                    nodes: [node],
-                  });
+                  startResize(event, node);
                 }}
               >
                 <Maximize2 size={12} />
@@ -986,14 +2091,57 @@ export const WorkspaceCanvas: React.FC<{
           ))}
       </div>
       <div className="workspace-canvas-minimap" aria-label="Minimapa do canvas">
-        <svg viewBox={`0 0 ${WORLD_WIDTH} ${WORLD_HEIGHT}`} onPointerDown={moveFromMinimap} role="img">
+        <svg
+          viewBox={`0 0 ${WORLD_WIDTH} ${WORLD_HEIGHT}`}
+          onPointerDown={startMinimapNavigation}
+          onPointerMove={continueMinimapNavigation}
+          onPointerUp={finishMinimapNavigation}
+          onPointerCancel={finishMinimapNavigation}
+          role="img"
+          tabIndex={0}
+          aria-label="Navegar pelo minimapa"
+        >
           {canvas.nodes.map((node) => <rect key={node.id} x={node.x} y={node.y} width={node.width} height={node.height} className={'minimap-node ' + node.kind} />)}
           {(() => { const host = viewportRef.current?.getBoundingClientRect(); const width = (host?.width || 900) / canvas.viewport.zoom; const height = (host?.height || 650) / canvas.viewport.zoom; return <rect className="minimap-viewport" x={-canvas.viewport.x / canvas.viewport.zoom} y={-canvas.viewport.y / canvas.viewport.zoom} width={width} height={height} /> })()}
         </svg>
       </div>
+      {connectFrom && (
+        <div className="workspace-canvas-connection-status" role="status" aria-live="polite">
+          <Link2 size={13} />
+          <span>Conexão iniciada. Arraste até uma porta ou escolha o destino. Esc cancela.</span>
+        </div>
+      )}
+      {orchestration && (
+        <div
+          className={
+            "workspace-canvas-orchestration-status orchestration-" +
+            orchestration.phase
+          }
+          data-orchestration-phase={orchestration.phase}
+          role="status"
+          aria-live="polite"
+        >
+          <Terminal size={14} aria-hidden="true" />
+          <span>
+            <strong>{orchestrationStatusText}</strong>
+            <small>
+              {orchestration.phase === "specialist"
+                ? `Etapa ${orchestration.specialistIndex + 1} de ${orchestration.specialists.length}`
+                : orchestration.phase === "finalizing"
+                  ? `${orchestration.results.length} resultado(s) recebido(s)`
+                  : orchestration.phase === "complete"
+                    ? "Todas as etapas foram processadas automaticamente"
+                    : orchestration.phase === "blocked"
+                      ? "Revise o cartão indicado e tente novamente"
+                      : `${orchestration.specialists.length} etapa(s) especialista(s) na fila`}
+            </small>
+          </span>
+        </div>
+      )}
       <div className="workspace-canvas-hint">
-        <MousePointer2 size={12} /> Arraste para mover · Shift + arrastar para
-        navegar · Ctrl + roda para zoom · Ctrl+D duplica notas
+        <MousePointer2 size={12} /> Arraste o cabeçalho para mover · Arraste o
+        fundo para navegar · Espaço ou botão do meio também navega · Roda move
+        · Ctrl/Cmd + roda aplica zoom · Ctrl+D duplica notas
       </div>
       {canDelete && (
         <button

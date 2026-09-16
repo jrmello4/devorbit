@@ -11,7 +11,7 @@ const MAX_IMPORT_BYTES = 1_000_000
 const MAX_CONFIG_TEXT_LENGTH = 160
 const MAX_CUSTOM_PATH_LENGTH = 4096
 const MAX_PROJECT_DIRS = 16
-const CUSTOM_PATH_KEYS = ['brave', 'chrome', 'mimo', 'agy', 'codex', 'vscode', 'wt'] as const
+const CUSTOM_PATH_KEYS = ['brave', 'chrome', 'mimo', 'agy', 'codex', 'opencode', 'claude', 'gemini', 'aider', 'customAgent', 'vscode', 'wt'] as const
 let configOperationQueue: Promise<void> = Promise.resolve()
 
 const defaultConfig: AppConfig = {

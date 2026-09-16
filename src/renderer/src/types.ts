@@ -84,6 +84,11 @@ export interface CodexTerminalStartResult {
   message?: string
 }
 
+export interface AgentTerminalStartResult extends CodexTerminalStartResult {
+  provider?: AgentProviderId
+  command?: string
+}
+
 export interface TerminalEvent {
   id: string
   type: 'data' | 'exit' | 'error'
@@ -122,6 +127,11 @@ export interface AppConfig {
     mimo?: string
     agy?: string
     codex?: string
+    opencode?: string
+    claude?: string
+    gemini?: string
+    aider?: string
+    customAgent?: string
     vscode?: string
     wt?: string
   }
@@ -156,6 +166,7 @@ export type IpcInvokeChannel =
   | 'devorbit:getGitChanges' | 'devorbit:syncAllGit' | 'devorbit:getGitInitPreview'
   | 'devorbit:initGitRepository' | 'devorbit:cloneGitRepository' | 'devorbit:restoreManagedProject'
   | 'devorbit:finalizeManagedProject' | 'devorbit:startTerminal' | 'devorbit:startCodexTerminal'
+  | 'devorbit:startAgentTerminal'
   | 'devorbit:createAgentWorktree'
   | 'devorbit:integrateAgentWorktree'
   | 'devorbit:resizeTerminal' | 'devorbit:writeTerminal' | 'devorbit:stopTerminal'
@@ -201,8 +212,19 @@ export interface ToolPathCheck {
 
 export type ToolHealthState = 'ready' | 'fallback' | 'missing'
 
+export type AgentProviderId = 'codex' | 'opencode' | 'claude' | 'gemini' | 'aider' | 'agy' | 'custom'
+
+export interface AgentProvider {
+  id: AgentProviderId
+  label: string
+  command: string
+  state: ToolHealthState
+  path?: string
+  message: string
+}
+
 export interface ToolHealth {
-  id: 'terminal' | 'vscode' | 'codex' | 'agy' | 'brave' | 'chrome' | 'mimo'
+  id: 'terminal' | 'vscode' | 'codex' | 'opencode' | 'claude' | 'gemini' | 'aider' | 'agy' | 'custom' | 'brave' | 'chrome' | 'mimo'
   label: string
   state: ToolHealthState
   path?: string
@@ -374,6 +396,13 @@ export interface DevOrbitAPI {
     cols?: number,
     rows?: number,
   ) => Promise<CodexTerminalStartResult>
+  startAgentTerminal: (
+    id: string,
+    projectPath: string,
+    provider: AgentProviderId,
+    cols?: number,
+    rows?: number,
+  ) => Promise<AgentTerminalStartResult>
   resizeTerminal: (id: string, cols: number, rows: number) => Promise<{ success: boolean }>
   writeTerminal: (id: string, input: string) => Promise<{ success: boolean }>
   stopTerminal: (id: string) => Promise<{ success: boolean }>

@@ -76,6 +76,8 @@ const api: DevOrbitAPI = {
     invoke('devorbit:startTerminal', id, projectPath),
   startCodexTerminal: (id, projectPath, account, cols, rows) =>
     invoke('devorbit:startCodexTerminal', id, projectPath, account, cols, rows),
+  startAgentTerminal: (id, projectPath, provider, cols, rows) =>
+    invoke('devorbit:startAgentTerminal', id, projectPath, provider, cols, rows),
   resizeTerminal: (id, cols, rows) =>
     invoke('devorbit:resizeTerminal', id, cols, rows),
   writeTerminal: (id: string, input: string) =>
