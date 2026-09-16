@@ -37,6 +37,7 @@ const expectedApiKeys = [
   'stashSwitchGitBranch',
   'pushGit',
   'getGitChanges',
+  'getGitFileDiff',
   'syncAllGit',
   'onSyncProgress',
   'getGitInitPreview',
@@ -83,12 +84,7 @@ const expectedApiKeys = [
   'getProjectMemory',
   'saveProjectMemory',
   'generateMemoryFromGit',
-  'getUsageState',
   'getRealUsage',
-  'incrementUsage',
-  'decrementUsage',
-  'resetUsage',
-  'updateUsageLimits',
 ]
 
 let exposedApiObject: Record<string, (...args: any[]) => unknown>
@@ -131,6 +127,7 @@ describe('preload IPC contract', () => {
       ['devorbit:stashSwitchGitBranch', 'project', 'main'],
       ['devorbit:pushGit', 'project', 'commit'],
       ['devorbit:getGitChanges', 'project'],
+      ['devorbit:getGitFileDiff', 'project', 'src/app.ts'],
       ['devorbit:syncAllGit'],
       ['devorbit:getGitInitPreview', 'project', 'main'],
       ['devorbit:initGitRepository', 'project', { branch: 'main' }],
@@ -169,28 +166,22 @@ describe('preload IPC contract', () => {
       ['devorbit:getProjectMemory', 'project'],
       ['devorbit:saveProjectMemory', 'project', 'memory'],
       ['devorbit:generateMemoryFromGit', 'project'],
-      ['devorbit:getUsageState'],
       ['devorbit:getRealUsage', true],
-      ['devorbit:incrementUsage', 'account1'],
-      ['devorbit:decrementUsage', 'account1'],
-      ['devorbit:resetUsage', 'account1'],
-      ['devorbit:updateUsageLimits', 'account1', 100, 24],
     ]
 
     const methodNames = [
       'getProjects', 'refreshProjects', 'getOtherDirs', 'listProjectFiles', 'readProjectFile',
       'saveProjectFile', 'createProjectFile', 'createProjectDirectory', 'moveProjectEntry',
       'deleteProjectEntry', 'syncGit', 'getGitBranches', 'switchGitBranch', 'stashSyncGit',
-      'stashSwitchGitBranch', 'pushGit', 'getGitChanges', 'syncAllGit', 'getGitInitPreview',
+      'stashSwitchGitBranch', 'pushGit', 'getGitChanges', 'getGitFileDiff', 'syncAllGit', 'getGitInitPreview',
       'initGitRepository', 'cloneGitRepository', 'restoreManagedProject', 'finalizeManagedProject',
        'startTerminal', 'startCodexTerminal', 'startAgentTerminal', 'resizeTerminal', 'writeTerminal', 'stopTerminal',
       'navigateWeb', 'getWebState', 'goBackWeb', 'goForwardWeb', 'reloadWeb', 'setWebVisible',
       'disposeWebPanel', 'setWebBounds', 'launchTool', 'copyProjectContext', 'getConfig',
-      'getUpdateState', 'downloadUpdate', 'installUpdate', 'saveConfig', 'exportConfig',
+      'getUpdateState', 'downloadUpdate',       'installUpdate', 'saveConfig', 'exportConfig',
       'importConfig', 'selectDirectory', 'testToolPath', 'getToolHealth', 'getCodexAuthStatus',
       'startCodexLogin', 'cancelCodexLogin', 'getProjectMemory', 'saveProjectMemory',
-      'generateMemoryFromGit', 'getUsageState', 'getRealUsage', 'incrementUsage', 'decrementUsage',
-      'resetUsage', 'updateUsageLimits',
+      'generateMemoryFromGit', 'getRealUsage',
     ]
 
     for (const [index, methodName] of methodNames.entries()) await api[methodName](...calls[index].slice(1))

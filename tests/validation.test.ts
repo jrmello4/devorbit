@@ -10,10 +10,7 @@ import {
   validateGitPushOptions,
   validateHttpsUrl,
   validateLaunchTool,
-  MAX_USAGE_LIMIT,
-  MIN_USAGE_LIMIT,
   validateProjectDirs,
-  validateUsageTarget,
   validateWindowAction,
 } from '../src/main/validation'
 
@@ -29,12 +26,10 @@ describe('IPC input validation', () => {
   it('accepts supported enum values and rejects values outside the allowlists', () => {
     expect(validateLaunchTool('codex-cli')).toBe('codex-cli')
     expect(validateCodexAccount('account2')).toBe('account2')
-    expect(validateUsageTarget('antigravity')).toBe('antigravity')
     expect(validateWindowAction('maximize')).toBe('maximize')
 
     expect(() => validateLaunchTool('powershell')).toThrow('Ferramenta inválida')
     expect(() => validateCodexAccount('account3')).toThrow('Conta do Codex inválida')
-    expect(() => validateUsageTarget('unknown')).toThrow('Alvo de uso inválido')
     expect(() => validateWindowAction('reload')).toThrow('Ação de janela inválida')
   })
 
@@ -100,9 +95,9 @@ describe('IPC input validation', () => {
     expect(() => validateFiniteNumber(1.5, 'Quantidade', { integer: true })).toThrow(
       'Quantidade inválido'
     )
-    expect(validateFiniteNumber(MAX_USAGE_LIMIT, 'Limite', { minimum: MIN_USAGE_LIMIT, maximum: MAX_USAGE_LIMIT, integer: true })).toBe(MAX_USAGE_LIMIT)
-    expect(() => validateFiniteNumber(MAX_USAGE_LIMIT + 1, 'Limite', { minimum: MIN_USAGE_LIMIT, maximum: MAX_USAGE_LIMIT, integer: true })).toThrow('Limite inválido')
-    expect(() => validateFiniteNumber(MIN_USAGE_LIMIT - 1, 'Limite', { minimum: MIN_USAGE_LIMIT, maximum: MAX_USAGE_LIMIT, integer: true })).toThrow('Limite inválido')
+    expect(validateFiniteNumber(200, 'Limite', { minimum: 5, maximum: 200, integer: true })).toBe(200)
+    expect(() => validateFiniteNumber(201, 'Limite', { minimum: 5, maximum: 200, integer: true })).toThrow('Limite inválido')
+    expect(() => validateFiniteNumber(4, 'Limite', { minimum: 5, maximum: 200, integer: true })).toThrow('Limite inválido')
   })
 
   it('canonicalizes project directories and removes duplicate paths', async () => {

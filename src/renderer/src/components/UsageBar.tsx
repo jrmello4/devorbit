@@ -3,38 +3,24 @@ import {
   AlertTriangle,
   ArrowRightLeft,
   CheckCircle2,
-  ChevronDown,
   Clock,
-  Minus,
-  Plus,
   RefreshCw,
-  RotateCcw,
-  Settings2,
-  Sparkles,
 } from 'lucide-react'
-import { MAX_USAGE_LIMIT, MIN_USAGE_LIMIT } from '../types'
 import type {
-  AccountUsage,
   AppConfig,
   RealAccountUsage,
   RealUsageMetric,
   RealUsageState,
-  UsageTrackerState,
 } from '../types'
 import './UsagePanel.css'
 
 interface UsageBarProps {
-  usage: UsageTrackerState | null
   config: AppConfig | null
-  onIncrement: (target: 'account1' | 'account2' | 'antigravity') => Promise<void>
-  onDecrement: (target: 'account1' | 'account2') => Promise<void>
-  onReset: (target: 'account1' | 'account2') => Promise<void>
-  onUpdateLimit: (account: 'account1' | 'account2', limit: number) => Promise<void>
-  onSwitchAccount: () => Promise<void>
-  isSwitchingAccount?: boolean
   realUsage: RealUsageState | null
   onRefreshRealUsage: () => Promise<void>
   isRefreshingRealUsage?: boolean
+  onSwitchAccount: () => Promise<void>
+  isSwitchingAccount?: boolean
 }
 
 type AccountKey = 'account1' | 'account2'
@@ -65,63 +51,19 @@ const getProviderStatusIcon = (status: RealAccountUsage['status']) => {
 }
 
 export const UsageBar: React.FC<UsageBarProps> = ({
-  usage,
   config,
-  onIncrement,
-  onDecrement,
-  onReset,
-  onUpdateLimit,
-  onSwitchAccount,
-  isSwitchingAccount = false,
   realUsage,
   onRefreshRealUsage,
   isRefreshingRealUsage = false,
+  onSwitchAccount,
+  isSwitchingAccount = false,
 }) => {
   const [now, setNow] = useState(Date.now())
-  const [limitDrafts, setLimitDrafts] = useState<Record<AccountKey, string>>({ account1: '', account2: '' })
-  const [limitErrors, setLimitErrors] = useState<Record<AccountKey, string>>({ account1: '', account2: '' })
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 10000)
     return () => clearInterval(timer)
   }, [])
-
-  useEffect(() => {
-    if (!usage) return
-    setLimitDrafts({
-      account1: String(usage.account1.limit),
-      account2: String(usage.account2.limit),
-    })
-    setLimitErrors({ account1: '', account2: '' })
-  }, [usage?.account1.limit, usage?.account2.limit])
-
-  const commitLimit = async (accountKey: AccountKey) => {
-    if (!usage) return
-    const rawValue = limitDrafts[accountKey].trim()
-    const parsed = Number(rawValue)
-    if (!rawValue || !Number.isInteger(parsed) || parsed < MIN_USAGE_LIMIT || parsed > MAX_USAGE_LIMIT) {
-      setLimitErrors((current) => ({
-        ...current,
-        [accountKey]: `Use um número inteiro entre ${MIN_USAGE_LIMIT} e ${MAX_USAGE_LIMIT}.`,
-      }))
-      return
-    }
-
-    setLimitErrors((current) => ({ ...current, [accountKey]: '' }))
-    if (parsed !== usage[accountKey].limit) await onUpdateLimit(accountKey, parsed)
-  }
-
-  const getRemainingTime = (account: AccountUsage) => {
-    if (!account.windowStart || account.used === 0) return null
-    const durationMs = (account.windowDurationHours || 3) * 3600 * 1000
-    const remainingMs = Math.max(0, account.windowStart + durationMs - now)
-    if (remainingMs <= 0) return 'Reset iminente'
-
-    const totalMinutes = Math.floor(remainingMs / 60000)
-    const hours = Math.floor(totalMinutes / 60)
-    const minutes = totalMinutes % 60
-    return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`
-  }
 
   const formatRealReset = (resetAt?: number) => {
     if (!resetAt) return null
@@ -134,12 +76,15 @@ export const UsageBar: React.FC<UsageBarProps> = ({
   }
 
   const activeAccount = config?.activeChatGptAccount || 'account1'
-  const activeUsage = usage?.[activeAccount]
-  const activePercent = activeUsage && activeUsage.limit > 0
-    ? Math.round((activeUsage.used / activeUsage.limit) * 100)
-    : 0
-  const showHandoffAlert = Boolean(activeUsage && activePercent >= 80)
   const nextAccount: AccountKey = activeAccount === 'account1' ? 'account2' : 'account1'
+
+  const primaryPercent = ((): number | undefined => {
+    if (!realUsage) return undefined
+    const metrics = realUsage.accounts[activeAccount]?.metrics || []
+    const primary = metrics.find((metric) => metric.id === 'primary') || metrics[0]
+    return typeof primary?.percent === 'number' ? primary.percent : undefined
+  })()
+  const showHandoffAlert = typeof primaryPercent === 'number' && primaryPercent >= 80
 
   const renderProviderMetric = (accountName: string, metric: RealUsageMetric) => {
     const metricPercent = typeof metric.percent === 'number' && Number.isFinite(metric.percent)
@@ -227,143 +172,17 @@ export const UsageBar: React.FC<UsageBarProps> = ({
     )
   }
 
-  const renderManualAccount = (accountKey: AccountKey) => {
-    if (!usage) return null
-    const account = usage[accountKey]
-    const accountName = getAccountName(config, accountKey)
-    const percent = account.limit > 0
-      ? Math.min(100, Math.max(0, Math.round((account.used / account.limit) * 100)))
-      : 0
-    const isWarning = percent >= 75 && percent < 100
-    const isCritical = percent >= 100
-    const remaining = getRemainingTime(account)
-    const tone = isCritical
-      ? 'usage-manual-account--critical'
-      : isWarning
-        ? 'usage-manual-account--warning'
-        : ''
-    const isActive = activeAccount === accountKey
-
-    return (
-      <article key={accountKey} className={`usage-manual-account ${tone} ${isActive ? 'usage-manual-account--active' : ''}`}>
-        <div className="usage-account-heading">
-          <div className="usage-account-name-wrap">
-            <span className={`usage-status-dot ${isActive ? 'usage-status-dot--active' : ''}`} aria-hidden="true" />
-            <h3>{accountName}</h3>
-            {isActive && <span className="usage-active-label">Conta ativa</span>}
-          </div>
-          <span className="usage-estimate-label">Estimativa local</span>
-        </div>
-
-        <div className="usage-manual-figure">
-          <div className="usage-manual-count-wrap">
-            <strong className="usage-manual-count tabular-nums">{account.used}</strong>
-            <span className="usage-manual-unit">/ {account.limit} sessões</span>
-          </div>
-          <span className="usage-window-label">janela de {account.windowDurationHours || 3}h</span>
-        </div>
-
-        <div
-          className="usage-progress usage-progress--manual"
-          role="progressbar"
-          aria-label={`${accountName} — sessões estimadas`}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={percent}
-        >
-          <div className="usage-progress-fill" style={{ width: `${percent}%` }} />
-        </div>
-
-        <div className="usage-manual-status-row">
-          <span className="usage-manual-status">
-            {isCritical ? 'Limite atingido' : isWarning ? 'Limite próximo' : 'Dentro do limite'}
-          </span>
-          {remaining && (
-            <span className="usage-reset-label">
-              <Clock aria-hidden="true" />
-              reseta em {remaining}
-            </span>
-          )}
-        </div>
-
-        <div className="usage-manual-controls" aria-label={`Controles da estimativa de ${accountName}`}>
-          <div className="usage-stepper" role="group" aria-label={`Ajustar sessões de ${accountName}`}>
-            <button
-              type="button"
-              className="usage-icon-button"
-              onClick={() => void onDecrement(accountKey)}
-              aria-label={`Diminuir uso de ${accountName}`}
-              title="Diminuir sessão registrada"
-            >
-              <Minus aria-hidden="true" />
-            </button>
-            <span className="usage-stepper-value tabular-nums" aria-live="polite">{account.used}</span>
-            <button
-              type="button"
-              className="usage-icon-button"
-              onClick={() => void onIncrement(accountKey)}
-              aria-label={`Aumentar uso de ${accountName}`}
-              title="Aumentar sessão registrada"
-            >
-              <Plus aria-hidden="true" />
-            </button>
-          </div>
-          <button
-            type="button"
-            className="usage-button usage-button--quiet"
-            onClick={() => void onReset(accountKey)}
-            aria-label={`Zerar uso estimado de ${accountName}`}
-          >
-            <RotateCcw aria-hidden="true" />
-            Zerar
-          </button>
-        </div>
-
-        <div className="usage-limit-field">
-          <label htmlFor={`usage-limit-${accountKey}`}>Limite de sessões por janela</label>
-          <div className="usage-limit-input-wrap">
-            <input
-              id={`usage-limit-${accountKey}`}
-              name={`usage-limit-${accountKey}`}
-              type="number"
-              min={MIN_USAGE_LIMIT}
-              max={MAX_USAGE_LIMIT}
-              inputMode="numeric"
-              value={limitDrafts[accountKey] ?? String(account.limit)}
-              onChange={(event) => {
-                setLimitDrafts((current) => ({ ...current, [accountKey]: event.currentTarget.value }))
-                setLimitErrors((current) => ({ ...current, [accountKey]: '' }))
-              }}
-              onBlur={() => void commitLimit(accountKey)}
-              onKeyDown={(event) => {
-                if (event.key !== 'Enter') return
-                event.preventDefault()
-                void commitLimit(accountKey)
-              }}
-              aria-invalid={Boolean(limitErrors[accountKey])}
-              aria-describedby={limitErrors[accountKey] ? `usage-limit-error-${accountKey}` : undefined}
-            />
-            <span>sessões</span>
-          </div>
-          {limitErrors[accountKey]
-            ? <p id={`usage-limit-error-${accountKey}`} className="text-red-700" role="alert">{limitErrors[accountKey]}</p>
-            : <p>Janela local: {account.windowDurationHours || 3} horas.</p>}
-        </div>
-      </article>
-    )
-  }
-
   const realFetchedLabel = formatTimestamp(realUsage?.fetchedAt)
   const providerSourceLabel = realUsage?.source === 'codex-oauth' ? 'OAuth do Codex' : 'Aguardando fonte'
 
   return (
-    <section className="usage-panel" aria-labelledby="usage-heading" aria-busy={!usage || !realUsage || isRefreshingRealUsage}>
+    <section className="usage-panel" aria-labelledby="usage-heading" aria-busy={!realUsage || isRefreshingRealUsage}>
       <div className="usage-scroll">
         <div className="usage-shell">
           <header className="usage-header">
             <div className="usage-heading-copy">
               <h1 id="usage-heading">Uso e quotas</h1>
-              <p>Acompanhe as janelas publicadas pelo provedor e mantenha uma referência local para alternar entre contas.</p>
+              <p>Fonte única: percentuais publicados pelo provedor via OAuth do Codex.</p>
             </div>
             <div className="usage-header-actions">
               <div className="usage-source-meta" aria-live="polite">
@@ -385,12 +204,12 @@ export const UsageBar: React.FC<UsageBarProps> = ({
           </header>
 
           {showHandoffAlert && (
-            <div className={`usage-handoff ${activePercent >= 100 ? 'usage-handoff--critical' : ''}`} role="status">
+            <div className={`usage-handoff ${typeof primaryPercent === 'number' && primaryPercent >= 100 ? 'usage-handoff--critical' : ''}`} role="status">
               <div className="usage-handoff-copy">
                 <AlertTriangle aria-hidden="true" />
                 <div>
-                  <strong>{activePercent >= 100 ? 'Limite de sessões atingido!' : 'Limite de sessões próximo!'}</strong>
-                  <span>A estimativa local da conta ativa chegou a {activePercent}%.</span>
+                  <strong>{typeof primaryPercent === 'number' && primaryPercent >= 100 ? 'Quota do provedor esgotada!' : 'Quota do provedor próxima do limite!'}</strong>
+                  <span>A conta ativa chegou a {primaryPercent}% na janela principal.</span>
                 </div>
               </div>
               <button
@@ -412,7 +231,7 @@ export const UsageBar: React.FC<UsageBarProps> = ({
                 <h2 id="usage-provider-heading">Quotas do provedor</h2>
                 <p>Percentuais, janelas e estados retornados na última consulta.</p>
               </div>
-              <span className="usage-section-note">Fonte primária</span>
+              <span className="usage-section-note">Fonte única</span>
             </div>
 
             {realUsage ? (
@@ -429,50 +248,6 @@ export const UsageBar: React.FC<UsageBarProps> = ({
               </div>
             )}
           </section>
-
-          <details className="usage-details">
-            <summary className="usage-details-summary">
-              <span className="usage-details-summary-copy">
-                <span className="usage-details-title"><Settings2 aria-hidden="true" />Estimativas locais</span>
-                <span className="usage-details-description">Contador ajustável para orientar a alternância de contas.</span>
-              </span>
-              <span className="usage-details-summary-note">Secundário</span>
-              <ChevronDown className="usage-details-chevron" aria-hidden="true" />
-            </summary>
-
-            <div className="usage-details-body">
-              <p className="usage-details-disclaimer">Estes números são registros locais e não representam tokens ou quotas oficiais do provedor.</p>
-              {usage ? (
-                <div className="usage-manual-grid">
-                  {accountKeys.map(renderManualAccount)}
-                  <article className="usage-antigravity">
-                    <div className="usage-antigravity-copy">
-                      <span className="usage-antigravity-icon"><Sparkles aria-hidden="true" /></span>
-                      <div>
-                        <h3>Antigravity</h3>
-                        <p>Sessões registradas localmente.</p>
-                      </div>
-                    </div>
-                    <div className="usage-antigravity-actions">
-                      <strong className="usage-antigravity-count tabular-nums">{usage.antigravity.sessionCount}</strong>
-                      <span>sessões</span>
-                      <button
-                        type="button"
-                        className="usage-icon-button usage-icon-button--accent"
-                        onClick={() => void onIncrement('antigravity')}
-                        aria-label="Aumentar sessões registradas do Antigravity"
-                        title="Aumentar sessão registrada"
-                      >
-                        <Plus aria-hidden="true" />
-                      </button>
-                    </div>
-                  </article>
-                </div>
-              ) : (
-                <div className="usage-manual-loading" role="status">Carregando estimativas locais…</div>
-              )}
-            </div>
-          </details>
         </div>
       </div>
     </section>

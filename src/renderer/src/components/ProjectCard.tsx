@@ -35,7 +35,6 @@ interface ProjectCardProps {
   onOpenAuthModal?: (account: 'account1' | 'account2') => void
   onOpenMemory?: (project: Project) => void
   onOpenBranches?: (project: Project) => void
-  onUsageUpdate?: () => void
   onRestoreProject?: (project: Project) => Promise<void>
   onFinalizeProject?: (project: Project) => Promise<void>
   onProjectAccountChange?: (project: Project, account: 'account1' | 'account2') => Promise<void>
@@ -70,7 +69,6 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
   onOpenAuthModal,
   onOpenMemory,
   onOpenBranches,
-  onUsageUpdate,
   onRestoreProject,
   onFinalizeProject,
   onProjectAccountChange,
@@ -114,7 +112,6 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
       })
       if (res?.success) {
         onNotify(res.message || 'Ferramenta iniciada!', 'success')
-        onUsageUpdate?.()
       } else {
         if (res?.needsAuth) {
           onOpenAuthModal?.(
@@ -144,7 +141,6 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
           'Contexto do projeto copiado para a área de transferência!',
           'success'
         )
-        onUsageUpdate?.()
         setTimeout(() => setCopied(false), 2000)
       } else {
         onNotify(res?.context || 'Falha ao copiar contexto', 'error')

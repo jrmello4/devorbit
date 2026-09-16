@@ -16,7 +16,6 @@ interface ProjectGridProps {
   onOpenAuthModal?: (account: 'account1' | 'account2') => void
   onOpenMemory?: (project: Project) => void
   onOpenBranches?: (project: Project) => void
-  onUsageUpdate?: () => void
   onOpenSettings?: () => void
   onOpenClone?: () => void
   onRestoreProject?: (project: Project) => Promise<void>

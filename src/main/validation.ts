@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { MAX_USAGE_LIMIT, MIN_USAGE_LIMIT, type AgentProviderId, type AppConfig, type ManagedProject } from '../renderer/src/types'
+import type { AgentProviderId, AppConfig, ManagedProject } from '../renderer/src/types'
 
 const execFileAsync = promisify(execFile)
 
@@ -31,11 +31,9 @@ export function validateAgentProvider(value: unknown): AgentProviderId {
   }
   throw new Error('Provedor de agente inválido.')
 }
-export type UsageTarget = CodexAccount | 'antigravity'
 export type WindowAction = 'minimize' | 'maximize' | 'close'
 
 const CODEX_ACCOUNTS = ['account1', 'account2'] as const
-const USAGE_TARGETS = ['account1', 'account2', 'antigravity'] as const
 const WINDOW_ACTIONS = ['minimize', 'maximize', 'close'] as const
 const CUSTOM_PATH_KEYS = [
   'brave',
@@ -102,13 +100,6 @@ export function validateCodexAccount(value: unknown): CodexAccount {
   return value
 }
 
-export function validateUsageTarget(value: unknown): UsageTarget {
-  if (!hasValue(USAGE_TARGETS, value)) {
-    throw new Error('Alvo de uso inválido.')
-  }
-  return value
-}
-
 export function validateWindowAction(value: unknown): WindowAction {
   if (!hasValue(WINDOW_ACTIONS, value)) {
     throw new Error('Ação de janela inválida.')
@@ -156,8 +147,6 @@ export function validateFiniteNumber(
   }
   return value
 }
-
-export { MAX_USAGE_LIMIT, MIN_USAGE_LIMIT }
 
 export function validateHttpsUrl(value: unknown): string {
   if (typeof value !== 'string' || value.length > MAX_PROJECT_DIR_LENGTH) {

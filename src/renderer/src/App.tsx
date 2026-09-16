@@ -2,13 +2,10 @@ import React, { Suspense, useState, useEffect, useCallback, useRef } from 'react
 import { Header } from './components/Header'
 import { ProjectGrid } from './components/ProjectGrid'
 import { SettingsModal } from './components/SettingsModal'
-import { GitPushModal } from './components/GitPushModal'
 import { CodexAuthModal } from './components/CodexAuthModal'
 import { UsageBar } from './components/UsageBar'
 import { AiMemoryModal } from './components/AiMemoryModal'
-import { GitInitModal } from './components/GitInitModal'
-import { GitCloneModal } from './components/GitCloneModal'
-import { GitBranchModal } from './components/GitBranchModal'
+import { GitDock, type GitDockTab } from './components/GitDock'
 import { CommandPalette } from './components/CommandPalette'
 import { UpdateModal } from './components/UpdateModal'
 import { ToolHealthModal } from './components/ToolHealthModal'
@@ -17,7 +14,6 @@ import type {
   OtherDir,
   AppConfig,
   CodexAccountStatus,
-  UsageTrackerState,
   RealUsageState,
   SyncResult,
   UpdateState,
@@ -32,10 +28,11 @@ export const App: React.FC = () => {
   const [config, setConfig] = useState<AppConfig | null>(null)
   const [authStatus, setAuthStatus] = useState<CodexAccountStatus | null>(null)
   const [authModalAccount, setAuthModalAccount] = useState<'account1' | 'account2' | null>(null)
-  const [usageState, setUsageState] = useState<UsageTrackerState | null>(null)
   const [realUsage, setRealUsage] = useState<RealUsageState | null>(null)
   const [activeMemoryProject, setActiveMemoryProject] = useState<Project | null>(null)
-  const [activeBranchProject, setActiveBranchProject] = useState<Project | null>(null)
+  const [gitDockProject, setGitDockProject] = useState<Project | null>(null)
+  const [gitDockTab, setGitDockTab] = useState<GitDockTab>('push')
+  const [isGitDockOpen, setIsGitDockOpen] = useState(false)
   const [activeWorkspaceProject, setActiveWorkspaceProject] = useState<Project | null>(null)
   const [workspaceProjects, setWorkspaceProjects] = useState<Project[]>([])
   const [workspaceDirty, setWorkspaceDirty] = useState<Record<string, boolean>>({})
@@ -49,9 +46,6 @@ export const App: React.FC = () => {
   const [isSyncingAll, setIsSyncingAll] = useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [isToolHealthOpen, setIsToolHealthOpen] = useState(false)
-  const [pushProject, setPushProject] = useState<Project | null>(null)
-  const [gitInitProject, setGitInitProject] = useState<Project | null>(null)
-  const [isCloneOpen, setIsCloneOpen] = useState(false)
   const [isSwitchingAccount, setIsSwitchingAccount] = useState(false)
   const [isRefreshingRealUsage, setIsRefreshingRealUsage] = useState(false)
   const [updateState, setUpdateState] = useState<UpdateState | null>(null)
@@ -156,19 +150,6 @@ export const App: React.FC = () => {
     return false
   }, [])
 
-  const loadUsage = useCallback(async (): Promise<boolean> => {
-    try {
-      if (window.devorbit) {
-        const usage = await window.devorbit.getUsageState()
-        setUsageState(usage)
-        return true
-      }
-    } catch (err: any) {
-      console.error('Falha ao carregar uso:', err)
-    }
-    return false
-  }, [])
-
   const loadRealUsage = useCallback(async (force = false): Promise<boolean> => {
     try {
       if (window.devorbit) {
@@ -199,20 +180,18 @@ export const App: React.FC = () => {
     console.log('[App] loadData called. window.devorbit available:', Boolean(window.devorbit))
     try {
       if (window.devorbit) {
-        console.log('[App] Calling Promise.all for config, projects, auth, usage...')
-        const [loadedConfig, loadedProjects, loadedOtherDirs, loadedAuth, loadedUsage] = await Promise.all([
+        console.log('[App] Calling Promise.all for config, projects, auth...')
+        const [loadedConfig, loadedProjects, loadedOtherDirs, loadedAuth] = await Promise.all([
           window.devorbit.getConfig(),
           window.devorbit.getProjects(),
           window.devorbit.getOtherDirs(),
           window.devorbit.getCodexAuthStatus(),
-          window.devorbit.getUsageState(),
         ])
         console.log('[App] Loaded successfully! Projects count:', loadedProjects?.length)
         setConfig(loadedConfig)
         applyProjects(loadedProjects)
         setOtherDirs(loadedOtherDirs)
         setAuthStatus(loadedAuth)
-        setUsageState(loadedUsage)
       } else {
         const message = 'O preload do DevOrbit não foi carregado. Reinicie o aplicativo e tente novamente.'
         console.warn('[App] window.devorbit is UNDEFINED! Preload failed or contextIsolation issue.')
@@ -241,16 +220,15 @@ export const App: React.FC = () => {
     setIsRefreshing(true)
     try {
       if (window.devorbit) {
-        const [refreshed, refreshedOtherDirs, authLoaded, usageLoaded, realUsageLoaded] = await Promise.all([
+        const [refreshed, refreshedOtherDirs, authLoaded, realUsageLoaded] = await Promise.all([
           window.devorbit.refreshProjects(),
           window.devorbit.getOtherDirs(),
           loadAuthStatus(),
-          loadUsage(),
           loadRealUsage(true),
         ])
         applyProjects(refreshed)
         setOtherDirs(refreshedOtherDirs)
-        const allDataLoaded = authLoaded && usageLoaded && realUsageLoaded
+        const allDataLoaded = authLoaded && realUsageLoaded
         notify(
           allDataLoaded
             ? 'Lista de projetos atualizada!'
@@ -299,53 +277,6 @@ export const App: React.FC = () => {
     }, 5 * 60_000)
     return () => window.clearInterval(timer)
   }, [loadRealUsage])
-
-  // Ações da Barra de Uso (Cotas)
-  const handleIncrementUsage = async (target: 'account1' | 'account2' | 'antigravity') => {
-    if (!window.devorbit) return
-    try {
-      const updated = await window.devorbit.incrementUsage(target)
-      setUsageState(updated)
-    } catch (err: any) {
-      console.error(err)
-      notify(`Não foi possível incrementar o uso: ${err instanceof Error ? err.message : String(err)}`, 'error')
-    }
-  }
-
-  const handleDecrementUsage = async (target: 'account1' | 'account2') => {
-    if (!window.devorbit) return
-    try {
-      const updated = await window.devorbit.decrementUsage(target)
-      setUsageState(updated)
-    } catch (err: any) {
-      console.error(err)
-      notify(`Não foi possível reduzir o uso: ${err instanceof Error ? err.message : String(err)}`, 'error')
-    }
-  }
-
-  const handleResetUsage = async (target: 'account1' | 'account2') => {
-    if (!window.devorbit) return
-    try {
-      const updated = await window.devorbit.resetUsage(target)
-      setUsageState(updated)
-      notify(`Janela de uso de ${target === 'account1' ? 'Conta 1' : 'Conta 2'} zerada!`, 'success')
-    } catch (err: any) {
-      console.error(err)
-      notify(`Não foi possível zerar o uso: ${err instanceof Error ? err.message : String(err)}`, 'error')
-    }
-  }
-
-  const handleUpdateUsageLimit = async (account: 'account1' | 'account2', limit: number) => {
-    if (!window.devorbit) return
-    try {
-      const updated = await window.devorbit.updateUsageLimits(account, limit)
-      setUsageState(updated)
-      notify(`Limite de ${account === 'account1' ? 'Conta 1' : 'Conta 2'} atualizado para ${limit}!`, 'info')
-    } catch (err: any) {
-      console.error(err)
-      notify(`Não foi possível atualizar o limite: ${err instanceof Error ? err.message : String(err)}`, 'error')
-    }
-  }
 
   const handleRefreshRealUsage = async () => {
     setIsRefreshingRealUsage(true)
@@ -570,6 +501,13 @@ export const App: React.FC = () => {
     }
   }
 
+  // GitDock não-bloqueante (FASE 1): substitui os 4 modais Git*Modal.
+  const openGitDock = useCallback((tab: GitDockTab, project?: Project | null) => {
+    if (project !== undefined) setGitDockProject(project)
+    setGitDockTab(tab)
+    setIsGitDockOpen(true)
+  }, [])
+
   // Atalhos de teclado globais
   useEffect(() => {
     const isUpdateModalOpen = Boolean(
@@ -578,8 +516,8 @@ export const App: React.FC = () => {
       ['available', 'downloading', 'downloaded'].includes(updateState.status)
     )
     const hasOpenModal = Boolean(
-      isSettingsOpen || isToolHealthOpen || authModalAccount || pushProject || gitInitProject ||
-      isCloneOpen || activeMemoryProject || activeBranchProject || isCommandPaletteOpen ||
+      isSettingsOpen || isToolHealthOpen || authModalAccount ||
+      activeMemoryProject || isCommandPaletteOpen ||
       isUpdateModalOpen
     )
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -605,7 +543,7 @@ export const App: React.FC = () => {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [activeBranchProject, activeMemoryProject, authModalAccount, gitInitProject, isCloneOpen, isSettingsOpen, isToolHealthOpen, isCommandPaletteOpen, isUpdateDismissed, openCommandPalette, pushProject, updateState])
+  }, [activeMemoryProject, authModalAccount, isSettingsOpen, isToolHealthOpen, isCommandPaletteOpen, isUpdateDismissed, openCommandPalette, updateState])
 
   const gitProjectsCount = projects.filter((p) => p.git.isRepo).length
   const isUpdateModalOpen = Boolean(
@@ -614,17 +552,13 @@ export const App: React.FC = () => {
     !isSettingsOpen &&
     !isToolHealthOpen &&
     !authModalAccount &&
-    !pushProject &&
-    !gitInitProject &&
-    !isCloneOpen &&
     !activeMemoryProject &&
-    !activeBranchProject &&
     !isCommandPaletteOpen &&
     ['available', 'downloading', 'downloaded'].includes(updateState.status)
   )
   const isWorkspaceWebSuppressed = workspaceView !== 'workspace' || Boolean(
-    isSettingsOpen || isToolHealthOpen || authModalAccount || pushProject || gitInitProject || isCloneOpen ||
-    activeMemoryProject || activeBranchProject || isCommandPaletteOpen || isUpdateModalOpen
+    isSettingsOpen || isToolHealthOpen || authModalAccount ||
+    activeMemoryProject || isCommandPaletteOpen || isUpdateModalOpen
   )
 
   if (bootstrapError) {
@@ -717,12 +651,7 @@ export const App: React.FC = () => {
       </div>
       <div className="view-panel" hidden={workspaceView !== 'usage'}>
       <UsageBar
-        usage={usageState}
         config={config}
-        onIncrement={handleIncrementUsage}
-        onDecrement={handleDecrementUsage}
-        onReset={handleResetUsage}
-        onUpdateLimit={handleUpdateUsageLimit}
         onSwitchAccount={handleToggleAccount}
         isSwitchingAccount={isSwitchingAccount}
         realUsage={realUsage}
@@ -740,16 +669,15 @@ export const App: React.FC = () => {
         search={search}
         onSync={handleSyncProject}
         onStashSync={handleStashSyncProject}
-        onOpenPushModal={setPushProject}
-        onOpenGitInit={(project) => setGitInitProject(project)}
+        onOpenPushModal={(project) => openGitDock('push', project)}
+        onOpenGitInit={(project) => openGitDock('init', project)}
         onNotify={notify}
         isLoading={isLoading}
         onOpenAuthModal={(acc) => setAuthModalAccount(acc)}
         onOpenMemory={(project) => setActiveMemoryProject(project)}
-        onOpenBranches={(project) => setActiveBranchProject(project)}
-        onUsageUpdate={loadUsage}
+        onOpenBranches={(project) => openGitDock('branches', project)}
         onOpenSettings={() => setIsSettingsOpen(true)}
-        onOpenClone={() => setIsCloneOpen(true)}
+        onOpenClone={() => openGitDock('clone', null)}
         onRestoreProject={handleRestoreProject}
         onFinalizeProject={handleFinalizeProject}
         onProjectAccountChange={handleProjectAccountChange}
@@ -758,6 +686,23 @@ export const App: React.FC = () => {
 
       </div>
       </div>
+      {isGitDockOpen && (
+        <GitDock
+          isOpen={isGitDockOpen}
+          initialTab={gitDockTab}
+          project={gitDockProject}
+          config={config}
+          onClose={() => setIsGitDockOpen(false)}
+          onNotify={notify}
+          onProjectUpdated={refreshProjectsQuietly}
+          onSwitch={handleSwitchBranch}
+          onStashSwitch={handleStashSwitchBranch}
+          onPreview={(projectPath, branch) => window.devorbit.getGitInitPreview(projectPath, branch)}
+          onInit={(projectPath, options) => window.devorbit.initGitRepository(projectPath, options)}
+          onCloned={handleRefresh}
+          onPushSuccess={handleRefresh}
+        />
+      )}
       </div>
       <footer className="app-statusbar"><span><span className={`status-dot ${isLoading ? 'loading' : ''}`}/>{isLoading ? 'Carregando workspace' : `${projects.length} projetos · ${gitProjectsCount} repositórios`}{updateState?.distribution === 'portable' ? ' · portable · atualização automática' : ''}</span><span>Dados locais <span aria-hidden="true">·</span> <kbd>Ctrl K</kbd> Ações rápidas <span aria-hidden="true">·</span> <kbd>Ctrl R</kbd> Atualizar</span></footer>
       <CommandPalette
@@ -769,7 +714,7 @@ export const App: React.FC = () => {
         onRefresh={handleRefresh}
         onSyncAll={handleSyncAll}
         onOpenSettings={() => setIsSettingsOpen(true)}
-        onOpenClone={() => setIsCloneOpen(true)}
+        onOpenClone={() => openGitDock('clone', null)}
         onToggleAccount={handleToggleAccount}
         activeAccountLabel={
           config?.activeChatGptAccount === 'account2'
@@ -786,43 +731,6 @@ export const App: React.FC = () => {
         isOpen={Boolean(activeMemoryProject)}
         project={activeMemoryProject}
         onClose={() => setActiveMemoryProject(null)}
-        onNotify={notify}
-      />
-
-      <GitBranchModal
-        isOpen={Boolean(activeBranchProject)}
-        project={activeBranchProject}
-        onClose={() => setActiveBranchProject(null)}
-        onSwitch={handleSwitchBranch}
-        onStashSwitch={handleStashSwitchBranch}
-        onProjectUpdated={refreshProjectsQuietly}
-        onNotify={notify}
-      />
-
-      {/* Modal de Subir para o GitHub (Push) */}
-      <GitPushModal
-        isOpen={Boolean(pushProject)}
-        project={pushProject}
-        onClose={() => setPushProject(null)}
-        onSuccess={handleRefresh}
-        onNotify={notify}
-      />
-
-      <GitInitModal
-        isOpen={Boolean(gitInitProject)}
-        project={gitInitProject}
-        onClose={() => setGitInitProject(null)}
-        onPreview={(projectPath, branch) => window.devorbit.getGitInitPreview(projectPath, branch)}
-        onInit={(projectPath, options) => window.devorbit.initGitRepository(projectPath, options)}
-        onProjectUpdated={refreshProjectsQuietly}
-        onNotify={notify}
-      />
-
-      <GitCloneModal
-        isOpen={isCloneOpen}
-        config={config}
-        onClose={() => setIsCloneOpen(false)}
-        onCloned={handleRefresh}
         onNotify={notify}
       />
 

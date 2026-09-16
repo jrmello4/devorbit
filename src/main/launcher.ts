@@ -16,14 +16,8 @@ import {
   hasValidCodexAuth,
   resolveCodexCommand,
   resolveBrowserPath,
-  shouldTrackBrowserUsage,
   type AccountId,
 } from './account-profiles'
-import {
-  releaseUsageReservation,
-  tryReserveUsage,
-  type UsageTarget,
-} from './usage'
 import { getAgentProviderHealth } from './agent-providers'
 
 const execFileAsync = promisify(execFile)
@@ -286,14 +280,6 @@ export async function getToolHealth(config: AppConfig): Promise<ToolHealth[]> {
     ...agentHealth.filter((item) => item.id !== 'codex' && item.id !== 'agy'),
   ]
 }
-async function reserveUsage(target: UsageTarget): Promise<boolean> {
-  return tryReserveUsage(target)
-}
-
-async function rollbackUsage(target: UsageTarget): Promise<void> {
-  await releaseUsageReservation(target)
-}
-
 function redactProjectPath(content: string, projectPath: string): string {
   const variants = new Set([projectPath, projectPath.replaceAll('\\', '/')])
   let redacted = content
@@ -327,19 +313,10 @@ export async function launchTool(
     switch (tool) {
       case 'codex-desktop': {
         const codexCmd = await resolveCodexCommand(custom.codex)
-        const usageTarget = config.activeChatGptAccount === 'account2' ? 'account2' : 'account1'
-        if (!(await reserveUsage(usageTarget))) {
-          return { success: false, message: 'Limite de uso da conta ativa atingido.' }
-        }
         try {
-          try {
-            await spawnDetached(codexCmd, ['app', projectPath])
-          } catch {
-            await spawnDetached('explorer.exe', ['shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App'])
-          }
-        } catch (error) {
-          await rollbackUsage(usageTarget)
-          throw error
+          await spawnDetached(codexCmd, ['app', projectPath])
+        } catch {
+          await spawnDetached('explorer.exe', ['shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App'])
         }
         return { success: true, message: 'OpenAI Codex Desktop aberto no projeto!' }
       }
@@ -364,20 +341,10 @@ export async function launchTool(
           }
         }
 
-        const usageTarget = account
-        if (!(await reserveUsage(usageTarget))) {
-          return { success: false, message: `Limite de uso da ${accountLabel} atingido.` }
-        }
-
         const wtCmd = custom.wt || 'wt.exe'
         const codexCmd = await resolveCodexCommand(custom.codex)
         const env = { ...process.env, CODEX_HOME: codexHome }
-        try {
-          await openCmdSession(wtCmd, projectPath, codexCmd, env)
-        } catch (error) {
-          await rollbackUsage(usageTarget)
-          throw error
-        }
+        await openCmdSession(wtCmd, projectPath, codexCmd, env)
         return {
           success: true,
           message: `Codex CLI iniciado no terminal (${accountLabel})!`,
@@ -392,17 +359,9 @@ export async function launchTool(
         if (!chromePath) {
           return { success: false, message: 'Google Chrome não foi encontrado. Ajuste o caminho em Configurações ou instale o navegador.' }
         }
-        // Explicit URLs are navigation/auth/reopen actions initiated by the UI,
-        // not a new ChatGPT session. They must never consume the account quota.
-        const trackUsage = shouldTrackBrowserUsage(options?.url)
-        const usageTarget = account
-        if (trackUsage && !(await reserveUsage(usageTarget))) return { success: false, message: 'Limite de uso da Conta 1 atingido.' }
-        try {
-          await spawnDetached(chromePath, getBrowserLaunchArgs(browserProfile, url))
-        } catch (error) {
-          if (trackUsage) await rollbackUsage(usageTarget)
-          throw error
-        }
+        // A telemetria de quotas é somente leitura via OAuth (usage-real.ts).
+        // Abrir o navegador nunca é bloqueado por contador local.
+        await spawnDetached(chromePath, getBrowserLaunchArgs(browserProfile, url))
         return { success: true, message: `ChatGPT aberto no Google Chrome (${getAccountLabel(account, { account1: config.chatGptAccount1Name })})!` }
       }
 
@@ -414,15 +373,7 @@ export async function launchTool(
         if (!bravePath) {
           return { success: false, message: 'Brave não foi encontrado. Ajuste o caminho em Configurações ou instale o navegador.' }
         }
-        const trackUsage = shouldTrackBrowserUsage(options?.url)
-        const usageTarget = account
-        if (trackUsage && !(await reserveUsage(usageTarget))) return { success: false, message: 'Limite de uso da Conta 2 atingido.' }
-        try {
-          await spawnDetached(bravePath, getBrowserLaunchArgs(browserProfile, url))
-        } catch (error) {
-          if (trackUsage) await rollbackUsage(usageTarget)
-          throw error
-        }
+        await spawnDetached(bravePath, getBrowserLaunchArgs(browserProfile, url))
         return { success: true, message: `ChatGPT aberto no Brave (${getAccountLabel(account, { account2: config.chatGptAccount2Name })})!` }
       }
 
@@ -434,15 +385,7 @@ export async function launchTool(
             message: 'Antigravity não foi encontrado. Ajuste o caminho em Configurações ou instale o CLI.',
           }
         }
-        const usageTarget = 'antigravity'
-        // Antigravity is intentionally unlimited; keep the session counter for visibility.
-        await reserveUsage(usageTarget)
-        try {
-          await openCmdSession(custom.wt || 'wt.exe', projectPath, agyPath)
-        } catch (error) {
-          await rollbackUsage(usageTarget)
-          throw error
-        }
+        await openCmdSession(custom.wt || 'wt.exe', projectPath, agyPath)
         return { success: true, message: 'Antigravity CLI iniciado no terminal!' }
       }
 

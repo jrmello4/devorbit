@@ -54,6 +54,8 @@ const api: DevOrbitAPI = {
     : invoke('devorbit:pushGit', projectPath, commitMessage, options),
   getGitChanges: (projectPath: string) =>
     invoke('devorbit:getGitChanges', projectPath),
+  getGitFileDiff: (projectPath: string, relativePath: string) =>
+    invoke('devorbit:getGitFileDiff', projectPath, relativePath),
   syncAllGit: () => invoke('devorbit:syncAllGit'),
   onSyncProgress: (callback) => {
     return subscribe<SyncProgress>('devorbit:syncProgress', callback)
@@ -72,8 +74,10 @@ const api: DevOrbitAPI = {
     invoke('devorbit:createAgentWorktree', projectPath, agentId),
   integrateAgentWorktree: (projectPath: string, branch: string, worktreePath: string) =>
     invoke('devorbit:integrateAgentWorktree', projectPath, branch, worktreePath),
-  startTerminal: (id: string, projectPath: string) =>
-    invoke('devorbit:startTerminal', id, projectPath),
+  startTerminal: (id: string, projectPath: string, cols?: number, rows?: number) =>
+    cols === undefined && rows === undefined
+      ? invoke('devorbit:startTerminal', id, projectPath)
+      : invoke('devorbit:startTerminal', id, projectPath, cols, rows),
   startCodexTerminal: (id, projectPath, account, cols, rows) =>
     invoke('devorbit:startCodexTerminal', id, projectPath, account, cols, rows),
   startAgentTerminal: (id, projectPath, provider, cols, rows) =>
@@ -133,13 +137,7 @@ const api: DevOrbitAPI = {
     invoke('devorbit:saveProjectMemory', projectPath, content),
   generateMemoryFromGit: (projectPath) =>
     invoke('devorbit:generateMemoryFromGit', projectPath),
-  getUsageState: () => invoke('devorbit:getUsageState'),
   getRealUsage: (force?: boolean) => invoke('devorbit:getRealUsage', force),
-  incrementUsage: (target) => invoke('devorbit:incrementUsage', target),
-  decrementUsage: (target) => invoke('devorbit:decrementUsage', target),
-  resetUsage: (target) => invoke('devorbit:resetUsage', target),
-  updateUsageLimits: (account, limit, windowHours) =>
-    invoke('devorbit:updateUsageLimits', account, limit, windowHours),
 }
 
 contextBridge.exposeInMainWorld('devorbit', api)

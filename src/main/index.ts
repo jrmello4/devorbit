@@ -7,12 +7,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { exportConfigJson, importConfigJson, loadConfig, saveConfig } from './config'
 import { listAllNonProjectDirs, scanAllProjects } from './scanner'
 import { syncGit, getGitBranches, switchGitBranch, pushGit, getGitChanges, cloneGitRepository, stashSyncGit, stashSwitchGitBranch, finalizeGitProject, getGitRemoteUrl, createAgentWorktree, integrateAgentWorktree } from './git'
+import { getGitFileDiff, validateGitDiffPathspec } from './git-diff'
 import { getGitInitPreview, initGitRepository } from './git-init'
 import { ensureAccountDirectories, getAccountLabel, hasValidCodexAuth, resolveCodexCommand } from './account-profiles'
 import { launchTool, copyProjectContext, getToolHealth } from './launcher'
 import { resolveAgentProviderCommand } from './agent-providers'
 import { createProjectDirectory, createProjectFile, deleteProjectEntry, listProjectFiles, moveProjectEntry, readProjectFile, saveProjectFile } from './project-files'
-import { onTerminalEvent, resizeTerminal, startTerminal, stopAllTerminals, stopTerminal, writeTerminal, type TerminalEvent } from './terminal-session'
+import { onTerminalEvent, resizeTerminal, startTerminal, stopAllTerminals, stopTerminal, writeTerminal, TERMINAL_MAX_COLS, TERMINAL_MAX_ROWS, TERMINAL_MIN_COLS, TERMINAL_MIN_ROWS, type TerminalEvent } from './terminal-session'
 import { attachWebPanel, disposeWebPanel, getWebState, goBackWeb, goForwardWeb, navigateWeb, onWebPanelEvent, reloadWeb, setWebBounds, setWebVisible } from './web-panel'
 import {
   checkCodexAuthStatus,
@@ -25,15 +26,6 @@ import {
   saveProjectMemory,
   generateMemoryFromGit,
 } from './memory'
-import {
-  getUsageState,
-  incrementUsage,
-  decrementUsage,
-  resetUsageWindow,
-  updateUsageLimits,
-  releaseUsageReservation,
-  tryReserveUsage,
-} from './usage'
 import { getRealUsage } from './usage-real'
 import { downloadUpdate, getUpdateState, initializeUpdater, installUpdate } from './updater'
 import type {
@@ -57,12 +49,9 @@ import {
   validateCloneInput,
   testToolPath,
   validateProjectDirs,
-  validateUsageTarget,
   validateWindowAction,
   validateGitPushOptions,
   isTrustedRendererUrl,
-  MAX_USAGE_LIMIT,
-  MIN_USAGE_LIMIT,
   type IpcSenderLike,
 } from './validation'
 
@@ -362,6 +351,12 @@ function setupIpcHandlers() {
     return await getGitChanges(await validateProjectPath(projectPath))
   })
 
+  registerIpcHandler('devorbit:getGitFileDiff', async (_event, projectPath: string, relativePath: unknown) => {
+    const safePath = await validateProjectPath(projectPath)
+    const safeRelative = validateGitDiffPathspec(relativePath)
+    return await getGitFileDiff(safePath, safeRelative)
+  })
+
   // Inicializar e vincular um projeto que ainda não possui Git
   registerIpcHandler('devorbit:getGitInitPreview', async (_event, projectPath: string, branch?: string) => {
     return await getGitInitPreview(await validateProjectPath(projectPath), branch)
@@ -556,12 +551,17 @@ function setupIpcHandlers() {
     return await integrateAgentWorktree(safePath, branch, safeWorktree)
   })
 
-  registerIpcHandler('devorbit:startTerminal', async (_event, id: unknown, projectPath: string) => {
+  registerIpcHandler('devorbit:startTerminal', async (_event, id: unknown, projectPath: string, cols?: unknown, rows?: unknown) => {
     if (typeof id !== 'string' || !/^[a-z0-9_-]{1,64}$/i.test(id)) throw new Error('Identificador de terminal inválido.')
     const generation = terminalLifecycleGeneration
     const safePath = await validateProjectPath(projectPath)
     assertTerminalLifecycle(generation)
-    return await startTerminal(id, safePath)
+    const safeCols = cols === undefined ? undefined : validateFiniteNumber(cols, 'Colunas do terminal', { minimum: TERMINAL_MIN_COLS, maximum: TERMINAL_MAX_COLS, integer: true })
+    const safeRows = rows === undefined ? undefined : validateFiniteNumber(rows, 'Linhas do terminal', { minimum: TERMINAL_MIN_ROWS, maximum: TERMINAL_MAX_ROWS, integer: true })
+    return await startTerminal(id, safePath, {
+      ...(safeCols !== undefined ? { cols: safeCols } : {}),
+      ...(safeRows !== undefined ? { rows: safeRows } : {}),
+    })
   })
 
   registerIpcHandler('devorbit:startCodexTerminal', async (
@@ -592,34 +592,26 @@ function setupIpcHandlers() {
       }
     }
 
-    const safeCols = cols === undefined ? 120 : validateFiniteNumber(cols, 'Colunas do terminal', { minimum: 40, integer: true })
-    const safeRows = rows === undefined ? 32 : validateFiniteNumber(rows, 'Linhas do terminal', { minimum: 12, integer: true })
+    const safeCols = cols === undefined ? 120 : validateFiniteNumber(cols, 'Colunas do terminal', { minimum: TERMINAL_MIN_COLS, maximum: TERMINAL_MAX_COLS, integer: true })
+    const safeRows = rows === undefined ? 32 : validateFiniteNumber(rows, 'Linhas do terminal', { minimum: TERMINAL_MIN_ROWS, maximum: TERMINAL_MAX_ROWS, integer: true })
     const codexCommand = await resolveCodexCommand(config.customPaths.codex)
     assertTerminalLifecycle(generation)
     if (/[%!]/.test(codexCommand)) {
       return { success: false, message: 'O caminho configurado do Codex contém caracteres que o terminal não pode executar com segurança.' }
     }
-    const usageReserved = await tryReserveUsage(safeAccount)
-    if (!usageReserved) {
-      return { success: false, message: 'Limite de uso da ' + accountLabel + ' atingido.' }
-    }
+    // A quota real é somente leitura via OAuth (usage-real.ts). O terminal
+    // nunca é bloqueado por contador local.
     const isScript = /\.(?:cmd|bat)$/i.test(codexCommand)
     const command = isScript ? (process.env.ComSpec || 'cmd.exe') : codexCommand
     const args = isScript ? ['/d', '/q', '/k', 'call "' + codexCommand + '"'] : []
-    let result
-    try {
-      assertTerminalLifecycle(generation)
-      result = await startTerminal(id, safePath, {
-        command,
-        args,
-        env: { CODEX_HOME: codexHome },
-        cols: safeCols,
-        rows: safeRows,
-      })
-    } catch (error) {
-      await releaseUsageReservation(safeAccount)
-      throw error
-    }
+    assertTerminalLifecycle(generation)
+    const result = await startTerminal(id, safePath, {
+      command,
+      args,
+      env: { CODEX_HOME: codexHome },
+      cols: safeCols,
+      rows: safeRows,
+    })
     return {
       success: true,
       ...result,
@@ -656,8 +648,8 @@ function setupIpcHandlers() {
     if (/[%!]/.test(resolved.path)) {
       return { success: false, provider: safeProvider, message: 'O caminho do provedor contém caracteres que o terminal não pode executar com segurança.' }
     }
-    const safeCols = cols === undefined ? 120 : validateFiniteNumber(cols, 'Colunas do terminal', { minimum: 40, integer: true })
-    const safeRows = rows === undefined ? 32 : validateFiniteNumber(rows, 'Linhas do terminal', { minimum: 12, integer: true })
+    const safeCols = cols === undefined ? 120 : validateFiniteNumber(cols, 'Colunas do terminal', { minimum: TERMINAL_MIN_COLS, maximum: TERMINAL_MAX_COLS, integer: true })
+    const safeRows = rows === undefined ? 32 : validateFiniteNumber(rows, 'Linhas do terminal', { minimum: TERMINAL_MIN_ROWS, maximum: TERMINAL_MAX_ROWS, integer: true })
     const isScript = /\.(?:cmd|bat)$/i.test(resolved.path)
     const command = isScript ? (process.env.ComSpec || 'cmd.exe') : resolved.path
     const args = isScript ? ['/d', '/q', '/k', 'call "' + resolved.path + '"'] : []
@@ -679,8 +671,8 @@ function setupIpcHandlers() {
 
   registerIpcHandler('devorbit:resizeTerminal', (_event, id: unknown, cols: unknown, rows: unknown) => {
     if (typeof id !== 'string' || !/^[a-z0-9_-]{1,64}$/i.test(id)) throw new Error('Identificador de terminal inválido.')
-    const safeCols = validateFiniteNumber(cols, 'Colunas do terminal', { minimum: 40, integer: true })
-    const safeRows = validateFiniteNumber(rows, 'Linhas do terminal', { minimum: 12, integer: true })
+    const safeCols = validateFiniteNumber(cols, 'Colunas do terminal', { minimum: TERMINAL_MIN_COLS, maximum: TERMINAL_MAX_COLS, integer: true })
+    const safeRows = validateFiniteNumber(rows, 'Linhas do terminal', { minimum: TERMINAL_MIN_ROWS, maximum: TERMINAL_MAX_ROWS, integer: true })
     return { success: resizeTerminal(id, safeCols, safeRows) }
   })
 
@@ -846,57 +838,13 @@ function setupIpcHandlers() {
     return await generateMemoryFromGit(await validateProjectPath(projectPath))
   })
 
-  // Usage Tracker Handlers
-  registerIpcHandler('devorbit:getUsageState', async () => {
-    return await getUsageState()
-  })
-
+  // Telemetria única: quotas reais via OAuth (usage-real.ts)
   registerIpcHandler('devorbit:getRealUsage', async (_event, force?: boolean) => {
     if (force !== undefined && typeof force !== 'boolean') {
       throw new Error('Opção de atualização de uso inválida.')
     }
     return await getRealUsage(force === true)
   })
-
-  registerIpcHandler(
-    'devorbit:incrementUsage',
-    async (_event, target: 'account1' | 'account2' | 'antigravity') => {
-      return await incrementUsage(validateUsageTarget(target))
-    }
-  )
-
-  registerIpcHandler(
-    'devorbit:decrementUsage',
-    async (_event, target: 'account1' | 'account2') => {
-      const account = validateCodexAccount(target)
-      return await decrementUsage(account)
-    }
-  )
-
-  registerIpcHandler(
-    'devorbit:resetUsage',
-    async (_event, target: 'account1' | 'account2') => {
-      const account = validateCodexAccount(target)
-      return await resetUsageWindow(account)
-    }
-  )
-
-  registerIpcHandler(
-    'devorbit:updateUsageLimits',
-    async (
-      _event,
-      account: 'account1' | 'account2',
-      limit: number,
-      windowHours?: number
-    ) => {
-      const safeAccount = validateCodexAccount(account)
-      const safeLimit = validateFiniteNumber(limit, 'Limite de uso', { minimum: MIN_USAGE_LIMIT, maximum: MAX_USAGE_LIMIT, integer: true })
-      const safeWindowHours = windowHours === undefined
-        ? undefined
-        : validateFiniteNumber(windowHours, 'Janela de uso', { minimum: 1 })
-      return await updateUsageLimits(safeAccount, safeLimit, safeWindowHours)
-    }
-  )
 
   // Controles de janela (minimizar, maximizar, fechar)
   registerIpcListener('devorbit:windowControl', (_event, action: 'minimize' | 'maximize' | 'close') => {

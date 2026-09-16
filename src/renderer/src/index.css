@@ -46,6 +46,9 @@
 .window-controls button:hover { background:var(--surface-hover); }
 .window-controls button:last-child:hover { background:#ba3028; color:white; }
 .app-body { display:grid; grid-template-columns:184px minmax(0,1fr); min-height:0; overflow:hidden; }
+.app-body:has(.git-dock) { grid-template-columns:184px minmax(0,1fr) auto; }
+.git-dock { display:flex; flex-direction:column; min-height:0; height:100%; overflow:hidden; background:#fcfcfa; border-left:1px solid var(--color-border-subtle); box-shadow:-8px 0 24px rgba(28,25,23,0.06); }
+.git-dock[data-collapsed="true"] { overflow:hidden; }
 .workspace-sidebar { display:flex; flex-direction:column; min-height:0; overflow-y:auto; padding:20px 10px 12px; background:#f0f1ec; border-right:1px solid var(--color-border-subtle); }
 .sidebar-heading { display:flex; align-items:center; justify-content:space-between; color:var(--color-text-muted); font-size:11px; padding-left:10px; margin-bottom:13px; }
 .nav-item { display:flex; align-items:center; gap:10px; width:100%; min-height:36px; padding:7px 10px; border:0; border-radius:5px; background:none; color:#555e50; text-align:left; margin-bottom:3px; font-size:12px; }

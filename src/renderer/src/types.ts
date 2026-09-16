@@ -91,9 +91,11 @@ export interface AgentTerminalStartResult extends CodexTerminalStartResult {
 
 export interface TerminalEvent {
   id: string
-  type: 'data' | 'exit' | 'error'
+  type: 'data' | 'exit' | 'error' | 'resize'
   data?: string
   code?: number | null
+  cols?: number
+  rows?: number
 }
 
 export interface WebPanelEvent {
@@ -157,13 +159,26 @@ export type GitPushOptions = {
   selectedPaths?: string[]
 }
 
+export interface GitFileDiff {
+  path: string
+  status: string
+  headExists: boolean
+  worktreeExists: boolean
+  binary: boolean
+  truncated: boolean
+  diff: string
+  headContent: string
+  worktreeContent: string
+  message: string
+}
+
 export type IpcInvokeChannel =
   | 'devorbit:getProjects' | 'devorbit:refreshProjects' | 'devorbit:getOtherDirs'
   | 'devorbit:listProjectFiles' | 'devorbit:readProjectFile' | 'devorbit:saveProjectFile'
   | 'devorbit:createProjectFile' | 'devorbit:createProjectDirectory' | 'devorbit:moveProjectEntry' | 'devorbit:deleteProjectEntry'
   | 'devorbit:syncGit' | 'devorbit:getGitBranches' | 'devorbit:switchGitBranch'
   | 'devorbit:stashSyncGit' | 'devorbit:stashSwitchGitBranch' | 'devorbit:pushGit'
-  | 'devorbit:getGitChanges' | 'devorbit:syncAllGit' | 'devorbit:getGitInitPreview'
+  | 'devorbit:getGitChanges' | 'devorbit:getGitFileDiff' | 'devorbit:syncAllGit' | 'devorbit:getGitInitPreview'
   | 'devorbit:initGitRepository' | 'devorbit:cloneGitRepository' | 'devorbit:restoreManagedProject'
   | 'devorbit:finalizeManagedProject' | 'devorbit:startTerminal' | 'devorbit:startCodexTerminal'
   | 'devorbit:startAgentTerminal'
@@ -178,9 +193,8 @@ export type IpcInvokeChannel =
   | 'devorbit:exportConfig' | 'devorbit:importConfig' | 'devorbit:selectDirectory'
   | 'devorbit:testToolPath' | 'devorbit:getToolHealth' | 'devorbit:getCodexAuthStatus'
   | 'devorbit:startCodexLogin' | 'devorbit:cancelCodexLogin' | 'devorbit:getProjectMemory'
-  | 'devorbit:saveProjectMemory' | 'devorbit:generateMemoryFromGit' | 'devorbit:getUsageState'
-  | 'devorbit:getRealUsage' | 'devorbit:incrementUsage' | 'devorbit:decrementUsage'
-  | 'devorbit:resetUsage' | 'devorbit:updateUsageLimits'
+  | 'devorbit:saveProjectMemory' | 'devorbit:generateMemoryFromGit'
+  | 'devorbit:getRealUsage'
 
 export type IpcEventChannel =
   | 'devorbit:syncProgress' | 'devorbit:terminalEvent' | 'devorbit:webEvent'
@@ -313,16 +327,6 @@ export interface ProjectMemory {
   generatedAt?: string
 }
 
-export interface AccountUsage {
-  used: number
-  limit: number
-  windowStart?: number
-  windowDurationHours: number
-}
-
-export const MIN_USAGE_LIMIT = 5
-export const MAX_USAGE_LIMIT = 200
-
 export type RealUsageStatus = 'ready' | 'not_configured' | 'error'
 
 export interface RealUsageMetric {
@@ -353,14 +357,6 @@ export interface RealUsageState {
   }
 }
 
-export interface UsageTrackerState {
-  account1: AccountUsage
-  account2: AccountUsage
-  antigravity: {
-    sessionCount: number
-  }
-}
-
 export interface DevOrbitAPI {
   getProjects: () => Promise<Project[]>
   refreshProjects: () => Promise<Project[]>
@@ -379,6 +375,7 @@ export interface DevOrbitAPI {
   stashSwitchGitBranch: (projectPath: string, branch: string) => Promise<SyncResult>
   pushGit: (projectPath: string, commitMessage?: string, options?: GitPushOptions) => Promise<SyncResult>
   getGitChanges: (projectPath: string) => Promise<GitChange[]>
+  getGitFileDiff: (projectPath: string, relativePath: string) => Promise<GitFileDiff>
   syncAllGit: () => Promise<{ [projectPath: string]: SyncResult }>
   onSyncProgress: (callback: (progress: SyncProgress) => void) => () => void
   getGitInitPreview: (projectPath: string, branch?: string) => Promise<GitInitPreview>
@@ -388,7 +385,7 @@ export interface DevOrbitAPI {
   finalizeManagedProject: (projectPath: string, options?: { allowRecreatableIgnored?: boolean }) => Promise<SyncResult>
   createAgentWorktree: (projectPath: string, agentId: string) => Promise<{ path: string; branch: string }>
   integrateAgentWorktree: (projectPath: string, branch: string, worktreePath: string) => Promise<SyncResult>
-  startTerminal: (id: string, projectPath: string) => Promise<{ id: string; pid: number | undefined }>
+  startTerminal: (id: string, projectPath: string, cols?: number, rows?: number) => Promise<{ id: string; pid: number | undefined }>
   startCodexTerminal: (
     id: string,
     projectPath: string,
@@ -453,18 +450,7 @@ export interface DevOrbitAPI {
     content: string
   ) => Promise<{ success: boolean; message?: string }>
   generateMemoryFromGit: (projectPath: string) => Promise<string>
-  getUsageState: () => Promise<UsageTrackerState>
   getRealUsage: (force?: boolean) => Promise<RealUsageState>
-  incrementUsage: (
-    target: 'account1' | 'account2' | 'antigravity'
-  ) => Promise<UsageTrackerState>
-  decrementUsage: (target: 'account1' | 'account2') => Promise<UsageTrackerState>
-  resetUsage: (target: 'account1' | 'account2') => Promise<UsageTrackerState>
-  updateUsageLimits: (
-    account: 'account1' | 'account2',
-    limit: number,
-    windowHours?: number
-  ) => Promise<UsageTrackerState>
 }
 
 declare global {

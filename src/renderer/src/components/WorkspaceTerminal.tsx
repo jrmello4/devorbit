@@ -22,6 +22,9 @@ type TerminalMode = 'shell' | 'codex' | 'agent'
 
 const MAX_SNAPSHOT_LENGTH = 40_000
 const CODEX_READY_FALLBACK_MS = 750
+const RESIZE_DEBOUNCE_MS = 90
+const MIN_PTY_COLS = 20
+const MIN_PTY_ROWS = 5
 const providerLabels: Record<AgentProviderId, string> = {
   codex: 'Codex',
   opencode: 'OpenCode',
@@ -30,6 +33,11 @@ const providerLabels: Record<AgentProviderId, string> = {
   aider: 'Aider',
   agy: 'Antigravity',
   custom: 'Agente local',
+}
+
+function currentDimensions(terminal: XTerm | null): { cols: number; rows: number } | undefined {
+  if (!terminal || !Number.isFinite(terminal.cols) || !Number.isFinite(terminal.rows)) return undefined
+  return { cols: terminal.cols, rows: terminal.rows }
 }
 
 export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
@@ -58,6 +66,10 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
   const terminalModeRef = useRef<TerminalMode>('shell')
   const activeProviderRef = useRef<AgentProviderId | null>(null)
   const fitTerminalRef = useRef<() => void>(() => undefined)
+  const lastSentDimsRef = useRef<{ cols: number; rows: number } | null>(null)
+  const resizeTimerRef = useRef<number | null>(null)
+  const pendingFramesRef = useRef<number[]>([])
+  const pendingTimeoutsRef = useRef<number[]>([])
   const onNotifyRef = useRef(onNotify)
   const onRequestCodexAuthRef = useRef(onRequestCodexAuth)
   const onAgentResultRef = useRef(onAgentResult)
@@ -83,6 +95,35 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
     onNotifyRef.current('A tarefa automática do agente foi bloqueada: ' + message, 'error')
     onAgentTaskFailureRef.current?.(taskId, message)
   }, [])
+
+  const scheduleFitFrame = useCallback((callback: () => void): number => {
+    const id = window.requestAnimationFrame(() => {
+      pendingFramesRef.current = pendingFramesRef.current.filter((frame) => frame !== id)
+      callback()
+    })
+    pendingFramesRef.current.push(id)
+    return id
+  }, [])
+
+  const scheduleFitTimeout = useCallback((callback: () => void, ms: number): number => {
+    const id = window.setTimeout(() => {
+      pendingTimeoutsRef.current = pendingTimeoutsRef.current.filter((timeout) => timeout !== id)
+      callback()
+    }, ms)
+    pendingTimeoutsRef.current.push(id)
+    return id
+  }, [])
+
+  const sendResize = useCallback((cols: number, rows: number, force = false) => {
+    if (!Number.isFinite(cols) || !Number.isFinite(rows)) return
+    if (cols < MIN_PTY_COLS || rows < MIN_PTY_ROWS) return
+    const last = lastSentDimsRef.current
+    if (!force && last && last.cols === cols && last.rows === rows) return
+    lastSentDimsRef.current = { cols, rows }
+    void window.devorbit.resizeTerminal(terminalId, cols, rows).catch(() => {
+      lastSentDimsRef.current = last
+    })
+  }, [terminalId])
 
   const waitForTerminalData = useCallback(() => {
     let settled = false
@@ -111,17 +152,22 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
     outputSnapshotRef.current = ''
     outputSnapshotOffsetRef.current = 0
     reportedResultsRef.current.clear()
+    lastSentDimsRef.current = null
     setTerminalMode('shell')
     setTerminalState('starting')
     try {
+      const dims = currentDimensions(terminalRef.current)
       const result = await window.devorbit.startTerminal(
         terminalId,
         projectPath,
+        dims?.cols,
+        dims?.rows,
       )
       if (startToken === terminalStartTokenRef.current) {
         terminalRef.current?.clear()
         terminalRef.current?.writeln('\x1b[90mDevOrbit terminal PTY pronto.\x1b[0m')
         setTerminalState('ready')
+        scheduleFitFrame(() => fitTerminalRef.current())
       }
       return result
     } catch (error) {
@@ -132,7 +178,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
       onNotifyRef.current('Não foi possível iniciar o terminal interno: ' + message, 'error')
       return null
     }
-  }, [projectPath, terminalId])
+  }, [projectPath, scheduleFitFrame, terminalId])
 
   const startCodex = useCallback(async () => {
     const startToken = ++terminalStartTokenRef.current
@@ -141,6 +187,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
     outputSnapshotRef.current = ''
     outputSnapshotOffsetRef.current = 0
     reportedResultsRef.current.clear()
+    lastSentDimsRef.current = null
     setIsStartingCodex(true)
     setTerminalState('starting')
     const readySignal = waitForTerminalData()
@@ -178,9 +225,9 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
           const terminal = terminalRef.current
           if (terminal) terminal.refresh(0, Math.max(0, terminal.rows - 1))
         }
-        window.requestAnimationFrame(refit)
-        window.setTimeout(refit, 140)
-        window.setTimeout(refit, 650)
+        scheduleFitFrame(refit)
+        scheduleFitTimeout(refit, 140)
+        scheduleFitTimeout(refit, 650)
       }
       return result
     } catch (error) {
@@ -196,7 +243,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
       readySignal.cancel()
       setIsStartingCodex(false)
     }
-  }, [codexAccount, projectPath, terminalId, waitForTerminalData])
+  }, [codexAccount, projectPath, scheduleFitFrame, scheduleFitTimeout, terminalId, waitForTerminalData])
 
   const startAgent = useCallback(async () => {
     if (provider === 'codex') return startCodex()
@@ -206,6 +253,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
     outputSnapshotRef.current = ''
     outputSnapshotOffsetRef.current = 0
     reportedResultsRef.current.clear()
+    lastSentDimsRef.current = null
     setIsStartingCodex(true)
     setTerminalState('starting')
     const readySignal = waitForTerminalData()
@@ -294,9 +342,11 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
 
     const fitTerminal = () => {
       try {
+        if (!container.isConnected || container.clientWidth === 0 || container.clientHeight === 0) return
         fitAddon.fit()
-        if (terminal.cols >= 40 && terminal.rows >= 12) {
-          void window.devorbit.resizeTerminal(terminalId, terminal.cols, terminal.rows)
+        const dims = currentDimensions(terminal)
+        if (dims && dims.cols >= MIN_PTY_COLS && dims.rows >= MIN_PTY_ROWS) {
+          sendResize(dims.cols, dims.rows)
         }
       } catch {
         // The terminal can be temporarily detached while the workspace changes
@@ -305,11 +355,22 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
     }
     fitTerminalRef.current = fitTerminal
 
-    const resizeObserver = new ResizeObserver(() => {
-      window.requestAnimationFrame(fitTerminal)
-    })
+    const scheduleFit = () => {
+      if (resizeTimerRef.current !== null) window.clearTimeout(resizeTimerRef.current)
+      resizeTimerRef.current = window.setTimeout(() => {
+        resizeTimerRef.current = null
+        scheduleFitFrame(fitTerminal)
+      }, RESIZE_DEBOUNCE_MS)
+    }
+
+    const resizeObserver = new ResizeObserver(scheduleFit)
     resizeObserver.observe(container)
-    fitTerminal()
+    window.addEventListener('resize', scheduleFit)
+    // O fit inicial usa as dimensões reais do card; o PTY nasce com elas e
+    // cada resize posterior emite um evento real de redimensionamento.
+    // Todos os handles passam pelo scheduler estável para cleanup no unmount.
+    scheduleFitFrame(fitTerminal)
+    scheduleFitTimeout(fitTerminal, 120)
 
     const inputDisposable = terminal.onData((data) => {
       if (terminalStateRef.current !== 'ready') return
@@ -319,6 +380,8 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
     const unsubscribe = window.devorbit.onTerminalEvent((event: TerminalEvent) => {
       if (event.id !== terminalId) return
       if (event.type === 'data' && event.data) {
+        // Streaming sem perda: cada chunk do PTY nativo é anexado ao snapshot
+        // e escrito no xterm na mesma ordem de chegada.
         for (const waiter of Array.from(terminalDataWaitersRef.current)) waiter()
         const nextSnapshot = outputSnapshotRef.current + event.data
         const removedLength = Math.max(0, nextSnapshot.length - MAX_SNAPSHOT_LENGTH)
@@ -341,6 +404,8 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
           }
         }
         terminal.write(event.data)
+      } else if (event.type === 'resize' && event.cols && event.rows) {
+        lastSentDimsRef.current = { cols: event.cols, rows: event.rows }
       } else if (event.type === 'exit') {
         terminal.writeln('\r\n\x1b[90m[processo encerrado: ' + String(event.code ?? '') + ']\x1b[0m')
         setTerminalState('stopped')
@@ -357,11 +422,13 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
     let alive = true
     const initialStartToken = ++terminalStartTokenRef.current
     terminalModeRef.current = 'shell'
-    void window.devorbit.startTerminal(terminalId, projectPath)
+    const initialDims = currentDimensions(terminal)
+    void window.devorbit.startTerminal(terminalId, projectPath, initialDims?.cols, initialDims?.rows)
       .then(() => {
         if (!alive || initialStartToken !== terminalStartTokenRef.current || terminalModeRef.current !== 'shell') return
         terminal.writeln('\x1b[90mDevOrbit terminal PTY pronto em ' + projectPath + '\x1b[0m')
         setTerminalState('ready')
+        scheduleFitFrame(fitTerminal)
       })
       .catch((error) => {
         if (!alive || initialStartToken !== terminalStartTokenRef.current) return
@@ -376,13 +443,23 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
       inputDisposable.dispose()
       unsubscribe()
       resizeObserver.disconnect()
+      window.removeEventListener('resize', scheduleFit)
+      if (resizeTimerRef.current !== null) {
+        window.clearTimeout(resizeTimerRef.current)
+        resizeTimerRef.current = null
+      }
+      for (const frame of pendingFramesRef.current) window.cancelAnimationFrame(frame)
+      pendingFramesRef.current = []
+      for (const timeout of pendingTimeoutsRef.current) window.clearTimeout(timeout)
+      pendingTimeoutsRef.current = []
       terminal.dispose()
       terminalRef.current = null
       fitAddonRef.current = null
       fitTerminalRef.current = () => undefined
+      lastSentDimsRef.current = null
       void window.devorbit.stopTerminal(terminalId)
     }
-  }, [projectPath, terminalId])
+  }, [projectPath, reportTaskFailure, scheduleFitFrame, scheduleFitTimeout, sendResize, terminalId])
 
   useEffect(() => {
     if (!agentTask || completedTaskRef.current === agentTask.id || deliveringTaskRef.current === agentTask.id) return

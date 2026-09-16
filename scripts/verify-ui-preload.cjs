@@ -130,22 +130,6 @@ let config = {
 
 let writeTerminalFailure = false
 
-let usage = {
-  account1: {
-    used: 32,
-    limit: 40,
-    windowStart: baseTime - 45 * 60_000,
-    windowDurationHours: 3,
-  },
-  account2: {
-    used: 14,
-    limit: 40,
-    windowStart: baseTime - 30 * 60_000,
-    windowDurationHours: 3,
-  },
-  antigravity: { sessionCount: 2 },
-}
-
 const realUsage = {
   source: 'codex-oauth',
   fetchedAt: new Date(baseTime).toISOString(),
@@ -250,6 +234,21 @@ const api = {
       { path: 'src/fixture.ts', status: ' M' },
       { path: 'README.md', status: '??' },
     ]
+  },
+  getGitFileDiff: async (projectPath, relativePath) => {
+    record('getGitFileDiff', projectPath, relativePath)
+    return {
+      path: relativePath,
+      status: ' M',
+      headExists: true,
+      worktreeExists: true,
+      binary: false,
+      truncated: false,
+      diff: `--- a/${relativePath}\n+++ b/${relativePath}\n@@ -1 +1 @@\n-const fixture = false\n+const fixture = true`,
+      headContent: 'const fixture = false\n',
+      worktreeContent: 'const fixture = true\n',
+      message: 'Fixture diff',
+    }
   },
   syncAllGit: async () => {
     record('syncAllGit')
@@ -459,36 +458,9 @@ const api = {
     record('generateMemoryFromGit', projectPath)
     return 'Fixture generated memory'
   },
-  getUsageState: async () => {
-    record('getUsageState')
-    return copy(usage)
-  },
   getRealUsage: async () => {
     record('getRealUsage')
     return copy(realUsage)
-  },
-  incrementUsage: async (target) => {
-    record('incrementUsage', target)
-    if (target === 'antigravity') usage.antigravity.sessionCount += 1
-    else usage[target].used += 1
-    return copy(usage)
-  },
-  decrementUsage: async (target) => {
-    record('decrementUsage', target)
-    usage[target].used = Math.max(0, usage[target].used - 1)
-    return copy(usage)
-  },
-  resetUsage: async (target) => {
-    record('resetUsage', target)
-    usage[target].used = 0
-    usage[target].windowStart = undefined
-    return copy(usage)
-  },
-  updateUsageLimits: async (account, limit, windowHours) => {
-    record('updateUsageLimits', account, limit, windowHours)
-    usage[account].limit = limit
-    if (windowHours !== undefined) usage[account].windowDurationHours = windowHours
-    return copy(usage)
   },
 }
 

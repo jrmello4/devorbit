@@ -1,3 +1,11 @@
+/**
+ * Fonte única de telemetria de uso do DevOrbit (FASE 1).
+ *
+ * A medição local estimada (antigo usage.ts) foi removida. Todas as quotas
+ * exibidas no UsageBar vêm exclusivamente do OAuth do Codex via
+ * `getRealUsage`. Este módulo é somente leitura: nunca bloqueia lançamentos
+ * nem mantém contadores locais.
+ */
 import fs from 'node:fs/promises'
 import type {
   RealAccountUsage,
