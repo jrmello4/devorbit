@@ -129,6 +129,7 @@ let config = {
 }
 
 let writeTerminalFailure = false
+let sendAgentTurnResult = null
 
 const realUsage = {
   source: 'codex-oauth',
@@ -338,10 +339,45 @@ const api = {
     record('stopTerminal', id)
     return { success: true }
   },
+  pipeTerminals: async (fromId, toId) => {
+    record('pipeTerminals', fromId, toId)
+    return { success: true }
+  },
+  sendAgentTurn: async (terminalId, provider, projectPath, prompt) => {
+    record('sendAgentTurn', terminalId, provider, projectPath, prompt)
+    if (writeTerminalFailure) {
+      record('writeTerminal', terminalId, `${prompt}\r`)
+      return { success: false, provider, message: 'Fixture write failure' }
+    }
+    // O main resolve o turno, faz spawn interno (mesmo id) e escreve o prompt
+    // no PTY: o fixture registra esses efeitos observáveis pelo renderer.
+    record('startAgentTerminal', terminalId, projectPath, provider)
+    record('writeTerminal', terminalId, `${prompt}\r`)
+    // Resultado configurado é one-shot: aplica ao PRÓXIMO turno apenas, para
+    // a race não contaminar as etapas seguintes da orquestração.
+    const result = sendAgentTurnResult
+    sendAgentTurnResult = null
+    if (result) {
+      // Race real do backend: o marcador chega pelo evento PTY ANTES desta
+      // Promise resolver. O renderer precisa entregar o resultado mesmo assim.
+      const payload = { id: terminalId, type: 'data', data: `\r\nDEVORBIT_RESULT: ${result}\r\n` }
+      for (const listener of terminalListeners) listener(copy(payload))
+    }
+    return {
+      success: true,
+      provider,
+      model: 'fixture-model',
+      tier: 'fast',
+      result,
+      blocked: null,
+      attempts: [{ provider, ok: true }],
+    }
+  },
   onTerminalEvent: (callback) => {
     terminalListeners.add(callback)
     return () => terminalListeners.delete(callback)
   },
+  onCompanionEvent: () => () => {},
   navigateWeb: async (url) => {
     record('navigateWeb', url)
     for (const listener of webListeners) listener({ type: 'navigated', url, title: url })
@@ -475,5 +511,8 @@ contextBridge.exposeInMainWorld('__devorbitVerifyFixture', {
   },
   setWriteTerminalFailure: (value) => {
     writeTerminalFailure = Boolean(value)
+  },
+  setSendAgentTurnResult: (value) => {
+    sendAgentTurnResult = value ? String(value) : null
   },
 })

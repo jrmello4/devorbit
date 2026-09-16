@@ -53,7 +53,10 @@ const expectedApiKeys = [
   'resizeTerminal',
   'writeTerminal',
   'stopTerminal',
+  'pipeTerminals',
+  'sendAgentTurn',
   'onTerminalEvent',
+  'onCompanionEvent',
   'navigateWeb',
   'getWebState',
   'goBackWeb',
@@ -140,6 +143,8 @@ describe('preload IPC contract', () => {
       ['devorbit:resizeTerminal', 'terminal-1', 120, 40],
       ['devorbit:writeTerminal', 'terminal-1', 'ls\n'],
       ['devorbit:stopTerminal', 'terminal-1'],
+      ['devorbit:pipeTerminals', 'terminal-1', 'terminal-2'],
+      ['devorbit:sendAgentTurn', 'terminal-1', 'opencode', 'project', 'revise a arquitetura'],
       ['devorbit:navigateWeb', 'https://example.com/'],
       ['devorbit:getWebState'],
       ['devorbit:goBackWeb'],
@@ -175,7 +180,7 @@ describe('preload IPC contract', () => {
       'deleteProjectEntry', 'syncGit', 'getGitBranches', 'switchGitBranch', 'stashSyncGit',
       'stashSwitchGitBranch', 'pushGit', 'getGitChanges', 'getGitFileDiff', 'syncAllGit', 'getGitInitPreview',
       'initGitRepository', 'cloneGitRepository', 'restoreManagedProject', 'finalizeManagedProject',
-       'startTerminal', 'startCodexTerminal', 'startAgentTerminal', 'resizeTerminal', 'writeTerminal', 'stopTerminal',
+       'startTerminal', 'startCodexTerminal', 'startAgentTerminal', 'resizeTerminal', 'writeTerminal', 'stopTerminal', 'pipeTerminals', 'sendAgentTurn',
       'navigateWeb', 'getWebState', 'goBackWeb', 'goForwardWeb', 'reloadWeb', 'setWebVisible',
       'disposeWebPanel', 'setWebBounds', 'launchTool', 'copyProjectContext', 'getConfig',
       'getUpdateState', 'downloadUpdate',       'installUpdate', 'saveConfig', 'exportConfig',
@@ -207,9 +212,35 @@ describe('preload IPC contract', () => {
     )
   })
 
+  it('forwards the agent turn prompt for per-turn routing', async () => {
+    await exposedApi().startAgentTerminal('terminal-1', 'project', 'opencode', 120, 40, 'revise a arquitetura')
+    expect(ipcInvoke).toHaveBeenCalledWith(
+      'devorbit:startAgentTerminal',
+      'terminal-1',
+      'project',
+      'opencode',
+      120,
+      40,
+      'revise a arquitetura',
+    )
+  })
+
+  it('forwards turn timeouts only when provided', async () => {
+    await exposedApi().sendAgentTurn('terminal-1', 'opencode', 'project', 'faça algo', { idleMs: 60_000 })
+    expect(ipcInvoke).toHaveBeenCalledWith(
+      'devorbit:sendAgentTurn',
+      'terminal-1',
+      'opencode',
+      'project',
+      'faça algo',
+      { idleMs: 60_000 },
+    )
+  })
+
   it.each([
     ['onSyncProgress', 'devorbit:syncProgress', { path: 'project', done: 1, total: 2 }],
     ['onTerminalEvent', 'devorbit:terminalEvent', { type: 'data', id: 'terminal-1' }],
+    ['onCompanionEvent', 'devorbit:companionEvent', { terminalId: 'terminal-1', outcome: 'completed', title: 'Tarefa finalizada', message: 'ok', suggestion: 'revise', actions: [] }],
     ['onWebEvent', 'devorbit:webEvent', { type: 'loaded', url: 'https://example.com/' }],
     ['onUpdateStatus', 'devorbit:updateStatus', { status: 'idle' }],
     ['onCodexAuthProgress', 'devorbit:codexAuthProgress', { account: 'account1' }],

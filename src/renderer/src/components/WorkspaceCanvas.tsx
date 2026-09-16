@@ -22,6 +22,7 @@ import {
   Unlink,
 } from "lucide-react";
 import type { AgentProvider, AgentProviderId, Project } from "../types";
+import { createsAgentCycle, sanitizeAgentCycles } from "./workspace-request-helpers";
 import "./WorkspaceCanvas.css";
 
 type NodeKind = "workbench" | "browser" | "note" | "agent";
@@ -301,23 +302,27 @@ function read(id: string): CanvasState {
         ),
       );
       const ids = new Set(nodes.map((node) => node.id));
+      const agentIds = new Set(nodes.filter((node) => node.kind === "agent").map((node) => node.id));
+      const validConnections = Array.isArray(raw.connections)
+        ? raw.connections.filter(
+            (connection): connection is CanvasConnection =>
+              Boolean(
+                connection &&
+                typeof connection.id === "string" &&
+                typeof connection.from === "string" &&
+                typeof connection.to === "string" &&
+                connection.from !== connection.to &&
+                ids.has(connection.from) &&
+                ids.has(connection.to),
+              ),
+          )
+        : [];
       return {
         version: 2,
         nodes,
-        connections: Array.isArray(raw.connections)
-          ? raw.connections.filter(
-              (connection): connection is CanvasConnection =>
-                Boolean(
-                  connection &&
-                  typeof connection.id === "string" &&
-                  typeof connection.from === "string" &&
-                  typeof connection.to === "string" &&
-                  connection.from !== connection.to &&
-                  ids.has(connection.from) &&
-                  ids.has(connection.to),
-                ),
-            )
-          : [],
+        // Saneia ciclos agente-agente persistidos: nenhum ciclo visual pode
+        // ficar sem aresta de piping correspondente no main.
+        connections: sanitizeAgentCycles(validConnections, agentIds),
         viewport: {
           x: Number.isFinite(raw.viewport?.x)
             ? raw.viewport!.x
@@ -471,6 +476,10 @@ export const WorkspaceCanvas: React.FC<{
   onSelectionChange?: (node: { id: string; title: string; kind: string } | null) => void;
   pendingNodeRequest?: { kind: 'note' | 'agent'; nonce: number } | null;
   onPendingNodeConsumed?: (nonce: number) => void;
+  onConnectionsChange?: (
+    connections: Array<{ id: string; from: string; to: string }>,
+    nodes: Array<{ id: string; kind: string }>,
+  ) => void;
 }> = ({
   project,
   workbench,
@@ -483,6 +492,7 @@ export const WorkspaceCanvas: React.FC<{
   onSelectionChange,
   pendingNodeRequest = null,
   onPendingNodeConsumed,
+  onConnectionsChange,
 }) => {
   const [canvas, setCanvas] = useState<CanvasState>(() => read(project.id));
   const [selected, setSelected] = useState<string[]>([]);
@@ -567,6 +577,12 @@ export const WorkspaceCanvas: React.FC<{
     const node = lastId ? canvas.nodes.find((item) => item.id === lastId) : undefined;
     onSelectionChange?.(node ? { id: node.id, title: node.title, kind: node.kind } : null);
   }, [canvas.nodes, onSelectionChange, selected]);
+  useEffect(() => {
+    onConnectionsChange?.(
+      canvas.connections,
+      canvas.nodes.map((node) => ({ id: node.id, kind: node.kind })),
+    );
+  }, [canvas.connections, canvas.nodes, onConnectionsChange]);
   const connectNodes = useCallback(
     (from: string | null, to: string) => {
       if (!from || from === to) {
@@ -575,6 +591,17 @@ export const WorkspaceCanvas: React.FC<{
           connectionDraftRef.current = null;
           setConnectionDraft(null);
         }
+        return;
+      }
+      const agentIds = new Set(
+        canvasRef.current.nodes.filter((node) => node.kind === "agent").map((node) => node.id),
+      );
+      // Recusa determinística de ciclo agente-agente: o main rejeitaria o
+      // setPipe e o cabo ficaria desenhado sem piping. Cancela o gesto.
+      if (createsAgentCycle(canvasRef.current.connections, agentIds, from, to)) {
+        setConnectFrom(null);
+        connectionDraftRef.current = null;
+        setConnectionDraft(null);
         return;
       }
       update(

@@ -5,7 +5,8 @@ import {
 } from 'lucide-react'
 import type { AgentProvider, AgentProviderId, Project, ToolHealth, WebPanelEvent } from '../types'
 import type { PendingCanvasNode, WorkspaceUiRequest } from './workspace-request-helpers'
-import { applyWorkspaceUiRequest, isPendingNodeForProject } from './workspace-request-helpers'
+import { applyWorkspaceUiRequest, computePipeSync, isPendingNodeForProject } from './workspace-request-helpers'
+import { createPipeCallQueue } from './pipe-ipc-queue'
 import { WorkspaceEditor, type WorkspaceEditorContext } from './WorkspaceEditor'
 import { WorkspaceTerminal } from './WorkspaceTerminal'
 import { WorkspaceCanvas, type CanvasNode } from './WorkspaceCanvas'
@@ -74,6 +75,10 @@ export function resolveInitialWorkspaceMode(saved: string | null): 'canvas' | 'g
   return 'canvas'
 }
 
+export function agentTerminalId(projectId: string, nodeId: string): string {
+  return 'agent-' + projectId.replace(/[^a-z0-9_-]/gi, '-').slice(0, 32) + '-' + nodeId.slice(-18)
+}
+
 export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
   project, onClose, onNotify, codexAccount = 'account1', isWebSuppressed = false, isSuspended = false, onRequestCodexAuth, onDirtyChange, onCanvasFocusChange,
   uiRequest = null, onUiRequestConsumed, pendingCanvasNode = null, onPendingCanvasNodeConsumed,
@@ -120,6 +125,67 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
   }, [onNotify, onPendingCanvasNodeConsumed, pendingCanvasNode, project.id])
   const [agentProviders, setAgentProviders] = useState<AgentProvider[]>([])
   const [agentWorktrees, setAgentWorktrees] = useState<Record<string, { path: string; branch: string }>>({})
+  const appliedPipesRef = useRef<Map<string, Set<string>>>(new Map())
+  // Fila seriada por origem: clear -> add sempre nessa ordem observável,
+  // mesmo sob mudanças rápidas de fanout.
+  const pipeQueueRef = useRef(createPipeCallQueue((from, to) => window.devorbit.pipeTerminals(from, to)))
+  // PTY piping (FASE 3): cabos agente -> agente no canvas canalizam stdout
+  // para stdin via `devorbit:pipeTerminals`. Fanout suportado; reconciliação
+  // determinística por origem via computePipeSync. Best-effort, sem spam.
+  const syncCanvasPipes = useCallback((
+    connections: Array<{ id: string; from: string; to: string }>,
+    nodes: Array<{ id: string; kind: string }>,
+  ) => {
+    const kinds = new Map(nodes.map((node) => [node.id, node.kind] as const))
+    const desired = new Map<string, Set<string>>()
+    for (const connection of connections) {
+      if (kinds.get(connection.from) === 'agent' && kinds.get(connection.to) === 'agent') {
+        const from = agentTerminalId(project.id, connection.from)
+        const to = agentTerminalId(project.id, connection.to)
+        const destinations = desired.get(from) || new Set<string>()
+        destinations.add(to)
+        desired.set(from, destinations)
+      }
+    }
+    const plan = computePipeSync(appliedPipesRef.current, desired)
+    const queue = pipeQueueRef.current
+    for (const from of plan.clearSources) {
+      appliedPipesRef.current.delete(from)
+      void queue(from, null)
+    }
+    for (const edge of plan.addEdges) {
+      const destinations = appliedPipesRef.current.get(edge.from) || new Set<string>()
+      destinations.add(edge.to)
+      appliedPipesRef.current.set(edge.from, destinations)
+      void queue(edge.from, edge.to).then(() => undefined, () => {
+        const current = appliedPipesRef.current.get(edge.from)
+        if (current) {
+          current.delete(edge.to)
+          if (current.size === 0) appliedPipesRef.current.delete(edge.from)
+        }
+      })
+    }
+  }, [project.id])
+  // Canvas -> grid: os PTYs dos agentes desmontam e os cabos somem do main;
+  // limpa o mapa para reinstalar os mesmos cabos ao voltar ao canvas.
+  useEffect(() => {
+    if (isCanvas) return
+    const queue = pipeQueueRef.current
+    for (const from of Array.from(appliedPipesRef.current.keys())) {
+      void queue(from, null)
+    }
+    appliedPipesRef.current.clear()
+  }, [isCanvas, project.id])
+  useEffect(() => {
+    const applied = appliedPipesRef.current
+    const queue = pipeQueueRef.current
+    return () => {
+      for (const from of Array.from(applied.keys())) {
+        void queue(from, null)
+      }
+      applied.clear()
+    }
+  }, [project.id])
   const terminalId = useMemo(
     () => 'workspace-' + project.id.replace(/[^a-z0-9_-]/gi, '-').slice(0, 48),
     [project.id],
@@ -419,7 +485,7 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
         </div>
       </header>
 
-      {isCanvas ? <WorkspaceCanvas project={project} workbench={canvasWorkbench} browser={layout.webVisible ? canvasBrowser : undefined} agentAccount={codexAccount} agentProviders={agentProviders} onSendAgentTask={queueAgentTask} onCreateAgentWorktree={(node) => void isolateAgent(node)} onSelectionChange={onCanvasFocusChange} pendingNodeRequest={pendingCanvasNode && isPendingNodeForProject(pendingCanvasNode, project.id) ? { kind: pendingCanvasNode.kind, nonce: pendingCanvasNode.nonce } : null} onPendingNodeConsumed={handlePendingCanvasNodeConsumed} renderAgent={(node: CanvasNode, onAgentResult, onAgentTaskFailure) => <div className="canvas-agent-terminal"><div className="canvas-agent-review"><span>Worktree</span><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void reviewAgent(node)}>Alterações</button><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void mergeAgent(node)}>Integrar</button></div><WorkspaceTerminal projectPath={agentWorktrees[node.id]?.path || project.path} terminalId={'agent-' + project.id.replace(/[^a-z0-9_-]/gi, '-').slice(0, 32) + '-' + node.id.slice(-18)} codexAccount={node.account || codexAccount} provider={node.provider || 'codex'} agentTask={agentTasks[node.id]} onAgentResult={onAgentResult} onAgentTaskFailure={onAgentTaskFailure} onNotify={onNotify} onRequestCodexAuth={onRequestCodexAuth} /></div>} /> : <>
+      {isCanvas ? <WorkspaceCanvas project={project} workbench={canvasWorkbench} browser={layout.webVisible ? canvasBrowser : undefined} agentAccount={codexAccount} agentProviders={agentProviders} onSendAgentTask={queueAgentTask} onCreateAgentWorktree={(node) => void isolateAgent(node)} onSelectionChange={onCanvasFocusChange} onConnectionsChange={syncCanvasPipes} pendingNodeRequest={pendingCanvasNode && isPendingNodeForProject(pendingCanvasNode, project.id) ? { kind: pendingCanvasNode.kind, nonce: pendingCanvasNode.nonce } : null} onPendingNodeConsumed={handlePendingCanvasNodeConsumed} renderAgent={(node: CanvasNode, onAgentResult, onAgentTaskFailure) => <div className="canvas-agent-terminal"><div className="canvas-agent-review"><span>Worktree</span><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void reviewAgent(node)}>Alterações</button><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void mergeAgent(node)}>Integrar</button></div><WorkspaceTerminal projectPath={agentWorktrees[node.id]?.path || project.path} terminalId={agentTerminalId(project.id, node.id)} codexAccount={node.account || codexAccount} provider={node.provider || 'codex'} agentTask={agentTasks[node.id]} onAgentResult={onAgentResult} onAgentTaskFailure={onAgentTaskFailure} onNotify={onNotify} onRequestCodexAuth={onRequestCodexAuth} /></div>} /> : <>
       <div className="workspace-editor-stack">
         <WorkspaceEditor
           projectPath={project.path}

@@ -231,6 +231,41 @@ async function verifyCoordinatorOrchestration(window, viewport) {
   await evaluate(window, `window.__devorbitVerifyFixture.setWriteTerminalFailure(false)`)
   recordPass(viewport.label, 'terminal write failure blocks the orchestration')
   recordPass(viewport.label, 'um clique no Coordenador executa planejamento, Implementação, Revisão, Testes e consolidação final')
+
+  // FASE 3 — race real: no backend o marcador chega pelo evento PTY ANTES de
+  // sendAgentTurn resolver. O taskId precisa ser registrado antes do await
+  // para o listener entregar ao canvas e a fila avançar mesmo assim.
+  await evaluate(window, `window.__devorbitVerifyFixture.resetCalls()`)
+  const coordinatorProviderChanged = await evaluate(window, `(() => {
+    const card = Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]'))
+      .find((node) => node.querySelector('select')?.value === 'Coordenador')
+    const select = card?.querySelector('[aria-label="Provedor do agente"]')
+    if (!select) return false
+    select.value = 'opencode'
+    select.dispatchEvent(new Event('change', { bubbles: true }))
+    return select.value === 'opencode'
+  })()`)
+  assert(coordinatorProviderChanged, `${viewport.label}: não foi possível selecionar OpenCode no Coordenador`)
+  await evaluate(window, `window.__devorbitVerifyFixture.setSendAgentTurnResult('plano entregue antes da promessa')`)
+  const raceRunStarted = await evaluate(window, `(() => {
+    const card = Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]'))
+      .find((node) => node.querySelector('select')?.value === 'Coordenador')
+    const send = card?.querySelector('[data-agent-send]')
+    if (!send || send.disabled) return false
+    send.click()
+    return true
+  })()`)
+  assert(raceRunStarted, `${viewport.label}: coordinator race run did not start`)
+  const raceAdvance = await waitFor(window, `(() => Array.from(window.__devorbitVerifyFixture.getCalls())
+    .filter((call) => call.name === 'writeTerminal')
+    .find((call) => String(call.args[1]).includes('Você atua como Implementação neste projeto') && String(call.args[1]).includes('plano entregue antes da promessa')))()`, `${viewport.label} race turn advanced the queue`)
+  assert(
+    await evaluate(window, `window.__devorbitVerifyFixture.getCalls().some((call) => call.name === 'sendAgentTurn')`),
+    `${viewport.label}: race turn não passou por sendAgentTurn`
+  )
+  recordPass(viewport.label, 'turno não-Codex entrega resultado emitido antes da resolução e avança a fila')
+  await emitResult(raceAdvance.args[0], 'BLOQUEADO: encerrando teste de race', 'the race halt')
+  await waitFor(window, `document.querySelector('.workspace-canvas-orchestration-status[data-orchestration-phase="blocked"]')`, `${viewport.label} race run halted`)
 }
 
 async function key(window, keyName, options = {}) {

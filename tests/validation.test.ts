@@ -5,6 +5,7 @@ import path from 'node:path'
 import {
   testToolPath,
   validateCodexAccount,
+  validateConfigUpdates,
   validateFiniteNumber,
   validateGitInitOptions,
   validateGitPushOptions,
@@ -98,6 +99,16 @@ describe('IPC input validation', () => {
     expect(validateFiniteNumber(200, 'Limite', { minimum: 5, maximum: 200, integer: true })).toBe(200)
     expect(() => validateFiniteNumber(201, 'Limite', { minimum: 5, maximum: 200, integer: true })).toThrow('Limite inválido')
     expect(() => validateFiniteNumber(4, 'Limite', { minimum: 5, maximum: 200, integer: true })).toThrow('Limite inválido')
+  })
+
+  it('validates BYOK model routing without accepting garbage', async () => {
+    expect(await validateConfigUpdates({ modelRouting: { fastModel: 'ministral-3b' } })).toEqual({
+      modelRouting: { fastModel: 'ministral-3b' },
+    })
+    expect(await validateConfigUpdates({ modelRouting: {} })).toEqual({ modelRouting: undefined })
+    await expect(validateConfigUpdates({ modelRouting: 'nope' })).rejects.toThrow(
+      'Configuração de modelos inválida'
+    )
   })
 
   it('canonicalizes project directories and removes duplicate paths', async () => {

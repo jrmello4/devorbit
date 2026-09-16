@@ -3,6 +3,7 @@ import type { IpcRendererEvent } from 'electron'
 const { contextBridge, ipcRenderer } = electron
 import type {
   AppConfig,
+  CompanionSummary,
   DevOrbitAPI,
   IpcEventChannel,
   IpcInvokeChannel,
@@ -80,16 +81,27 @@ const api: DevOrbitAPI = {
       : invoke('devorbit:startTerminal', id, projectPath, cols, rows),
   startCodexTerminal: (id, projectPath, account, cols, rows) =>
     invoke('devorbit:startCodexTerminal', id, projectPath, account, cols, rows),
-  startAgentTerminal: (id, projectPath, provider, cols, rows) =>
-    invoke('devorbit:startAgentTerminal', id, projectPath, provider, cols, rows),
+  startAgentTerminal: (id, projectPath, provider, cols, rows, task) =>
+    task === undefined
+      ? invoke('devorbit:startAgentTerminal', id, projectPath, provider, cols, rows)
+      : invoke('devorbit:startAgentTerminal', id, projectPath, provider, cols, rows, task),
   resizeTerminal: (id, cols, rows) =>
     invoke('devorbit:resizeTerminal', id, cols, rows),
   writeTerminal: (id: string, input: string) =>
     invoke('devorbit:writeTerminal', id, input),
   stopTerminal: (id: string) =>
     invoke('devorbit:stopTerminal', id),
+  pipeTerminals: (fromId: string, toId: string | null) =>
+    invoke('devorbit:pipeTerminals', fromId, toId),
+  sendAgentTurn: (terminalId, provider, projectPath, prompt, timeouts) =>
+    timeouts === undefined
+      ? invoke('devorbit:sendAgentTurn', terminalId, provider, projectPath, prompt)
+      : invoke('devorbit:sendAgentTurn', terminalId, provider, projectPath, prompt, timeouts),
   onTerminalEvent: (callback) => {
     return subscribe<TerminalEvent>('devorbit:terminalEvent', callback)
+  },
+  onCompanionEvent: (callback) => {
+    return subscribe<CompanionSummary>('devorbit:companionEvent', callback)
   },
   navigateWeb: (url: string) =>
     invoke('devorbit:navigateWeb', url),

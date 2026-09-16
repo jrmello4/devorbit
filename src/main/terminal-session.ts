@@ -1,4 +1,5 @@
 import { spawn as spawnPty, type IPty } from 'node-pty'
+import { clearPipesFor, resetPipes } from './pty-pipe'
 
 export interface TerminalEvent {
   id: string
@@ -88,7 +89,9 @@ export async function startTerminal(
 ): Promise<{ id: string; pid: number | undefined }> {
   if (!isValidId(id)) throw new Error('Identificador de terminal inválido.')
   if (typeof cwd !== 'string' || !cwd.trim()) throw new Error('Diretório do terminal inválido.')
-  stopTerminal(id)
+  // Restart interno (mesmo id): preserva as arestas — o cabo visual continua
+  // desenhado e o piping volta a valer na nova sessão. stopTerminal limpa.
+  stopTerminal(id, { keepPipes: true })
   const { cols, rows } = clampDimensions(options.cols, options.rows)
   const command = options.command || (process.platform === 'win32' ? (process.env.ComSpec || 'cmd.exe') : (process.env.SHELL || 'bash'))
   if (typeof command !== 'string' || !command.trim()) throw new Error('Comando do terminal inválido.')
@@ -155,8 +158,11 @@ export function resizeTerminal(id: string, cols: number, rows: number): boolean 
   return true
 }
 
-export function stopTerminal(id: string): void {
+export function stopTerminal(id: string, options?: { keepPipes?: boolean }): void {
   const record = sessions.get(id)
+  // Limpeza bidirecional por padrão: remove cabos que saem E que chegam neste
+  // terminal. Restart interno usa keepPipes para preservar o grafo visual.
+  if (!options?.keepPipes) clearPipesFor(id)
   if (!record) return
   sessions.delete(id)
   try {
@@ -168,4 +174,5 @@ export function stopTerminal(id: string): void {
 
 export function stopAllTerminals(): void {
   for (const id of Array.from(sessions.keys())) stopTerminal(id)
+  resetPipes()
 }

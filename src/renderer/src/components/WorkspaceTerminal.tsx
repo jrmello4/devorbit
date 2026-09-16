@@ -76,6 +76,10 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
   const onAgentTaskFailureRef = useRef(onAgentTaskFailure)
   const activeTaskRef = useRef<string | null>(null)
   const reportedTaskFailuresRef = useRef(new Set<string>())
+  // Tarefas cujo resultado/blocked já foi entregue ao canvas (via evento PTY
+  // ou via retorno de sendAgentTurn). Garante entrega única e determinística
+  // mesmo quando o marcador chega antes da Promise resolver.
+  const deliveredTaskResultsRef = useRef(new Set<string>())
   const terminalDataWaitersRef = useRef(new Set<() => void>())
   onNotifyRef.current = onNotify
   onRequestCodexAuthRef.current = onRequestCodexAuth
@@ -94,6 +98,16 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
     if (activeTaskRef.current === taskId) activeTaskRef.current = null
     onNotifyRef.current('A tarefa automática do agente foi bloqueada: ' + message, 'error')
     onAgentTaskFailureRef.current?.(taskId, message)
+  }, [])
+
+  // Entrega o resultado de um turno ao canvas exatamente uma vez por tarefa.
+  // O listener do PTY pode ter entregado antes (marcador veio antes da
+  // resolução); nesse caso esta chamada é um no-op.
+  const deliverTaskResult = useCallback((taskId: string, result: string) => {
+    const normalized = result.trim().slice(0, 1000)
+    if (!normalized || deliveredTaskResultsRef.current.has(taskId)) return
+    deliveredTaskResultsRef.current.add(taskId)
+    onAgentResultRef.current?.(normalized, taskId)
   }, [])
 
   const scheduleFitFrame = useCallback((callback: () => void): number => {
@@ -245,7 +259,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
     }
   }, [codexAccount, projectPath, scheduleFitFrame, scheduleFitTimeout, terminalId, waitForTerminalData])
 
-  const startAgent = useCallback(async () => {
+  const startAgent = useCallback(async (task?: string) => {
     if (provider === 'codex') return startCodex()
     const startToken = ++terminalStartTokenRef.current
     terminalModeRef.current = 'agent'
@@ -264,6 +278,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
         provider,
         terminalRef.current?.cols,
         terminalRef.current?.rows,
+        task,
       )
       if (!result.success) {
         readySignal.cancel()
@@ -277,9 +292,13 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
       }
       await readySignal.promise
       if (startToken === terminalStartTokenRef.current) {
+        if (result.provider) activeProviderRef.current = result.provider
         setTerminalMode('agent')
         terminalRef.current?.clear()
         terminalRef.current?.writeln('\x1b[90mDevOrbit iniciou o agente local nesta sessão.\x1b[0m')
+        if (result.tier && result.model) {
+          terminalRef.current?.writeln(`\x1b[90mRoteado para tier ${result.tier} (${result.model}).\x1b[0m`)
+        }
         setTerminalState('ready')
       }
       return result
@@ -400,7 +419,12 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
             reportedResultsRef.current.add(resultKey)
             const taskId = activeTaskRef.current || undefined
             activeTaskRef.current = null
-            onAgentResultRef.current?.(result.slice(0, 1000), taskId)
+            // Entrega única por tarefa: se o turno já entregou o resultado
+            // pelo retorno (evento perdido/tardio), não duplica no canvas.
+            if (!taskId || !deliveredTaskResultsRef.current.has(taskId)) {
+              if (taskId) deliveredTaskResultsRef.current.add(taskId)
+              onAgentResultRef.current?.(result.slice(0, 1000), taskId)
+            }
           }
         }
         terminal.write(event.data)
@@ -467,10 +491,60 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
     const deliver = async () => {
       deliveringTaskRef.current = agentTask.id
       try {
-        const expectedMode = provider === 'codex' ? 'codex' : 'agent'
+        // Fronteira real do turno (FASE 3): o main resolve tier/modelo pelo
+        // prompt, garante o CLI com o env do turno, entrega, aguarda o
+        // marcador e só faz failover em erro transitório — mesmo terminal id.
+        // O taskId é registrado ANTES do await: no backend real o marcador
+        // chega pelo evento PTY antes desta Promise resolver, e o listener
+        // precisa do id para entregar ao canvas. O retorno também é entregue
+        // explicitamente (dedup) caso o evento não tenha sido observado.
+        if (provider !== 'codex') {
+          activeTaskRef.current = agentTask.id
+          const turn = await window.devorbit.sendAgentTurn(terminalId, provider, projectPath, agentTask.prompt)
+          if (cancelled) return
+          if (!turn.success) {
+            activeTaskRef.current = null
+            reportTaskFailure(agentTask.id, turn.message || 'O agente não executou a tarefa.')
+            return
+          }
+          if (turn.provider) activeProviderRef.current = turn.provider
+          if (turn.blocked) {
+            activeTaskRef.current = null
+            // Se o listener já entregou o texto bloqueado como resultado, o
+            // canvas marcou o bloqueio; reportTaskFailure duplicaria o toast.
+            if (!deliveredTaskResultsRef.current.has(agentTask.id)) {
+              reportTaskFailure(agentTask.id, turn.blocked)
+            }
+            return
+          }
+          if (turn.result) {
+            // No backend real o listener normalmente já entregou (marcador
+            // antes da resolução); deliverTaskResult deduplica por tarefa.
+            deliverTaskResult(agentTask.id, turn.result)
+            activeTaskRef.current = null
+          } else if (deliveredTaskResultsRef.current.has(agentTask.id)) {
+            activeTaskRef.current = null
+          }
+          // Sem result e sem entrega: o marcador ainda virá por evento PTY e
+          // o taskId precisa continuar ativo para o listener entregar.
+          if (!cancelled) {
+            completedTaskRef.current = agentTask.id
+            terminalModeRef.current = 'agent'
+            setTerminalMode('agent')
+            setTerminalState('ready')
+            onNotifyRef.current(
+              `Tarefa enviada ao agente${turn.model ? ` (tier ${turn.tier}, ${turn.model})` : ''}.`,
+              'success'
+            )
+          } else if (activeTaskRef.current === agentTask.id) {
+            activeTaskRef.current = null
+          }
+          return
+        }
+        const expectedMode = 'codex'
         const ready = activeProviderRef.current === provider && terminalModeRef.current === expectedMode && terminalStateRef.current === 'ready'
           ? { success: true }
-          : await startAgent()
+          : await startAgent(agentTask.prompt)
         if (cancelled) return
         if (!ready?.success) {
           reportTaskFailure(agentTask.id, ready?.message || 'O Codex não ficou disponível para receber a tarefa.')
@@ -501,7 +575,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
       cancelled = true
       if (activeTaskRef.current === agentTask.id && completedTaskRef.current !== agentTask.id) activeTaskRef.current = null
     }
-  }, [agentTask, provider, reportTaskFailure, startAgent, terminalId])
+  }, [agentTask, deliverTaskResult, provider, reportTaskFailure, startAgent, terminalId])
 
   const openDetectedLink = async () => {
     if (!lastDetectedUrl) return

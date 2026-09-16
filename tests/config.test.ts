@@ -108,4 +108,43 @@ describe('config persistence hardening', () => {
     await expect(importConfigJson('')).rejects.toThrow('inválido')
     await expect(importConfigJson(JSON.stringify({ projectDirs: ['/missing-dir-xyz'] }))).rejects.toThrow()
   })
+
+  it('round-trips modelRouting through save/load/export/import', async () => {
+    const secret = `sk-test-${'x'.repeat(16)}`
+    const saved = await saveConfig({
+      modelRouting: { fastModel: 'ministral-3b', openaiApiKey: secret },
+    })
+    expect(saved.modelRouting).toMatchObject({ fastModel: 'ministral-3b' })
+
+    const loaded = await loadConfig()
+    expect(loaded.modelRouting?.fastModel).toBe('ministral-3b')
+    expect(loaded.modelRouting?.openaiApiKey).toBe(secret)
+
+    // Atualização parcial não descarta chaves já salvas.
+    await saveConfig({ modelRouting: { deepModel: 'claude-sonnet' } })
+    const merged = await loadConfig()
+    expect(merged.modelRouting).toMatchObject({
+      fastModel: 'ministral-3b',
+      deepModel: 'claude-sonnet',
+      openaiApiKey: secret,
+    })
+
+    const exported = await exportConfigJson()
+    const imported = await importConfigJson(exported)
+    expect(imported.modelRouting?.deepModel).toBe('claude-sonnet')
+
+    // O segredo persiste no arquivo do usuário, mas nenhuma visão
+    // serializada para logs o expõe em claro.
+    const { redactSecrets } = await import('../src/main/agent-providers')
+    expect(redactSecrets(exported)).not.toContain(secret)
+    expect(JSON.stringify(saved)).toContain(secret)
+  })
+
+  it('drops invalid modelRouting values on load', async () => {
+    await fs.writeFile(
+      path.join(temporaryUserData, 'config.json'),
+      JSON.stringify({ modelRouting: { fastModel: 'has space', openaiApiKey: '   ' } })
+    )
+    expect((await loadConfig()).modelRouting).toBeUndefined()
+  })
 })

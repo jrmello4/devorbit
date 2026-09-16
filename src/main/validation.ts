@@ -3,6 +3,7 @@ import { promisify } from 'node:util'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import type { AgentProviderId, AppConfig, ManagedProject } from '../renderer/src/types'
+import { validateModelRoutingConfig } from './agent-providers'
 
 const execFileAsync = promisify(execFile)
 
@@ -437,6 +438,11 @@ export async function validateConfigUpdates(value: unknown): Promise<Partial<App
   }
   if ('customPaths' in value && value.customPaths !== undefined) {
     updates.customPaths = validateCustomPaths(value.customPaths)
+  }
+  if ('modelRouting' in value && value.modelRouting !== undefined) {
+    const routing = validateModelRoutingConfig(value.modelRouting)
+    if (routing) updates.modelRouting = routing
+    else updates.modelRouting = undefined
   }
   return updates
 }

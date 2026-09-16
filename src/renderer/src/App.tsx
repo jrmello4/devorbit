@@ -62,8 +62,10 @@ export const App: React.FC = () => {
   const [notification, setNotification] = useState<{
     message: string
     type: 'success' | 'error' | 'info'
+    actions?: Array<{ id: string; label: string }>
   } | null>(null)
   const notificationTimerRef = useRef<number | null>(null)
+  const notificationActionRef = useRef<((id: string) => void) | null>(null)
 
   const openCommandPalette = useCallback(() => {
     commandPaletteOriginRef.current = document.activeElement instanceof HTMLElement
@@ -82,12 +84,17 @@ export const App: React.FC = () => {
   }, [])
 
   const notify = useCallback(
-    (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+    (
+      message: string,
+      type: 'success' | 'error' | 'info' = 'info',
+      options?: { actions?: Array<{ id: string; label: string }>; onAction?: (id: string) => void },
+    ) => {
       if (notificationTimerRef.current) {
         window.clearTimeout(notificationTimerRef.current)
         notificationTimerRef.current = null
       }
-      setNotification({ message, type })
+      notificationActionRef.current = options?.onAction || null
+      setNotification({ message, type, ...(options?.actions ? { actions: options.actions } : {}) })
       // Errors remain visible until the user dismisses them so failures are not lost.
       if (type !== 'error') {
         notificationTimerRef.current = window.setTimeout(() => {
@@ -483,6 +490,28 @@ export const App: React.FC = () => {
     setActiveWorkspaceProject(nextProject || null)
     if (!nextProject) setWorkspaceView('projects')
   }
+
+  // Companion: toast com ação Ver ambiente abre o projeto dono do terminal.
+  // Efeito após openIntegratedWorkspace para não acessar a const na TDZ.
+  useEffect(() => {
+    if (!window.devorbit?.onCompanionEvent) return
+    const unsubscribe = window.devorbit.onCompanionEvent((summary) => {
+      notify(`${summary.title}: ${summary.message} ${summary.suggestion}`, summary.outcome === 'completed' ? 'success' : summary.outcome === 'blocked' ? 'error' : 'info', {
+        actions: summary.actions,
+        onAction: (id) => {
+          if (id === 'view-workspace') {
+            const owner = summary.projectPath
+              ? projects.find((project) => project.path === summary.projectPath)
+              : undefined
+            if (owner) openIntegratedWorkspace(owner)
+            else setWorkspaceView('workspace')
+          }
+          setNotification(null)
+        },
+      })
+    })
+    return unsubscribe
+  }, [notify, openIntegratedWorkspace, projects])
 
   useEffect(() => {
     const warnAboutDrafts = (event: BeforeUnloadEvent) => {
@@ -915,6 +944,15 @@ export const App: React.FC = () => {
             <Info aria-hidden="true" className="w-4 h-4 text-stone-700 shrink-0" />
           )}
           <span className="text-pretty font-medium text-stone-800">{notification.message}</span>
+          {notification.actions?.map((action) => (
+            <button
+              key={action.id}
+              onClick={() => notificationActionRef.current?.(action.id)}
+              className="ms-1 inline-flex min-h-8 items-center justify-center rounded-lg bg-[#3e562f] px-3 text-xs font-semibold text-white transition-[background-color] hover:bg-[#334827]"
+            >
+              {action.label}
+            </button>
+          ))}
           <button
             onClick={() => setNotification(null)}
             aria-label="Fechar notificação"

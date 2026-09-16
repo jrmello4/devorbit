@@ -87,6 +87,25 @@ export interface CodexTerminalStartResult {
 export interface AgentTerminalStartResult extends CodexTerminalStartResult {
   provider?: AgentProviderId
   command?: string
+  tier?: 'fast' | 'deep'
+  model?: string
+}
+
+export interface AgentTurnAttempt {
+  provider: AgentProviderId
+  ok: boolean
+  error?: string
+}
+
+export interface AgentTurnResult {
+  success: boolean
+  provider: AgentProviderId
+  model: string
+  tier: 'fast' | 'deep'
+  result?: string
+  blocked?: string
+  attempts: AgentTurnAttempt[]
+  message?: string
 }
 
 export interface TerminalEvent {
@@ -137,6 +156,12 @@ export interface AppConfig {
     vscode?: string
     wt?: string
   }
+  modelRouting?: {
+    fastModel?: string
+    deepModel?: string
+    openaiApiKey?: string
+    anthropicApiKey?: string
+  }
 }
 
 export interface SyncResult {
@@ -172,6 +197,24 @@ export interface GitFileDiff {
   message: string
 }
 
+export type CompanionOutcome = 'completed' | 'blocked' | 'failed'
+
+export interface CompanionAction {
+  id: 'view-workspace' | 'dismiss'
+  label: string
+}
+
+export interface CompanionSummary {
+  terminalId: string
+  projectPath?: string
+  outcome: CompanionOutcome
+  title: string
+  message: string
+  suggestion: string
+  code?: number | null
+  actions: CompanionAction[]
+}
+
 export type IpcInvokeChannel =
   | 'devorbit:getProjects' | 'devorbit:refreshProjects' | 'devorbit:getOtherDirs'
   | 'devorbit:listProjectFiles' | 'devorbit:readProjectFile' | 'devorbit:saveProjectFile'
@@ -185,6 +228,7 @@ export type IpcInvokeChannel =
   | 'devorbit:createAgentWorktree'
   | 'devorbit:integrateAgentWorktree'
   | 'devorbit:resizeTerminal' | 'devorbit:writeTerminal' | 'devorbit:stopTerminal'
+  | 'devorbit:pipeTerminals' | 'devorbit:sendAgentTurn'
   | 'devorbit:navigateWeb' | 'devorbit:getWebState' | 'devorbit:goBackWeb'
   | 'devorbit:goForwardWeb' | 'devorbit:reloadWeb' | 'devorbit:setWebVisible'
   | 'devorbit:disposeWebPanel' | 'devorbit:setWebBounds' | 'devorbit:launchTool'
@@ -198,7 +242,7 @@ export type IpcInvokeChannel =
 
 export type IpcEventChannel =
   | 'devorbit:syncProgress' | 'devorbit:terminalEvent' | 'devorbit:webEvent'
-  | 'devorbit:updateStatus' | 'devorbit:codexAuthProgress'
+  | 'devorbit:updateStatus' | 'devorbit:codexAuthProgress' | 'devorbit:companionEvent'
 
 export type IpcSendChannel = 'devorbit:windowControl'
 
@@ -399,11 +443,21 @@ export interface DevOrbitAPI {
     provider: AgentProviderId,
     cols?: number,
     rows?: number,
+    task?: string,
   ) => Promise<AgentTerminalStartResult>
   resizeTerminal: (id: string, cols: number, rows: number) => Promise<{ success: boolean }>
   writeTerminal: (id: string, input: string) => Promise<{ success: boolean }>
   stopTerminal: (id: string) => Promise<{ success: boolean }>
+  pipeTerminals: (fromId: string, toId: string | null) => Promise<{ success: boolean }>
+  sendAgentTurn: (
+    terminalId: string,
+    provider: AgentProviderId,
+    projectPath: string,
+    prompt: string,
+    timeouts?: { idleMs?: number; overallMs?: number },
+  ) => Promise<AgentTurnResult>
   onTerminalEvent: (callback: (event: TerminalEvent) => void) => () => void
+  onCompanionEvent: (callback: (summary: CompanionSummary) => void) => () => void
   navigateWeb: (url: string) => Promise<{ success: boolean; url?: string; message?: string }>
   getWebState: () => Promise<WebPanelEvent>
   goBackWeb: () => Promise<{ success: boolean }>

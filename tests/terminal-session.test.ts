@@ -105,4 +105,46 @@ describe('terminal-session', () => {
     expect(first.kill).toHaveBeenCalledOnce()
     expect(second.kill).toHaveBeenCalledOnce()
   })
+
+  it('restart interno preserva arestas; stop limpa nas duas direções', async () => {
+    const terminal = createFakeTerminal(701)
+    spawnMock.mockReturnValue(terminal)
+    const session = await import('../src/main/terminal-session')
+    const pipes = await import('../src/main/pty-pipe')
+
+    await session.startTerminal('pipe-src', 'C:\\workspace')
+    await session.startTerminal('pipe-dst', 'C:\\workspace')
+    pipes.setPipe('pipe-src', 'pipe-dst')
+    expect(pipes.listPipes()).toEqual([{ from: 'pipe-src', to: 'pipe-dst' }])
+
+    // Restart (mesmo id, ex. failover com troca de modelo): o cabo visual
+    // continua desenhado, então o piping é preservado.
+    await session.startTerminal('pipe-src', 'C:\\workspace')
+    expect(pipes.listPipes()).toEqual([{ from: 'pipe-src', to: 'pipe-dst' }])
+    expect(session.hasTerminal('pipe-src')).toBe(true)
+
+    // Destino parado: sem cabo pendurado, origem viva.
+    session.stopTerminal('pipe-dst')
+    expect(pipes.listPipes()).toEqual([])
+    expect(session.hasTerminal('pipe-src')).toBe(true)
+
+    // Origem parada também limpa suas saídas.
+    pipes.setPipe('pipe-src', 'pipe-dst')
+    await session.startTerminal('pipe-dst', 'C:\\workspace')
+    session.stopTerminal('pipe-src')
+    expect(pipes.listPipes()).toEqual([])
+  })
+
+  it('parar tudo zera o grafo', async () => {
+    const terminal = createFakeTerminal(801)
+    spawnMock.mockReturnValue(terminal)
+    const session = await import('../src/main/terminal-session')
+    const pipes = await import('../src/main/pty-pipe')
+
+    await session.startTerminal('pipe-src', 'C:\\workspace')
+    await session.startTerminal('pipe-dst', 'C:\\workspace')
+    pipes.setPipe('pipe-src', 'pipe-dst')
+    session.stopAllTerminals()
+    expect(pipes.listPipes()).toEqual([])
+  })
 })

@@ -11,9 +11,12 @@ import { getGitFileDiff, validateGitDiffPathspec } from './git-diff'
 import { getGitInitPreview, initGitRepository } from './git-init'
 import { ensureAccountDirectories, getAccountLabel, hasValidCodexAuth, resolveCodexCommand } from './account-profiles'
 import { launchTool, copyProjectContext, getToolHealth } from './launcher'
-import { resolveAgentProviderCommand } from './agent-providers'
+import { executeAgentTurnWithFallback, getAgentProviderHealth, orderProvidersForTask, resolveAgentProviderWithFallback, resolveAgentTurn } from './agent-providers'
+import { createResultWaiter, sendAgentTurn, spawnAgentProviderTerminal } from './agent-turn'
 import { createProjectDirectory, createProjectFile, deleteProjectEntry, listProjectFiles, moveProjectEntry, readProjectFile, saveProjectFile } from './project-files'
-import { onTerminalEvent, resizeTerminal, startTerminal, stopAllTerminals, stopTerminal, writeTerminal, TERMINAL_MAX_COLS, TERMINAL_MAX_ROWS, TERMINAL_MIN_COLS, TERMINAL_MIN_ROWS, type TerminalEvent } from './terminal-session'
+import { onTerminalEvent, hasTerminal, resizeTerminal, startTerminal, stopAllTerminals, stopTerminal, writeTerminal, TERMINAL_MAX_COLS, TERMINAL_MAX_ROWS, TERMINAL_MIN_COLS, TERMINAL_MIN_ROWS, type TerminalEvent } from './terminal-session'
+import { clearPipe, clearPipesFor, installPtyPipe, setPipe } from './pty-pipe'
+import { beginCompanionTerminalStart, handleCompanionTerminalEvent, onCompanionEvent, registerCompanionTerminal, unregisterAllCompanionTerminals, unregisterCompanionTerminal, type CompanionSummary } from './companion'
 import { attachWebPanel, disposeWebPanel, getWebState, goBackWeb, goForwardWeb, navigateWeb, onWebPanelEvent, reloadWeb, setWebBounds, setWebVisible } from './web-panel'
 import {
   checkCodexAuthStatus,
@@ -25,10 +28,14 @@ import {
   getProjectMemory,
   saveProjectMemory,
   generateMemoryFromGit,
+  cancelAllMemoryCompactions,
+  cancelMemoryCompaction,
+  syncMemorySchedulers,
 } from './memory'
 import { getRealUsage } from './usage-real'
 import { downloadUpdate, getUpdateState, initializeUpdater, installUpdate } from './updater'
 import type {
+  AgentProviderId,
   AppConfig,
   IpcInvokeChannel,
   IpcSendChannel,
@@ -76,6 +83,7 @@ let terminalLifecycleGeneration = 0
 function invalidateTerminalLifecycle(): void {
   terminalLifecycleGeneration += 1
   stopAllTerminals()
+  unregisterAllCompanionTerminals()
 }
 
 function assertTerminalLifecycle(generation: number): void {
@@ -90,7 +98,24 @@ function sendTerminalEvent(event: TerminalEvent): void {
   window.webContents.send('devorbit:terminalEvent', event)
 }
 
+function sendCompanionEvent(summary: CompanionSummary): void {
+  const window = mainWindow
+  if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return
+  window.webContents.send('devorbit:companionEvent', summary)
+}
+
 onTerminalEvent(sendTerminalEvent)
+onTerminalEvent(handleCompanionTerminalEvent)
+onCompanionEvent(sendCompanionEvent)
+installPtyPipe({
+  subscribe: onTerminalEvent,
+  write: writeTerminal,
+  exists: hasTerminal,
+})
+
+// Sessões de turno (provedor + modelo efetivos por terminal) para sendAgentTurn.
+const turnSessions = new Map<string, { provider: AgentProviderId; model: string }>()
+const waitTurnResult = createResultWaiter(onTerminalEvent)
 onWebPanelEvent((event) => {
   const window = mainWindow
   if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return
@@ -248,6 +273,7 @@ if (!hasSingleInstanceLock) {
 app.on('before-quit', () => {
   invalidateTerminalLifecycle()
   disposeWebPanel()
+  cancelAllMemoryCompactions()
 })
 
 app.on('window-all-closed', () => {
@@ -284,13 +310,17 @@ function setupIpcHandlers() {
   // Obter lista de projetos
   registerIpcHandler('devorbit:getProjects', async () => {
     const config = await loadConfig()
-    return await scanAllProjects(config.projectDirs, false, config.managedProjects)
+    const projects = await scanAllProjects(config.projectDirs, false, config.managedProjects)
+    syncMemorySchedulers(projects.map((project) => project.path))
+    return projects
   })
 
   // Atualizar projetos forçando novo scan
   registerIpcHandler('devorbit:refreshProjects', async () => {
     const config = await loadConfig()
-    return await scanAllProjects(config.projectDirs, true, config.managedProjects)
+    const projects = await scanAllProjects(config.projectDirs, true, config.managedProjects)
+    syncMemorySchedulers(projects.map((project) => project.path))
+    return projects
   })
 
   registerIpcHandler('devorbit:getOtherDirs', async () => {
@@ -446,6 +476,7 @@ function setupIpcHandlers() {
       return { success: false, message: `Liberação recusada: não foi possível salvar o cadastro do projeto (${error?.message || 'erro de configuração'}).` }
     }
     const result = await finalizeGitProject(safePath, { allowRecreatableIgnored })
+    if (result.success) cancelMemoryCompaction(safePath)
     return result
   })
 
@@ -558,10 +589,13 @@ function setupIpcHandlers() {
     assertTerminalLifecycle(generation)
     const safeCols = cols === undefined ? undefined : validateFiniteNumber(cols, 'Colunas do terminal', { minimum: TERMINAL_MIN_COLS, maximum: TERMINAL_MAX_COLS, integer: true })
     const safeRows = rows === undefined ? undefined : validateFiniteNumber(rows, 'Linhas do terminal', { minimum: TERMINAL_MIN_ROWS, maximum: TERMINAL_MAX_ROWS, integer: true })
-    return await startTerminal(id, safePath, {
+    beginCompanionTerminalStart(id)
+    const started = await startTerminal(id, safePath, {
       ...(safeCols !== undefined ? { cols: safeCols } : {}),
       ...(safeRows !== undefined ? { rows: safeRows } : {}),
     })
+    registerCompanionTerminal(id, { projectPath: safePath })
+    return started
   })
 
   registerIpcHandler('devorbit:startCodexTerminal', async (
@@ -605,6 +639,7 @@ function setupIpcHandlers() {
     const command = isScript ? (process.env.ComSpec || 'cmd.exe') : codexCommand
     const args = isScript ? ['/d', '/q', '/k', 'call "' + codexCommand + '"'] : []
     assertTerminalLifecycle(generation)
+    beginCompanionTerminalStart(id)
     const result = await startTerminal(id, safePath, {
       command,
       args,
@@ -612,6 +647,7 @@ function setupIpcHandlers() {
       cols: safeCols,
       rows: safeRows,
     })
+    registerCompanionTerminal(id, { projectPath: safePath })
     return {
       success: true,
       ...result,
@@ -627,6 +663,7 @@ function setupIpcHandlers() {
     provider: unknown,
     cols?: unknown,
     rows?: unknown,
+    task?: unknown,
   ) => {
     if (typeof id !== 'string' || !/^[a-z0-9_-]{1,64}$/i.test(id)) throw new Error('Identificador de terminal inválido.')
     const generation = terminalLifecycleGeneration
@@ -638,34 +675,50 @@ function setupIpcHandlers() {
         message: 'O Codex usa o fluxo de conta do DevOrbit; selecione uma conta Codex ou outro provedor.',
       }
     }
+    const safeTask = task === undefined || task === null ? undefined : String(task).slice(0, 8000)
+    if (task !== undefined && task !== null && typeof task !== 'string') throw new Error('Tarefa do turno inválida.')
     const safePath = await validateProjectPath(projectPath)
     const config = await loadConfig()
     assertTerminalLifecycle(generation)
-    const resolved = await resolveAgentProviderCommand(config, safeProvider)
-    if (!resolved.path) {
-      return { success: false, provider: safeProvider, message: resolved.message }
-    }
-    if (/[%!]/.test(resolved.path)) {
-      return { success: false, provider: safeProvider, message: 'O caminho do provedor contém caracteres que o terminal não pode executar com segurança.' }
-    }
+    // Resolução por turno: o prompt classifica tier/modelo e ordena provedores
+    // (preferido + fallbacks prontos). O spawn tenta em ordem e só faz failover
+    // em erro transitório classificado, devolvendo o provedor efetivo.
+    const turn = await resolveAgentTurn(config, safeProvider, safeTask)
+    const ordered = orderProvidersForTask(turn.provider, (await getAgentProviderHealth(config))
+      .filter((item) => item.state === 'ready')
+      .map((item) => item.id))
     const safeCols = cols === undefined ? 120 : validateFiniteNumber(cols, 'Colunas do terminal', { minimum: TERMINAL_MIN_COLS, maximum: TERMINAL_MAX_COLS, integer: true })
     const safeRows = rows === undefined ? 32 : validateFiniteNumber(rows, 'Linhas do terminal', { minimum: TERMINAL_MIN_ROWS, maximum: TERMINAL_MAX_ROWS, integer: true })
-    const isScript = /\.(?:cmd|bat)$/i.test(resolved.path)
-    const command = isScript ? (process.env.ComSpec || 'cmd.exe') : resolved.path
-    const args = isScript ? ['/d', '/q', '/k', 'call "' + resolved.path + '"'] : []
-    assertTerminalLifecycle(generation)
-    const result = await startTerminal(id, safePath, {
-      command,
-      args,
-      cols: safeCols,
-      rows: safeRows,
+    beginCompanionTerminalStart(id)
+    const execution = await executeAgentTurnWithFallback(ordered, async (candidate) => {
+      const spawned = await spawnAgentProviderTerminal(
+        {
+          resolveWithFallback: resolveAgentProviderWithFallback,
+          startTerminal: (spawnId, options) => startTerminal(spawnId, safePath, options),
+          assertLive: () => assertTerminalLifecycle(generation),
+        },
+        {
+          id,
+          candidate,
+          model: turn.model,
+          tier: turn.tier,
+          routing: config.modelRouting,
+          cols: safeCols,
+          rows: safeRows,
+        },
+        config
+      )
+      return { started: spawned.started, provider: spawned.provider, command: spawned.command }
     })
+    registerCompanionTerminal(id, { projectPath: safePath })
     return {
       success: true,
-      ...result,
-      provider: safeProvider,
-      command: resolved.path,
-      message: safeProvider + ' iniciado no terminal interno. Se precisar, autentique pelo próprio CLI.',
+      ...execution.result.started,
+      provider: execution.result.provider ?? execution.provider,
+      command: execution.result.command,
+      tier: turn.tier,
+      model: turn.model,
+      message: (execution.result.provider ?? execution.provider) + ' iniciado no terminal interno. Se precisar, autentique pelo próprio CLI.',
     }
   })
 
@@ -685,7 +738,102 @@ function setupIpcHandlers() {
   registerIpcHandler('devorbit:stopTerminal', (_event, id: unknown) => {
     if (typeof id !== 'string' || !/^[a-z0-9_-]{1,64}$/i.test(id)) throw new Error('Identificador de terminal inválido.')
     stopTerminal(id)
+    clearPipesFor(id)
+    turnSessions.delete(id)
+    unregisterCompanionTerminal(id)
     return { success: true }
+  })
+
+  registerIpcHandler('devorbit:pipeTerminals', (_event, fromId: unknown, toId: unknown) => {
+    if (typeof fromId !== 'string' || !/^[a-z0-9_-]{1,64}$/i.test(fromId)) throw new Error('Identificador de terminal inválido.')
+    if (toId === null || toId === undefined) {
+      clearPipe(fromId)
+      return { success: true }
+    }
+    if (typeof toId !== 'string') throw new Error('Identificador de terminal inválido.')
+    setPipe(fromId, toId)
+    return { success: true }
+  })
+
+  // Fronteira real de execução do turno (FASE 3): resolve tier/modelo pelo
+  // prompt, garante o CLI com o env do turno, entrega, aguarda o marcador e
+  // só faz failover em erro transitório — reutilizando o mesmo terminal id.
+  registerIpcHandler('devorbit:sendAgentTurn', async (
+    _event,
+    terminalId: unknown,
+    provider: unknown,
+    projectPath: string,
+    prompt: unknown,
+    timeouts?: unknown,
+  ) => {
+    if (typeof terminalId !== 'string' || !/^[a-z0-9_-]{1,64}$/i.test(terminalId)) throw new Error('Identificador de terminal inválido.')
+    const safeProvider = validateAgentProvider(provider)
+    if (safeProvider === 'codex') {
+      throw new Error('O Codex usa o fluxo de conta do DevOrbit; use startCodexTerminal.')
+    }
+    const safePath = await validateProjectPath(projectPath)
+    if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 8000) throw new Error('Prompt do turno inválido.')
+    let idleMs: number | undefined
+    let overallMs: number | undefined
+    if (timeouts !== undefined && timeouts !== null) {
+      if (typeof timeouts !== 'object' || Array.isArray(timeouts)) throw new Error('Timeouts do turno inválidos.')
+      const raw = timeouts as Record<string, unknown>
+      if (raw.idleMs !== undefined) idleMs = validateFiniteNumber(raw.idleMs, 'Timeout de ociosidade', { minimum: 1000, maximum: 600_000, integer: true })
+      if (raw.overallMs !== undefined) overallMs = validateFiniteNumber(raw.overallMs, 'Timeout total', { minimum: 5000, maximum: 1800_000, integer: true })
+    }
+    const generation = terminalLifecycleGeneration
+    const outcome = await sendAgentTurn(
+      {
+        getSession: (id) => turnSessions.get(id),
+        setSession: (id, session) => turnSessions.set(id, session),
+        clearSession: (id) => turnSessions.delete(id),
+        hasTerminal,
+        spawn: async (id, turn) => {
+          const turnConfig = await loadConfig()
+          beginCompanionTerminalStart(id)
+          const spawned = await spawnAgentProviderTerminal(
+            {
+              resolveWithFallback: resolveAgentProviderWithFallback,
+              startTerminal: (spawnId, options) => startTerminal(spawnId, safePath, options),
+              assertLive: () => assertTerminalLifecycle(generation),
+            },
+            {
+              id,
+              candidate: turn.provider,
+              model: turn.model,
+              tier: turn.tier,
+              routing: turnConfig.modelRouting,
+              cols: 120,
+              rows: 32,
+            },
+            turnConfig
+          )
+          registerCompanionTerminal(id, { projectPath: safePath })
+          // Provedor efetivo resolvido no spawn (health pode trocar o
+          // candidato); sendAgentTurn usa isso na sessão e no desfecho.
+          return { provider: spawned.provider }
+        },
+        write: writeTerminal,
+        waitResult: waitTurnResult,
+        resolveTurn: async (candidate, taskPrompt) => {
+          const turnConfig = await loadConfig()
+          return resolveAgentTurn(turnConfig, candidate, taskPrompt)
+        },
+        orderProviders: orderProvidersForTask,
+        readyProviders: async () => (await getAgentProviderHealth(await loadConfig()))
+          .filter((item) => item.state === 'ready')
+          .map((item) => item.id),
+      },
+      {
+        terminalId,
+        provider: safeProvider,
+        prompt,
+        ...(idleMs !== undefined || overallMs !== undefined
+          ? { timeouts: { ...(idleMs !== undefined ? { idleMs } : {}), ...(overallMs !== undefined ? { overallMs } : {}) } }
+          : {}),
+      }
+    )
+    return { success: true, ...outcome }
   })
 
   registerIpcHandler('devorbit:navigateWeb', async (_event, url: unknown) => {

@@ -89,6 +89,34 @@ function normalizeProjectAccounts(value: unknown): Record<string, 'account1' | '
   }
   return result
 }
+
+function normalizeModelName(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  if (!trimmed || trimmed.length > 200 || /[\s"']/.test(trimmed)) return undefined
+  return trimmed
+}
+
+function normalizeModelApiKey(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  if (!trimmed || trimmed.length > 500 || /\s/.test(trimmed)) return undefined
+  return trimmed
+}
+
+function normalizeModelRouting(value: unknown): AppConfig['modelRouting'] {
+  if (!isRecord(value)) return undefined
+  const result: NonNullable<AppConfig['modelRouting']> = {}
+  const fastModel = normalizeModelName(value.fastModel)
+  const deepModel = normalizeModelName(value.deepModel)
+  const openaiApiKey = normalizeModelApiKey(value.openaiApiKey)
+  const anthropicApiKey = normalizeModelApiKey(value.anthropicApiKey)
+  if (fastModel) result.fastModel = fastModel
+  if (deepModel) result.deepModel = deepModel
+  if (openaiApiKey) result.openaiApiKey = openaiApiKey
+  if (anthropicApiKey) result.anthropicApiKey = anthropicApiKey
+  return Object.keys(result).length > 0 ? result : undefined
+}
 function normalizeConfig(value: unknown): AppConfig {
   const source = isRecord(value) ? value : {}
   const rawProjectDirs = source.projectDirs
@@ -116,6 +144,7 @@ function normalizeConfig(value: unknown): AppConfig {
     if (normalized !== undefined) customPaths[key] = normalized
   }
 
+  const modelRouting = normalizeModelRouting(source.modelRouting)
   return {
     projectDirs: hasValidProjectDirList ? projectDirs : [...defaultConfig.projectDirs],
     managedProjects: normalizeManagedProjects(source.managedProjects),
@@ -131,6 +160,7 @@ function normalizeConfig(value: unknown): AppConfig {
       defaultConfig.chatGptAccount2Name
     ),
     customPaths,
+    ...(modelRouting ? { modelRouting } : {}),
   }
 }
 
@@ -208,6 +238,13 @@ export async function saveConfig(updates: Partial<AppConfig>): Promise<AppConfig
         ...current.customPaths,
         ...(updates.customPaths || {}),
       },
+      // modelRouting funde por campo como customPaths: atualizações parciais
+      // (só fastModel, por exemplo) não descartam as chaves já salvas.
+      ...(updates.modelRouting !== undefined
+        ? { modelRouting: { ...current.modelRouting, ...updates.modelRouting } }
+        : current.modelRouting !== undefined
+          ? { modelRouting: current.modelRouting }
+          : {}),
     })
 
     await atomicallyWriteConfig(filePath, merged)
