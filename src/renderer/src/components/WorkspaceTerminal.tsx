@@ -41,6 +41,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
   // session as a shell session.
   const terminalStartTokenRef = useRef(0)
   const terminalModeRef = useRef<TerminalMode>('shell')
+  const fitTerminalRef = useRef<() => void>(() => undefined)
   const onNotifyRef = useRef(onNotify)
   const onRequestCodexAuthRef = useRef(onRequestCodexAuth)
   const onAgentResultRef = useRef(onAgentResult)
@@ -105,6 +106,18 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
         terminalRef.current?.clear()
         terminalRef.current?.writeln('\x1b[90mDevOrbit iniciou o Codex nesta sessão.\x1b[0m')
         setTerminalState('ready')
+        // The Codex TUI switches to an alternate screen after its process has
+        // started. Re-fit it after that switch so its grid uses the card's real
+        // dimensions instead of the initial CMD dimensions.
+        const refit = () => {
+          if (startToken !== terminalStartTokenRef.current || terminalModeRef.current !== 'codex') return
+          fitTerminalRef.current()
+          const terminal = terminalRef.current
+          if (terminal) terminal.refresh(0, Math.max(0, terminal.rows - 1))
+        }
+        window.requestAnimationFrame(refit)
+        window.setTimeout(refit, 140)
+        window.setTimeout(refit, 650)
       }
       return result
     } catch (error) {
@@ -170,6 +183,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
         // visibility. The next resize event will fit it again.
       }
     }
+    fitTerminalRef.current = fitTerminal
 
     const resizeObserver = new ResizeObserver(() => {
       window.requestAnimationFrame(fitTerminal)
@@ -228,6 +242,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
       terminal.dispose()
       terminalRef.current = null
       fitAddonRef.current = null
+      fitTerminalRef.current = () => undefined
       void window.devorbit.stopTerminal(terminalId)
     }
   }, [projectPath, terminalId])

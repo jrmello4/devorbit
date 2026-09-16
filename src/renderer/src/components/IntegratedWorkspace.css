@@ -273,7 +273,8 @@
 .terminal-codex-button { min-height: 26px; padding-block: 3px; color: #cfe2c7; }
 .terminal-codex-button:hover:not(:disabled) { background: #34432f; border-color: #52614d; color: #f4f8f1; }
 .workspace-terminal-xterm { flex: 1; min-height: 0; padding: 8px 10px 10px; overflow: hidden; }
-.workspace-terminal-xterm .xterm { height: 100%; }
+.workspace-terminal-xterm .xterm { width: 100%; height: 100%; border: 1px solid rgba(154, 176, 143, .12); border-radius: 5px; }
+.workspace-terminal-xterm .xterm-screen { width: 100%; }
 .workspace-terminal-xterm .xterm-viewport { border-radius: 4px; }
 .terminal-heading strong { color: #e8efe4; }
 .terminal-heading > div { gap: 12px; }

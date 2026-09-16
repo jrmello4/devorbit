@@ -412,8 +412,8 @@ export const WorkspaceCanvas: React.FC<{
             account: agentAccount,
             x,
             y,
-            width: 440,
-            height: 320,
+            width: 500,
+            height: 360,
             z: Math.max(0, ...current.nodes.map((node) => node.z)) + 1,
           },
         ],
@@ -432,7 +432,7 @@ export const WorkspaceCanvas: React.FC<{
     const agents = roles.map((role, index) => ({
       id: nodeId(), kind: "agent" as const, title: "Agente: " + role, role, account: agentAccount,
       x: originX + 390 + (index % 2) * 430, y: originY + Math.floor(index / 2) * 300,
-      width: 400, height: 270, z: index + 2,
+      width: 500, height: 340, z: index + 2,
     }));
     update((current) => ({
       ...current,
@@ -441,9 +441,9 @@ export const WorkspaceCanvas: React.FC<{
     }), true);
     setSelected([noteId, ...agents.map((agent) => agent.id)]);
   }, [agentAccount, update]);
-  const deleteSelected = useCallback(() => {
+  const deleteNodes = useCallback((ids: string[]) => {
     const removable = new Set(
-      selected.filter((id) =>
+      ids.filter((id) =>
         canvasRef.current.nodes.find(
           (node) => node.id === id && !fixedKinds.has(node.kind),
         ),
@@ -462,7 +462,11 @@ export const WorkspaceCanvas: React.FC<{
       true,
     );
     setSelected([]);
-  }, [selected, update]);
+    setConnectFrom((current) => current && removable.has(current) ? null : current);
+  }, [update]);
+  const deleteSelected = useCallback(() => {
+    deleteNodes(selected);
+  }, [deleteNodes, selected]);
   const duplicateSelected = useCallback(() => {
     const source = canvasRef.current.nodes.find(
       (node) =>
@@ -618,7 +622,11 @@ export const WorkspaceCanvas: React.FC<{
     () => new Map(canvas.nodes.map((node) => [node.id, node])),
     [canvas.nodes],
   );
-  const canDelete = selected.some((id) => nodeMap.get(id)?.kind === "note");
+  const deletableSelection = selected.filter((id) => {
+    const node = nodeMap.get(id);
+    return node && !fixedKinds.has(node.kind);
+  });
+  const canDelete = deletableSelection.length > 0;
   const removeLinks = () => {
     const ids = new Set(selected);
     update(
@@ -889,6 +897,16 @@ export const WorkspaceCanvas: React.FC<{
                     onClick={() => sendAgentTask(node)}
                   ><Send size={13} /></button>
                 )}
+                {!fixedKinds.has(node.kind) && (
+                  <button
+                    type="button"
+                    className="canvas-delete-node"
+                    aria-label={"Excluir " + node.title}
+                    title={node.kind === "agent" ? "Excluir terminal do agente" : "Excluir nota"}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={() => deleteNodes([node.id])}
+                  ><Trash2 size={13} /></button>
+                )}
                 <button
                   data-canvas-drag-handle
                   type="button"
@@ -984,7 +1002,7 @@ export const WorkspaceCanvas: React.FC<{
           onClick={deleteSelected}
         >
           <Trash2 size={14} /> Excluir{" "}
-          {selected.length > 1 ? "selecionados" : "nota"}
+          {deletableSelection.length > 1 ? "selecionados" : nodeMap.get(deletableSelection[0])?.kind === "agent" ? "terminal" : "nota"}
         </button>
       )}
     </div>
