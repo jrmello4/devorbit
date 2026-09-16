@@ -99,7 +99,7 @@ export interface TerminalEvent {
 }
 
 export interface WebPanelEvent {
-  type: 'loading' | 'loaded' | 'navigated' | 'error'
+  type: 'loading' | 'loaded' | 'navigated' | 'error' | 'palette-shortcut'
   url: string
   title?: string
   message?: string

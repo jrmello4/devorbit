@@ -367,13 +367,14 @@ async function inspectProjectInteractions(window, viewport) {
     window.confirm = () => { window.__devorbitVerifyConfirmCalls += 1; return false }
     return true
   })()`)
-  await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Abrir canvas', `${viewport.label} guarded canvas launch`)
-  await waitFor(window, `!document.querySelector('.workspace-canvas')`, `${viewport.label} guarded canvas mode`)
+  const canvasBeforeGuard = await evaluate(window, `Boolean(document.querySelector('.workspace-canvas'))`)
+  await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Abrir canvas' || node.getAttribute('aria-label') === 'Voltar ao layout integrado', `${viewport.label} guarded canvas launch`)
+  await waitFor(window, `Boolean(document.querySelector('.workspace-canvas')) === ${canvasBeforeGuard ? 'true' : 'false'}`, `${viewport.label} guarded canvas mode`)
   const modeGuard = await evaluate(window, `({
     confirmCalls: window.__devorbitVerifyConfirmCalls || 0,
     canvas: Boolean(document.querySelector('.workspace-canvas')),
   })`)
-  assert(modeGuard.confirmCalls > 0 && !modeGuard.canvas, `${viewport.label}: troca de layout ignorou rascunho (${JSON.stringify(modeGuard)})`)
+  assert(modeGuard.confirmCalls > 0 && modeGuard.canvas === canvasBeforeGuard, `${viewport.label}: troca de layout ignorou rascunho (${JSON.stringify(modeGuard)})`)
   recordPass(viewport.label, 'troca de layout confirma rascunhos e preserva o modo atual quando cancelada')
   await evaluate(window, `(() => { window.confirm = () => true; return true })()`)
   const canvasAlreadyOpen = await evaluate(window, `Boolean(document.querySelector('.workspace-canvas'))`)
@@ -406,7 +407,9 @@ async function inspectProjectInteractions(window, viewport) {
   const terminalIds = await evaluate(window, `Array.from(window.__devorbitVerifyFixture.getCalls())
     .filter((call) => call.name === 'startTerminal' || call.name === 'startCodexTerminal')
     .map((call) => call.args[0])`)
-  assert(terminalIds.length >= 2 && new Set(terminalIds).size === 1, `${viewport.label}: terminal perdeu o ID ao trocar para o canvas (${JSON.stringify(terminalIds)})`)
+  // FASE 2: o projeto abre direto no canvas; pode haver 1 start (sem toggle)
+  // ou 2+ (grid -> canvas). O invariante é o mesmo ID de sessão.
+  assert(terminalIds.length >= 1 && new Set(terminalIds).size === 1, `${viewport.label}: terminal perdeu o ID ao trocar para o canvas (${JSON.stringify(terminalIds)})`)
   recordPass(viewport.label, 'canvas reinicia o terminal usando o mesmo identificador de sessão')
   const canvasInteractions = await evaluate(window, `(function () {
     const workbench = document.querySelector('[data-canvas-card="workbench"]')
@@ -698,6 +701,12 @@ async function inspectSettingsAndPalette(window, viewport) {
   assert(restoredSettingsFocus === 'Configurações', `${viewport.label}: settings Escape não restaurou foco (${restoredSettingsFocus})`)
   recordPass(viewport.label, 'settings Escape closes and restores trigger focus')
 
+  // FASE 2: valida Ctrl+K com o painel Web visível — navega ao workspace para
+  // garantir a view nativa ativa antes de abrir a paleta.
+  await clickButtonByText(window, (node) => (node.getAttribute('title') || '').startsWith('Ambiente integrado de '), `${viewport.label} workspace restore for palette`)
+  await waitFor(window, `Boolean(document.querySelector('.integrated-workspace') && document.querySelector('.integrated-workspace-view:not([hidden])'))`, `${viewport.label} workspace active for palette`)
+  await waitFor(window, `window.__devorbitVerifyFixture.getCalls().filter((call) => call.name === 'setWebVisible').length > 0 && window.__devorbitVerifyFixture.getCalls().filter((call) => call.name === 'setWebVisible').at(-1).args[0] === true`, `${viewport.label} palette native web visible`)
+  const paletteOrigin = await evaluate(window, `document.activeElement?.getAttribute('title') || ''`)
   await key(window, 'k', { ctrlKey: true })
   await waitFor(window, `Boolean(document.querySelector('[role="dialog"] #command-palette-search'))`, `${viewport.label} command palette`)
   const paletteFocus = await evaluate(window, `(() => {
@@ -708,12 +717,23 @@ async function inspectSettingsAndPalette(window, viewport) {
   assert(paletteFocus.activeId === 'command-palette-search' && paletteFocus.activeInside, `${viewport.label}: command palette não moveu foco (${JSON.stringify(paletteFocus)})`)
   assert(paletteFocus.options > 0, `${viewport.label}: command palette sem ações`)
   recordPass(viewport.label, `command palette opens and focuses search with ${paletteFocus.options} options`)
+  // FASE 2: a view nativa pinta acima do DOM; com a paleta aberta ela deve ser
+  // ocultada (preservando URL/sessão) para o input ficar utilizável.
+  await waitFor(window, `window.__devorbitVerifyFixture.getCalls().filter((call) => call.name === 'setWebVisible').length > 0 && window.__devorbitVerifyFixture.getCalls().filter((call) => call.name === 'setWebVisible').at(-1).args[0] === false`, `${viewport.label} palette native web hidden`)
+  const paletteWebState = await evaluate(window, `(() => {
+    const input = document.querySelector('#command-palette-search')
+    const dialog = document.querySelector('[role="dialog"]')
+    return { usable: Boolean(input && !input.disabled && dialog && dialog.contains(document.activeElement)) }
+  })()`)
+  assert(paletteWebState.usable, `${viewport.label}: command center inutilizável com painel web visível`)
+  recordPass(viewport.label, 'command palette usable over native web with state preserved')
   await screenshot(window, `desktop-${viewport.label}-command-palette`)
   await key(window, 'Escape')
   await waitFor(window, `!document.querySelector('[role="dialog"] #command-palette-search')`, `${viewport.label} palette Escape`)
-  await waitFor(window, `document.activeElement?.getAttribute('title') === 'Configurações'`, `${viewport.label} palette focus restore`)
+  await waitFor(window, `window.__devorbitVerifyFixture.getCalls().filter((call) => call.name === 'setWebVisible').at(-1).args[0] === true`, `${viewport.label} palette native web restored`)
+  await waitFor(window, `document.activeElement?.getAttribute('title') === ${JSON.stringify(paletteOrigin)}`, `${viewport.label} palette focus restore`)
   const restoredPaletteFocus = await evaluate(window, `document.activeElement?.getAttribute('title') || document.activeElement?.getAttribute('aria-label') || ''`)
-  assert(restoredPaletteFocus === 'Configurações', `${viewport.label}: palette Escape não restaurou o controle de origem (${restoredPaletteFocus})`)
+  assert(restoredPaletteFocus === paletteOrigin, `${viewport.label}: palette Escape não restaurou o controle de origem (${restoredPaletteFocus})`)
   recordPass(viewport.label, 'command palette Escape closes and restores origin focus')
 }
 

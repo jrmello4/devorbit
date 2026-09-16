@@ -9,6 +9,10 @@ import { GitDock, type GitDockTab } from './components/GitDock'
 import { CommandPalette } from './components/CommandPalette'
 import { UpdateModal } from './components/UpdateModal'
 import { ToolHealthModal } from './components/ToolHealthModal'
+import type { CreateActionId, NavigateActionId } from './components/command-center-helpers'
+import { resolvePaletteToggle } from './components/command-center-helpers'
+import type { PendingCanvasNode, WorkspaceUiRequest } from './components/workspace-request-helpers'
+import { buildPendingCanvasNode, buildWorkspaceUiRequest, computeWebSuppressed } from './components/workspace-request-helpers'
 import type {
   Project,
   OtherDir,
@@ -40,6 +44,9 @@ export const App: React.FC = () => {
   const [workspaceView, setWorkspaceView] = useState<'projects' | 'usage' | 'workspace'>('projects')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false)
+  const [focusedCanvasNode, setFocusedCanvasNode] = useState<{ id: string; title: string; kind: string } | null>(null)
+  const [pendingCanvasNode, setPendingCanvasNode] = useState<PendingCanvasNode | null>(null)
+  const [workspaceUiRequest, setWorkspaceUiRequest] = useState<WorkspaceUiRequest | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [bootstrapError, setBootstrapError] = useState('')
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -508,17 +515,66 @@ export const App: React.FC = () => {
     setIsGitDockOpen(true)
   }, [])
 
+  // Command Center (FASE 2): navegação G + tecla e criação C + tecla.
+  // Abrir a paleta nunca desmonta workspaces/terminais; só alterna o overlay.
+  // G+C/G+T forçam canvas (+ terminal primário) via uiRequest explícito, mesmo
+  // com projeto salvo em grid ou terminal oculto.
+  const handlePaletteNavigate = useCallback((action: NavigateActionId) => {
+    const fallbackProject = activeWorkspaceProject || projects[0] || null
+    if (action === 'nav-projects') setWorkspaceView('projects')
+    else if (action === 'nav-canvas' || action === 'nav-terminal') {
+      if (fallbackProject) {
+        setWorkspaceProjects((current) => current.some((item) => item.id === fallbackProject.id) ? current : [...current, fallbackProject])
+        setActiveWorkspaceProject(fallbackProject)
+        setWorkspaceUiRequest(buildWorkspaceUiRequest(fallbackProject.id, {
+          forceCanvas: true,
+          showTerminal: action === 'nav-terminal',
+        }))
+      }
+      setWorkspaceView('workspace')
+    } else if (action === 'nav-git') openGitDock('push', fallbackProject)
+    else if (action === 'nav-memory') {
+      if (fallbackProject) setActiveMemoryProject(fallbackProject)
+      else notify('Selecione um projeto para abrir a memória.', 'info')
+    } else if (action === 'nav-settings') setIsSettingsOpen(true)
+  }, [activeWorkspaceProject, notify, openGitDock, projects])
+
+  // C+N/C+T usam fila pendente consumida após a montagem do canvas: no
+  // primeiro uso a partir de Projetos não há WorkspaceCanvas montado, então
+  // despachar evento síncrono seria perdido com notificação falsa.
+  const handlePaletteCreate = useCallback((action: CreateActionId) => {
+    const fallbackProject = activeWorkspaceProject || projects[0] || null
+    if (action === 'create-agent-terminal' || action === 'create-note') {
+      if (!fallbackProject) {
+        notify('Abra um projeto antes de criar nós no canvas.', 'info')
+        return
+      }
+      setWorkspaceProjects((current) => current.some((item) => item.id === fallbackProject.id) ? current : [...current, fallbackProject])
+      setActiveWorkspaceProject(fallbackProject)
+      setWorkspaceView('workspace')
+      setWorkspaceUiRequest(buildWorkspaceUiRequest(fallbackProject.id, { forceCanvas: true, showTerminal: false }))
+      setPendingCanvasNode(buildPendingCanvasNode(fallbackProject.id, action === 'create-note' ? 'note' : 'agent'))
+      notify('Pedido registrado — o nó será criado ao abrir o canvas.', 'info')
+    } else if (action === 'create-branch') openGitDock('branches', fallbackProject)
+    else if (action === 'create-project') openGitDock('clone', null)
+  }, [activeWorkspaceProject, notify, openGitDock, projects])
+
+  const handleConsumePendingCanvasNode = useCallback((nonce: number) => {
+    setPendingCanvasNode((current) => current && current.nonce === nonce ? null : current)
+  }, [])
+
+  const handleConsumeWorkspaceUiRequest = useCallback((nonce: number) => {
+    setWorkspaceUiRequest((current) => current && current.nonce === nonce ? null : current)
+  }, [])
+
   // Atalhos de teclado globais
+  // Ctrl/Cmd+K alterna o Command Center em qualquer visão sem encerrar agentes:
+  // workspaces, terminais PTY e tarefas permanecem montados; só o overlay abre/fecha.
   useEffect(() => {
     const isUpdateModalOpen = Boolean(
       updateState &&
       !isUpdateDismissed &&
       ['available', 'downloading', 'downloaded'].includes(updateState.status)
-    )
-    const hasOpenModal = Boolean(
-      isSettingsOpen || isToolHealthOpen || authModalAccount ||
-      activeMemoryProject || isCommandPaletteOpen ||
-      isUpdateModalOpen
     )
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target
@@ -529,21 +585,57 @@ export const App: React.FC = () => {
       )
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault()
-        if (hasOpenModal) return
-        openCommandPalette()
+        const intent = resolvePaletteToggle({
+          paletteOpen: isCommandPaletteOpen,
+          settingsOpen: isSettingsOpen,
+          toolHealthOpen: isToolHealthOpen,
+          authOpen: Boolean(authModalAccount),
+          memoryOpen: Boolean(activeMemoryProject),
+          updateModalOpen: isUpdateModalOpen,
+        })
+        if (intent === 'open') openCommandPalette()
+        else if (intent === 'close') closeCommandPalette()
+        return
       } else if ((e.ctrlKey || e.metaKey) && e.key === ',') {
         e.preventDefault()
-        if (hasOpenModal) return
+        if (isCommandPaletteOpen || isSettingsOpen || isToolHealthOpen || authModalAccount || activeMemoryProject || isUpdateModalOpen) return
         setIsSettingsOpen(true)
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'r') {
         e.preventDefault()
-        if (hasOpenModal || isEditableTarget) return
+        if (isCommandPaletteOpen || isSettingsOpen || isToolHealthOpen || authModalAccount || activeMemoryProject || isUpdateModalOpen || isEditableTarget) return
         void handleRefresh()
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [activeMemoryProject, authModalAccount, isSettingsOpen, isToolHealthOpen, isCommandPaletteOpen, isUpdateDismissed, openCommandPalette, updateState])
+  }, [activeMemoryProject, authModalAccount, closeCommandPalette, isCommandPaletteOpen, isSettingsOpen, isToolHealthOpen, isUpdateDismissed, openCommandPalette, updateState])
+
+  // Atalho global com o WebContentsView nativo focado: a página consome o
+  // teclado e o listener acima nunca dispara. O main encaminha Ctrl/Cmd+K via
+  // webEvent 'palette-shortcut' (sem navegar nem recarregar); aqui só alterna
+  // o overlay, preservando workspaces, terminais e sessão web.
+  useEffect(() => {
+    if (!window.devorbit) return
+    const isUpdateModalOpen = Boolean(
+      updateState &&
+      !isUpdateDismissed &&
+      ['available', 'downloading', 'downloaded'].includes(updateState.status)
+    )
+    const unsubscribe = window.devorbit.onWebEvent((event) => {
+      if (event.type !== 'palette-shortcut') return
+      const intent = resolvePaletteToggle({
+        paletteOpen: isCommandPaletteOpen,
+        settingsOpen: isSettingsOpen,
+        toolHealthOpen: isToolHealthOpen,
+        authOpen: Boolean(authModalAccount),
+        memoryOpen: Boolean(activeMemoryProject),
+        updateModalOpen: isUpdateModalOpen,
+      })
+      if (intent === 'open') openCommandPalette()
+      else if (intent === 'close') closeCommandPalette()
+    })
+    return unsubscribe
+  }, [activeMemoryProject, authModalAccount, closeCommandPalette, isCommandPaletteOpen, isSettingsOpen, isToolHealthOpen, isUpdateDismissed, openCommandPalette, updateState])
 
   const gitProjectsCount = projects.filter((p) => p.git.isRepo).length
   const isUpdateModalOpen = Boolean(
@@ -556,10 +648,18 @@ export const App: React.FC = () => {
     !isCommandPaletteOpen &&
     ['available', 'downloading', 'downloaded'].includes(updateState.status)
   )
-  const isWorkspaceWebSuppressed = workspaceView !== 'workspace' || Boolean(
-    isSettingsOpen || isToolHealthOpen || authModalAccount ||
-    activeMemoryProject || isCommandPaletteOpen || isUpdateModalOpen
-  )
+  // O WebContentsView nativo pinta acima do DOM: com o Command Center aberto a
+  // view nativa é ocultada (preservando URL/histórico/sessão) para o overlay e
+  // o input ficarem utilizáveis; ao fechar, a visibilidade é restaurada.
+  const isWorkspaceWebSuppressed = computeWebSuppressed({
+    workspaceView,
+    settingsOpen: isSettingsOpen,
+    toolHealthOpen: isToolHealthOpen,
+    authOpen: Boolean(authModalAccount),
+    memoryOpen: Boolean(activeMemoryProject),
+    paletteOpen: isCommandPaletteOpen,
+    updateModalOpen: isUpdateModalOpen,
+  })
 
   if (bootstrapError) {
     return (
@@ -643,6 +743,11 @@ export const App: React.FC = () => {
                 onRequestCodexAuth={setAuthModalAccount}
                 isWebSuppressed={isWorkspaceWebSuppressed || activeWorkspaceProject?.id !== workspaceProject.id}
                 onDirtyChange={(dirty) => setWorkspaceDirty((current) => current[workspaceProject.id] === dirty ? current : { ...current, [workspaceProject.id]: dirty })}
+                onCanvasFocusChange={activeWorkspaceProject?.id === workspaceProject.id ? setFocusedCanvasNode : undefined}
+                uiRequest={workspaceUiRequest && workspaceUiRequest.projectId === workspaceProject.id ? workspaceUiRequest : null}
+                onUiRequestConsumed={handleConsumeWorkspaceUiRequest}
+                pendingCanvasNode={pendingCanvasNode && pendingCanvasNode.projectId === workspaceProject.id ? pendingCanvasNode : null}
+                onPendingCanvasNodeConsumed={handleConsumePendingCanvasNode}
               />
               </Suspense>
             </div>
@@ -724,6 +829,9 @@ export const App: React.FC = () => {
         isRefreshing={isRefreshing}
         isSyncingAll={isSyncingAll}
         isSwitchingAccount={isSwitchingAccount}
+        focusedNode={focusedCanvasNode}
+        onNavigate={handlePaletteNavigate}
+        onCreate={handlePaletteCreate}
       />
 
       {/* Modal de Memória da Sessão & Handoff (estilo Akita AI Memory) */}

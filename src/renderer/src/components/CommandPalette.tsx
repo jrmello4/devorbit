@@ -12,6 +12,18 @@ import {
 import type { LucideIcon } from 'lucide-react'
 import type { Project } from '../types'
 import { AccessibleDialog } from './AccessibleDialog'
+import {
+  CREATE_BINDINGS,
+  NAVIGATE_BINDINGS,
+  detectPrefixQuery,
+  matchTwoStroke,
+  parseSpacedTwoStroke,
+  rankWithFocusedContext,
+  type CreateActionId,
+  type FocusedCanvasContext,
+  type NavigateActionId,
+  type TwoStrokePrefix,
+} from './command-center-helpers'
 
 interface CommandPaletteProps {
   isOpen: boolean
@@ -28,6 +40,9 @@ interface CommandPaletteProps {
   isRefreshing?: boolean
   isSyncingAll?: boolean
   isSwitchingAccount?: boolean
+  focusedNode?: FocusedCanvasContext | null
+  onNavigate?: (action: NavigateActionId) => void
+  onCreate?: (action: CreateActionId) => void
 }
 
 interface PaletteItem {
@@ -59,15 +74,31 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   isRefreshing = false,
   isSyncingAll = false,
   isSwitchingAccount = false,
+  focusedNode = null,
+  onNavigate,
+  onCreate,
 }) => {
   const [query, setQuery] = useState(search)
   const [highlightedIndex, setHighlightedIndex] = useState(0)
+  const [pendingPrefix, setPendingPrefix] = useState<TwoStrokePrefix | null>(null)
 
   useEffect(() => {
     if (!isOpen) return
     setQuery(search)
     setHighlightedIndex(0)
+    setPendingPrefix(null)
   }, [isOpen, search])
+
+  const runTwoStroke = (prefix: TwoStrokePrefix, key: string): boolean => {
+    const binding = matchTwoStroke(prefix, key)
+    if (!binding) return false
+    if (binding.prefix === 'g') {
+      onNavigate?.(binding.action as NavigateActionId)
+    } else {
+      onCreate?.(binding.action as CreateActionId)
+    }
+    return true
+  }
 
   const items = useMemo<PaletteItem[]>(() => {
     const normalizedQuery = query.trim().toLowerCase()
@@ -117,9 +148,13 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         )
       : commands
 
+    const spacedBinding = parseSpacedTwoStroke(query)
     const projectMatches = projects
       .filter((project) => {
-        if (!normalizedQuery) return true
+        if (!normalizedQuery || normalizedQuery === 'g' || normalizedQuery === 'c') return true
+        // Sequência válida de dois tempos (ex.: "g p"): mostra tudo pois a
+        // ação executa ao confirmar; qualquer outro texto com espaço filtra normal.
+        if (spacedBinding) return true
         return `${project.name} ${project.path} ${project.parentDir}`
           .toLowerCase()
           .includes(normalizedQuery)
@@ -133,9 +168,11 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         onSelect: () => onSearchChange(project.name),
       }))
 
-    return [...commandMatches, ...projectMatches]
+    const ranked = rankWithFocusedContext([...commandMatches, ...projectMatches], query, focusedNode)
+    return ranked
   }, [
     activeAccountLabel,
+    focusedNode,
     isRefreshing,
     isSyncingAll,
     isSwitchingAccount,
@@ -149,7 +186,35 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     query,
   ])
 
+  const handleQueryChange = (value: string) => {
+    const spaced = parseSpacedTwoStroke(value)
+    if (spaced) {
+      if (spaced.prefix === 'g') onNavigate?.(spaced.action as NavigateActionId)
+      else onCreate?.(spaced.action as CreateActionId)
+      setPendingPrefix(null)
+      setQuery('')
+      setHighlightedIndex(0)
+      onClose()
+      return
+    }
+    const prefix = detectPrefixQuery(value)
+    setPendingPrefix(prefix)
+    setQuery(value)
+    setHighlightedIndex(0)
+  }
+
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (pendingPrefix && event.key.length === 1) {
+      if (runTwoStroke(pendingPrefix, event.key)) {
+        event.preventDefault()
+        setPendingPrefix(null)
+        setQuery('')
+        setHighlightedIndex(0)
+        onClose()
+        return
+      }
+      setPendingPrefix(null)
+    }
     if (event.key === 'ArrowDown') {
       event.preventDefault()
       setHighlightedIndex((current) => (current + 1) % Math.max(items.length, 1))
@@ -203,12 +268,9 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
             type="text"
             autoFocus
             value={query}
-            onChange={(event) => {
-              setQuery(event.target.value)
-              setHighlightedIndex(0)
-            }}
+            onChange={(event) => handleQueryChange(event.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Pesquisar comandos e projetos..."
+            placeholder="Pesquisar comandos e projetos... (G + tecla navega, C + tecla cria)"
             role="combobox"
             aria-controls="command-palette-list"
             aria-expanded="true"
@@ -216,6 +278,14 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
             className="w-full bg-transparent py-4 ps-11 pe-4 text-base text-[var(--text-primary)] outline-none placeholder:text-[var(--color-text-muted)] sm:text-sm"
           />
         </div>
+
+        {(pendingPrefix || focusedNode) && (
+          <div className="flex flex-wrap items-center gap-2 border-b border-[var(--color-border-subtle)]/55 bg-[#f7f8f4] px-4 py-2 text-[11px] text-[var(--color-text-muted)]" aria-live="polite">
+            {pendingPrefix === 'g' && <span>Aguardando segunda tecla de navegação: P · C · T · G · M · S</span>}
+            {pendingPrefix === 'c' && <span>Aguardando segunda tecla de criação: T · N · B · P</span>}
+            {!pendingPrefix && focusedNode && <span>Contexto do canvas: {focusedNode.title} ({focusedNode.kind}) — resultados priorizados</span>}
+          </div>
+        )}
 
         <div
           id="command-palette-list"
@@ -268,8 +338,16 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         </div>
 
         <div className="flex items-center justify-between border-t border-[var(--color-border-subtle)] px-4 py-2.5 text-[10px] text-[var(--color-text-muted)]">
-          <span>Use ↑ ↓ para navegar</span>
+          <span>Use ↑ ↓ para navegar · G + tecla navega · C + tecla cria</span>
           <span className="flex items-center gap-1"><kbd className="rounded border border-[var(--color-border-subtle)] bg-white px-1">↵</kbd> executar</span>
+        </div>
+        <div className="flex flex-wrap gap-2 border-t border-[var(--color-border-subtle)]/55 px-4 py-2 text-[10px] text-[var(--color-text-muted)]" aria-label="Atalhos de dois tempos">
+          {NAVIGATE_BINDINGS.map((binding) => (
+            <span key={binding.hint} title={binding.label} className="rounded border border-[var(--color-border-subtle)] bg-white px-1.5 py-0.5 font-semibold">{binding.hint}</span>
+          ))}
+          {CREATE_BINDINGS.map((binding) => (
+            <span key={binding.hint} title={binding.label} className="rounded border border-[var(--color-border-subtle)] bg-white px-1.5 py-0.5 font-semibold">{binding.hint}</span>
+          ))}
         </div>
       </div>
     </AccessibleDialog>

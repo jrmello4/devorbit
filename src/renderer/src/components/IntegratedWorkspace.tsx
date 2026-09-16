@@ -4,6 +4,8 @@ import {
   RefreshCw, Send, Terminal, X,
 } from 'lucide-react'
 import type { AgentProvider, AgentProviderId, Project, ToolHealth, WebPanelEvent } from '../types'
+import type { PendingCanvasNode, WorkspaceUiRequest } from './workspace-request-helpers'
+import { applyWorkspaceUiRequest, isPendingNodeForProject } from './workspace-request-helpers'
 import { WorkspaceEditor, type WorkspaceEditorContext } from './WorkspaceEditor'
 import { WorkspaceTerminal } from './WorkspaceTerminal'
 import { WorkspaceCanvas, type CanvasNode } from './WorkspaceCanvas'
@@ -18,6 +20,11 @@ interface IntegratedWorkspaceProps {
   isSuspended?: boolean
   onRequestCodexAuth?: (account: 'account1' | 'account2') => void
   onDirtyChange?: (dirty: boolean) => void
+  onCanvasFocusChange?: (node: { id: string; title: string; kind: string } | null) => void
+  uiRequest?: WorkspaceUiRequest | null
+  onUiRequestConsumed?: (nonce: number) => void
+  pendingCanvasNode?: PendingCanvasNode | null
+  onPendingCanvasNodeConsumed?: (nonce: number) => void
 }
 interface WorkspaceLayout {
   rightWidth: number
@@ -62,8 +69,14 @@ function readLayout(id: string): WorkspaceLayout {
   }
 }
 
+export function resolveInitialWorkspaceMode(saved: string | null): 'canvas' | 'grid' {
+  if (saved === 'grid') return 'grid'
+  return 'canvas'
+}
+
 export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
-  project, onClose, onNotify, codexAccount = 'account1', isWebSuppressed = false, isSuspended = false, onRequestCodexAuth, onDirtyChange,
+  project, onClose, onNotify, codexAccount = 'account1', isWebSuppressed = false, isSuspended = false, onRequestCodexAuth, onDirtyChange, onCanvasFocusChange,
+  uiRequest = null, onUiRequestConsumed, pendingCanvasNode = null, onPendingCanvasNodeConsumed,
 }) => {
   const [webUrl, setWebUrl] = useState('https://www.google.com/')
   const [webTitle, setWebTitle] = useState('Navegador')
@@ -76,9 +89,35 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
   const [isEditorDirty, setIsEditorDirty] = useState(false)
   const suppressNativeWeb = isWebSuppressed || isSuspended
   const [layout, setLayout] = useState<WorkspaceLayout>(() => readLayout(project.id))
-  const [isCanvas, setIsCanvas] = useState(() => window.localStorage.getItem('devorbit:workspace-mode:' + project.id) === 'canvas')
+  const [isCanvas, setIsCanvas] = useState(() => {
+    try {
+      return resolveInitialWorkspaceMode(window.localStorage.getItem('devorbit:workspace-mode:' + project.id)) === 'canvas'
+    } catch {
+      return true
+    }
+  })
   const [dragging, setDragging] = useState<'browser' | 'terminal' | null>(null)
   const [agentTasks, setAgentTasks] = useState<Record<string, { id: string; prompt: string }>>({})
+  const consumedUiRef = useRef<Set<number>>(new Set())
+  // Requisição explícita App -> workspace (G+C/G+T/C+N/C+T): força canvas e/ou
+  // terminal primário mesmo com projeto salvo em grid ou terminal oculto.
+  useEffect(() => {
+    if (!uiRequest || uiRequest.projectId !== project.id || consumedUiRef.current.has(uiRequest.nonce)) return
+    consumedUiRef.current.add(uiRequest.nonce)
+    const next = applyWorkspaceUiRequest({ isCanvas, terminalVisible: layout.terminalVisible }, uiRequest, project.id)
+    if (next.isCanvas !== isCanvas) setIsCanvas(next.isCanvas)
+    if (next.terminalVisible !== layout.terminalVisible) {
+      setLayout((current) => ({ ...current, terminalVisible: next.terminalVisible }))
+    }
+    onUiRequestConsumed?.(uiRequest.nonce)
+  }, [isCanvas, layout.terminalVisible, onUiRequestConsumed, project.id, uiRequest])
+  const handlePendingCanvasNodeConsumed = useCallback((nonce: number) => {
+    const pending = pendingCanvasNode
+    onPendingCanvasNodeConsumed?.(nonce)
+    if (pending && pending.nonce === nonce && isPendingNodeForProject(pending, project.id)) {
+      onNotify(pending.kind === 'note' ? 'Nova nota criada no canvas.' : 'Novo terminal de agente criado no canvas.', 'success')
+    }
+  }, [onNotify, onPendingCanvasNodeConsumed, pendingCanvasNode, project.id])
   const [agentProviders, setAgentProviders] = useState<AgentProvider[]>([])
   const [agentWorktrees, setAgentWorktrees] = useState<Record<string, { path: string; branch: string }>>({})
   const terminalId = useMemo(
@@ -150,6 +189,9 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
     // to preserve their editor state, but must not observe or control it.
     if (suppressNativeWeb) return
     const unsubscribe = window.devorbit.onWebEvent((event: WebPanelEvent) => {
+      // Atalho global vindo do WebContentsView nativo: só sinaliza a App para
+      // abrir o Command Center; nunca altera URL, histórico ou loading.
+      if (event.type === 'palette-shortcut') return
       const nextUrl = event.url || 'https://www.google.com/'
       const nextTitle = event.title || 'Navegador'
       setWebUrl(nextUrl)
@@ -377,7 +419,7 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
         </div>
       </header>
 
-      {isCanvas ? <WorkspaceCanvas project={project} workbench={canvasWorkbench} browser={layout.webVisible ? canvasBrowser : undefined} agentAccount={codexAccount} agentProviders={agentProviders} onSendAgentTask={queueAgentTask} onCreateAgentWorktree={(node) => void isolateAgent(node)} renderAgent={(node: CanvasNode, onAgentResult, onAgentTaskFailure) => <div className="canvas-agent-terminal"><div className="canvas-agent-review"><span>Worktree</span><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void reviewAgent(node)}>Alterações</button><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void mergeAgent(node)}>Integrar</button></div><WorkspaceTerminal projectPath={agentWorktrees[node.id]?.path || project.path} terminalId={'agent-' + project.id.replace(/[^a-z0-9_-]/gi, '-').slice(0, 32) + '-' + node.id.slice(-18)} codexAccount={node.account || codexAccount} provider={node.provider || 'codex'} agentTask={agentTasks[node.id]} onAgentResult={onAgentResult} onAgentTaskFailure={onAgentTaskFailure} onNotify={onNotify} onRequestCodexAuth={onRequestCodexAuth} /></div>} /> : <>
+      {isCanvas ? <WorkspaceCanvas project={project} workbench={canvasWorkbench} browser={layout.webVisible ? canvasBrowser : undefined} agentAccount={codexAccount} agentProviders={agentProviders} onSendAgentTask={queueAgentTask} onCreateAgentWorktree={(node) => void isolateAgent(node)} onSelectionChange={onCanvasFocusChange} pendingNodeRequest={pendingCanvasNode && isPendingNodeForProject(pendingCanvasNode, project.id) ? { kind: pendingCanvasNode.kind, nonce: pendingCanvasNode.nonce } : null} onPendingNodeConsumed={handlePendingCanvasNodeConsumed} renderAgent={(node: CanvasNode, onAgentResult, onAgentTaskFailure) => <div className="canvas-agent-terminal"><div className="canvas-agent-review"><span>Worktree</span><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void reviewAgent(node)}>Alterações</button><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void mergeAgent(node)}>Integrar</button></div><WorkspaceTerminal projectPath={agentWorktrees[node.id]?.path || project.path} terminalId={'agent-' + project.id.replace(/[^a-z0-9_-]/gi, '-').slice(0, 32) + '-' + node.id.slice(-18)} codexAccount={node.account || codexAccount} provider={node.provider || 'codex'} agentTask={agentTasks[node.id]} onAgentResult={onAgentResult} onAgentTaskFailure={onAgentTaskFailure} onNotify={onNotify} onRequestCodexAuth={onRequestCodexAuth} /></div>} /> : <>
       <div className="workspace-editor-stack">
         <WorkspaceEditor
           projectPath={project.path}

@@ -4,6 +4,7 @@ type WebContentsMock = {
   loadURL: ReturnType<typeof vi.fn>
   setWindowOpenHandler: ReturnType<typeof vi.fn>
   on: ReturnType<typeof vi.fn>
+  removeListener: ReturnType<typeof vi.fn>
   getURL: ReturnType<typeof vi.fn>
   getTitle: ReturnType<typeof vi.fn>
   isDestroyed: ReturnType<typeof vi.fn>
@@ -55,6 +56,9 @@ function createFixture() {
     setWindowOpenHandler: vi.fn(),
     on: vi.fn((event: string, handler: (...args: any[]) => void) => {
       handlers.set(event, handler)
+    }),
+    removeListener: vi.fn((event: string) => {
+      handlers.delete(event)
     }),
     getURL: vi.fn(() => ''),
     getTitle: vi.fn(() => 'Example'),
@@ -212,8 +216,7 @@ describe('web panel', () => {
     expect(getWebState()).toMatchObject({ type: 'navigated', url: 'https://example.com/page' })
   })
 
-  it('denies every popup and routes valid HTTPS targets through navigation', async () => {
-    const fixture = createFixture()
+  it('denies every popup and routes valid HTTPS targets through navigation', async () => {    const fixture = createFixture()
     attachWebPanel(fixture.window as any)
     fixture.webContents.loadURL.mockClear()
     const handler = fixture.webContents.setWindowOpenHandler.mock.calls[0][0]
@@ -225,5 +228,48 @@ describe('web panel', () => {
     expect(handler({ url: 'javascript:alert(1)' })).toEqual({ action: 'deny' })
     await Promise.resolve()
     expect(fixture.webContents.loadURL).not.toHaveBeenCalled()
+  })
+
+  it('forwards Ctrl/Cmd+K from the focused native view without touching URL/session', () => {
+    const fixture = createFixture()
+    const events: Array<{ type: string; url: string }> = []
+    const unsubscribe = onWebPanelEvent((event) => events.push(event))
+    try {
+      attachWebPanel(fixture.window as any)
+      fixture.webContents.getURL.mockReturnValue('https://example.com/app?session=abc')
+      fixture.webContents.getTitle.mockReturnValue('App')
+      const shortcut = fixture.handlers.get('before-input-event')!
+      expect(typeof shortcut).toBe('function')
+
+      const ctrlDown = { preventDefault: vi.fn() }
+      shortcut(ctrlDown, { type: 'keyDown', key: 'k', control: true })
+      expect(ctrlDown.preventDefault).toHaveBeenCalledOnce()
+      expect(events).toEqual([{ type: 'palette-shortcut', url: 'https://example.com/app?session=abc', title: 'App' }])
+
+      const metaDown = { preventDefault: vi.fn() }
+      shortcut(metaDown, { type: 'keyDown', key: 'K', meta: true })
+      expect(metaDown.preventDefault).toHaveBeenCalledOnce()
+      expect(events).toHaveLength(2)
+
+      // Teclas comuns nunca disparam o atalho nem recarregam a página.
+      const loadsBefore = fixture.webContents.loadURL.mock.calls.length
+      shortcut({ preventDefault: vi.fn() }, { type: 'keyDown', key: 'k' })
+      shortcut({ preventDefault: vi.fn() }, { type: 'keyDown', key: 'r', control: true })
+      shortcut({ preventDefault: vi.fn() }, { type: 'keyUp', key: 'k', control: true })
+      expect(events).toHaveLength(2)
+      expect(fixture.webContents.loadURL.mock.calls.length).toBe(loadsBefore)
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  it('removes the native shortcut listener on dispose', () => {
+    const fixture = createFixture()
+    attachWebPanel(fixture.window as any)
+    const registered = fixture.handlers.get('before-input-event')!
+    expect(typeof registered).toBe('function')
+
+    disposeWebPanel()
+    expect(fixture.webContents.removeListener).toHaveBeenCalledWith('before-input-event', registered)
   })
 })

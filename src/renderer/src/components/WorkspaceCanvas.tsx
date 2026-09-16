@@ -220,6 +220,9 @@ const connectionPath = (from: CanvasNode, toX: number, toY: number) => {
     return `M ${x1} ${y1} C ${x1 + curve} ${y1}, ${toX - curve} ${toY}, ${toX} ${toY}`;
   return `M ${x1} ${y1} C ${x1 + curve} ${y1}, ${toX + curve} ${toY}, ${toX} ${toY}`;
 };
+function closestElement(target: unknown, selector: string): Element | null {
+  return target instanceof Element ? target.closest(selector) : null;
+}
 function sanitizeNode(
   value: Partial<CanvasNode>,
   fallback: CanvasNode,
@@ -465,6 +468,9 @@ export const WorkspaceCanvas: React.FC<{
   ) => React.ReactNode;
   onSendAgentTask?: (node: CanvasNode, prompt: string) => string | undefined;
   onCreateAgentWorktree?: (node: CanvasNode) => void;
+  onSelectionChange?: (node: { id: string; title: string; kind: string } | null) => void;
+  pendingNodeRequest?: { kind: 'note' | 'agent'; nonce: number } | null;
+  onPendingNodeConsumed?: (nonce: number) => void;
 }> = ({
   project,
   workbench,
@@ -474,6 +480,9 @@ export const WorkspaceCanvas: React.FC<{
   renderAgent,
   onSendAgentTask,
   onCreateAgentWorktree,
+  onSelectionChange,
+  pendingNodeRequest = null,
+  onPendingNodeConsumed,
 }) => {
   const [canvas, setCanvas] = useState<CanvasState>(() => read(project.id));
   const [selected, setSelected] = useState<string[]>([]);
@@ -495,6 +504,7 @@ export const WorkspaceCanvas: React.FC<{
   const gestureCaptureRef = useRef<HTMLElement | null>(null);
   const connectionDraftRef = useRef<ConnectionDraft | null>(null);
   const minimapPointerRef = useRef<number | null>(null);
+  const consumedPendingRef = useRef<Set<number>>(new Set());
   const spaceHeldRef = useRef(false);
   const persist = useCallback(
     (value: CanvasState) => {
@@ -552,6 +562,11 @@ export const WorkspaceCanvas: React.FC<{
       flush();
     };
   }, [flush]);
+  useEffect(() => {
+    const lastId = selected[selected.length - 1];
+    const node = lastId ? canvas.nodes.find((item) => item.id === lastId) : undefined;
+    onSelectionChange?.(node ? { id: node.id, title: node.title, kind: node.kind } : null);
+  }, [canvas.nodes, onSelectionChange, selected]);
   const connectNodes = useCallback(
     (from: string | null, to: string) => {
       if (!from || from === to) {
@@ -664,6 +679,24 @@ export const WorkspaceCanvas: React.FC<{
     );
     setSelected([id]);
   }, [agentAccount, defaultAgentProvider, update]);
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ projectId?: string; kind?: string }>).detail
+      if (detail?.projectId && detail.projectId !== project.id) return
+      if (detail?.kind === 'note') addNote()
+      else if (detail?.kind === 'agent') addAgent()
+    }
+    window.addEventListener('devorbit:create-canvas-node', handler as EventListener)
+    return () => window.removeEventListener('devorbit:create-canvas-node', handler as EventListener)
+  }, [addAgent, addNote, project.id]);
+  useEffect(() => {
+    if (!pendingNodeRequest) return
+    if (consumedPendingRef.current.has(pendingNodeRequest.nonce)) return
+    consumedPendingRef.current.add(pendingNodeRequest.nonce)
+    if (pendingNodeRequest.kind === 'note') addNote()
+    else addAgent()
+    onPendingNodeConsumed?.(pendingNodeRequest.nonce)
+  }, [addAgent, addNote, onPendingNodeConsumed, pendingNodeRequest]);
   const createSquad = useCallback(() => {
     const rect = viewportRef.current?.getBoundingClientRect();
     const view = canvasRef.current.viewport;
@@ -790,11 +823,11 @@ export const WorkspaceCanvas: React.FC<{
     const host = viewportRef.current;
     if (!host) return;
     const onWheel = (event: WheelEvent) => {
-      const target = event.target as Element;
+      const target = event.target;
       if (
         !event.ctrlKey &&
         !event.metaKey &&
-        target.closest(".workspace-canvas-card-content")
+        closestElement(target, ".workspace-canvas-card-content")
       )
         return;
       event.preventDefault();
@@ -1055,9 +1088,9 @@ export const WorkspaceCanvas: React.FC<{
   }, [connectNodes, pointerToWorld]);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
+      const target = event.target;
       const isEditable = Boolean(
-        target?.closest("input, textarea, [contenteditable=true]"),
+        closestElement(target, "input, textarea, [contenteditable=true]"),
       );
       if (event.code === "Space" && !isEditable) {
         spaceHeldRef.current = true;
@@ -1699,18 +1732,20 @@ export const WorkspaceCanvas: React.FC<{
       tabIndex={0}
       aria-label="Área de trabalho do canvas"
       onPointerDown={(event) => {
-        const target = event.target as Element;
+        const target = event.target;
         if (
-          target.closest(
+          closestElement(
+            target,
             ".workspace-canvas-card, .workspace-canvas-toolbar, .workspace-canvas-minimap",
           )
         )
           return;
+        const targetElement = target instanceof Element ? target : null;
         if (
           event.target !== event.currentTarget &&
-          !target.classList.contains("workspace-canvas-grid") &&
-          !target.classList.contains("workspace-canvas-world") &&
-          !target.classList.contains("workspace-canvas-connections")
+          !(targetElement?.classList.contains("workspace-canvas-grid") ||
+            targetElement?.classList.contains("workspace-canvas-world") ||
+            targetElement?.classList.contains("workspace-canvas-connections"))
         )
           return;
         if (event.button === 0) {
@@ -1911,9 +1946,10 @@ export const WorkspaceCanvas: React.FC<{
               </button>
               <header
                 onPointerDown={(event) => {
-                  const target = event.target as Element;
+                  const target = event.target;
                   if (
-                    target.closest(
+                    closestElement(
+                      target,
                       "button, input, select, textarea, a, [contenteditable=true]",
                     )
                   )

@@ -5,7 +5,7 @@ const { View: ViewConstructor, WebContentsView: WebContentsViewConstructor, sess
 const DEFAULT_WEB_URL = 'https://www.google.com/'
 
 export interface WebPanelEvent {
-  type: 'loading' | 'loaded' | 'navigated' | 'error'
+  type: 'loading' | 'loaded' | 'navigated' | 'error' | 'palette-shortcut'
   url: string
   title?: string
   message?: string
@@ -26,6 +26,30 @@ let lastContentBounds: Rectangle = { x: 0, y: 0, width: 0, height: 0 }
 let lastUrl = DEFAULT_WEB_URL
 let lastTitle = 'Navegador'
 const listeners = new Set<(event: WebPanelEvent) => void>()
+
+// O WebContentsView nativo consome o teclado quando focado: a página recebe
+// Ctrl/Cmd+K e o listener global do renderer (App) nunca dispara. Este
+// handler encaminha o atalho via webEvent sem navegar, recarregar ou tocar na
+// sessão — só emite para o renderer abrir o Command Center.
+interface BeforeInputEvent {
+  preventDefault: () => void
+}
+
+interface BeforeInputDetail {
+  type?: string
+  key?: string
+  control?: boolean
+  meta?: boolean
+}
+
+function shortcutHandler(event: BeforeInputEvent, input: BeforeInputDetail): void {
+  if (input?.type && input.type !== 'keyDown') return
+  if (typeof input?.key !== 'string' || input.key.toLowerCase() !== 'k') return
+  if (!input.control && !input.meta) return
+  event.preventDefault()
+  const state = currentState()
+  emit({ type: 'palette-shortcut', url: state.url, title: state.title })
+}
 
 function emit(event: WebPanelEvent): void {
   for (const listener of listeners) listener(event)
@@ -108,6 +132,7 @@ export function attachWebPanel(window: BrowserWindow): void {
     if (code === -3) return
     emit({ type: 'error', url, message: description })
   })
+  webView.webContents.on('before-input-event', shortcutHandler)
   void webView.webContents.loadURL(lastUrl)
 }
 
@@ -171,7 +196,10 @@ export function getWebState(): WebPanelEvent {
 export function disposeWebPanel(): void {
   if (hostWindow && clipView) hostWindow.contentView.removeChildView(clipView)
   if (clipView && webView) clipView.removeChildView(webView)
-  if (webView && !webView.webContents.isDestroyed()) webView.webContents.close({ waitForBeforeUnload: false })
+  if (webView && !webView.webContents.isDestroyed()) {
+    webView.webContents.removeListener?.('before-input-event', shortcutHandler)
+    webView.webContents.close({ waitForBeforeUnload: false })
+  }
   webView = null
   clipView = null
   hostWindow = null
