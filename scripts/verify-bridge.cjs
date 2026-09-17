@@ -188,6 +188,7 @@ async function main() {
 
 app.disableHardwareAcceleration()
 app.commandLine.appendSwitch('disable-gpu')
+if (process.platform === 'linux') app.commandLine.appendSwitch('no-sandbox')
 
 app.whenReady().then(async () => {
   try {

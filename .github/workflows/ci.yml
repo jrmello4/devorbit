@@ -148,6 +148,9 @@ jobs:
           $hasSecrets = -not [string]::IsNullOrWhiteSpace($env:CSC_LINK) -and -not [string]::IsNullOrWhiteSpace($env:CSC_KEY_PASSWORD) -and -not [string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_THUMBPRINT)
           "signing=$($hasSecrets.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
+      - name: Production build
+        run: npm run build
+
       - name: Empacotar NSIS e portable (runner Windows obrigatorio; sem publicar)
         run: npx electron-builder --publish never
         env:
