@@ -51,6 +51,13 @@ jobs:
       - name: Production build
         run: npm run build
 
+      - name: Preparar sandbox do Electron (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo chown root:root node_modules/electron/dist/chrome-sandbox
+          sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+
       - name: Bridge unit suite
         run: npm run verify:bridge
 
@@ -96,6 +103,7 @@ jobs:
         with:
           name: ui-artifacts-${{ matrix.os }}
           path: artifacts/ui
+          if-no-files-found: ignore
 
   package:
     name: Pacote Windows e smoke de instalacao
