@@ -171,6 +171,7 @@ describe('config persistence hardening', () => {
   it('round-trips modelRouting through save/load/export/import', async () => {
     const secret = `sk-test-${'x'.repeat(16)}`
     const saved = await saveConfig({
+      projectDirs: [temporaryUserData],
       modelRouting: { fastModel: 'ministral-3b', openaiApiKey: secret },
     })
     expect(saved.modelRouting).toMatchObject({ fastModel: 'ministral-3b' })
