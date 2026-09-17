@@ -3,6 +3,7 @@ import {
   AlertCircle, ArrowLeft, ArrowRight, Check, Code2, Globe, GripVertical,
   RefreshCw, Send, Terminal, X,
 } from 'lucide-react'
+import type { AgentBridgeEvent } from '../../../shared/agent-bridge-event'
 import type { AgentProvider, AgentProviderId, CodexAccountStatus, Project, ToolHealth, WebPanelEvent } from '../types'
 import type { PendingCanvasNode, WorkspaceUiRequest } from './workspace-request-helpers'
 import { applyWorkspaceUiRequest, computePipeSync, isPendingNodeForProject } from './workspace-request-helpers'
@@ -241,6 +242,22 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
     })
     return () => { alive = false }
   }, [isCanvas, project.id])
+
+  useEffect(() => {
+    if (isSuspended) return
+    return window.devorbit.onAgentBridgeEvent((event: AgentBridgeEvent) => {
+      const target = event.target === 'bridge-target' ? 'agente' : event.target
+      if (event.status === 'pending') {
+        onNotify('Delegação iniciada para ' + target + '.', 'info')
+      } else if (event.status === 'completed') {
+        onNotify(event.summary || 'Delegação concluída para ' + target + '.', 'success')
+      } else if (event.status === 'blocked') {
+        onNotify(event.summary || 'Delegação bloqueada para ' + target + '.', 'error')
+      } else {
+        onNotify(event.summary || 'Delegação falhou para ' + target + '.', 'error')
+      }
+    })
+  }, [isSuspended, onNotify])
   const webViewportRef = useRef<HTMLDivElement>(null)
   const restoreWebOnActivateRef = useRef(true)
   const requestedHistoryIndexRef = useRef<number | null>(null)

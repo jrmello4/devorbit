@@ -9,6 +9,10 @@ import { GitDock, type GitDockTab } from './components/GitDock'
 import { CommandPalette } from './components/CommandPalette'
 import { UpdateModal } from './components/UpdateModal'
 import { ToolHealthModal } from './components/ToolHealthModal'
+import { AuditDashboard, type AuditDashboardData } from './components/AuditDashboard'
+import { HitlApprovalDialog, type HitlApprovalRequest } from './components/HitlApprovalDialog'
+import { applyTheme, initializeTheme, setTheme, toggleTheme, type ThemeMode } from './theme'
+import './components/EvolutionPanels.css'
 import type { CreateActionId, NavigateActionId } from './components/command-center-helpers'
 import { resolvePaletteToggle } from './components/command-center-helpers'
 import type { PendingCanvasNode, WorkspaceUiRequest } from './components/workspace-request-helpers'
@@ -21,10 +25,22 @@ import type {
   RealUsageState,
   SyncResult,
   UpdateState,
+  HitlRequestView,
 } from './types'
 import { CheckCircle2, AlertCircle, Info, X, FolderKanban, ChartNoAxesCombined, Settings, ArrowRightLeft, GitPullRequest, PanelLeftClose, PanelLeftOpen, Wrench, LayoutDashboard, RefreshCw } from 'lucide-react'
 
 const IntegratedWorkspace = React.lazy(() => import('./components/IntegratedWorkspace').then((module) => ({ default: module.IntegratedWorkspace })))
+
+function toHitlApprovalRequest(request: HitlRequestView): HitlApprovalRequest {
+  const metadataEvidence = Object.entries(request.metadata || {}).map(([label, value]) => ({ label, value: String(value) }))
+  return {
+    id: request.id,
+    title: 'Ação requer aprovação',
+    summary: request.prompt,
+    risk: 'high',
+    evidence: [{ label: 'Identificador', value: request.id }, ...metadataEvidence],
+  }
+}
 
 export function isDevOrbitBridgeAvailable(): boolean {
   return typeof window !== 'undefined' && Boolean(window.devorbit)
@@ -45,7 +61,11 @@ export const App: React.FC = () => {
   const [workspaceProjects, setWorkspaceProjects] = useState<Project[]>([])
   const [workspaceDirty, setWorkspaceDirty] = useState<Record<string, boolean>>({})
   const [search, setSearch] = useState('')
-  const [workspaceView, setWorkspaceView] = useState<'projects' | 'usage' | 'workspace'>('projects')
+  const [workspaceView, setWorkspaceView] = useState<'projects' | 'usage' | 'workspace' | 'audit'>('projects')
+  const [theme, setThemeMode] = useState<ThemeMode>(() => initializeTheme())
+  const [auditData, setAuditData] = useState<AuditDashboardData>({ entries: [] })
+  const [hitlRequests, setHitlRequests] = useState<HitlApprovalRequest[]>([])
+  const [hitlSubmitting, setHitlSubmitting] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false)
   const [focusedCanvasNode, setFocusedCanvasNode] = useState<{ id: string; title: string; kind: string } | null>(null)
@@ -70,6 +90,123 @@ export const App: React.FC = () => {
   } | null>(null)
   const notificationTimerRef = useRef<number | null>(null)
   const notificationActionRef = useRef<((id: string) => void) | null>(null)
+  const hitlRequest = hitlRequests[0] || null
+
+  const notify = useCallback(
+    (
+      message: string,
+      type: 'success' | 'error' | 'info' = 'info',
+      options?: { actions?: Array<{ id: string; label: string }>; onAction?: (id: string) => void },
+    ) => {
+      if (notificationTimerRef.current) {
+        window.clearTimeout(notificationTimerRef.current)
+        notificationTimerRef.current = null
+      }
+      notificationActionRef.current = options?.onAction || null
+      setNotification({ message, type, ...(options?.actions ? { actions: options.actions } : {}) })
+      if (type !== 'error') {
+        notificationTimerRef.current = window.setTimeout(() => {
+          setNotification((current) => current?.message === message && current.type === type ? null : current)
+          notificationTimerRef.current = null
+        }, 4000)
+      }
+    },
+    [],
+  )
+
+  useEffect(() => {
+    applyTheme(theme)
+  }, [theme])
+
+  const loadAudit = useCallback(async (project: Project | null) => {
+    if (!project || !window.devorbit) {
+      setAuditData({ entries: [] })
+      return
+    }
+    try {
+      const [snapshot, history, telemetry] = await Promise.all([
+        window.devorbit.getProjectAudit(project.path),
+        window.devorbit.getEvolutionHistory(50),
+        window.devorbit.getTelemetrySpans(100),
+      ])
+      const gainRecord = [...history].reverse().find((record) => record.kind === 'gain' && record.data.projectPath === snapshot.projectPath)
+      const gain = gainRecord?.data.report
+      const gainEntry = gain && typeof gain === 'object' && !Array.isArray(gain)
+        ? {
+            id: gainRecord?.id || 'gain-latest',
+            category: 'gain' as const,
+            title: 'Ganho após a remediação',
+            description: 'Comparação entre snapshots consecutivos da auditoria.',
+            status: 'verified' as const,
+            severity: 'info' as const,
+            evidence: `Findings: ${String((gain as Record<string, unknown>).findingCount || 'não informado')}`,
+            value: typeof (gain as Record<string, unknown>).debtMinutes === 'object' && (gain as Record<string, unknown>).debtMinutes !== null
+              ? { amount: Number(((gain as Record<string, unknown>).debtMinutes as Record<string, unknown>).reduction) || 0, unit: 'min de débito reduzido' }
+              : undefined,
+          }
+        : undefined
+      setAuditData({
+        updatedAt: snapshot.generatedAt,
+        telemetry: {
+          spans: telemetry.length,
+          errors: telemetry.filter((span) => span.status === 'error').length,
+          averageDurationMs: telemetry.length > 0 ? telemetry.reduce((total, span) => total + span.durationMs, 0) / telemetry.length : 0,
+        },
+        entries: [
+          ...(gainEntry ? [gainEntry] : []),
+          ...snapshot.findings.map((finding) => ({
+            id: finding.id,
+            category: 'debt' as const,
+            title: finding.message,
+            description: `${finding.file}:${finding.line}`,
+            status: 'open' as const,
+            severity: finding.severity,
+            evidence: finding.evidence,
+            value: { amount: finding.estimatedMinutes, unit: 'min' },
+          })),
+        ],
+      })
+    } catch (error) {
+      notify('Não foi possível executar a auditoria: ' + (error instanceof Error ? error.message : String(error)), 'error')
+    }
+  }, [notify])
+
+  useEffect(() => {
+    if (workspaceView === 'audit') void loadAudit(activeWorkspaceProject || projects[0] || null)
+  }, [activeWorkspaceProject, loadAudit, projects, workspaceView])
+
+  useEffect(() => {
+    if (!window.devorbit?.onHitlEvent) return
+    let active = true
+    void window.devorbit.getHitlRequests().then((requests) => {
+      if (!active) return
+      setHitlRequests(requests.filter((request) => request.state === 'pending').map(toHitlApprovalRequest))
+    }).catch(() => undefined)
+    const unsubscribe = window.devorbit.onHitlEvent((request) => {
+      if (request.state === 'pending') {
+        setHitlRequests((current) => current.some((item) => item.id === request.id) ? current : [...current, toHitlApprovalRequest(request)])
+      } else {
+        setHitlRequests((current) => current.filter((item) => item.id !== request.id))
+      }
+    })
+    return () => {
+      active = false
+      unsubscribe()
+    }
+  }, [])
+
+  const decideHitl = useCallback(async (request: HitlApprovalRequest, approved: boolean) => {
+    setHitlSubmitting(true)
+    try {
+      if (approved) await window.devorbit.approveHitl(request.id)
+      else await window.devorbit.rejectHitl(request.id)
+      setHitlRequests((current) => current.filter((item) => item.id !== request.id))
+    } catch (error) {
+      notify('Não foi possível registrar a decisão: ' + (error instanceof Error ? error.message : String(error)), 'error')
+    } finally {
+      setHitlSubmitting(false)
+    }
+  }, [notify])
 
   const openCommandPalette = useCallback(() => {
     commandPaletteOriginRef.current = document.activeElement instanceof HTMLElement
@@ -86,31 +223,6 @@ export const App: React.FC = () => {
       commandPaletteOriginRef.current = null
     })
   }, [])
-
-  const notify = useCallback(
-    (
-      message: string,
-      type: 'success' | 'error' | 'info' = 'info',
-      options?: { actions?: Array<{ id: string; label: string }>; onAction?: (id: string) => void },
-    ) => {
-      if (notificationTimerRef.current) {
-        window.clearTimeout(notificationTimerRef.current)
-        notificationTimerRef.current = null
-      }
-      notificationActionRef.current = options?.onAction || null
-      setNotification({ message, type, ...(options?.actions ? { actions: options.actions } : {}) })
-      // Errors remain visible until the user dismisses them so failures are not lost.
-      if (type !== 'error') {
-        notificationTimerRef.current = window.setTimeout(() => {
-          setNotification((current) =>
-            current?.message === message && current.type === type ? null : current
-          )
-          notificationTimerRef.current = null
-        }, 4000)
-      }
-    },
-    []
-  )
 
   useEffect(() => {
     return () => {
@@ -754,13 +866,15 @@ export const App: React.FC = () => {
   return (
     <div className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
       <Header search={search} setSearch={(value) => {setSearch(value); setWorkspaceView('projects')}}
-        onOpenCommandPalette={openCommandPalette} onRefresh={handleRefresh} isRefreshing={isRefreshing}/>
+        onOpenCommandPalette={openCommandPalette} onRefresh={handleRefresh} isRefreshing={isRefreshing}
+        theme={theme} onToggleTheme={() => setThemeMode(setTheme(toggleTheme(theme)))} />
       <div className="app-body">
       <aside className="workspace-sidebar" aria-label="Navegação principal">
         <div className="sidebar-heading"><span>Área de trabalho</span><button className="icon-button" onClick={() => setSidebarCollapsed(!sidebarCollapsed)} aria-label={sidebarCollapsed ? 'Expandir navegação' : 'Recolher navegação'}>{sidebarCollapsed ? <PanelLeftOpen size={15}/> : <PanelLeftClose size={15}/>}</button></div>
         <nav>
           <button className={`nav-item ${workspaceView === 'projects' ? 'active' : ''}`} aria-current={workspaceView === 'projects' ? 'page' : undefined} title="Projetos" onClick={() => setWorkspaceView('projects')}><FolderKanban size={17}/><span>Projetos</span><small>{projects.length}</small></button>
           <button className={`nav-item ${workspaceView === 'usage' ? 'active' : ''}`} aria-current={workspaceView === 'usage' ? 'page' : undefined} title="Contas e uso" onClick={() => setWorkspaceView('usage')}><ChartNoAxesCombined size={17}/><span>Contas e uso</span></button>
+          <button className={`nav-item ${workspaceView === 'audit' ? 'active' : ''}`} aria-current={workspaceView === 'audit' ? 'page' : undefined} title="Auditoria e evolução" onClick={() => setWorkspaceView('audit')}><ChartNoAxesCombined size={17}/><span>Auditoria</span></button>
           {activeWorkspaceProject && <button className={`nav-item ${workspaceView === 'workspace' ? 'active' : ''}`} aria-current={workspaceView === 'workspace' ? 'page' : undefined} title={`Ambiente integrado de ${activeWorkspaceProject.name}`} onClick={() => setWorkspaceView('workspace')}><LayoutDashboard size={17}/><span>Ambiente</span></button>}
         </nav>
         <div className="sidebar-tools"><span className="sidebar-label">Workspace</span><button className="nav-item" title="Sincronizar todos os repositórios" onClick={handleSyncAll} disabled={isSyncingAll}><GitPullRequest size={17}/><span>{isSyncingAll ? 'Sincronizando…' : 'Sincronizar Git'}</span></button><button className="nav-item" title="Configurações" onClick={() => setIsSettingsOpen(true)}><Settings size={17}/><span>Configurações</span></button><button className="nav-item" title="Diagnosticar ferramentas instaladas" onClick={() => setIsToolHealthOpen(true)}><Wrench size={17}/><span>Diagnóstico</span></button></div>
@@ -835,6 +949,9 @@ export const App: React.FC = () => {
       />
 
       </div>
+      <div className="view-panel" hidden={workspaceView !== 'audit'}>
+        <AuditDashboard data={auditData} />
+      </div>
       <div className="view-panel" hidden={workspaceView !== 'projects'}>
       {/* Grid de Projetos */}
       <ProjectGrid
@@ -902,6 +1019,10 @@ export const App: React.FC = () => {
         focusedNode={focusedCanvasNode}
         onNavigate={handlePaletteNavigate}
         onCreate={handlePaletteCreate}
+        onRunEvolutionCommand={(command) => {
+          setWorkspaceView('audit')
+          if (command !== 'audit') notify('/' + command + ' aberto no painel de evolução.', 'info')
+        }}
       />
 
       {/* Modal de Memória da Sessão & Handoff (estilo Akita AI Memory) */}
@@ -921,6 +1042,17 @@ export const App: React.FC = () => {
       />
 
       <ToolHealthModal isOpen={isToolHealthOpen} onClose={() => setIsToolHealthOpen(false)} />
+
+      <HitlApprovalDialog
+        isOpen={Boolean(hitlRequest)}
+        request={hitlRequest}
+        onClose={() => {
+          if (hitlRequest) void decideHitl(hitlRequest, false)
+        }}
+        onApprove={(request) => decideHitl(request, true)}
+        onReject={(request) => decideHitl(request, false)}
+        isSubmitting={hitlSubmitting}
+      />
 
       {/* Modal de Configurações */}
       <SettingsModal

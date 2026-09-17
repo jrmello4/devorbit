@@ -13,7 +13,15 @@ import type {
   WebPanelEvent,
   UpdateState,
   CodexAuthProgress,
+  HitlRequestView,
 } from '../renderer/src/types'
+import type { AgentBridgeEvent } from '../shared/agent-bridge-event'
+import type { DiagnosticProcessRequest, DiagnosticProcessResult } from '../shared/diagnostic-process'
+import type { TelemetrySpanView } from '../shared/telemetry-contract'
+import type { HybridMemoryKind, HybridMemoryView, HybridMemoryWrite } from '../shared/hybrid-memory-contract'
+import type { LlmCompletionRequestView, LlmRouteView } from '../shared/llm-contract'
+import type { EvolutionRecord } from '../shared/evolution-history'
+import type { TextSearchRequest, TextSearchResult } from '../shared/text-search-contract'
 
 const invoke = <T>(channel: IpcInvokeChannel, ...args: unknown[]): Promise<T> =>
   ipcRenderer.invoke(channel, ...args) as Promise<T>
@@ -103,6 +111,12 @@ const api: DevOrbitAPI = {
   onCompanionEvent: (callback) => {
     return subscribe<CompanionSummary>('devorbit:companionEvent', callback)
   },
+  onAgentBridgeEvent: (callback) => {
+    return subscribe<AgentBridgeEvent>('devorbit:agentBridgeEvent', callback)
+  },
+  onHitlEvent: (callback) => {
+    return subscribe<HitlRequestView>('devorbit:hitlEvent', callback)
+  },
   navigateWeb: (url: string) =>
     invoke('devorbit:navigateWeb', url),
   getWebState: () =>
@@ -150,6 +164,28 @@ const api: DevOrbitAPI = {
   generateMemoryFromGit: (projectPath) =>
     invoke('devorbit:generateMemoryFromGit', projectPath),
   getRealUsage: (force?: boolean) => invoke('devorbit:getRealUsage', force),
+  getProjectAudit: (projectPath: string) => invoke('devorbit:getProjectAudit', projectPath),
+  getHitlRequests: () => invoke('devorbit:getHitlRequests'),
+  approveHitl: (id: string, reason?: string) => reason === undefined
+    ? invoke('devorbit:approveHitl', id)
+    : invoke('devorbit:approveHitl', id, reason),
+  rejectHitl: (id: string, reason?: string) => reason === undefined
+    ? invoke('devorbit:rejectHitl', id)
+    : invoke('devorbit:rejectHitl', id, reason),
+  runDiagnostic: (request: DiagnosticProcessRequest): Promise<DiagnosticProcessResult> =>
+    invoke('devorbit:runDiagnostic', request),
+  getTelemetrySpans: (limit?: number): Promise<TelemetrySpanView[]> =>
+    limit === undefined ? invoke('devorbit:getTelemetrySpans') : invoke('devorbit:getTelemetrySpans', limit),
+  getHybridMemory: (projectPath: string, kind?: HybridMemoryKind): Promise<HybridMemoryView[]> =>
+    kind === undefined ? invoke('devorbit:getHybridMemory', projectPath) : invoke('devorbit:getHybridMemory', projectPath, kind),
+  rememberHybridMemory: (projectPath: string, input: HybridMemoryWrite): Promise<HybridMemoryView> =>
+    invoke('devorbit:rememberHybridMemory', projectPath, input),
+  searchHybridMemory: (projectPath: string, query: string, limit?: number) =>
+    limit === undefined ? invoke('devorbit:searchHybridMemory', projectPath, query) : invoke('devorbit:searchHybridMemory', projectPath, query, limit),
+  completeLlm: (request: LlmCompletionRequestView): Promise<LlmRouteView> => invoke('devorbit:completeLlm', request),
+  getEvolutionHistory: (limit?: number): Promise<EvolutionRecord[]> =>
+    limit === undefined ? invoke('devorbit:getEvolutionHistory') : invoke('devorbit:getEvolutionHistory', limit),
+  searchProjectText: (request: TextSearchRequest): Promise<TextSearchResult> => invoke('devorbit:searchProjectText', request),
 }
 
 contextBridge.exposeInMainWorld('devorbit', api)

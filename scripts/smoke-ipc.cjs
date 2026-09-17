@@ -88,6 +88,7 @@ const EXPECTED_METHODS = [
   'sendAgentTurn',
   'onTerminalEvent',
   'onCompanionEvent',
+  'onAgentBridgeEvent',
   'navigateWeb',
   'getWebState',
   'goBackWeb',
@@ -119,6 +120,19 @@ const EXPECTED_METHODS = [
   'saveProjectMemory',
   'generateMemoryFromGit',
   'getRealUsage',
+  'getProjectAudit',
+  'getHitlRequests',
+  'onHitlEvent',
+  'approveHitl',
+  'rejectHitl',
+  'runDiagnostic',
+  'getTelemetrySpans',
+  'getHybridMemory',
+  'rememberHybridMemory',
+  'searchHybridMemory',
+  'completeLlm',
+  'getEvolutionHistory',
+  'searchProjectText',
 ]
 
 const checks = []

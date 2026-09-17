@@ -19,7 +19,7 @@ import {
   resolveBrowserPath,
   type AccountId,
 } from './account-profiles'
-import { getAgentProviderHealth } from './agent-providers'
+import { getAgentProviderHealth, resolveAgentProviderCommand } from './agent-providers'
 
 const execFileAsync = promisify(execFile)
 
@@ -163,20 +163,6 @@ async function resolveVscodeCommand(configuredCommand?: string): Promise<string 
   return null
 }
 
-async function resolveAntigravityCommand(configuredCommand?: string): Promise<string | null> {
-  const candidates = [
-    configuredCommand?.trim(),
-    path.join(os.homedir(), 'AppData', 'Local', 'agy', 'bin', 'agy.exe'),
-    path.join(os.homedir(), 'AppData', 'Local', 'agy', 'agy.exe'),
-    await findCommandOnPath('agy.exe'),
-  ].filter((candidate): candidate is string => Boolean(candidate))
-
-  for (const candidate of candidates) {
-    if (await fileExists(candidate)) return candidate
-  }
-  return null
-}
-
 async function openCmdSession(
   terminalCommand: string,
   projectPath: string,
@@ -245,14 +231,14 @@ export async function getToolHealth(config: AppConfig): Promise<ToolHealth[]> {
   const powershellPath = await resolveCommandPath('powershell.exe')
   const codexCandidate = await resolveCodexCommand(custom.codex)
   const codexPath = await resolveCommandPath(codexCandidate)
-  const [bravePath, chromePath, vscodePath, agyPath, mimoPath] = await Promise.all([
+  const [bravePath, chromePath, vscodePath, mimoPath] = await Promise.all([
     resolveBrowserPath('account2', custom.brave),
     resolveBrowserPath('account1', custom.chrome),
     resolveVscodeCommand(custom.vscode),
-    resolveAntigravityCommand(custom.agy),
     resolveCommandPath(custom.mimo || path.join(os.homedir(), 'AppData', 'Local', 'Programs', 'Xiaomi MiMo AI', 'Xiaomi MiMo AI.exe')),
   ])
   const agentHealth = await getAgentProviderHealth(config)
+  const agyPath = agentHealth.find((item) => item.id === 'agy')?.path || null
 
   return [
     {
@@ -481,7 +467,7 @@ export async function launchTool(
       }
 
       case 'agy': {
-        const agyPath = await resolveAntigravityCommand(custom.agy)
+        const { path: agyPath } = await resolveAgentProviderCommand(config, 'agy')
         if (!agyPath) {
           return {
             success: false,

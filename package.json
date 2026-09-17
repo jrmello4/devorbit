@@ -24,6 +24,13 @@
     "verify:runtime": "electron scripts/verify-runtime.cjs",
     "smoke:ipc": "electron scripts/smoke-ipc.cjs",
     "smoke:package": "node scripts/smoke-package.cjs",
+    "verify:bridge": "vitest run tests/agent-bridge.test.ts tests/agent-bridge-event.test.ts tests/agent-bridge-runtime.test.ts tests/process-runner.test.ts tests/ripgrep-indexer.test.ts",
+    "verify:bridge:e2e": "electron scripts/verify-bridge.cjs",
+    "mcp": "node scripts/devorbit-mcp.cjs",
+    "audit:tokens": "node scripts/validate-tokens.cjs",
+    "audit:repository": "node scripts/audit-repository.cjs",
+    "release:check": "node scripts/release-check.cjs",
+    "verify:all": "npm run typecheck && npm run typecheck:test && npm test -- --run && npm run lint && npm run build && npm run audit:tokens && npm run audit:repository && npm run release:check && npm run verify:bridge",
     "preview": "vite preview"
   },
   "dependencies": {

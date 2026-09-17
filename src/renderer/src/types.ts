@@ -1,3 +1,12 @@
+import type { AgentBridgeEvent } from '../../shared/agent-bridge-event'
+import type { AuditSnapshot } from '../../shared/audit-contract'
+import type { DiagnosticProcessRequest, DiagnosticProcessResult } from '../../shared/diagnostic-process'
+import type { TelemetrySpanView } from '../../shared/telemetry-contract'
+import type { HybridMemoryKind, HybridMemoryView, HybridMemoryWrite } from '../../shared/hybrid-memory-contract'
+import type { LlmCompletionRequestView, LlmRouteView } from '../../shared/llm-contract'
+import type { EvolutionRecord } from '../../shared/evolution-history'
+import type { TextSearchRequest, TextSearchResult } from '../../shared/text-search-contract'
+
 export interface TechStack {
   id: string
   label: string
@@ -247,11 +256,19 @@ export type IpcInvokeChannel =
   | 'devorbit:testToolPath' | 'devorbit:getToolHealth' | 'devorbit:getCodexAuthStatus'
   | 'devorbit:startCodexLogin' | 'devorbit:cancelCodexLogin' | 'devorbit:getProjectMemory'
   | 'devorbit:saveProjectMemory' | 'devorbit:generateMemoryFromGit'
-  | 'devorbit:getRealUsage'
+  | 'devorbit:getRealUsage' | 'devorbit:getProjectAudit' | 'devorbit:getHitlRequests'
+  | 'devorbit:approveHitl' | 'devorbit:rejectHitl'
+  | 'devorbit:runDiagnostic'
+  | 'devorbit:getTelemetrySpans'
+  | 'devorbit:getHybridMemory' | 'devorbit:rememberHybridMemory' | 'devorbit:searchHybridMemory'
+  | 'devorbit:completeLlm'
+  | 'devorbit:getEvolutionHistory'
+  | 'devorbit:searchProjectText'
 
 export type IpcEventChannel =
   | 'devorbit:syncProgress' | 'devorbit:terminalEvent' | 'devorbit:webEvent'
   | 'devorbit:updateStatus' | 'devorbit:codexAuthProgress' | 'devorbit:companionEvent'
+  | 'devorbit:agentBridgeEvent' | 'devorbit:hitlEvent'
 
 export type IpcSendChannel = 'devorbit:windowControl'
 
@@ -419,6 +436,17 @@ export interface RealUsageState {
   }
 }
 
+export interface HitlRequestView {
+  id: string
+  prompt: string
+  state: 'pending' | 'approved' | 'rejected' | 'expired'
+  createdAt: number
+  expiresAt: number
+  context?: unknown
+  metadata?: Record<string, unknown>
+  decision?: { state: 'approved' | 'rejected' | 'expired'; decidedAt: number; reason?: string; decidedBy?: string }
+}
+
 export interface DevOrbitAPI {
   getProjects: () => Promise<Project[]>
   refreshProjects: () => Promise<Project[]>
@@ -476,6 +504,8 @@ export interface DevOrbitAPI {
   ) => Promise<AgentTurnResult>
   onTerminalEvent: (callback: (event: TerminalEvent) => void) => () => void
   onCompanionEvent: (callback: (summary: CompanionSummary) => void) => () => void
+  onAgentBridgeEvent: (callback: (event: AgentBridgeEvent) => void) => () => void
+  onHitlEvent: (callback: (request: HitlRequestView) => void) => () => void
   navigateWeb: (url: string) => Promise<{ success: boolean; url?: string; message?: string }>
   getWebState: () => Promise<WebPanelEvent>
   goBackWeb: () => Promise<{ success: boolean }>
@@ -523,6 +553,18 @@ export interface DevOrbitAPI {
   ) => Promise<{ success: boolean; message?: string }>
   generateMemoryFromGit: (projectPath: string) => Promise<string>
   getRealUsage: (force?: boolean) => Promise<RealUsageState>
+  getProjectAudit: (projectPath: string) => Promise<AuditSnapshot>
+  getHitlRequests: () => Promise<HitlRequestView[]>
+  approveHitl: (id: string, reason?: string) => Promise<HitlRequestView>
+  rejectHitl: (id: string, reason?: string) => Promise<HitlRequestView>
+  runDiagnostic: (request: DiagnosticProcessRequest) => Promise<DiagnosticProcessResult>
+  getTelemetrySpans: (limit?: number) => Promise<TelemetrySpanView[]>
+  getHybridMemory: (projectPath: string, kind?: HybridMemoryKind) => Promise<HybridMemoryView[]>
+  rememberHybridMemory: (projectPath: string, input: HybridMemoryWrite) => Promise<HybridMemoryView>
+  searchHybridMemory: (projectPath: string, query: string, limit?: number) => Promise<Array<{ entry: HybridMemoryView; score: number; matchedTerms: string[] }>>
+  completeLlm: (request: LlmCompletionRequestView) => Promise<LlmRouteView>
+  getEvolutionHistory: (limit?: number) => Promise<EvolutionRecord[]>
+  searchProjectText: (request: TextSearchRequest) => Promise<TextSearchResult>
 }
 
 declare global {

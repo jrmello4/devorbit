@@ -289,6 +289,26 @@ describe('waiter integrado ao turno via eventos reais', () => {  function create
     expect(harness.spawns).toHaveLength(1)
     resetTurnQueues()
   })
+
+  it('arma o waiter antes de escrever para não perder uma resposta síncrona do PTY', async () => {
+    resetTurnQueues()
+    const harness = createLiveHarness()
+    harness.deps.write = vi.fn((id: string) => {
+      harness.emit({
+        id,
+        type: 'data',
+        data: 'DEVORBIT_RESULT: {"version":1,"outcome":"completed","summary":"resposta imediata"}\n',
+      })
+      return true
+    })
+
+    await expect(sendAgentTurn(harness.deps, {
+      terminalId: 'turn-live-sync-result',
+      provider: 'opencode',
+      prompt: 'faça algo',
+    })).resolves.toMatchObject({ result: 'resposta imediata' })
+    resetTurnQueues()
+  })
 })
 
 describe('createResultWaiter', () => {

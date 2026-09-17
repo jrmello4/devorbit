@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import type { AppConfig, GitBranch as GitBranchInfo, GitChange, GitFileDiff, Project, SyncResult } from '../types'
 import { canSubmitInitDock, classifyDiffLine, isInitPushAvailable, splitPreviewLines } from './git-dock-helpers'
+import { DiffViewer, type SerializableDiffLine } from './DiffViewer'
 
 export interface GitDockInitPreview {
   path: string
@@ -601,24 +602,20 @@ export const GitDock: React.FC<GitDockProps> = ({
                                     </pre>
                                   </div>
                                 </div>
-                                <div>
-                                  <p className="mb-1 text-[11px] font-semibold text-stone-700">Diff colorido</p>
-                                  <pre className="max-h-56 overflow-auto rounded-md border border-stone-200 bg-[#fafaf7] p-2 font-mono text-[11px] leading-5" aria-label="Diff unificado colorido">
-                                    {fileDiff.diff.split('\n').slice(0, 400).map((line, index) => {
+                                <DiffViewer
+                                  diff={{
+                                    filePath: selectedDiffPath,
+                                    oldLabel: 'HEAD',
+                                    newLabel: 'Working tree',
+                                    lines: fileDiff.diff.split('\n').slice(0, 400).map<SerializableDiffLine>((line) => {
                                       const tone = classifyDiffLine(line)
-                                      const className = tone === 'add'
-                                        ? 'bg-emerald-50 text-emerald-800'
-                                        : tone === 'del'
-                                          ? 'bg-red-50 text-red-800'
-                                          : tone === 'hunk'
-                                            ? 'bg-sky-50 text-sky-800'
-                                            : tone === 'meta'
-                                              ? 'text-stone-500'
-                                              : 'text-stone-700'
-                                      return <div key={index} className={className}>{line || ' '}</div>
-                                    })}
-                                  </pre>
-                                </div>
+                                      return {
+                                        kind: tone === 'add' ? 'add' : tone === 'del' ? 'del' : tone === 'hunk' ? 'hunk' : tone === 'meta' ? 'meta' : 'context',
+                                        content: line || ' ',
+                                      }
+                                    }),
+                                  }}
+                                />
                               </>
                             )}
                           </div>

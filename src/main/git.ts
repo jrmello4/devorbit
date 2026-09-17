@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { promisify } from 'node:util'
 import path from 'node:path'
 import fs from 'node:fs/promises'
@@ -187,10 +188,135 @@ export async function createAgentWorktree(repoPath: string, agentId: string): Pr
   })
 }
 
-export async function integrateAgentWorktree(repoPath: string, branch: string, worktreePath: string): Promise<SyncResult> {
+export interface GitApprovalSnapshot {
+  operation: 'push' | 'merge'
+  head: string
+  branch: string
+  status: string
+  remote: string | null
+  pushRemote: string | null
+  pushUrls: readonly string[]
+  pushRefspec: string | null
+  contentHash: string
+  sourceHead?: string
+  sourceBranch?: string
+}
+
+async function readGitContentHash(repoPath: string): Promise<string> {
+  const hash = createHash('sha256')
+  const diff = await execFileAsync('git', ['diff', '--binary', 'HEAD', '--'], {
+    cwd: repoPath,
+    timeout: 15000,
+    windowsHide: true,
+    maxBuffer: 32 * 1024 * 1024,
+  })
+  hash.update(diff.stdout, 'utf8')
+  const untracked = await execFileAsync('git', ['ls-files', '--others', '--exclude-standard', '-z'], {
+    cwd: repoPath,
+    timeout: 15000,
+    windowsHide: true,
+    maxBuffer: 8 * 1024 * 1024,
+  })
+  for (const relativePath of untracked.stdout.split('\0').filter(Boolean)) {
+    hash.update(relativePath, 'utf8')
+    hash.update('\0', 'utf8')
+    hash.update(await fs.readFile(path.join(repoPath, relativePath)))
+  }
+  return hash.digest('hex')
+}
+
+export function resolvePushRefspecFallback(pushDefault: string, branch: string): string {
+  const normalized = pushDefault.trim().toLowerCase()
+  if (normalized === 'current') return `HEAD:${branch}`
+  const detail = normalized || 'unset'
+  throw new Error(
+    `O push desta branch não tem destino determinado (push.default=${detail}); configure um upstream ou push.default=current.`,
+  )
+}
+
+async function resolveGitPushTarget(repoPath: string, branch: string): Promise<{ remote: string | null; urls: readonly string[]; refspec: string | null }> {
+  if (!branch) return { remote: null, urls: [], refspec: null }
+  const config = async (key: string): Promise<string> => {
+    try {
+      return (await execFileAsync('git', ['config', '--get', key], { cwd: repoPath, timeout: 8000, windowsHide: true })).stdout.trim()
+    } catch {
+      return ''
+    }
+  }
+  const remoteName = (await config(`branch.${branch}.pushRemote`)) || (await config('remote.pushDefault')) || (await config(`branch.${branch}.remote`)) || 'origin'
+  let remoteUrls: string[] = []
+  try {
+    remoteUrls = (await execFileAsync('git', ['remote', 'get-url', '--push', '--all', remoteName], { cwd: repoPath, timeout: 8000, windowsHide: true })).stdout.split(/\r?\n/u).map((value) => value.trim()).filter(Boolean)
+  } catch {
+    remoteUrls = []
+  }
+  let refspec = `HEAD:${branch}`
+  try {
+    const configured = (await execFileAsync('git', ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{push}'], { cwd: repoPath, timeout: 8000, windowsHide: true })).stdout.trim()
+    const separator = configured.indexOf('/')
+    if (separator > 0 && separator < configured.length - 1) refspec = `HEAD:${configured.slice(separator + 1)}`
+  } catch {
+    refspec = resolvePushRefspecFallback(await config('push.default'), branch)
+  }
+  return { remote: remoteName, urls: remoteUrls, refspec }
+}
+
+async function readGitApprovalSnapshot(repoPath: string, operation: GitApprovalSnapshot['operation'], sourceBranch?: string, sourcePath?: string): Promise<GitApprovalSnapshot> {
+  const [headResult, branchResult, statusResult, remoteResult] = await Promise.all([
+    execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: repoPath, timeout: 8000, windowsHide: true }),
+    execFileAsync('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], { cwd: repoPath, timeout: 8000, windowsHide: true }),
+    execFileAsync('git', ['status', '--porcelain=v1', '-z'], { cwd: repoPath, timeout: 8000, windowsHide: true }),
+    execFileAsync('git', ['remote', 'get-url', 'origin'], { cwd: repoPath, timeout: 8000, windowsHide: true }).catch(() => ({ stdout: '' })),
+  ])
+  const pushTarget = operation === 'push' ? await resolveGitPushTarget(repoPath, branchResult.stdout.trim()) : { remote: null, urls: [], refspec: null }
+  const snapshot: GitApprovalSnapshot = {
+    operation,
+    head: headResult.stdout.trim(),
+    branch: branchResult.stdout.trim(),
+    status: statusResult.stdout,
+    remote: remoteResult.stdout.trim() || null,
+    pushRemote: pushTarget.remote,
+    pushUrls: pushTarget.urls,
+    pushRefspec: pushTarget.refspec,
+    contentHash: await readGitContentHash(repoPath),
+  }
+  if (operation === 'merge' && sourceBranch) {
+    const sourceResult = await execFileAsync('git', ['rev-parse', `${sourceBranch}^{commit}`], {
+      cwd: sourcePath || repoPath,
+      timeout: 8000,
+      windowsHide: true,
+    })
+    snapshot.sourceBranch = sourceBranch
+    snapshot.sourceHead = sourceResult.stdout.trim()
+  }
+  return snapshot
+}
+
+export async function getGitApprovalSnapshot(repoPath: string, sourceBranch?: string, sourcePath?: string): Promise<GitApprovalSnapshot> {
+  if (sourceBranch !== undefined && !/^devorbit\/[a-z0-9_-]{1,48}$/i.test(sourceBranch)) throw new Error('Branch de agente inválida.')
+  return readGitApprovalSnapshot(repoPath, sourceBranch ? 'merge' : 'push', sourceBranch, sourcePath)
+}
+
+async function assertGitApprovalSnapshot(repoPath: string, expected: GitApprovalSnapshot): Promise<void> {
+  const current = await readGitApprovalSnapshot(repoPath, expected.operation, expected.sourceBranch)
+  if (
+    current.head !== expected.head ||
+    current.branch !== expected.branch ||
+    current.status !== expected.status ||
+    current.remote !== expected.remote ||
+    current.pushRemote !== expected.pushRemote ||
+    current.pushUrls.join('\0') !== expected.pushUrls.join('\0') ||
+    current.pushRefspec !== expected.pushRefspec ||
+    current.contentHash !== expected.contentHash ||
+    current.sourceHead !== expected.sourceHead
+  ) throw new Error('O estado do repositório mudou enquanto a aprovação estava pendente. Revise a operação novamente.')
+}
+
+export async function integrateAgentWorktree(repoPath: string, branch: string, worktreePath: string, approvalSnapshot?: GitApprovalSnapshot): Promise<SyncResult> {
   if (!/^devorbit\/[a-z0-9_-]{1,48}$/i.test(branch)) throw new Error('Branch de agente inválida.')
   const lockKey = await getRepositoryLockKey(repoPath)
   return await runSerialized(lockKey, async () => {
+    if (approvalSnapshot) await assertGitApprovalSnapshot(repoPath, approvalSnapshot)
     const { stdout: dirty } = await execFileAsync('git', ['status', '--porcelain'], { cwd: repoPath, timeout: 8000, windowsHide: true })
     if (dirty.trim()) throw new Error('O projeto principal possui alterações pendentes.')
     const hasNodeManifest = await fs.access(path.join(worktreePath, 'package.json')).then(() => true).catch(() => false)
@@ -789,7 +915,8 @@ function formatGitChanges(changes: GitStatusChange[]): string {
 async function pushGitUnlocked(
   repoPath: string,
   commitMessage?: string,
-  options?: GitPushOptions
+  options?: GitPushOptions,
+  approvedTarget?: { urls: readonly string[]; refspec: string },
 ): Promise<SyncResult> {
   const isRepo = await isGitRepository(repoPath)
   if (!isRepo) {
@@ -862,12 +989,23 @@ async function pushGitUnlocked(
     // 2. Executa git push
     let pushOutput = ''
     try {
-      const { stdout, stderr } = await execFileAsync('git', ['push'], {
-        cwd: repoPath,
-        timeout: 45000,
-        windowsHide: true,
-      })
-      pushOutput = (stdout + '\n' + stderr).trim()
+      if (approvedTarget) {
+        for (const url of approvedTarget.urls) {
+          const { stdout, stderr } = await execFileAsync('git', ['push', url, approvedTarget.refspec], {
+            cwd: repoPath,
+            timeout: 45000,
+            windowsHide: true,
+          })
+          pushOutput = [pushOutput, stdout, stderr].filter(Boolean).join('\n').trim()
+        }
+      } else {
+        const { stdout, stderr } = await execFileAsync('git', ['push'], {
+          cwd: repoPath,
+          timeout: 45000,
+          windowsHide: true,
+        })
+        pushOutput = (stdout + '\n' + stderr).trim()
+      }
     } catch (pushErr: any) {
       const errText = (pushErr.stderr || pushErr.stdout || pushErr.message || '').toString()
 
@@ -927,6 +1065,26 @@ export async function pushGit(
     return { success: false, message: 'Caminho de repositório inválido.' }
   }
   return runSerialized(lockKey, () => pushGitUnlocked(repoPath, commitMessage, options))
+}
+
+export async function pushGitWithApproval(
+  repoPath: string,
+  commitMessage: string | undefined,
+  options: GitPushOptions | undefined,
+  approvalSnapshot: GitApprovalSnapshot,
+): Promise<SyncResult> {
+  if (approvalSnapshot.operation !== 'push') throw new Error('Snapshot de aprovação incompatível com push.')
+  const lockKey = await getRepositoryLockKey(repoPath)
+  return runSerialized(lockKey, async () => {
+    await assertGitApprovalSnapshot(repoPath, approvalSnapshot)
+    if (!approvalSnapshot.pushRemote || approvalSnapshot.pushUrls.length === 0 || !approvalSnapshot.pushRefspec) {
+      throw new Error('O destino efetivo do push não pôde ser confirmado.')
+    }
+    return pushGitUnlocked(repoPath, commitMessage, options, {
+      urls: approvalSnapshot.pushUrls,
+      refspec: approvalSnapshot.pushRefspec,
+    })
+  })
 }
 
 async function finalizeGitProjectUnlocked(repoPath: string, allowRecreatableIgnored: boolean): Promise<SyncResult> {

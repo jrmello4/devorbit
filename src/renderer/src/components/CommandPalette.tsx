@@ -43,6 +43,7 @@ interface CommandPaletteProps {
   focusedNode?: FocusedCanvasContext | null
   onNavigate?: (action: NavigateActionId) => void
   onCreate?: (action: CreateActionId) => void
+  onRunEvolutionCommand?: (command: 'audit' | 'debt' | 'review' | 'fix') => void
 }
 
 interface PaletteItem {
@@ -77,6 +78,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   focusedNode = null,
   onNavigate,
   onCreate,
+  onRunEvolutionCommand,
 }) => {
   const [query, setQuery] = useState(search)
   const [highlightedIndex, setHighlightedIndex] = useState(0)
@@ -140,6 +142,13 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         icon: ArrowRightLeft,
         onSelect: onToggleAccount,
       },
+      ...(onRunEvolutionCommand ? (['audit', 'debt', 'review', 'fix'] as const).map((command) => ({
+        id: 'evolution-' + command,
+        label: '/' + command,
+        description: command === 'audit' ? 'Executar auditoria estática do projeto ativo' : 'Abrir o painel de evolução para ' + command,
+        icon: FolderSearch,
+        onSelect: () => onRunEvolutionCommand(command),
+      })) : []),
     ]
 
     const commandMatches = normalizedQuery
@@ -179,6 +188,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     onOpenClone,
     onOpenSettings,
     onRefresh,
+    onRunEvolutionCommand,
     onSearchChange,
     onSyncAll,
     onToggleAccount,

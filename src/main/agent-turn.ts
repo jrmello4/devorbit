@@ -135,6 +135,8 @@ export interface TurnWaiter {
   tail?: string
 }
 
+export type ResultWaitPromise = Promise<TurnWaiter> & { cancel: () => void }
+
 export interface TurnDependencies {
   getSession: (id: string) => { provider: AgentProviderId; model: string } | undefined
   setSession: (id: string, session: { provider: AgentProviderId; model: string }) => void
@@ -261,10 +263,17 @@ async function runTurn(
     } else {
       effective = session.provider
     }
+    // Arme o observador antes de escrever: alguns CLIs devolvem um resultado
+    // no mesmo ciclo de eventos do PTY. Se o waiter fosse criado depois do
+    // write, essa resposta seria perdida e o turno ficaria em stall até o
+    // timeout.
+    const waiterPromise = deps.waitResult(terminalId, { idleMs, overallMs })
     if (!deps.write(terminalId, prompt + '\r')) {
+      const cancel = (waiterPromise as Partial<ResultWaitPromise>).cancel
+      cancel?.()
       throw new Error('O terminal recusou a tarefa (ENETUNREACH).')
     }
-    const waiter = await deps.waitResult(terminalId, { idleMs, overallMs })
+    const waiter = await waiterPromise
     const outcome = outcomeFromWait(waiter)
     if (outcome.blocked !== undefined) {
       attempts.push({ provider: effective, ok: true })
@@ -294,8 +303,10 @@ async function runTurn(
 /** Espera o marcador DEVORBIT_RESULT sobre eventos reais do PTY. */
 export function createResultWaiter(
   subscribe: (listener: (event: TerminalEvent) => void) => () => void
-): (id: string, timeouts: { idleMs: number; overallMs: number }) => Promise<TurnWaiter> {
-  return (id, timeouts) => new Promise<TurnWaiter>((resolve) => {
+): (id: string, timeouts: { idleMs: number; overallMs: number }) => ResultWaitPromise {
+  return (id, timeouts) => {
+    let cancelWaiter: () => void = () => undefined
+    const promise = new Promise<TurnWaiter>((resolve) => {
     let settled = false
     let buffer = ''
     const resultScanner = createAgentResultScanner()
@@ -315,6 +326,7 @@ export function createResultWaiter(
     }
     let idleTimer = setTimeout(() => finish({ timedOut: true, idleTimedOut: true, tail: tail() }), Math.max(1000, timeouts.idleMs))
     const overallTimer = setTimeout(() => finish({ timedOut: true, tail: tail() }), Math.max(5000, timeouts.overallMs))
+    cancelWaiter = () => finish({ error: 'A espera do resultado foi cancelada.' })
     const unsubscribe = subscribe((event) => {
       if (event.id !== id) return
       if (event.type === 'data' && typeof event.data === 'string') {
@@ -357,4 +369,8 @@ export function createResultWaiter(
       }
     })
   })
+  const result = promise as ResultWaitPromise
+    result.cancel = cancelWaiter
+    return result
+  }
 }

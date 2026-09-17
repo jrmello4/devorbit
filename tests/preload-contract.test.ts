@@ -57,6 +57,8 @@ const expectedApiKeys = [
   'sendAgentTurn',
   'onTerminalEvent',
   'onCompanionEvent',
+  'onAgentBridgeEvent',
+  'onHitlEvent',
   'navigateWeb',
   'getWebState',
   'goBackWeb',
@@ -88,6 +90,18 @@ const expectedApiKeys = [
   'saveProjectMemory',
   'generateMemoryFromGit',
   'getRealUsage',
+  'getProjectAudit',
+  'getHitlRequests',
+  'approveHitl',
+  'rejectHitl',
+  'runDiagnostic',
+  'getTelemetrySpans',
+  'getHybridMemory',
+  'rememberHybridMemory',
+  'searchHybridMemory',
+  'completeLlm',
+  'getEvolutionHistory',
+  'searchProjectText',
 ]
 
 let exposedApiObject: Record<string, (...args: any[]) => unknown>
@@ -172,6 +186,18 @@ describe('preload IPC contract', () => {
       ['devorbit:saveProjectMemory', 'project', 'memory'],
       ['devorbit:generateMemoryFromGit', 'project'],
       ['devorbit:getRealUsage', true],
+      ['devorbit:getProjectAudit', 'project'],
+      ['devorbit:getHitlRequests'],
+      ['devorbit:approveHitl', 'approval-1'],
+      ['devorbit:rejectHitl', 'approval-1', 'motivo'],
+      ['devorbit:runDiagnostic', { command: 'git', args: ['status'], projectPath: 'C:/project' }],
+      ['devorbit:getTelemetrySpans'],
+      ['devorbit:getHybridMemory', 'project'],
+      ['devorbit:rememberHybridMemory', 'project', { kind: 'operational', content: 'memory' }],
+      ['devorbit:searchHybridMemory', 'project', 'query'],
+      ['devorbit:completeLlm', { messages: [{ role: 'user', content: 'hello' }] }],
+      ['devorbit:getEvolutionHistory'],
+      ['devorbit:searchProjectText', { projectPath: 'project', query: 'needle' }],
     ]
 
     const methodNames = [
@@ -186,7 +212,7 @@ describe('preload IPC contract', () => {
       'getUpdateState', 'downloadUpdate',       'installUpdate', 'saveConfig', 'exportConfig',
       'importConfig', 'selectDirectory', 'testToolPath', 'getToolHealth', 'getCodexAuthStatus',
       'startCodexLogin', 'cancelCodexLogin', 'getProjectMemory', 'saveProjectMemory',
-      'generateMemoryFromGit', 'getRealUsage',
+      'generateMemoryFromGit', 'getRealUsage', 'getProjectAudit', 'getHitlRequests', 'approveHitl', 'rejectHitl', 'runDiagnostic', 'getTelemetrySpans', 'getHybridMemory', 'rememberHybridMemory', 'searchHybridMemory', 'completeLlm', 'getEvolutionHistory', 'searchProjectText',
     ]
 
     for (const [index, methodName] of methodNames.entries()) await api[methodName](...calls[index].slice(1))
@@ -241,6 +267,8 @@ describe('preload IPC contract', () => {
     ['onSyncProgress', 'devorbit:syncProgress', { path: 'project', done: 1, total: 2 }],
     ['onTerminalEvent', 'devorbit:terminalEvent', { type: 'data', id: 'terminal-1' }],
     ['onCompanionEvent', 'devorbit:companionEvent', { terminalId: 'terminal-1', outcome: 'completed', title: 'Tarefa finalizada', message: 'ok', suggestion: 'revise', actions: [] }],
+    ['onAgentBridgeEvent', 'devorbit:agentBridgeEvent', { requestId: 'req-1', source: 'devorbit', target: 'agy', status: 'pending' }],
+    ['onHitlEvent', 'devorbit:hitlEvent', { id: 'approval-1', prompt: 'approve', state: 'pending', createdAt: 1, expiresAt: 2 }],
     ['onWebEvent', 'devorbit:webEvent', { type: 'loaded', url: 'https://example.com/' }],
     ['onUpdateStatus', 'devorbit:updateStatus', { status: 'idle' }],
     ['onCodexAuthProgress', 'devorbit:codexAuthProgress', { account: 'account1' }],

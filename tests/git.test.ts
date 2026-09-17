@@ -9,7 +9,7 @@ vi.mock('node:child_process', () => ({
   execFile: execFileMock,
 }))
 
-import { getGitBranches, getGitChanges, getGitStatus, pushGit, syncGit } from '../src/main/git'
+import { getGitApprovalSnapshot, getGitBranches, getGitChanges, getGitStatus, pushGit, resolvePushRefspecFallback, syncGit } from '../src/main/git'
 
 interface ExecCall {
   command: string
@@ -88,6 +88,34 @@ describe('syncGit safety gates', () => {
 })
 
 describe('pushGit selection safety', () => {
+  it('changes approval fingerprint when an untracked file changes without changing Git status', async () => {
+    const scratchPath = path.join(repoPath, 'scratch.txt')
+    await fs.writeFile(scratchPath, 'before', 'utf8')
+    respondWithGitOutput((command, args) => {
+      if (command !== 'git') throw new Error(`unexpected command: ${command}`)
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return { stdout: 'head\n' }
+      if (args[0] === 'symbolic-ref') return { stdout: 'main\n' }
+      if (args[0] === 'status') return { stdout: '?? scratch.txt\0' }
+      if (args[0] === 'remote' && args[1] === 'get-url' && args[2] === 'origin') return { stdout: 'https://read.example/repo\n' }
+      if (args[0] === 'config' && args[2] === 'branch.main.pushRemote') return { stdout: 'branch-remote\n' }
+      if (args[0] === 'config') return { stdout: 'global-remote\n' }
+      if (args[0] === 'remote' && args[1] === 'get-url' && args[2] === '--push') return { stdout: 'git@write.example:repo\ngit@backup.example:repo\n' }
+      if (args[0] === 'rev-parse' && args[1] === '--abbrev-ref') return { stdout: 'origin/main\n' }
+      if (args[0] === 'diff') return { stdout: '' }
+      if (args[0] === 'ls-files') return { stdout: 'scratch.txt\0' }
+      throw new Error(`unexpected command: ${args.join(' ')}`)
+    })
+
+    const first = await getGitApprovalSnapshot(repoPath)
+    await fs.writeFile(scratchPath, 'after', 'utf8')
+    const second = await getGitApprovalSnapshot(repoPath)
+
+    expect(first.status).toBe(second.status)
+    expect(first.pushRemote).toBe('branch-remote')
+    expect(first.pushUrls).toEqual(['git@write.example:repo', 'git@backup.example:repo'])
+    expect(first.contentHash).not.toBe(second.contentHash)
+  })
+
   it('stages only the explicitly selected currently listed paths', async () => {
     respondWithGitOutput((command, args) => {
       if (command !== 'git') throw new Error(`unexpected command: ${command}`)
@@ -301,5 +329,57 @@ describe('Git mutation serialization', () => {
       { name: 'main', isCurrent: true, isRemote: false, commit: 'abc1234' },
     ])
     expect(events.indexOf('push:end')).toBeLessThan(events.indexOf('fetch:start'))
+  })
+})
+
+describe('push destination determination', () => {
+  it('only accepts push.default=current as an explicit fallback', () => {
+    expect(resolvePushRefspecFallback('current', 'main')).toBe('HEAD:main')
+    expect(resolvePushRefspecFallback('  CURRENT  ', 'main')).toBe('HEAD:main')
+    for (const value of ['nothing', 'matching', 'simple', 'upstream', 'tracking', '', '   ']) {
+      expect(() => resolvePushRefspecFallback(value, 'main')).toThrowError(/destino determinado/)
+    }
+  })
+
+  it('records the effective branch refspec when push.default=current', async () => {
+    respondWithGitOutput((command, args) => {
+      if (command !== 'git') throw new Error(`unexpected command: ${command}`)
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return { stdout: 'head\n' }
+      if (args[0] === 'symbolic-ref') return { stdout: 'main\n' }
+      if (args[0] === 'status') return { stdout: '' }
+      if (args[0] === 'remote' && args[1] === 'get-url' && args[2] === 'origin') return { stdout: 'https://read.example/repo\n' }
+      if (args[0] === 'config' && args[2] === 'push.default') return { stdout: 'current\n' }
+      if (args[0] === 'config') return { stdout: '' }
+      if (args[0] === 'remote' && args[1] === 'get-url' && args[2] === '--push') return { stdout: 'git@write.example:repo\n' }
+      if (args[0] === 'rev-parse' && args[1] === '--abbrev-ref') throw new Error('no upstream configured')
+      if (args[0] === 'diff') return { stdout: '' }
+      if (args[0] === 'ls-files') return { stdout: '' }
+      throw new Error(`unexpected command: ${args.join(' ')}`)
+    })
+
+    const snapshot = await getGitApprovalSnapshot(repoPath)
+
+    expect(snapshot.pushRemote).toBe('origin')
+    expect(snapshot.pushUrls).toEqual(['git@write.example:repo'])
+    expect(snapshot.pushRefspec).toBe('HEAD:main')
+  })
+
+  it('refuses the snapshot when push.default leaves the destination undetermined', async () => {
+    respondWithGitOutput((command, args) => {
+      if (command !== 'git') throw new Error(`unexpected command: ${command}`)
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return { stdout: 'head\n' }
+      if (args[0] === 'symbolic-ref') return { stdout: 'main\n' }
+      if (args[0] === 'status') return { stdout: '' }
+      if (args[0] === 'remote' && args[1] === 'get-url' && args[2] === 'origin') return { stdout: 'https://read.example/repo\n' }
+      if (args[0] === 'config' && args[2] === 'push.default') return { stdout: 'nothing\n' }
+      if (args[0] === 'config') return { stdout: '' }
+      if (args[0] === 'remote' && args[1] === 'get-url' && args[2] === '--push') return { stdout: 'git@write.example:repo\n' }
+      if (args[0] === 'rev-parse' && args[1] === '--abbrev-ref') throw new Error('no upstream configured')
+      if (args[0] === 'diff') return { stdout: '' }
+      if (args[0] === 'ls-files') return { stdout: '' }
+      throw new Error(`unexpected command: ${args.join(' ')}`)
+    })
+
+    await expect(getGitApprovalSnapshot(repoPath)).rejects.toThrowError(/destino determinado/)
   })
 })

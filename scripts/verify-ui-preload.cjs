@@ -378,6 +378,7 @@ const api = {
     return () => terminalListeners.delete(callback)
   },
   onCompanionEvent: () => () => {},
+  onAgentBridgeEvent: () => () => {},
   navigateWeb: async (url) => {
     record('navigateWeb', url)
     for (const listener of webListeners) listener({ type: 'navigated', url, title: url })
@@ -498,6 +499,18 @@ const api = {
     record('getRealUsage')
     return copy(realUsage)
   },
+  getProjectAudit: async () => ({ version: 1, projectPath: projectPath, generatedAt: new Date().toISOString(), filesScanned: 0, linesScanned: 0, cyclomaticComplexity: 0, findings: [], estimatedDebtMinutes: 0 }),
+  getHitlRequests: async () => [],
+  approveHitl: async (id) => ({ id, prompt: 'fixture', state: 'approved', createdAt: 0, expiresAt: 0 }),
+  rejectHitl: async (id) => ({ id, prompt: 'fixture', state: 'rejected', createdAt: 0, expiresAt: 0 }),
+  runDiagnostic: async () => ({ command: 'git', args: [], status: 'completed', code: 0, signal: null, stdout: '', stderr: '', stdoutBytes: 0, stderrBytes: 0, truncated: false, durationMs: 0 }),
+  getTelemetrySpans: async () => [],
+  getHybridMemory: async () => [],
+  rememberHybridMemory: async () => ({ id: 'memory', kind: 'operational', content: 'fixture', tags: [], createdAt: '', updatedAt: '' }),
+  searchHybridMemory: async () => [],
+  completeLlm: async () => ({ ok: false, attempts: [], context: { inputTokens: 0, requestedOutputTokens: 0, totalRequestedTokens: 0, contextWindow: 0, remainingTokens: 0, withinLimit: false }, cost: { inputTokens: 0, outputTokens: 0, inputCost: 0, outputCost: 0, totalCost: 0, currency: 'USD' } }),
+  getEvolutionHistory: async () => [],
+  searchProjectText: async () => ({ root: projectPath, query: '', status: 'ok', matches: [], truncated: false, exitCode: 1 }),
 }
 
 contextBridge.exposeInMainWorld('devorbit', api)

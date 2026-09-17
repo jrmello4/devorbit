@@ -178,6 +178,105 @@ function removeTempDir(dir, timeoutMs = 45_000) {
   return !fs.existsSync(dir)
 }
 
+const BRIDGE_RESOURCE_FILES = [
+  'devorbit.cmd',
+  'devorbit-mcp.cmd',
+  path.join('scripts', 'devorbit-bridge.cjs'),
+  path.join('scripts', 'devorbit-mcp.cjs'),
+]
+
+function runLauncherProbe(command, args, input, timeoutMs = 30_000, windowsVerbatimArguments = false) {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, {
+      windowsHide: true,
+      windowsVerbatimArguments,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    let settled = false
+    const finish = (result) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      try {
+        child.kill()
+      } catch (error) {
+        void error
+      }
+      resolve({ ...result, stdout, stderr })
+    }
+    const timer = setTimeout(() => finish({ code: null, timedOut: true }), timeoutMs)
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString()
+      if (stdout.includes('\n')) finish({ code: 0 })
+    })
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString()
+    })
+    child.on('error', (error) => finish({ code: null, error }))
+    child.on('close', (code) => finish({ code }))
+    child.stdin.write(`${input}\n`)
+  })
+}
+
+async function verifyBridgeResources() {
+  const label = 'bridge/mcp resources'
+  const resourcesDir = path.join(releaseDir, 'win-unpacked', 'resources')
+  if (!fs.existsSync(resourcesDir)) {
+    return { label, ok: false, detail: 'resources do pacote ausente; rode npm run dist antes do smoke' }
+  }
+  const missing = []
+  for (const relative of BRIDGE_RESOURCE_FILES) {
+    const file = path.join(resourcesDir, relative)
+    if (!fs.existsSync(file) || !fs.statSync(file).isFile() || fs.statSync(file).size === 0) {
+      missing.push(relative)
+    }
+  }
+  if (missing.length > 0) {
+    return { label, ok: false, detail: `arquivos ausentes fora do ASAR: ${missing.join(', ')}` }
+  }
+  if (!fs.existsSync(path.join(resourcesDir, 'app.asar'))) {
+    return { label, ok: false, detail: 'app.asar ausente no pacote' }
+  }
+  const mcpCmdSource = fs.readFileSync(path.join(resourcesDir, 'devorbit-mcp.cmd'), 'utf8')
+  if (!mcpCmdSource.includes('scripts\\devorbit-mcp.cjs') && !mcpCmdSource.includes('scripts/devorbit-mcp.cjs')) {
+    return { label, ok: false, detail: 'devorbit-mcp.cmd nao aponta para scripts/devorbit-mcp.cjs' }
+  }
+  const bridgeCmdSource = fs.readFileSync(path.join(resourcesDir, 'devorbit.cmd'), 'utf8')
+  if (!bridgeCmdSource.includes('scripts\\devorbit-bridge.cjs') && !bridgeCmdSource.includes('scripts/devorbit-bridge.cjs')) {
+    return { label, ok: false, detail: 'devorbit.cmd nao aponta para scripts/devorbit-bridge.cjs' }
+  }
+  if (process.platform !== 'win32') {
+    return { label, ok: false, detail: 'probe do launcher fisico exige Windows' }
+  }
+  const mcpCjs = path.join(resourcesDir, 'scripts', 'devorbit-mcp.cjs')
+  const bridgeCjs = path.join(resourcesDir, 'scripts', 'devorbit-bridge.cjs')
+  for (const file of [bridgeCjs, mcpCjs]) {
+    const check = await runProcess(process.execPath, ['--check', file], 20_000)
+    if (check.code !== 0) {
+      return { label, ok: false, detail: `node --check falhou em ${path.basename(file)}: ${check.stderr.trim()}` }
+    }
+  }
+  const initialize = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} })
+  const direct = await runLauncherProbe(process.execPath, [mcpCjs], initialize)
+  if (direct.timedOut || direct.code !== 0 || !direct.stdout.includes('DevOrbit MCP')) {
+    return { label, ok: false, detail: `mcp.cjs empacotado nao respondeu initialize (${direct.timedOut ? 'timeout' : direct.code})` }
+  }
+  const mcpCmd = path.join(resourcesDir, 'devorbit-mcp.cmd')
+  const launcher = await runLauncherProbe(
+    process.env.ComSpec || 'cmd.exe',
+    ['/d', '/s', '/c', `"${mcpCmd}"`],
+    initialize,
+    30_000,
+    true
+  )
+  if (launcher.timedOut || launcher.code !== 0 || !launcher.stdout.includes('DevOrbit MCP')) {
+    return { label, ok: false, detail: `launcher fisico devorbit-mcp.cmd nao respondeu initialize (${launcher.timedOut ? 'timeout' : launcher.code})` }
+  }
+  return { label, ok: true, detail: '4 arquivos fora do ASAR; initialize OK via mcp.cjs e devorbit-mcp.cmd' }
+}
+
 function runProcess(exePath, args, timeoutMs) {
   return new Promise((resolve) => {
     const child = spawn(exePath, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -355,7 +454,7 @@ async function silentInstallSmoke(label, installerPath, version) {
 async function main() {
   const version = readVersion()
   const targets = parseTargets(process.argv)
-  const results = [validateLatestYml(version)]
+  const results = [validateLatestYml(version), await verifyBridgeResources()]
 
   if (targets.includes('unpacked')) {
     results.push(

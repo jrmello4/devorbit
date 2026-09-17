@@ -16,10 +16,12 @@ concurrency:
 
 jobs:
   quality:
-    name: Qualidade e pacote Windows
-    runs-on: windows-latest
-    outputs:
-      release_version: ${{ steps.version.outputs.release_version }}
+    name: Qualidade (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
       - name: Checkout
@@ -49,16 +51,66 @@ jobs:
       - name: Production build
         run: npm run build
 
-      - name: UI verification (Electron)
-        run: npm run verify:ui
+      - name: Bridge unit suite
+        run: npm run verify:bridge
 
-      - name: Runtime verification (Electron IPC)
-        run: npm run verify:runtime
+      - name: Bridge Electron E2E (sem display; runner local)
+        run: npm run verify:bridge:e2e
 
-      - name: IPC/preload smoke (real preload)
-        run: npm run smoke:ipc
+      - name: Runtime verification (Electron; xvfb no Ubuntu)
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a npm run verify:runtime
+          else
+            npm run verify:runtime
+          fi
 
-      - name: Definir versão do pacote
+      - name: IPC/preload smoke (Electron; xvfb no Ubuntu)
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a npm run smoke:ipc
+          else
+            npm run smoke:ipc
+          fi
+
+      - name: UI verification (Electron; xvfb no Ubuntu)
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a npm run verify:ui
+          else
+            npm run verify:ui
+          fi
+
+      - name: Upload UI artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-artifacts-${{ matrix.os }}
+          path: artifacts/ui
+
+  package:
+    name: Pacote Windows e smoke de instalacao
+    needs: quality
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22.x
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Definir versao do pacote
         id: version
         shell: pwsh
         run: |
@@ -71,7 +123,7 @@ jobs:
           }
           "release_version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
-      - name: Detectar assinatura de código
+      - name: Detectar assinatura de codigo
         id: signing
         shell: pwsh
         env:
@@ -81,9 +133,8 @@ jobs:
         run: |
           $hasSecrets = -not [string]::IsNullOrWhiteSpace($env:CSC_LINK) -and -not [string]::IsNullOrWhiteSpace($env:CSC_KEY_PASSWORD) -and -not [string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_THUMBPRINT)
           "signing=$($hasSecrets.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          if (-not $hasSecrets) { Write-Host 'Sem secrets de assinatura: pacote será gerado sem assinatura.' }
 
-      - name: Empacotar NSIS e portable (sem publicar)
+      - name: Empacotar NSIS e portable (runner Windows obrigatorio; sem publicar)
         run: npx electron-builder --publish never
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
@@ -139,16 +190,15 @@ jobs:
             }
           }
           if ($invalid.Count -gt 0) {
-            Write-Error ('Assinatura Authenticode inválida: ' + ($invalid -join '; '))
+            Write-Error ('Assinatura Authenticode invalida: ' + ($invalid -join '; '))
             exit 1
           }
           Write-Host 'Authenticode: Valid e thumbprint correspondente em todos os EXEs.'
 
-      - name: Smoke dos pacotes Windows
+      - name: Smoke dos pacotes Windows (instalacao NSIS exige runner Windows)
         run: npm run smoke:package
 
       - name: Enviar pacote validado como artefato
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
         uses: actions/upload-artifact@v4
         with:
           name: devorbit-windows
@@ -159,16 +209,9 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - name: Upload UI artifacts on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ui-artifacts
-          path: artifacts/ui
-
   release:
-    name: Publicar instalador e atualização
-    needs: quality
+    name: Publicar instalador e atualizacao
+    needs: package
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-latest
     permissions:
@@ -187,18 +230,18 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Validar versão da publicação
+      - name: Validar versao da publicacao
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+$') {
-            throw "Tag inválida: $env:RELEASE_TAG. Use o formato vMAJOR.MINOR.PATCH."
+            throw "Tag invalida: $env:RELEASE_TAG. Use o formato vMAJOR.MINOR.PATCH."
           }
 
           $tagVersion = $env:RELEASE_TAG.Substring(1)
           $packageVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
           if ($packageVersion -ne $tagVersion) {
-            throw "A tag $env:RELEASE_TAG não corresponde à versão do package.json ($packageVersion)."
+            throw "A tag $env:RELEASE_TAG nao corresponde a versao do package.json ($packageVersion)."
           }
 
           "RELEASE_VERSION=$tagVersion" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -209,11 +252,11 @@ jobs:
           name: devorbit-windows
           path: release
 
-      - name: Criar release para a versão
+      - name: Criar release para a versao
         run: |
           gh release view "$env:RELEASE_TAG" 2>$null
           if ($LASTEXITCODE -ne 0) {
-            gh release create "$env:RELEASE_TAG" --target "$env:GITHUB_SHA" --title "DevOrbit $env:RELEASE_VERSION" --notes "Atualização do DevOrbit."
+            gh release create "$env:RELEASE_TAG" --target "$env:GITHUB_SHA" --title "DevOrbit $env:RELEASE_VERSION" --notes "Atualizacao do DevOrbit."
           }
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -232,7 +275,7 @@ jobs:
           }
           gh release upload "$env:RELEASE_TAG" $assetPaths --clobber
           $portable = Get-ChildItem -LiteralPath release -Filter 'DevOrbit-*-portable.exe' | Select-Object -First 1
-          if (-not $portable) { throw 'Executável portable não foi gerado.' }
+          if (-not $portable) { throw 'Executavel portable nao foi gerado.' }
           $hash = (Get-FileHash -LiteralPath $portable.FullName -Algorithm SHA512).Hash.ToLowerInvariant()
           $manifest = @(
             "version: $env:RELEASE_VERSION"
