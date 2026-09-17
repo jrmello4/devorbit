@@ -4,16 +4,18 @@ import { Terminal as XTerm } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { Code2, Globe, RefreshCw, Terminal as TerminalIcon } from 'lucide-react'
 import type { AgentProviderId, TerminalEvent } from '../types'
+import { createAgentResultScanner, createLegacyAgentResult, type AgentResult } from '../../../shared/agent-result'
+import { canReuseCodexSession } from '../../../shared/codex-session'
 
 interface WorkspaceTerminalProps {
   projectPath: string
   terminalId: string
-  codexAccount: 'account1' | 'account2'
+  codexAccount?: 'account1' | 'account2'
   onNotify: (message: string, type?: 'success' | 'error' | 'info') => void
   onRequestCodexAuth?: (account: 'account1' | 'account2') => void
-  provider?: AgentProviderId
+  provider: AgentProviderId
   agentTask?: { id: string; prompt: string }
-  onAgentResult?: (result: string, taskId?: string) => void
+  onAgentResult?: (result: AgentResult, taskId?: string) => void
   onAgentTaskFailure?: (taskId: string, message: string) => void
 }
 
@@ -46,7 +48,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
   codexAccount,
   onNotify,
   onRequestCodexAuth,
-  provider = 'codex',
+  provider,
   agentTask,
   onAgentResult,
   onAgentTaskFailure,
@@ -55,16 +57,15 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
   const terminalRef = useRef<XTerm | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const outputSnapshotRef = useRef('')
-  const outputSnapshotOffsetRef = useRef(0)
   const completedTaskRef = useRef<string | null>(null)
   const deliveringTaskRef = useRef<string | null>(null)
-  const reportedResultsRef = useRef(new Set<string>())
   // Every start replaces the PTY behind this terminal id. Keep a local token so
   // a late response from the initial CMD startup cannot repaint a newer Codex
   // session as a shell session.
   const terminalStartTokenRef = useRef(0)
   const terminalModeRef = useRef<TerminalMode>('shell')
   const activeProviderRef = useRef<AgentProviderId | null>(null)
+  const activeCodexAccountRef = useRef<'account1' | 'account2' | null>(null)
   const fitTerminalRef = useRef<() => void>(() => undefined)
   const lastSentDimsRef = useRef<{ cols: number; rows: number } | null>(null)
   const resizeTimerRef = useRef<number | null>(null)
@@ -80,6 +81,8 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
   // ou via retorno de sendAgentTurn). Garante entrega única e determinística
   // mesmo quando o marcador chega antes da Promise resolver.
   const deliveredTaskResultsRef = useRef(new Set<string>())
+  const resultScannerRef = useRef(createAgentResultScanner())
+  const invalidResultRef = useRef<string | null>(null)
   const terminalDataWaitersRef = useRef(new Set<() => void>())
   onNotifyRef.current = onNotify
   onRequestCodexAuthRef.current = onRequestCodexAuth
@@ -103,11 +106,10 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
   // Entrega o resultado de um turno ao canvas exatamente uma vez por tarefa.
   // O listener do PTY pode ter entregado antes (marcador veio antes da
   // resolução); nesse caso esta chamada é um no-op.
-  const deliverTaskResult = useCallback((taskId: string, result: string) => {
-    const normalized = result.trim().slice(0, 1000)
-    if (!normalized || deliveredTaskResultsRef.current.has(taskId)) return
+  const deliverTaskResult = useCallback((taskId: string, result: AgentResult) => {
+    if (!result.summary || deliveredTaskResultsRef.current.has(taskId)) return
     deliveredTaskResultsRef.current.add(taskId)
-    onAgentResultRef.current?.(normalized, taskId)
+    onAgentResultRef.current?.(result, taskId)
   }, [])
 
   const scheduleFitFrame = useCallback((callback: () => void): number => {
@@ -163,9 +165,10 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
     const startToken = ++terminalStartTokenRef.current
     terminalModeRef.current = 'shell'
     activeProviderRef.current = null
+    activeCodexAccountRef.current = null
     outputSnapshotRef.current = ''
-    outputSnapshotOffsetRef.current = 0
-    reportedResultsRef.current.clear()
+    resultScannerRef.current.reset()
+    invalidResultRef.current = null
     lastSentDimsRef.current = null
     setTerminalMode('shell')
     setTerminalState('starting')
@@ -195,12 +198,16 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
   }, [projectPath, scheduleFitFrame, terminalId])
 
   const startCodex = useCallback(async () => {
+    if (!codexAccount) {
+      onNotifyRef.current('Configure a conta Codex deste agente para iniciar o Codex.', 'error')
+      return null
+    }
     const startToken = ++terminalStartTokenRef.current
     terminalModeRef.current = 'codex'
     activeProviderRef.current = 'codex'
     outputSnapshotRef.current = ''
-    outputSnapshotOffsetRef.current = 0
-    reportedResultsRef.current.clear()
+    resultScannerRef.current.reset()
+    invalidResultRef.current = null
     lastSentDimsRef.current = null
     setIsStartingCodex(true)
     setTerminalState('starting')
@@ -217,6 +224,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
         readySignal.cancel()
         if (startToken !== terminalStartTokenRef.current) return result
         activeProviderRef.current = null
+        activeCodexAccountRef.current = null
         terminalModeRef.current = 'shell'
         setTerminalMode('shell')
         setTerminalState(result.needsAuth ? 'ready' : 'error')
@@ -226,6 +234,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
       }
       await readySignal.promise
       if (startToken === terminalStartTokenRef.current) {
+        activeCodexAccountRef.current = codexAccount
         setTerminalMode('codex')
         terminalRef.current?.clear()
         terminalRef.current?.writeln('\x1b[90mDevOrbit iniciou o Codex nesta sessão.\x1b[0m')
@@ -248,6 +257,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
       readySignal.cancel()
       if (startToken !== terminalStartTokenRef.current) return null
       activeProviderRef.current = null
+      activeCodexAccountRef.current = null
       setTerminalState('error')
       const message = error instanceof Error ? error.message : String(error)
       terminalRef.current?.writeln('\r\n\x1b[31m[erro ao iniciar o Codex: ' + message + ']\x1b[0m')
@@ -264,9 +274,10 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
     const startToken = ++terminalStartTokenRef.current
     terminalModeRef.current = 'agent'
     activeProviderRef.current = provider
+    activeCodexAccountRef.current = null
     outputSnapshotRef.current = ''
-    outputSnapshotOffsetRef.current = 0
-    reportedResultsRef.current.clear()
+    resultScannerRef.current.reset()
+    invalidResultRef.current = null
     lastSentDimsRef.current = null
     setIsStartingCodex(true)
     setTerminalState('starting')
@@ -284,6 +295,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
         readySignal.cancel()
         if (startToken !== terminalStartTokenRef.current) return result
         activeProviderRef.current = null
+        activeCodexAccountRef.current = null
         terminalModeRef.current = 'shell'
         setTerminalMode('shell')
         setTerminalState('error')
@@ -306,6 +318,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
       readySignal.cancel()
       if (startToken !== terminalStartTokenRef.current) return null
       activeProviderRef.current = null
+      activeCodexAccountRef.current = null
       terminalModeRef.current = 'shell'
       setTerminalMode('shell')
       setTerminalState('error')
@@ -403,27 +416,25 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
         // e escrito no xterm na mesma ordem de chegada.
         for (const waiter of Array.from(terminalDataWaitersRef.current)) waiter()
         const nextSnapshot = outputSnapshotRef.current + event.data
-        const removedLength = Math.max(0, nextSnapshot.length - MAX_SNAPSHOT_LENGTH)
-        if (removedLength > 0) outputSnapshotOffsetRef.current += removedLength
         outputSnapshotRef.current = nextSnapshot.slice(-MAX_SNAPSHOT_LENGTH)
         const detectedUrl = outputSnapshotRef.current.match(/https:\/\/[^\s"'<>`]+/i)?.[0]?.replace(/[),.;]+$/, '')
         if (detectedUrl) setLastDetectedUrl(detectedUrl)
-        const resultMatches = Array.from(outputSnapshotRef.current.matchAll(/DEVORBIT_RESULT:[ \t]*([^\r\n]+)(?:\r\n|\n|\r)/gi))
-        const latestResult = resultMatches[resultMatches.length - 1]
-        const result = latestResult?.[1]?.trim()
-        if (result && latestResult?.index !== undefined) {
-          // Use the marker's absolute stream offset so identical results from
-          // different orchestration stages are still delivered independently.
-          const resultKey = `${outputSnapshotOffsetRef.current + latestResult.index}:${result}`
-          if (!reportedResultsRef.current.has(resultKey)) {
-            reportedResultsRef.current.add(resultKey)
-            const taskId = activeTaskRef.current || undefined
-            activeTaskRef.current = null
-            // Entrega única por tarefa: se o turno já entregou o resultado
-            // pelo retorno (evento perdido/tardio), não duplica no canvas.
-            if (!taskId || !deliveredTaskResultsRef.current.has(taskId)) {
-              if (taskId) deliveredTaskResultsRef.current.add(taskId)
-              onAgentResultRef.current?.(result.slice(0, 1000), taskId)
+        for (const parsed of resultScannerRef.current.push(event.data)) {
+          if (parsed.kind === 'invalid') {
+            invalidResultRef.current = invalidResultRef.current || parsed.reason
+            continue
+          }
+          if (parsed.kind !== 'result') continue
+          const taskId = activeTaskRef.current || undefined
+          activeTaskRef.current = null
+          invalidResultRef.current = null
+          if (!taskId || !deliveredTaskResultsRef.current.has(taskId)) {
+            if (taskId) deliveredTaskResultsRef.current.add(taskId)
+            if (parsed.result.outcome === 'failed') {
+              if (taskId) reportTaskFailure(taskId, parsed.result.summary)
+              else onNotifyRef.current(`O agente reportou falha: ${parsed.result.summary}`, 'error')
+            } else {
+              onAgentResultRef.current?.(parsed.result, taskId)
             }
           }
         }
@@ -431,10 +442,28 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
       } else if (event.type === 'resize' && event.cols && event.rows) {
         lastSentDimsRef.current = { cols: event.cols, rows: event.rows }
       } else if (event.type === 'exit') {
+        for (const parsed of resultScannerRef.current.finish()) {
+          if (parsed.kind === 'invalid') {
+            invalidResultRef.current = invalidResultRef.current || parsed.reason
+            continue
+          }
+          if (parsed.kind !== 'result') continue
+          const taskId = activeTaskRef.current || undefined
+          activeTaskRef.current = null
+          invalidResultRef.current = null
+          if (!taskId || deliveredTaskResultsRef.current.has(taskId)) continue
+          deliveredTaskResultsRef.current.add(taskId)
+          if (parsed.result.outcome === 'failed') reportTaskFailure(taskId, parsed.result.summary)
+          else onAgentResultRef.current?.(parsed.result, taskId)
+        }
         terminal.writeln('\r\n\x1b[90m[processo encerrado: ' + String(event.code ?? '') + ']\x1b[0m')
         setTerminalState('stopped')
         const taskId = activeTaskRef.current
-        if (taskId) reportTaskFailure(taskId, 'O processo do agente foi encerrado antes de devolver um resultado.')
+        if (taskId) {
+          reportTaskFailure(taskId, invalidResultRef.current
+            ? `Resultado DEVORBIT_RESULT inválido ou incerto (${invalidResultRef.current}).`
+            : 'O processo do agente foi encerrado antes de devolver um resultado.')
+        }
       } else if (event.type === 'error') {
         terminal.writeln('\r\n\x1b[31m[erro: ' + (event.data || 'falha desconhecida') + ']\x1b[0m')
         setTerminalState('error')
@@ -488,6 +517,8 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
   useEffect(() => {
     if (!agentTask || completedTaskRef.current === agentTask.id || deliveringTaskRef.current === agentTask.id) return
     let cancelled = false
+    resultScannerRef.current.reset()
+    invalidResultRef.current = null
     const deliver = async () => {
       deliveringTaskRef.current = agentTask.id
       try {
@@ -513,14 +544,14 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
             // Se o listener já entregou o texto bloqueado como resultado, o
             // canvas marcou o bloqueio; reportTaskFailure duplicaria o toast.
             if (!deliveredTaskResultsRef.current.has(agentTask.id)) {
-              reportTaskFailure(agentTask.id, turn.blocked)
+              deliverTaskResult(agentTask.id, createLegacyAgentResult('blocked', turn.blocked))
             }
             return
           }
           if (turn.result) {
             // No backend real o listener normalmente já entregou (marcador
             // antes da resolução); deliverTaskResult deduplica por tarefa.
-            deliverTaskResult(agentTask.id, turn.result)
+            deliverTaskResult(agentTask.id, createLegacyAgentResult('completed', turn.result))
             activeTaskRef.current = null
           } else if (deliveredTaskResultsRef.current.has(agentTask.id)) {
             activeTaskRef.current = null
@@ -541,10 +572,21 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
           }
           return
         }
-        const expectedMode = 'codex'
-        const ready = activeProviderRef.current === provider && terminalModeRef.current === expectedMode && terminalStateRef.current === 'ready'
-          ? { success: true }
-          : await startAgent(agentTask.prompt)
+        if (!codexAccount) {
+          reportTaskFailure(agentTask.id, 'Configure a conta Codex deste agente para executar tarefas.')
+          return
+        }
+        const reusable = canReuseCodexSession(
+          {
+            provider: activeProviderRef.current,
+            account: activeCodexAccountRef.current,
+            mode: terminalModeRef.current,
+            state: terminalStateRef.current,
+          },
+          provider,
+          codexAccount,
+        )
+        const ready = reusable ? { success: true } : await startAgent(agentTask.prompt)
         if (cancelled) return
         if (!ready?.success) {
           reportTaskFailure(agentTask.id, ready?.message || 'O Codex não ficou disponível para receber a tarefa.')
@@ -575,7 +617,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
       cancelled = true
       if (activeTaskRef.current === agentTask.id && completedTaskRef.current !== agentTask.id) activeTaskRef.current = null
     }
-  }, [agentTask, deliverTaskResult, provider, reportTaskFailure, startAgent, terminalId])
+  }, [agentTask, codexAccount, deliverTaskResult, provider, reportTaskFailure, startAgent, terminalId])
 
   const openDetectedLink = async () => {
     if (!lastDetectedUrl) return
@@ -586,8 +628,6 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
 
   const restartTerminal = async () => {
     outputSnapshotRef.current = ''
-    outputSnapshotOffsetRef.current = 0
-    reportedResultsRef.current.clear()
     await startShell()
   }
 
@@ -618,8 +658,8 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
             type="button"
             className="workspace-tool-button terminal-codex-button"
             onClick={() => void startCodex()}
-            disabled={isStartingCodex || terminalState === 'starting'}
-            title={'Iniciar Codex com a conta ' + (codexAccount === 'account2' ? '2' : '1')}
+            disabled={!codexAccount || isStartingCodex || terminalState === 'starting'}
+            title={codexAccount ? 'Iniciar Codex com a conta ' + (codexAccount === 'account2' ? '2' : '1') : 'Configure a conta Codex deste agente para iniciar'}
           >
             <Code2 size={13} aria-hidden="true" /><span>{isStartingCodex ? 'Conectando…' : 'Codex'}</span>
           </button>

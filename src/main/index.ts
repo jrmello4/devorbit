@@ -9,9 +9,9 @@ import { listAllNonProjectDirs, scanAllProjects } from './scanner'
 import { syncGit, getGitBranches, switchGitBranch, pushGit, getGitChanges, cloneGitRepository, stashSyncGit, stashSwitchGitBranch, finalizeGitProject, getGitRemoteUrl, createAgentWorktree, integrateAgentWorktree } from './git'
 import { getGitFileDiff, validateGitDiffPathspec } from './git-diff'
 import { getGitInitPreview, initGitRepository } from './git-init'
-import { ensureAccountDirectories, getAccountLabel, hasValidCodexAuth, resolveCodexCommand } from './account-profiles'
+import { ensureAccountDirectories, getAccountLabel, getCodexAccountEnvironment, hasValidCodexAuth, resolveCodexCommand } from './account-profiles'
 import { launchTool, copyProjectContext, getToolHealth } from './launcher'
-import { executeAgentTurnWithFallback, getAgentProviderHealth, orderProvidersForTask, resolveAgentProviderWithFallback, resolveAgentTurn } from './agent-providers'
+import { executeExplicitAgentTurn, getAgentProviderHealth, orderProvidersForTask, resolveAgentProviderWithFallback, resolveAgentTurn } from './agent-providers'
 import { createResultWaiter, sendAgentTurn, spawnAgentProviderTerminal } from './agent-turn'
 import { createProjectDirectory, createProjectFile, deleteProjectEntry, listProjectFiles, moveProjectEntry, readProjectFile, saveProjectFile } from './project-files'
 import { onTerminalEvent, hasTerminal, resizeTerminal, startTerminal, stopAllTerminals, stopTerminal, writeTerminal, TERMINAL_MAX_COLS, TERMINAL_MAX_ROWS, TERMINAL_MIN_COLS, TERMINAL_MIN_ROWS, type TerminalEvent } from './terminal-session'
@@ -34,6 +34,7 @@ import {
 } from './memory'
 import { getRealUsage } from './usage-real'
 import { downloadUpdate, getUpdateState, initializeUpdater, installUpdate } from './updater'
+import { startShadowRoutingMetrics, stopShadowRoutingMetrics } from './shadow-routing-metrics'
 import type {
   AgentProviderId,
   AppConfig,
@@ -402,6 +403,12 @@ async function runPackagedSmokeTest(): Promise<void> {
   }
 }
 
+if (isSmokeRun || hasSingleInstanceLock) {
+  app.whenReady().then(() => {
+    startShadowRoutingMetrics(app.getPath('userData'))
+  })
+}
+
 if (isSmokeRun) {
   app.whenReady().then(() => {
     void runPackagedSmokeTest()
@@ -432,6 +439,7 @@ if (isSmokeRun) {
 }
 
 app.on('before-quit', () => {
+  void stopShadowRoutingMetrics()
   invalidateTerminalLifecycle()
   disposeWebPanel()
   cancelAllMemoryCompactions()
@@ -783,6 +791,7 @@ function setupIpcHandlers() {
       return {
         success: false,
         needsAuth: true,
+        fallback: false,
         account: safeAccount,
         message: accountLabel + ' ainda não está conectada. Conecte a conta e tente novamente.',
       }
@@ -793,7 +802,7 @@ function setupIpcHandlers() {
     const codexCommand = await resolveCodexCommand(config.customPaths.codex)
     assertTerminalLifecycle(generation)
     if (/[%!]/.test(codexCommand)) {
-      return { success: false, message: 'O caminho configurado do Codex contém caracteres que o terminal não pode executar com segurança.' }
+      return { success: false, fallback: false, account: safeAccount, message: 'O caminho configurado do Codex contém caracteres que o terminal não pode executar com segurança.' }
     }
     // A quota real é somente leitura via OAuth (usage-real.ts). O terminal
     // nunca é bloqueado por contador local.
@@ -805,7 +814,9 @@ function setupIpcHandlers() {
     const result = await startTerminal(id, safePath, {
       command,
       args,
-      env: { CODEX_HOME: codexHome },
+      // A conta escolhida define o perfil do PTY (CODEX_HOME isolado), sem
+      // reaproveitar autenticação de uma sessão anterior.
+      env: getCodexAccountEnvironment(safeAccount),
       cols: safeCols,
       rows: safeRows,
     })
@@ -814,6 +825,7 @@ function setupIpcHandlers() {
       success: true,
       ...result,
       account: safeAccount,
+      fallback: false,
       message: 'Codex conectado no terminal interno (' + accountLabel + ').',
     }
   })
@@ -846,13 +858,20 @@ function setupIpcHandlers() {
     // (preferido + fallbacks prontos). O spawn tenta em ordem e só faz failover
     // em erro transitório classificado, devolvendo o provedor efetivo.
     const turn = await resolveAgentTurn(config, safeProvider, safeTask)
-    const ordered = orderProvidersForTask(turn.provider, (await getAgentProviderHealth(config))
-      .filter((item) => item.state === 'ready')
-      .map((item) => item.id))
+    if (!turn.available) {
+      // Provedor explícito indisponível: erro estruturado, sem trocar de CLI.
+      return {
+        success: false,
+        provider: turn.provider,
+        code: turn.error?.code || 'provider-not-ready',
+        fallback: false,
+        message: turn.reason,
+      }
+    }
     const safeCols = cols === undefined ? 120 : validateFiniteNumber(cols, 'Colunas do terminal', { minimum: TERMINAL_MIN_COLS, maximum: TERMINAL_MAX_COLS, integer: true })
     const safeRows = rows === undefined ? 32 : validateFiniteNumber(rows, 'Linhas do terminal', { minimum: TERMINAL_MIN_ROWS, maximum: TERMINAL_MAX_ROWS, integer: true })
     beginCompanionTerminalStart(id)
-    const execution = await executeAgentTurnWithFallback(ordered, async (candidate) => {
+    const execution = await executeExplicitAgentTurn(turn.provider, async (candidate) => {
       const spawned = await spawnAgentProviderTerminal(
         {
           resolveWithFallback: resolveAgentProviderWithFallback,
@@ -880,6 +899,7 @@ function setupIpcHandlers() {
       command: execution.result.command,
       tier: turn.tier,
       model: turn.model,
+      fallback: false,
       message: (execution.result.provider ?? execution.provider) + ' iniciado no terminal interno. Se precisar, autentique pelo próprio CLI.',
     }
   })

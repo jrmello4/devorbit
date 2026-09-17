@@ -82,6 +82,55 @@ async function setSelectValue(window, selector, value) {
   assert(changed, `select não encontrado (${selector})`)
 }
 
+async function selectCreationProvider(window, role, provider, label) {
+  const selector = `[aria-label="Provider do agente ${role}"]`
+  await waitFor(window, `(() => {
+    const select = document.querySelector(${JSON.stringify(selector)})
+    if (!select) return false
+    return Array.from(select.options).some((option) => option.value === ${JSON.stringify(provider)} && !option.disabled)
+  })()`, `${label} provider ${provider} para ${role}`)
+  const selected = await evaluate(window, `(function () {
+    const select = document.querySelector(${JSON.stringify(selector)})
+    if (!select) return false
+    select.value = ${JSON.stringify(provider)}
+    select.dispatchEvent(new Event('change', { bubbles: true }))
+    return true
+  })()`)
+  assert(selected, `${label}: não foi possível selecionar ${provider} para ${role}`)
+}
+
+async function selectCreationAccount(window, role, account, label) {
+  const selector = `input[type="radio"][name="codex-account-${role}"]`
+  const index = account === 'account2' ? 1 : 0
+  await waitFor(window, `document.querySelectorAll(${JSON.stringify(selector)}).length > ${index}`, `${label} opções de conta para ${role}`)
+  const clicked = await evaluate(window, `(function () {
+    const radios = Array.from(document.querySelectorAll(${JSON.stringify(selector)}))
+    const radio = radios[${index}]
+    if (!radio) return false
+    radio.click()
+    return radio.checked
+  })()`)
+  assert(clicked, `${label}: conta ${account} indisponível para ${role}`)
+}
+
+async function enableSquadRole(window, role, label) {
+  const clicked = await evaluate(window, `(function () {
+    const labelNode = Array.from(document.querySelectorAll('[role="dialog"] label'))
+      .find((node) => node.querySelector('input[type="checkbox"]') && node.innerText.includes(${JSON.stringify(role)}))
+    const checkbox = labelNode?.querySelector('input[type="checkbox"]')
+    if (!checkbox || checkbox.disabled) return false
+    if (!checkbox.checked) checkbox.click()
+    return checkbox.checked
+  })()`)
+  assert(clicked, `${label}: papel ${role} não pôde ser marcado no squad`)
+}
+
+async function confirmCreationDialog(window, label) {
+  await clickButtonByText(window, (node) => Boolean(node.closest('[role="dialog"]')) && /Criar/.test(node.innerText), `${label} confirmação`)
+  await waitFor(window, `!document.querySelector('[role="dialog"] #agent-creation-dialog-title')`, `${label} diálogo fechado`)
+}
+
+
 async function verifyCoordinatorOrchestration(window, viewport) {
   const taskContent = 'Tarefa automatizada de ponta a ponta: executar a mudança e validar a entrega.'
   const noteUpdated = await evaluate(window, `(function () {
@@ -610,7 +659,7 @@ async function inspectProjectInteractions(window, viewport) {
     if (!canvas || !raw) return false
     const saved = JSON.parse(raw)
     const card = saved.nodes?.find((item) => item.id === 'workbench')
-    return saved.version === 2 && card && Number(card.width) === Number.parseFloat(canvas.querySelector('[data-canvas-card="workbench"]').style.width)
+    return saved.version === 3 && Array.isArray(saved.squads) && card && Number(card.width) === Number.parseFloat(canvas.querySelector('[data-canvas-card="workbench"]').style.width)
   })()`, `${viewport.label} canvas geometry persistence`)
   await evaluate(window, `(function () {
     const note = document.querySelector('[data-canvas-note-editor]')
@@ -623,15 +672,27 @@ async function inspectProjectInteractions(window, viewport) {
   await waitFor(window, `document.querySelector('[data-canvas-note-editor]').value === 'handoff persistente'`, `${viewport.label} canvas notes`)
   recordPass(viewport.label, 'canvas com cartões, arraste, redimensionamento e notas locais')
   await clickButtonByText(window, (node) => node.closest('.workspace-canvas-toolbar') && /Agente/.test(node.innerText), `${viewport.label} agent node creation`)
+  await waitFor(window, `Boolean(document.querySelector('[role="dialog"] #agent-creation-dialog-title'))`, `${viewport.label} agent creation dialog`)
+  await selectCreationProvider(window, 'Implementação', 'codex', viewport.label)
+  await selectCreationAccount(window, 'Implementação', 'account1', viewport.label)
+  await confirmCreationDialog(window, `${viewport.label} agent creation`)
   await waitFor(window, `document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]').length === 1`, `${viewport.label} agent canvas node`)
   await waitFor(window, `Array.from(window.__devorbitVerifyFixture.getCalls()).some((call) => call.name === 'startTerminal' && String(call.args[0]).startsWith('agent-'))`, `${viewport.label} agent terminal`)
-  recordPass(viewport.label, 'canvas cria agente com terminal independente')
+  recordPass(viewport.label, 'canvas cria agente configurado com terminal independente')
   await screenshot(window, `desktop-${viewport.label}-canvas-agent`)
   await evaluate(window, `document.querySelector('[data-canvas-card="agent"] .canvas-delete-node')?.click()`)
   await waitFor(window, `document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]').length === 0`, `${viewport.label} agent terminal deletion`)
   await waitFor(window, `Array.from(window.__devorbitVerifyFixture.getCalls()).some((call) => call.name === 'stopTerminal' && String(call.args[0]).startsWith('agent-'))`, `${viewport.label} agent terminal stop`)
   recordPass(viewport.label, 'canvas exclui terminal de agente e encerra seu PTY')
   await clickButtonByText(window, (node) => node.closest('.workspace-canvas-toolbar') && /Squad/.test(node.innerText), `${viewport.label} squad template`)
+  await waitFor(window, `Boolean(document.querySelector('[role="dialog"] #agent-creation-dialog-title'))`, `${viewport.label} squad creation dialog`)
+  for (const role of ['Implementação', 'Revisão', 'Testes']) await enableSquadRole(window, role, viewport.label)
+  await waitFor(window, `document.querySelectorAll('[role="dialog"] [aria-label^="Provider do agente"]').length === 4`, `${viewport.label} squad participants`)
+  for (const role of ['Coordenador', 'Implementação', 'Revisão', 'Testes']) {
+    await selectCreationProvider(window, role, 'codex', viewport.label)
+    await selectCreationAccount(window, role, 'account1', viewport.label)
+  }
+  await confirmCreationDialog(window, `${viewport.label} squad creation`)
   await waitFor(window, `document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]').length === 4 && document.querySelectorAll('.workspace-canvas [data-canvas-card="note"]').length >= 2`, `${viewport.label} squad canvas nodes`)
   await waitFor(window, `document.querySelectorAll('.workspace-canvas-connections path').length >= 4`, `${viewport.label} squad task connections`)
   recordPass(viewport.label, 'template cria squad conectado a uma nota de tarefa')

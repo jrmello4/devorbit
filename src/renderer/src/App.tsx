@@ -577,7 +577,7 @@ export const App: React.FC = () => {
   // despachar evento síncrono seria perdido com notificação falsa.
   const handlePaletteCreate = useCallback((action: CreateActionId) => {
     const fallbackProject = activeWorkspaceProject || projects[0] || null
-    if (action === 'create-agent-terminal' || action === 'create-note') {
+    if (action === 'create-agent-terminal' || action === 'create-squad' || action === 'create-note') {
       if (!fallbackProject) {
         notify('Abra um projeto antes de criar nós no canvas.', 'info')
         return
@@ -586,8 +586,11 @@ export const App: React.FC = () => {
       setActiveWorkspaceProject(fallbackProject)
       setWorkspaceView('workspace')
       setWorkspaceUiRequest(buildWorkspaceUiRequest(fallbackProject.id, { forceCanvas: true, showTerminal: false }))
-      setPendingCanvasNode(buildPendingCanvasNode(fallbackProject.id, action === 'create-note' ? 'note' : 'agent'))
-      notify('Pedido registrado — o nó será criado ao abrir o canvas.', 'info')
+       setPendingCanvasNode(buildPendingCanvasNode(
+         fallbackProject.id,
+         action === 'create-note' ? 'note' : action === 'create-squad' ? 'squad' : 'agent',
+       ))
+       notify(action === 'create-note' ? 'Pedido registrado — a nota será criada ao abrir o canvas.' : 'Pedido registrado — escolha os participantes no canvas.', 'info')
     } else if (action === 'create-branch') openGitDock('branches', fallbackProject)
     else if (action === 'create-project') openGitDock('clone', null)
   }, [activeWorkspaceProject, notify, openGitDock, projects])
@@ -805,6 +808,7 @@ export const App: React.FC = () => {
                 onClose={closeIntegratedWorkspace}
                 onNotify={notify}
                 codexAccount={config?.projectAccounts[workspaceProject.id] || config?.activeChatGptAccount || 'account1'}
+                codexAuthStatus={authStatus}
                 isSuspended={activeWorkspaceProject?.id !== workspaceProject.id}
                 onRequestCodexAuth={setAuthModalAccount}
                 isWebSuppressed={isWorkspaceWebSuppressed || activeWorkspaceProject?.id !== workspaceProject.id}

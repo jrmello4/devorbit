@@ -22,7 +22,17 @@ import {
   Unlink,
 } from "lucide-react";
 import type { AgentProvider, AgentProviderId, Project } from "../types";
+import type { AgentResult } from "../../../shared/agent-result";
 import { createsAgentCycle, sanitizeAgentCycles } from "./workspace-request-helpers";
+import { AgentCreationDialog } from "./AgentCreationDialog";
+import {
+  agentNodeBlockedLabel,
+  agentNodeSetupMessage,
+  isAgentNodeConfigured,
+  requiresCodexAccount,
+  type AgentCreationSpec,
+  type SquadCreationSpec,
+} from "./agent-creation-helpers";
 import "./WorkspaceCanvas.css";
 
 type NodeKind = "workbench" | "browser" | "note" | "agent";
@@ -46,10 +56,17 @@ interface CanvasConnection {
   from: string;
   to: string;
 }
+export interface CanvasSquad {
+  id: string;
+  title: string;
+  coordinatorNodeId: string;
+  memberNodeIds: string[];
+}
 interface CanvasState {
-  version: 2;
+  version: 3;
   nodes: CanvasNode[];
   connections: CanvasConnection[];
+  squads: CanvasSquad[];
   viewport: { x: number; y: number; zoom: number };
 }
 interface ConnectionDraft {
@@ -120,6 +137,7 @@ interface LegacyCanvas {
     z?: number;
   }>;
   note?: string;
+  squads?: unknown;
 }
 
 const WORLD_WIDTH = 5200;
@@ -135,9 +153,10 @@ const nodeMeta: Record<NodeKind, { label: string; icon: React.ReactNode }> = {
   agent: { label: "Agente", icon: <Terminal size={13} /> },
 };
 const defaults = (): CanvasState => ({
-  version: 2,
+  version: 3,
   viewport: { x: 40, y: 36, zoom: 1 },
   connections: [],
+  squads: [],
   nodes: [
     {
       id: "workbench",
@@ -186,8 +205,10 @@ const orchestrationRoleOrder: AgentRole[] = [
   "Revisão",
   "Testes",
 ];
-const orchestrationResultInstruction =
+const legacyOrchestrationResultInstruction =
   "Esta etapa faz parte de uma orquestração automática. Ao concluir, imprima uma única linha iniciada por DEVORBIT_RESULT: e seguida de um resumo objetivo. Use DEVORBIT_RESULT: CONCLUIDO: para uma etapa concluída; se não puder continuar, use DEVORBIT_RESULT: BLOQUEADO: e explique o motivo. Não aguarde outro clique para encaminhar a próxima etapa.";
+export const orchestrationResultInstruction = legacyOrchestrationResultInstruction &&
+  'Emita primeiro uma única linha com JSON compacto: DEVORBIT_RESULT: {"version":1,"outcome":"completed","summary":"resumo objetivo"}. Use outcome completed, blocked ou failed e summary objetivo, sem quebras de linha e com no máximo 1000 caracteres. Emita imediatamente depois o espelho legado DEVORBIT_RESULT: CONCLUIDO: <resumo>, DEVORBIT_RESULT: BLOQUEADO: <motivo> ou DEVORBIT_RESULT: FALHA: <motivo>. O JSON vem primeiro e não aguarde outro clique para encaminhar a próxima etapa.';
 const orchestrationRunId = () =>
   "orchestration-" +
   Date.now().toString(36) +
@@ -202,13 +223,6 @@ const agentProviderIds: AgentProviderId[] = [
   "agy",
   "custom",
 ];
-const fallbackAgentProvider: AgentProvider = {
-  id: "codex",
-  label: "Codex CLI",
-  command: "codex",
-  state: "ready",
-  message: "Codex CLI pronto.",
-};
 function isAgentProviderId(value: unknown): value is AgentProviderId {
   return typeof value === "string" && agentProviderIds.includes(value as AgentProviderId);
 }
@@ -275,16 +289,44 @@ function sanitizeNode(
           : fallback.account,
     provider: isAgentProviderId(value.provider)
       ? value.provider
-      : fallback.provider || "codex",
+      : fallback.provider,
   };
+}
+function sanitizeSquads(value: unknown, nodes: readonly CanvasNode[]): CanvasSquad[] {
+  if (!Array.isArray(value)) return [];
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const agentNodeIds = new Set(nodes.filter((node) => node.kind === "agent").map((node) => node.id));
+  const result: CanvasSquad[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const raw = item as Partial<CanvasSquad>;
+    const memberNodeIds = Array.isArray(raw.memberNodeIds)
+      ? [...new Set(raw.memberNodeIds.filter((id): id is string => typeof id === "string" && agentNodeIds.has(id)))]
+      : [];
+    if (
+      typeof raw.id !== "string" ||
+      typeof raw.title !== "string" ||
+      !raw.title.trim() ||
+      typeof raw.coordinatorNodeId !== "string" ||
+      !agentNodeIds.has(raw.coordinatorNodeId) ||
+      !memberNodeIds.includes(raw.coordinatorNodeId)
+    ) continue;
+    result.push({
+      id: raw.id.slice(0, 80),
+      title: raw.title.trim().slice(0, 80),
+      coordinatorNodeId: raw.coordinatorNodeId,
+      memberNodeIds: memberNodeIds.slice(0, 32),
+    });
+  }
+  return result.slice(0, 100);
 }
 function read(id: string): CanvasState {
   const fallback = defaults();
   try {
     const raw = JSON.parse(
       window.localStorage.getItem(key(id)) || "",
-    ) as Partial<CanvasState> & LegacyCanvas;
-    if (raw.version === 2 && Array.isArray(raw.nodes)) {
+    ) as { version?: number; nodes?: unknown; connections?: unknown; viewport?: CanvasState["viewport"] } & LegacyCanvas;
+    if ((raw.version === 2 || raw.version === 3) && Array.isArray(raw.nodes)) {
       const nodes = raw.nodes.map((node, index) =>
         sanitizeNode(
           node,
@@ -318,11 +360,14 @@ function read(id: string): CanvasState {
           )
         : [];
       return {
-        version: 2,
+        version: 3,
         nodes,
         // Saneia ciclos agente-agente persistidos: nenhum ciclo visual pode
         // ficar sem aresta de piping correspondente no main.
         connections: sanitizeAgentCycles(validConnections, agentIds),
+        // Canvas v2 nunca teve squads explícitos. Não inferimos participação
+        // por conexões: ela só passa a existir após confirmação do usuário.
+        squads: raw.version === 3 ? sanitizeSquads(raw.squads, nodes) : [],
         viewport: {
           x: Number.isFinite(raw.viewport?.x)
             ? raw.viewport!.x
@@ -456,25 +501,22 @@ function formatOrchestrationResults(results: OrchestrationResult[]): string {
     .join("\n");
 }
 
-function isBlockedOrchestrationResult(result: string): boolean {
-  return /^\s*(?:\[\s*)?(?:BLOQUEADO|BLOCKED|FALHA|FAILURE|ERRO|ERROR)\s*(?:\]|:|-)/i.test(result);
-}
-
 export const WorkspaceCanvas: React.FC<{
   project: Project;
   workbench: React.ReactNode;
   browser?: React.ReactNode;
-  agentAccount?: "account1" | "account2";
   agentProviders?: AgentProvider[];
   renderAgent?: (
     node: CanvasNode,
-    onResult: (result: string, taskId?: string) => void,
+    onResult: (result: AgentResult, taskId?: string) => void,
     onTaskFailure: (taskId: string, message: string) => void,
   ) => React.ReactNode;
   onSendAgentTask?: (node: CanvasNode, prompt: string) => string | undefined;
   onCreateAgentWorktree?: (node: CanvasNode) => void;
+  codexAuthStatus?: import("../types").CodexAccountStatus | null;
+  onRequestCodexAuth?: (account: "account1" | "account2") => void;
   onSelectionChange?: (node: { id: string; title: string; kind: string } | null) => void;
-  pendingNodeRequest?: { kind: 'note' | 'agent'; nonce: number } | null;
+  pendingNodeRequest?: { kind: 'note' | 'agent' | 'squad'; nonce: number } | null;
   onPendingNodeConsumed?: (nonce: number) => void;
   onConnectionsChange?: (
     connections: Array<{ id: string; from: string; to: string }>,
@@ -484,11 +526,12 @@ export const WorkspaceCanvas: React.FC<{
   project,
   workbench,
   browser,
-  agentAccount = "account1",
   agentProviders = [],
   renderAgent,
   onSendAgentTask,
   onCreateAgentWorktree,
+  codexAuthStatus = null,
+  onRequestCodexAuth,
   onSelectionChange,
   pendingNodeRequest = null,
   onPendingNodeConsumed,
@@ -499,6 +542,7 @@ export const WorkspaceCanvas: React.FC<{
   const [connectFrom, setConnectFrom] = useState<string | null>(null);
   const [gesture, setGesture] = useState<CanvasGesture | null>(null);
   const [connectionDraft, setConnectionDraft] = useState<ConnectionDraft | null>(null);
+  const [creationMode, setCreationMode] = useState<"agent" | "squad" | null>(null);
   const [orchestration, setOrchestration] = useState<OrchestrationRun | null>(
     null,
   );
@@ -507,8 +551,6 @@ export const WorkspaceCanvas: React.FC<{
   >({});
   const canvasRef = useRef(canvas);
   const orchestrationRef = useRef<OrchestrationRun | null>(null);
-  const providerOptions = agentProviders.length ? agentProviders : [fallbackAgentProvider];
-  const defaultAgentProvider = providerOptions.find((provider) => provider.state === "ready")?.id || "codex";
   const viewportRef = useRef<HTMLDivElement>(null);
   const persistTimerRef = useRef<number | null>(null);
   const gestureCaptureRef = useRef<HTMLElement | null>(null);
@@ -676,7 +718,13 @@ export const WorkspaceCanvas: React.FC<{
     );
     setSelected([id]);
   }, [update]);
-  const addAgent = useCallback(() => {
+  const openAgentCreation = useCallback(() => {
+    setCreationMode("agent");
+  }, []);
+  const openSquadCreation = useCallback(() => {
+    setCreationMode("squad");
+  }, []);
+  const addAgent = useCallback((spec: AgentCreationSpec) => {
     const rect = viewportRef.current?.getBoundingClientRect();
     const view = canvasRef.current.viewport;
     const id = nodeId();
@@ -690,10 +738,10 @@ export const WorkspaceCanvas: React.FC<{
           {
             id,
             kind: "agent",
-            title: "Agente de implementação",
-            role: "Implementação",
-            account: agentAccount,
-            provider: defaultAgentProvider,
+            title: spec.role === "Implementação" ? "Agente de implementação" : "Agente: " + spec.role,
+            role: spec.role,
+            ...(spec.account ? { account: spec.account } : {}),
+            ...(spec.provider ? { provider: spec.provider } : {}),
             x,
             y,
             width: 500,
@@ -705,44 +753,51 @@ export const WorkspaceCanvas: React.FC<{
       true,
     );
     setSelected([id]);
-  }, [agentAccount, defaultAgentProvider, update]);
+    setCreationMode(null);
+  }, [update]);
   useEffect(() => {
     const handler = (event: Event) => {
       const detail = (event as CustomEvent<{ projectId?: string; kind?: string }>).detail
       if (detail?.projectId && detail.projectId !== project.id) return
       if (detail?.kind === 'note') addNote()
-      else if (detail?.kind === 'agent') addAgent()
+      else if (detail?.kind === 'agent') openAgentCreation()
+      else if (detail?.kind === 'squad') openSquadCreation()
     }
     window.addEventListener('devorbit:create-canvas-node', handler as EventListener)
     return () => window.removeEventListener('devorbit:create-canvas-node', handler as EventListener)
-  }, [addAgent, addNote, project.id]);
+  }, [addNote, openAgentCreation, openSquadCreation, project.id]);
   useEffect(() => {
     if (!pendingNodeRequest) return
     if (consumedPendingRef.current.has(pendingNodeRequest.nonce)) return
     consumedPendingRef.current.add(pendingNodeRequest.nonce)
     if (pendingNodeRequest.kind === 'note') addNote()
-    else addAgent()
+    else if (pendingNodeRequest.kind === 'agent') openAgentCreation()
+    else openSquadCreation()
     onPendingNodeConsumed?.(pendingNodeRequest.nonce)
-  }, [addAgent, addNote, onPendingNodeConsumed, pendingNodeRequest]);
-  const createSquad = useCallback(() => {
+  }, [addNote, onPendingNodeConsumed, openAgentCreation, openSquadCreation, pendingNodeRequest]);
+  const createSquad = useCallback((spec: SquadCreationSpec) => {
     const rect = viewportRef.current?.getBoundingClientRect();
     const view = canvasRef.current.viewport;
     const originX = snap(((rect?.width || 1100) / 2 - view.x) / view.zoom - 380);
     const originY = snap(((rect?.height || 700) / 2 - view.y) / view.zoom - 260);
     const noteId = nodeId();
-    const roles: AgentRole[] = ["Coordenador", "Implementação", "Revisão", "Testes"];
-    const agents = roles.map((role, index) => ({
-      id: nodeId(), kind: "agent" as const, title: "Agente: " + role, role, account: agentAccount, provider: defaultAgentProvider,
+    const squadId = "squad-" + nodeId().slice(5);
+    const agents = spec.participants.map((participant, index) => ({
+      id: nodeId(), kind: "agent" as const, title: "Agente: " + participant.role, role: participant.role as AgentRole,
+      ...(participant.account ? { account: participant.account } : {}), ...(participant.provider ? { provider: participant.provider } : {}),
       x: originX + 390 + (index % 2) * 430, y: originY + Math.floor(index / 2) * 300,
       width: 500, height: 340, z: index + 2,
     }));
+    const coordinator = agents.find((agent) => agent.role === "Coordenador") || agents[0];
     update((current) => ({
       ...current,
       nodes: [...current.nodes, { id: noteId, kind: "note", title: "Plano da tarefa", content: "# Objetivo\n\nDescreva a tarefa, critérios de aceite e limites aqui.\n\n# Entregáveis\n\n- Implementação\n- Revisão\n- Testes", x: originX, y: originY + 130, width: 350, height: 290, z: 1 }, ...agents.map((agent) => ({ ...agent, z: Math.max(0, ...current.nodes.map((node) => node.z)) + agent.z }))],
       connections: [...current.connections, ...agents.map((agent) => ({ id: "link-" + noteId + "-" + agent.id, from: noteId, to: agent.id }))],
+      squads: [...current.squads, { id: squadId, title: spec.title.trim(), coordinatorNodeId: coordinator.id, memberNodeIds: agents.map((agent) => agent.id) }],
     }), true);
     setSelected([noteId, ...agents.map((agent) => agent.id)]);
-  }, [agentAccount, defaultAgentProvider, update]);
+    setCreationMode(null);
+  }, [update]);
   const deleteNodes = useCallback((ids: string[]) => {
     const removable = new Set(
       ids.filter((id) =>
@@ -760,6 +815,12 @@ export const WorkspaceCanvas: React.FC<{
           (connection) =>
             !removable.has(connection.from) && !removable.has(connection.to),
         ),
+        squads: current.squads
+          .map((squad) => ({
+            ...squad,
+            memberNodeIds: squad.memberNodeIds.filter((nodeIdValue) => !removable.has(nodeIdValue)),
+          }))
+          .filter((squad) => !removable.has(squad.coordinatorNodeId) && squad.memberNodeIds.length > 0),
       }),
       true,
     );
@@ -1228,6 +1289,13 @@ export const WorkspaceCanvas: React.FC<{
       progress?: AgentProgress,
     ): string | null => {
       if (!onSendAgentTask) return null;
+      if (!isAgentNodeConfigured(agent, agentProviders)) {
+        setAgentProgress((current) => ({
+          ...current,
+          [agent.id]: { state: "blocked", label: agentNodeBlockedLabel },
+        }));
+        return null;
+      }
       if (progress) {
         setAgentProgress((current) => ({ ...current, [agent.id]: progress }));
       }
@@ -1246,7 +1314,7 @@ export const WorkspaceCanvas: React.FC<{
       );
       return taskId;
     },
-    [onSendAgentTask, update],
+    [agentProviders, onSendAgentTask, update],
   );
   const markOrchestrationBlocked = useCallback(
     (run: OrchestrationRun, agentId: string) => {
@@ -1409,8 +1477,8 @@ export const WorkspaceCanvas: React.FC<{
     ],
   );
   const reportAgentResult = useCallback(
-    (agentId: string, result: string, taskId?: string) => {
-      const normalizedResult = result.trim().slice(0, 1000);
+    (agentId: string, result: AgentResult, taskId?: string) => {
+      const normalizedResult = result.summary.trim().slice(0, 1000);
       update(
         (current) => ({
           ...current,
@@ -1436,7 +1504,7 @@ export const WorkspaceCanvas: React.FC<{
       const resultKey = `${run.id}:${run.phase}:${agentId}:${taskId || "legacy"}:${normalizedResult}`;
       if (run.lastHandledResult === resultKey) return;
 
-      if (isBlockedOrchestrationResult(normalizedResult)) {
+      if (result.outcome === "blocked" || result.outcome === "failed") {
         markOrchestrationBlocked(
           { ...run, lastHandledResult: resultKey },
           agentId,
@@ -1793,10 +1861,10 @@ export const WorkspaceCanvas: React.FC<{
         <button type="button" onClick={addNote} title="Criar nota">
           <Plus size={14} /> Nota
         </button>
-        <button type="button" onClick={addAgent} title="Criar agente">
+        <button type="button" onClick={openAgentCreation} title="Criar agente">
           <Terminal size={14} /> Agente
         </button>
-        <button type="button" onClick={createSquad} title="Criar squad de agentes conectado a uma tarefa">
+        <button type="button" onClick={openSquadCreation} title="Criar squad de agentes conectado a uma tarefa">
           <Terminal size={14} /> Squad
         </button>
         <button
@@ -2030,43 +2098,68 @@ export const WorkspaceCanvas: React.FC<{
                       <option>Coordenador</option><option>Implementação</option><option>Revisão</option><option>Testes</option>
                     </select>
                     <select
-                      value={node.provider || "codex"}
+                      value={node.provider || ""}
                       aria-label="Provedor do agente"
                       onPointerDown={(event) => event.stopPropagation()}
                       onChange={(event) =>
                         update(
                           (current) => ({
                             ...current,
-                            nodes: current.nodes.map((item) =>
-                              item.id === node.id ? { ...item, provider: event.target.value as AgentProviderId } : item,
-                            ),
+                            nodes: current.nodes.map((item) => {
+                              if (item.id !== node.id) return item;
+                              const nextProvider = event.target.value
+                                ? (event.target.value as AgentProviderId)
+                                : undefined;
+                              return {
+                                ...item,
+                                provider: nextProvider,
+                                account:
+                                  nextProvider && requiresCodexAccount(nextProvider)
+                                    ? item.account
+                                    : undefined,
+                              };
+                            }),
                           }),
                           true,
                         )
                       }
                     >
-                      {providerOptions.map((provider) => (
+                      <option value="">Configurar provider</option>
+                      {agentProviders.map((provider) => (
                         <option key={provider.id} value={provider.id} disabled={provider.state !== "ready"}>
                           {provider.label}{provider.state !== "ready" ? " (não encontrado)" : ""}
                         </option>
                       ))}
                     </select>
                     <select
-                      value={node.account || agentAccount}
+                      value={requiresCodexAccount(node.provider ?? null) ? node.account || "" : ""}
                       aria-label="Conta Codex"
+                      title={
+                        requiresCodexAccount(node.provider ?? null)
+                          ? "Conta Codex deste agente"
+                          : "A conta só se aplica ao provider Codex"
+                      }
+                      disabled={!requiresCodexAccount(node.provider ?? null)}
                       onPointerDown={(event) => event.stopPropagation()}
                       onChange={(event) =>
                         update(
                           (current) => ({
                             ...current,
                             nodes: current.nodes.map((item) =>
-                              item.id === node.id ? { ...item, account: event.target.value as "account1" | "account2" } : item,
+                              item.id === node.id
+                                ? {
+                                    ...item,
+                                    account: event.target.value
+                                      ? (event.target.value as "account1" | "account2")
+                                      : undefined,
+                                  }
+                                : item,
                             ),
                           }),
                           true,
                         )
                       }
-                    ><option value="account1">C1</option><option value="account2">C2</option></select>
+                    ><option value="">—</option><option value="account1">C1</option><option value="account2">C2</option></select>
                   </label>
                 )}
                 {node.kind === "agent" && (
@@ -2076,13 +2169,15 @@ export const WorkspaceCanvas: React.FC<{
                     data-agent-send
                     aria-label={"Enviar tarefa para " + node.title}
                     title={
-                      node.role === "Coordenador"
-                        ? "Iniciar orquestração com as notas conectadas"
-                        : "Enviar as notas conectadas ao agente"
+                      !isAgentNodeConfigured(node, agentProviders)
+                        ? agentNodeSetupMessage(node, agentProviders)
+                        : node.role === "Coordenador"
+                          ? "Iniciar orquestração com as notas conectadas"
+                          : "Enviar as notas conectadas ao agente"
                     }
                     disabled={
                       orchestrationActive || connectedNotes(canvas, node.id).length === 0 ||
-                      !providerOptions.some((provider) => provider.id === (node.provider || "codex") && provider.state === "ready")
+                      !isAgentNodeConfigured(node, agentProviders)
                     }
                     onPointerDown={(event) => event.stopPropagation()}
                     onClick={() => sendAgentTask(node)}
@@ -2116,7 +2211,13 @@ export const WorkspaceCanvas: React.FC<{
                 ) : node.kind === "browser" ? (
                   browser
                 ) : node.kind === "agent" ? (
-                  <>{renderAgent?.(node, (result, taskId) => reportAgentResult(node.id, result, taskId), (taskId, message) => reportAgentTaskFailure(node.id, taskId, message)) || <div className="canvas-agent-empty">Terminal do agente indisponível.</div>}{node.content && <div className="canvas-agent-result" title={node.content}>{node.content}</div>}</>
+                  isAgentNodeConfigured(node, agentProviders) ? (
+                    <>{renderAgent?.(node, (result, taskId) => reportAgentResult(node.id, result, taskId), (taskId, message) => reportAgentTaskFailure(node.id, taskId, message)) || <div className="canvas-agent-empty">Terminal do agente indisponível.</div>}{node.content && <div className="canvas-agent-result" title={node.content}>{node.content}</div>}</>
+                  ) : (
+                    <div className="canvas-agent-empty" role="status">
+                      <p>{agentNodeSetupMessage(node, agentProviders)}</p>
+                    </div>
+                  )
                 ) : (
                   <textarea
                     data-canvas-note-editor
@@ -2215,6 +2316,18 @@ export const WorkspaceCanvas: React.FC<{
           <Trash2 size={14} /> Excluir{" "}
           {deletableSelection.length > 1 ? "selecionados" : nodeMap.get(deletableSelection[0])?.kind === "agent" ? "terminal" : "nota"}
         </button>
+      )}
+      {creationMode && (
+        <AgentCreationDialog
+          isOpen
+          mode={creationMode}
+          providers={agentProviders}
+          codexAuthStatus={codexAuthStatus}
+          onClose={() => setCreationMode(null)}
+          onRequestCodexAuth={onRequestCodexAuth}
+          onCreateAgent={addAgent}
+          onCreateSquad={createSquad}
+        />
       )}
     </div>
   );

@@ -11,6 +11,7 @@ export type CreateActionId =
   | 'create-note'
   | 'create-branch'
   | 'create-project'
+  | 'create-squad'
 
 export type TwoStrokePrefix = 'g' | 'c'
 
@@ -33,6 +34,7 @@ export const NAVIGATE_BINDINGS: TwoStrokeBinding[] = [
 
 export const CREATE_BINDINGS: TwoStrokeBinding[] = [
   { prefix: 'c', key: 't', action: 'create-agent-terminal', label: 'Novo terminal de agente', hint: 'C then T' },
+  { prefix: 'c', key: 's', action: 'create-squad', label: 'Novo squad de agentes', hint: 'C then S' },
   { prefix: 'c', key: 'n', action: 'create-note', label: 'Nova nota Markdown', hint: 'C then N' },
   { prefix: 'c', key: 'b', action: 'create-branch', label: 'Nova branch Git', hint: 'C then B' },
   { prefix: 'c', key: 'p', action: 'create-project', label: 'Novo projeto', hint: 'C then P' },

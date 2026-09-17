@@ -1,6 +1,6 @@
 {
   "name": "devorbit",
-  "version": "1.0.28",
+  "version": "1.0.29",
   "description": "Developer Workspace Hub & AI Launcher",
   "author": "DevOrbit contributors",
   "main": "dist-electron/main/index.js",
@@ -27,6 +27,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@typesafe-ai/sdk": "0.6.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "clsx": "^2.1.1",

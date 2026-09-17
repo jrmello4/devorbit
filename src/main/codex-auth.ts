@@ -11,6 +11,7 @@ import {
   getAccountLabel,
   getBrowserLaunchArgs,
   getBrowserProfileDirectory,
+  getCodexAccountEnvironment,
   getCodexHome,
   hasValidCodexAuth,
   resolveCodexCommand,
@@ -203,7 +204,7 @@ export async function startCodexDeviceLogin(
 
   const invocation = getCodexLoginInvocation(codexCmd)
   const child = spawn(invocation.command, invocation.args, {
-    env: { ...process.env, CODEX_HOME: codexHome },
+    env: { ...process.env, ...getCodexAccountEnvironment(account) },
     windowsHide: true,
     windowsVerbatimArguments: invocation.windowsVerbatimArguments,
   })

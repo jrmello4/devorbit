@@ -46,10 +46,8 @@ function createHarness(options: {
       provider,
       fellBack: false,
     }),
-    orderProviders: (preferred, ready) => {
-      const ordered = [preferred, ...ready.filter((id) => id !== preferred)]
-      return ordered as AgentProviderId[]
-    },
+    // Seleção explícita: só o provedor escolhido, nunca outro em fallback.
+    orderProviders: (preferred, ready) => (ready.includes(preferred) ? [preferred] : []),
     readyProviders: async () => ['opencode', 'codex', 'claude'] as AgentProviderId[],
   }
   return { deps, sessions, live, spawns, writes }
@@ -113,52 +111,33 @@ describe('sendAgentTurn', () => {
     resetTurnQueues()
   })
 
-  it('fails over on transient post-spawn rate limit reusing the same PTY id', async () => {
+  it('does not fail over to another provider on a transient post-spawn error', async () => {
     resetTurnQueues()
     const harness = createHarness({
-      failSpawn: () => null,
-      waiters: [{ error: 'request failed 429 rate limit, retry later' }, { result: 'CONCLUIDO: feito no fallback' }],
+      waiters: [{ error: 'request failed 429 rate limit, retry later' }],
     })
-    const order = ['opencode', 'claude'] as AgentProviderId[]
-    harness.deps.orderProviders = () => order
-    const outcome = await sendAgentTurn(harness.deps, {
-      terminalId: 'turn-failover',
+    await expect(sendAgentTurn(harness.deps, {
+      terminalId: 'turn-no-failover',
       provider: 'opencode',
       prompt: 'faça algo',
-    })
-    expect(outcome.provider).toBe('claude')
-    expect(outcome.result).toBe('CONCLUIDO: feito no fallback')
-    expect(outcome.attempts).toHaveLength(2)
-    expect(outcome.attempts[0]).toMatchObject({ provider: 'opencode', ok: false })
-    // Sem PTYs duplicados: todos os spawns usam o mesmo id, um por tentativa.
-    expect(harness.spawns).toEqual([
-      { id: 'turn-failover', provider: 'opencode' },
-      { id: 'turn-failover', provider: 'claude' },
-    ])
-    expect(harness.writes.map((entry) => entry.id)).toEqual(['turn-failover', 'turn-failover'])
+    })).rejects.toThrow(/rate limit/i)
+    expect(harness.spawns).toEqual([{ id: 'turn-no-failover', provider: 'opencode' }])
+    expect(harness.writes.map((entry) => entry.id)).toEqual(['turn-no-failover'])
     resetTurnQueues()
   })
 
-  it('fails over when the CLI prints rate limit and exits 0 without a marker', async () => {
+  it('does not fail over when the CLI prints rate limit and exits 0 without a marker', async () => {
     resetTurnQueues()
     const harness = createHarness({
-      waiters: [
-        { code: 0, tail: 'working...\nError: 429 rate limit exceeded, retry later' },
-        { result: 'CONCLUIDO: feito no fallback' },
-      ],
+      waiters: [{ code: 0, tail: 'working...\nError: 429 rate limit exceeded, retry later' }],
     })
-    const order = ['opencode', 'claude'] as AgentProviderId[]
-    harness.deps.orderProviders = () => order
-    const outcome = await sendAgentTurn(harness.deps, {
-      terminalId: 'turn-text-failover',
+    await expect(sendAgentTurn(harness.deps, {
+      terminalId: 'turn-text-no-failover',
       provider: 'opencode',
       prompt: 'faça algo',
-    })
-    expect(outcome.provider).toBe('claude')
-    expect(outcome.result).toBe('CONCLUIDO: feito no fallback')
-    expect(outcome.attempts[0]).toMatchObject({ provider: 'opencode', ok: false })
-    expect(outcome.attempts[0].error).toMatch(/rate limit/i)
-    expect(harness.spawns.map((entry) => entry.id)).toEqual(['turn-text-failover', 'turn-text-failover'])
+    })).rejects.toThrow(/rate limit/i)
+    expect(harness.spawns).toHaveLength(1)
+    expect(harness.spawns[0]).toEqual({ id: 'turn-text-no-failover', provider: 'opencode' })
     resetTurnQueues()
   })
 
@@ -205,6 +184,19 @@ describe('sendAgentTurn', () => {
     resetTurnQueues()
   })
 
+  it('does not advance or fail over after an invalid result without a legacy mirror', async () => {
+    resetTurnQueues()
+    const harness = createHarness({ waiters: [{ code: 0, invalidResult: 'invalid-json' }] })
+    harness.deps.orderProviders = () => ['opencode', 'claude'] as AgentProviderId[]
+    await expect(sendAgentTurn(harness.deps, {
+      terminalId: 'turn-invalid-result',
+      provider: 'opencode',
+      prompt: 'faÃ§a algo',
+    })).rejects.toThrow('Resultado DEVORBIT_RESULT')
+    expect(harness.spawns).toHaveLength(1)
+    resetTurnQueues()
+  })
+
   it('reuses a running terminal with matching provider and model', async () => {
     resetTurnQueues()
     const harness = createHarness({
@@ -218,53 +210,36 @@ describe('sendAgentTurn', () => {
     resetTurnQueues()
   })
 
-  it('uses the effective provider returned by spawn for session, attempt and outcome', async () => {
+  it('rejects a spawn that returns a different provider (explicit provider enforced)', async () => {
     resetTurnQueues()
     const harness = createHarness({ waiters: [{ result: 'CONCLUIDO: ok' }] })
-    // Candidato opencode, mas a resolução de saúde no spawn devolve claude.
-    const spawnMock = vi.fn(async (id: string) => {
+    harness.deps.spawn = vi.fn(async (id: string) => {
       harness.live.add(id)
       harness.spawns.push({ id, provider: 'claude' as AgentProviderId })
       return { provider: 'claude' as AgentProviderId }
     })
-    harness.deps.spawn = spawnMock
-    const outcome = await sendAgentTurn(harness.deps, {
-      terminalId: 'turn-effective',
+    await expect(sendAgentTurn(harness.deps, {
+      terminalId: 'turn-provider-swap',
       provider: 'opencode',
       prompt: 'refatore a arquitetura',
-    })
-    expect(outcome.provider).toBe('claude')
-    expect(outcome.result).toBe('CONCLUIDO: ok')
-    expect(outcome.attempts).toEqual([{ provider: 'claude', ok: true }])
-    expect(harness.sessions.get('turn-effective')).toEqual({ provider: 'claude', model: 'gpt-4o-mini' })
-    // Uma única tentativa/sessão: um spawn e uma escrita.
-    expect(spawnMock).toHaveBeenCalledOnce()
-    expect(harness.spawns).toEqual([{ id: 'turn-effective', provider: 'claude' }])
-    expect(harness.writes).toHaveLength(1)
+    })).rejects.toMatchObject({ code: 'provider-mismatch', provider: 'opencode' })
+    expect(harness.writes).toHaveLength(0)
+    expect(harness.sessions.has('turn-provider-swap')).toBe(false)
     resetTurnQueues()
   })
 
-  it('does not repeat a provider already attempted via spawn fallback', async () => {
+  it('never spawns another provider even if the ordered list is stale', async () => {
     resetTurnQueues()
     const harness = createHarness({
       waiters: [{ error: '429 rate limit exceeded' }],
     })
     harness.deps.orderProviders = () => ['opencode', 'claude'] as AgentProviderId[]
-    // ordered = [opencode, claude]; opencode resolve para claude no spawn.
-    // O claude (efetivo) falha transitoriamente; o candidato claude seguinte
-    // não pode ser tentado de novo (sem PTY duplicado para o mesmo provedor).
-    let spawnCount = 0
-    harness.deps.spawn = vi.fn(async (id: string) => {
-      spawnCount += 1
-      harness.live.add(id)
-      return { provider: 'claude' as AgentProviderId }
-    })
     await expect(sendAgentTurn(harness.deps, {
-      terminalId: 'turn-no-dup',
+      terminalId: 'turn-stale-list',
       provider: 'opencode',
       prompt: 'faça algo',
     })).rejects.toThrow('rate limit')
-    expect(spawnCount).toBe(1)
+    expect(harness.spawns).toEqual([{ id: 'turn-stale-list', provider: 'opencode' }])
     resetTurnQueues()
   })
 })
@@ -282,28 +257,20 @@ describe('waiter integrado ao turno via eventos reais', () => {  function create
     return { ...base, emit }
   }
 
-  it('rate limit impresso + exit 0 disparam failover real', async () => {
+  it('rate limit impresso + exit 0 falham sem trocar de provedor', async () => {
     resetTurnQueues()
     const harness = createLiveHarness()
-    const order = ['opencode', 'claude'] as AgentProviderId[]
-    harness.deps.orderProviders = () => order
     const pending = sendAgentTurn(harness.deps, {
-      terminalId: 'turn-live-failover',
+      terminalId: 'turn-live-no-failover',
       provider: 'opencode',
       prompt: 'faça algo',
     })
     await vi.waitFor(() => expect(harness.writes.length).toBeGreaterThan(0))
-    harness.emit({ id: 'turn-live-failover', type: 'data', data: 'Error: 429 rate limit exceeded\n' })
-    harness.emit({ id: 'turn-live-failover', type: 'exit', code: 0 })
-    // A escrita precede a assinatura do waiter no mesmo bloco síncrono:
-    // observar writes==2 garante o segundo waiter pronto antes do marcador.
-    await vi.waitFor(() => expect(harness.writes).toHaveLength(2))
-    harness.emit({ id: 'turn-live-failover', type: 'data', data: 'DEVORBIT_RESULT: CONCLUIDO: feito\n' })
-    const outcome = await pending
-    expect(outcome.provider).toBe('claude')
-    expect(outcome.result).toBe('CONCLUIDO: feito')
-    expect(harness.spawns).toHaveLength(2)
-    expect(harness.spawns.map((entry) => entry.id)).toEqual(['turn-live-failover', 'turn-live-failover'])
+    harness.emit({ id: 'turn-live-no-failover', type: 'data', data: 'Error: 429 rate limit exceeded\n' })
+    harness.emit({ id: 'turn-live-no-failover', type: 'exit', code: 0 })
+    await expect(pending).rejects.toThrow(/rate limit/i)
+    expect(harness.spawns).toEqual([{ id: 'turn-live-no-failover', provider: 'opencode' }])
+    expect(harness.writes).toHaveLength(1)
     resetTurnQueues()
   })
 
@@ -333,7 +300,7 @@ describe('createResultWaiter', () => {
     })
     const pending = wait('wait-one', { idleMs: 5000, overallMs: 5000 })
     listeners.forEach((listener) => listener({ id: 'other', type: 'data', data: 'noise' }))
-    listeners.forEach((listener) => listener({ id: 'wait-one', type: 'data', data: 'working...\nDEVORBIT_RESULT: CONCLUIDO: pronto' }))
+    listeners.forEach((listener) => listener({ id: 'wait-one', type: 'data', data: 'working...\nDEVORBIT_RESULT: CONCLUIDO: pronto\n' }))
     await expect(pending).resolves.toMatchObject({ result: 'CONCLUIDO: pronto' })
     expect(listeners.size).toBe(0)
   })
@@ -345,8 +312,54 @@ describe('createResultWaiter', () => {
       return () => listeners.delete(listener)
     })
     const pending = wait('wait-two', { idleMs: 5000, overallMs: 5000 })
-    listeners.forEach((listener) => listener({ id: 'wait-two', type: 'data', data: 'DEVORBIT_RESULT: BLOQUEADO: sem acesso' }))
+    listeners.forEach((listener) => listener({ id: 'wait-two', type: 'data', data: 'DEVORBIT_RESULT: BLOQUEADO: sem acesso\n' }))
     await expect(pending).resolves.toMatchObject({ blocked: 'BLOQUEADO: sem acesso' })
+  })
+
+  it('prefers valid JSON over the legacy mirror and maps failed without success', async () => {
+    const listeners = new Set<(event: TerminalEvent) => void>()
+    const wait = createResultWaiter((listener) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    })
+    const pending = wait('wait-json', { idleMs: 5000, overallMs: 5000 })
+    listeners.forEach((listener) => listener({
+      id: 'wait-json',
+      type: 'data',
+      data: 'DEVORBIT_RESULT: {"version":1,"outcome":"completed","summary":"JSON venceu"}\nDEVORBIT_RESULT: BLOQUEADO: espelho\n',
+    }))
+    await expect(pending).resolves.toMatchObject({ result: 'JSON venceu' })
+  })
+
+  it('rejects versionless JSON and falls back to a later valid legacy mirror', async () => {
+    const listeners = new Set<(event: TerminalEvent) => void>()
+    const wait = createResultWaiter((listener) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    })
+    const pending = wait('wait-no-ver', { idleMs: 5000, overallMs: 5000 })
+    listeners.forEach((listener) => listener({
+      id: 'wait-no-ver',
+      type: 'data',
+      data: 'DEVORBIT_RESULT: {"outcome":"completed","summary":"sem version"}\nDEVORBIT_RESULT: CONCLUIDO: espelho legado\n',
+    }))
+    await expect(pending).resolves.toMatchObject({ result: 'CONCLUIDO: espelho legado' })
+  })
+
+  it('returns an uncertain invalid result on exit instead of advancing', async () => {
+    const listeners = new Set<(event: TerminalEvent) => void>()
+    const wait = createResultWaiter((listener) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    })
+    const pending = wait('wait-invalid', { idleMs: 5000, overallMs: 5000 })
+    listeners.forEach((listener) => listener({
+      id: 'wait-invalid',
+      type: 'data',
+      data: 'DEVORBIT_RESULT: {"version":1,"outcome":"completed","summary":oops}\n',
+    }))
+    listeners.forEach((listener) => listener({ id: 'wait-invalid', type: 'exit', code: 0 }))
+    await expect(pending).resolves.toMatchObject({ code: 0, invalidResult: 'invalid-json' })
   })
 
   it('carries the tail on exit without a marker for text classification', async () => {
@@ -389,20 +402,32 @@ describe('spawnAgentProviderTerminal', () => {
     }
   }
 
-  it('uses the effective provider from health resolution, not the candidate', async () => {
+  it('rejects a health resolution that swaps the explicit provider', async () => {
     const { deps, starts } = createSpawnDeps({ healthProvider: 'claude', healthPath: 'C:\\cli\\agent.cmd' })
+    await expect(
+      spawnAgentProviderTerminal(
+        deps,
+        { id: 't1', candidate: 'opencode', model: 'claude-sonnet', tier: 'deep', cols: 120, rows: 32 },
+        config
+      )
+    ).rejects.toMatchObject({ code: 'provider-mismatch', provider: 'opencode' })
+    expect(starts).toHaveLength(0)
+    expect(deps.assertLive).not.toHaveBeenCalled()
+  })
+
+  it('spawns the explicit provider when the resolution matches', async () => {
+    const { deps, starts } = createSpawnDeps({ healthProvider: 'opencode', healthPath: 'C:\\cli\\agent.cmd' })
     const spawned = await spawnAgentProviderTerminal(
       deps,
-      { id: 't1', candidate: 'opencode', model: 'claude-sonnet', tier: 'deep', cols: 120, rows: 32 },
+      { id: 't1', candidate: 'opencode', model: 'gpt-4o-mini', tier: 'fast', cols: 120, rows: 32 },
       config
     )
-    // Fallback entre health e spawn: sessão e retorno com claude, 1 tentativa.
-    expect(spawned.provider).toBe('claude')
+    expect(spawned.provider).toBe('opencode')
     expect(spawned.command).toBe('C:\\cli\\agent.cmd')
     expect(starts).toHaveLength(1)
     expect(starts[0]).toMatchObject({
       id: 't1',
-      args: ['/d', '/q', '/k', 'call "C:\\cli\\agent.cmd" --model claude-sonnet'],
+      args: ['/d', '/q', '/k', 'call "C:\\cli\\agent.cmd" --model gpt-4o-mini'],
     })
     expect(deps.assertLive).toHaveBeenCalledOnce()
   })

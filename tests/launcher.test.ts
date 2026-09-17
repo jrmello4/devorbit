@@ -234,6 +234,18 @@ describe('launchTool', () => {
     expect(spawnMock).not.toHaveBeenCalled()
   })
 
+  it('exige conta explícita no codex-cli e nunca assume account1', async () => {
+    mockVisibleSpawn()
+
+    const result = await launchTool('codex-cli', projectPath)
+
+    expect(result).toMatchObject({ success: false, fallback: false })
+    expect(result.account).toBeUndefined()
+    expect(result.message).toContain('conta Codex')
+    expect(result.needsAuth).toBeUndefined()
+    expect(spawnMock).not.toHaveBeenCalled()
+  })
+
   it('ignora um caminho antigo do Brave quando encontra a instalação padrão atual', async () => {
     const previousProgramFiles = process.env.ProgramFiles
     const defaultBrowser = path.join(

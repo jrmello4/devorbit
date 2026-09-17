@@ -118,8 +118,16 @@ O botão de conta abre o ChatGPT em um perfil persistente e isolado para cada
 conta (`account1` e `account2`). Na primeira abertura de cada perfil, faça o
 login manualmente; depois disso, a sessão permanece separada e pode ser
 reutilizada sem misturar cookies. O DevOrbit não lê e-mails nem cookies do
-navegador para tentar adivinhar a identidade ativa. O Codex CLI também usa um
-`CODEX_HOME` separado por conta.
+navegador para tentar adivinhar a identidade ativa.
+
+O Codex CLI também usa um `CODEX_HOME` separado por conta:
+`%USERPROFILE%\.codex-conta1` para a Conta 1 e `%USERPROFILE%\.codex-conta2`
+para a Conta 2. O auth legado de `~/.codex` **não é lido, copiado nem movido**
+automaticamente: quem só tem essa sessão antiga deve fazer um login novo na
+Conta 1, que grava as credenciais no home isolado. Veja o passo a passo e o
+motivo de não copiar `auth.json` em
+[docs/codex-account-profiles.md](docs/codex-account-profiles.md).
+
 O Codex Desktop continua usando a sessão gerenciada pelo próprio aplicativo,
 que não oferece isolamento de perfis por `CODEX_HOME`.
 

@@ -1,8 +1,11 @@
 import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
+import { choice, TypeSafeClient } from '@typesafe-ai/sdk'
+import type { Fetch } from '@typesafe-ai/sdk'
 import type { AgentProvider, AgentProviderId, AppConfig } from '../renderer/src/types'
 
 const execFileAsync = promisify(execFile)
@@ -197,32 +200,540 @@ export function tierModels(tier: ModelTier): readonly string[] {
 }
 
 /**
- * Fallback multi-provedor: ordena o preferido primeiro e completa com os
- * demais provedores prontos, para que uma indisponibilidade ou rate limit do
- * primário não bloqueie o turno.
+ * Piloto TypeSafe em MODO SOMBRA (FASE 3).
+ *
+ * Classifica o prompt em `fast` | `deep` | `review` apenas para observação:
+ * a decisão que o produto toma hoje (`classifyTaskComplexity` -> fast/deep)
+ * permanece intacta. A fronteira é injetável (`ShadowJudge`) para testes com
+ * cliente fake; a chave vive só no env do processo main (`TYPESAFE_API_KEY`)
+ * e o piloto só liga com `DEVORBIT_TYPESAFE_SHADOW=1`.
+ *
+ * Garantias: nunca lança, timeout próprio, cache limitado por hash (o prompt
+ * cru nunca é persistido), circuit breaker e fallback silencioso. Antes de
+ * qualquer chamada externa o state passa por `redactPromptForJudgment`:
+ * credenciais (chaves, bearer, senhas) e caminhos absolutos da máquina nunca
+ * chegam ao SDK.
+ */
+export const SHADOW_TIERS = ['fast', 'deep', 'review'] as const
+export type ShadowTier = (typeof SHADOW_TIERS)[number]
+
+export const SHADOW_MAX_STATE_CHARS = 4_000
+export const SHADOW_DEFAULT_TIMEOUT_MS = 2_500
+export const SHADOW_CONFIDENCE_FLOOR = 0.6
+export const SHADOW_PROBABILITY_TOLERANCE = 1e-3
+export const SHADOW_CACHE_MAX_ENTRIES = 100
+export const SHADOW_CACHE_TTL_MS = 10 * 60_000
+export const SHADOW_BREAKER_FAILURE_THRESHOLD = 5
+export const SHADOW_BREAKER_COOLDOWN_MS = 60_000
+export const SHADOW_MAX_OBSERVATIONS = 200
+
+export type ShadowOutcome =
+  | 'ok'
+  | 'skipped'
+  | 'timeout'
+  | 'invalid'
+  | 'error'
+  | 'circuit-open'
+
+export interface ShadowJudgment {
+  tier: ShadowTier
+  confidence: number
+  probabilities: Record<ShadowTier, number>
+}
+
+export interface ShadowClassification extends ShadowJudgment {
+  confident: boolean
+  cacheHit: boolean
+  latencyMs: number
+}
+
+/** Registro de observação da sombra: nunca contém o prompt em texto. */
+export interface ShadowObservation {
+  at: number
+  promptChars: number
+  heuristicTier: ModelTier
+  outcome: ShadowOutcome
+  tier?: ShadowTier
+  confidence?: number
+  cacheHit: boolean
+  latencyMs: number
+}
+
+/**
+ * Fronteira injetável: recebe o state já sanitizado e sinaliza cancelamento.
+ * Devolve a resposta crua do julgamento (validada antes do uso).
+ */
+export type ShadowJudge = (state: string, signal: AbortSignal) => Promise<unknown>
+
+export interface ShadowDependencies {
+  judge?: ShadowJudge
+  timeoutMs?: number
+  cacheTtlMs?: number
+  cacheMaxEntries?: number
+  breakerFailureThreshold?: number
+  breakerCooldownMs?: number
+  now?: () => number
+}
+
+const SHADOW_ENV_FLAG = 'DEVORBIT_TYPESAFE_SHADOW'
+
+/** Variáveis do piloto que nunca podem ser herdadas por processos filhos. */
+export const SHADOW_ENV_VARIABLES = ['TYPESAFE_API_KEY', SHADOW_ENV_FLAG] as const
+
+interface ShadowEnvSnapshot {
+  apiKey?: string
+  enabled: boolean
+}
+
+function scrubShadowEnv(env: NodeJS.ProcessEnv): void {
+  for (const name of SHADOW_ENV_VARIABLES) delete env[name]
+}
+
+function captureShadowEnv(env: NodeJS.ProcessEnv): ShadowEnvSnapshot {
+  const snapshot: ShadowEnvSnapshot = {
+    apiKey: env.TYPESAFE_API_KEY?.trim() || undefined,
+    enabled: env[SHADOW_ENV_FLAG] === '1',
+  }
+  // Remove do ambiente imediatamente: a chave passa a viver só na memória
+  // deste módulo (main), nunca no env herdado por PTYs/CLIs filhos.
+  scrubShadowEnv(env)
+  return snapshot
+}
+
+// Captura no load do main, antes de qualquer spawn de agente/terminal.
+let shadowEnvSnapshot: ShadowEnvSnapshot = captureShadowEnv(process.env)
+
+/** Somente testes: substitui o snapshot capturado do ambiente do main. */
+export function setShadowEnvSnapshotForTests(snapshot: {
+  apiKey?: string
+  enabled?: boolean
+}): void {
+  shadowEnvSnapshot = {
+    apiKey: typeof snapshot.apiKey === 'string' ? snapshot.apiKey.trim() || undefined : undefined,
+    enabled: snapshot.enabled === true,
+  }
+}
+
+const SHADOW_TIER_QUESTIONS = {
+  tier: choice(
+    'O pedido exige raciocínio de engenharia (arquitetura, mudança ampla, migração), é execução mecânica (localizar/ler/listar, rodar build/testes, ajuste local óbvio) ou é revisão/análise crítica de código ou design existente?',
+    {
+      fast: {
+        what: 'Execução mecânica e local: buscar, ler, listar, rodar build/testes, resumo simples, ajuste óbvio',
+        not_for: 'Decisões de design, mudanças multi-arquivo ou análise crítica',
+        examples: ['grep por TODO em src', 'liste os arquivos do projeto', 'rode os testes rápidos'],
+      },
+      deep: {
+        what: 'Mudança ampla com decisão de engenharia: arquitetura, refatoração multi-arquivo, migração, integração entre componentes',
+        not_for: 'Comando único, consulta pontual ou edição trivial',
+        examples: ['refatore a camada de cache', 'proponha a arquitetura do serviço de filas', 'migre o estado global'],
+      },
+      review: {
+        what: 'Avaliação crítica do que já existe: revisão de PR/diff/design com julgamento de qualidade, riscos ou segurança',
+        not_for: 'Escrever a mudança em si',
+        examples: ['revise este PR com foco em segurança', 'analise os riscos deste diff'],
+      },
+    }
+  ),
+} as const
+
+// Sanitização de saída de terminal exige casar códigos de controle.
+/* eslint-disable no-control-regex */
+const ANSI_ESCAPE_PATTERN = /\u001b\[[0-9;?]*[ -/]*[@-~]/g
+const UNSAFE_CONTROL_PATTERN = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g
+/* eslint-enable no-control-regex */
+
+/** Remove ANSI/controles, apara e limita o state do julgamento. */
+export function sanitizePromptForJudgment(prompt: unknown): string | undefined {
+  if (typeof prompt !== 'string') return undefined
+  const cleaned = prompt
+    .replace(ANSI_ESCAPE_PATTERN, '')
+    .replace(UNSAFE_CONTROL_PATTERN, '')
+    .trim()
+  if (!cleaned) return undefined
+  return cleaned.length > SHADOW_MAX_STATE_CHARS
+    ? cleaned.slice(0, SHADOW_MAX_STATE_CHARS)
+    : cleaned
+}
+
+export const SHADOW_REDACTED = '[segredo omitido]'
+export const SHADOW_REDACTED_PATH = '[caminho local omitido]'
+
+/**
+ * Política explícita de redação do state antes de QUALQUER chamada ao
+ * TypeSafe: reaproveita `redactSecrets` (sk-/api_key) e cobre bearer token,
+ * campos de segredo nomeados (pt/en, com ou sem quotes) e caminhos absolutos
+ * da máquina (Windows, UNC e diretórios pessoais POSIX). O prompt cru nunca é
+ * enviado, cacheado nem registrado.
+ */
+const PROMPT_REDACTION_RULES: ReadonlyArray<readonly [RegExp, string]> = [
+  [/\b(bearer)\s+[A-Za-z0-9._~+/=-]{8,}/gi, `$1 ${SHADOW_REDACTED}`],
+  [
+    /(\\?["']?\b(?:api[_-]?key|access[_-]?token|auth[_-]?token|refresh[_-]?token|client[_-]?secret|secret|token|password|passwd|pwd|senha)\b\\?["']?\s*[:=]\s*)(?:\\?"(?:\\.|[^"\\])*\\?"|\\?'(?:\\.|[^'\\])*\\?'|[^\s,;}]+)/gi,
+    `$1${SHADOW_REDACTED}`,
+  ],
+  // Tokens crus reconhecíveis de provedores/CI.
+  [/\bghp_[A-Za-z0-9]{20,}/g, SHADOW_REDACTED],
+  [/\bgithub_pat_[A-Za-z0-9_]{20,}/g, SHADOW_REDACTED],
+  [/\bglpat-[A-Za-z0-9_-]{20,}/g, SHADOW_REDACTED],
+  [/\bnpm_[A-Za-z0-9]{20,}/g, SHADOW_REDACTED],
+  [/\bxox[baprs]-[A-Za-z0-9-]{10,}/g, SHADOW_REDACTED],
+  [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}/g, SHADOW_REDACTED],
+  // Caminhos absolutos da máquina: Windows, UNC e qualquer POSIX absoluto
+  // (conservador: `/tmp`, `/var`, `/workspace`, ...), fora de URLs e rotas
+  // relativas — o `/` não pode vir colado a alfanumérico, `:`, `.`, `/` ou `<`.
+  [/\\\\[^\s"'`<>|]+/g, SHADOW_REDACTED_PATH],
+  [/\b[A-Za-z]:[\\/][^\s"'`<>|]+/g, SHADOW_REDACTED_PATH],
+  [/(?<![A-Za-z0-9:/.<])\/[^\s"'`<>|]+/g, SHADOW_REDACTED_PATH],
+]
+
+export function redactPromptForJudgment(value: string): string {
+  if (!value) return value
+  let redacted = redactSecrets(value)
+  for (const [pattern, replacement] of PROMPT_REDACTION_RULES) {
+    redacted = redacted.replace(pattern, replacement)
+  }
+  return redacted
+}
+
+interface ShadowCacheEntry {
+  judgment: ShadowJudgment
+  expiresAt: number
+}
+
+const shadowCache = new Map<string, ShadowCacheEntry>()
+const shadowObservations: ShadowObservation[] = []
+let shadowConsecutiveFailures = 0
+let shadowOpenUntil = 0
+// undefined = ainda não resolvido; null = resolvido sem judge (piloto desligado).
+let defaultShadowJudge: ShadowJudge | null | undefined
+
+class ShadowTimeoutError extends Error {}
+
+function resolveShadowJudge(): ShadowJudge | undefined {
+  if (defaultShadowJudge === undefined) {
+    defaultShadowJudge =
+      shadowEnvSnapshot.apiKey && shadowEnvSnapshot.enabled
+        ? buildTypeSafeShadowJudge(shadowEnvSnapshot.apiKey)
+        : null
+  }
+  return defaultShadowJudge ?? undefined
+}
+
+export function isShadowRoutingEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  // `process.env` foi limpo no load; o snapshot preserva a decisão do main.
+  if (env === process.env) return shadowEnvSnapshot.enabled && Boolean(shadowEnvSnapshot.apiKey)
+  return env[SHADOW_ENV_FLAG] === '1' && Boolean(env.TYPESAFE_API_KEY?.trim())
+}
+
+function buildTypeSafeShadowJudge(apiKey: string, fetchImpl?: Fetch): ShadowJudge {
+  const client = new TypeSafeClient({
+    apiKey,
+    timeout: SHADOW_DEFAULT_TIMEOUT_MS,
+    retry: { maxRetries: 0 },
+    logLevel: 'warn',
+    ...(fetchImpl ? { fetch: fetchImpl } : {}),
+  })
+
+  return async (state, signal) => {
+    const { answers } = await client.systemOne(
+      { state: { prompt: state }, questions: SHADOW_TIER_QUESTIONS },
+      { signal }
+    )
+    return answers.tier
+  }
+}
+
+/**
+ * Judge de produção: a chave é lida do ambiente do main e imediatamente
+ * removida dele (o judge guarda a chave só na memória). `logLevel: 'warn'`
+ * (o SDK não redige corpos em `debug`), sem retries e com timeout curto — a
+ * sombra nunca pode competir com o turno real.
+ */
+export function createTypeSafeShadowJudge(
+  env: NodeJS.ProcessEnv = process.env,
+  fetchImpl?: Fetch
+): ShadowJudge | undefined {
+  const snapshot = env === process.env ? { ...shadowEnvSnapshot } : captureShadowEnv(env)
+  if (!snapshot.apiKey || !snapshot.enabled) return undefined
+  return buildTypeSafeShadowJudge(snapshot.apiKey, fetchImpl)
+}
+
+function parseShadowJudgment(raw: unknown): ShadowJudgment | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined
+  const record = raw as Record<string, unknown>
+
+  // Contrato da primitiva: ChoiceAnswer com type explícito.
+  if (record.type !== 'choice') return undefined
+
+  const tier = record.choice
+  if (typeof tier !== 'string' || !(SHADOW_TIERS as readonly string[]).includes(tier)) {
+    return undefined
+  }
+
+  const confidence = record.confidence
+  if (
+    typeof confidence !== 'number' ||
+    !Number.isFinite(confidence) ||
+    confidence < 0 ||
+    confidence > 1
+  ) {
+    return undefined
+  }
+
+  const rawProbabilities = record.probabilities
+  if (typeof rawProbabilities !== 'object' || rawProbabilities === null) return undefined
+  // Chaves exatas: distribuição com opção extra/desconhecida é payload inválido.
+  const probabilityKeys = Object.keys(rawProbabilities)
+  if (
+    probabilityKeys.length !== SHADOW_TIERS.length ||
+    probabilityKeys.some((key) => !(SHADOW_TIERS as readonly string[]).includes(key))
+  ) {
+    return undefined
+  }
+  const probabilities: Record<ShadowTier, number> = { fast: 0, deep: 0, review: 0 }
+  for (const known of SHADOW_TIERS) {
+    const value = (rawProbabilities as Record<string, unknown>)[known]
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) {
+      return undefined
+    }
+    probabilities[known] = value
+  }
+
+  // Distribuição coerente: soma ~1 e a opção escolhida é o máximo.
+  const sum = SHADOW_TIERS.reduce((total, known) => total + probabilities[known], 0)
+  if (Math.abs(sum - 1) > SHADOW_PROBABILITY_TOLERANCE) return undefined
+  const top = Math.max(...SHADOW_TIERS.map((known) => probabilities[known]))
+  if (probabilities[tier as ShadowTier] + SHADOW_PROBABILITY_TOLERANCE < top) return undefined
+
+  return { tier: tier as ShadowTier, confidence, probabilities }
+}
+
+export type ShadowObservationListener = (observation: Readonly<ShadowObservation>) => void
+
+const shadowObservationListeners = new Set<ShadowObservationListener>()
+
+function recordShadowObservation(observation: ShadowObservation): void {
+  shadowObservations.push(observation)
+  while (shadowObservations.length > SHADOW_MAX_OBSERVATIONS) shadowObservations.shift()
+  for (const listener of shadowObservationListeners) {
+    try {
+      listener({ ...observation })
+    } catch {
+      // Um listener com defeito nunca pode derrubar a sombra.
+    }
+  }
+}
+
+function readShadowCache(key: string, now: number): ShadowJudgment | undefined {
+  const entry = shadowCache.get(key)
+  if (!entry) return undefined
+  if (entry.expiresAt <= now) {
+    shadowCache.delete(key)
+    return undefined
+  }
+  // Reinsere para manter ordem LRU de inserção no Map.
+  shadowCache.delete(key)
+  shadowCache.set(key, entry)
+  return entry.judgment
+}
+
+function writeShadowCache(
+  key: string,
+  judgment: ShadowJudgment,
+  now: number,
+  ttlMs: number,
+  maxEntries: number
+): void {
+  shadowCache.delete(key)
+  shadowCache.set(key, { judgment, expiresAt: now + ttlMs })
+  while (shadowCache.size > maxEntries) {
+    const oldest = shadowCache.keys().next()
+    if (oldest.done) break
+    shadowCache.delete(oldest.value)
+  }
+}
+
+function registerShadowSuccess(): void {
+  shadowConsecutiveFailures = 0
+  shadowOpenUntil = 0
+}
+
+function registerShadowFailure(now: number, threshold: number, cooldownMs: number): void {
+  shadowConsecutiveFailures += 1
+  if (shadowConsecutiveFailures >= threshold) shadowOpenUntil = now + cooldownMs
+}
+
+/**
+ * Classificação sombra de um prompt. Retorna `undefined` em qualquer caminho
+ * degradado (sem judge, timeout, resposta inválida, erro, circuito aberto) —
+ * nunca lança e nunca altera o roteamento do produto.
+ */
+export async function classifyPromptShadow(
+  prompt: unknown,
+  deps: ShadowDependencies = {}
+): Promise<ShadowClassification | undefined> {
+  const now = deps.now ?? Date.now
+  const heuristicTier: ModelTier = classifyTaskComplexity(prompt) === 'deep' ? 'deep' : 'fast'
+  // Redação antes da fronteira externa: judge fake/SDK não veem credenciais
+  // nem caminhos locais; cache indexa pelo hash do texto já redigido.
+  const sanitizedState = sanitizePromptForJudgment(prompt)
+  const state = sanitizedState ? redactPromptForJudgment(sanitizedState) : undefined
+
+  const observe = (
+    outcome: ShadowOutcome,
+    extra: { judgment?: ShadowJudgment; cacheHit?: boolean; startedAt?: number } = {}
+  ): ShadowClassification | undefined => {
+    const at = now()
+    recordShadowObservation({
+      at,
+      promptChars: state?.length ?? 0,
+      heuristicTier,
+      outcome,
+      cacheHit: extra.cacheHit ?? false,
+      latencyMs: extra.startedAt === undefined ? 0 : Math.max(0, at - extra.startedAt),
+      ...(extra.judgment
+        ? { tier: extra.judgment.tier, confidence: extra.judgment.confidence }
+        : {}),
+    })
+    if (!extra.judgment) return undefined
+    return {
+      ...extra.judgment,
+      confident: extra.judgment.confidence >= SHADOW_CONFIDENCE_FLOOR,
+      cacheHit: extra.cacheHit ?? false,
+      latencyMs: extra.startedAt === undefined ? 0 : Math.max(0, at - extra.startedAt),
+    }
+  }
+
+  if (!state) return observe('skipped')
+
+  const currentNow = now()
+  if (shadowOpenUntil > currentNow) return observe('circuit-open')
+
+  const judge = deps.judge ?? resolveShadowJudge()
+  if (!judge) return observe('skipped')
+
+  const cacheKey = createHash('sha256').update(state).digest('hex')
+  const cached = readShadowCache(cacheKey, currentNow)
+  if (cached) return observe('ok', { judgment: cached, cacheHit: true })
+
+  const startedAt = now()
+  const timeoutMs = Math.max(50, deps.timeoutMs ?? SHADOW_DEFAULT_TIMEOUT_MS)
+  const threshold = deps.breakerFailureThreshold ?? SHADOW_BREAKER_FAILURE_THRESHOLD
+  const cooldownMs = deps.breakerCooldownMs ?? SHADOW_BREAKER_COOLDOWN_MS
+
+  const controller = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const raw = await new Promise<unknown>((resolve, reject) => {
+      timer = setTimeout(() => {
+        controller.abort()
+        reject(new ShadowTimeoutError('Julgamento da sombra excedeu o timeout.'))
+      }, timeoutMs)
+      judge(state, controller.signal).then(resolve, reject)
+    })
+
+    const judgment = parseShadowJudgment(raw)
+    if (!judgment) {
+      registerShadowFailure(now(), threshold, cooldownMs)
+      return observe('invalid', { startedAt })
+    }
+
+    registerShadowSuccess()
+    writeShadowCache(
+      cacheKey,
+      judgment,
+      startedAt,
+      deps.cacheTtlMs ?? SHADOW_CACHE_TTL_MS,
+      deps.cacheMaxEntries ?? SHADOW_CACHE_MAX_ENTRIES
+    )
+    return observe('ok', { judgment, startedAt })
+  } catch (error) {
+    registerShadowFailure(now(), threshold, cooldownMs)
+    return observe(error instanceof ShadowTimeoutError ? 'timeout' : 'error', { startedAt })
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+    controller.abort()
+  }
+}
+
+/** Observações (sem prompt cru) para o piloto; janela limitada em memória. */
+export function getShadowObservations(): readonly ShadowObservation[] {
+  return [...shadowObservations]
+}
+
+/**
+ * Assinatura mínima para um futuro consumidor local: recebe a observação
+ * agregada já existente (tamanho do state, tier, confiança, outcome, latência)
+ * — nunca prompt, state, hash, path, token ou resposta crua. Retorna a função
+ * de remoção do listener.
+ */
+export function onShadowObservation(listener: ShadowObservationListener): () => void {
+  shadowObservationListeners.add(listener)
+  return () => {
+    shadowObservationListeners.delete(listener)
+  }
+}
+
+export function getShadowRoutingStats(): {
+  cacheSize: number
+  consecutiveFailures: number
+  circuitOpenUntil: number
+} {
+  return {
+    cacheSize: shadowCache.size,
+    consecutiveFailures: shadowConsecutiveFailures,
+    circuitOpenUntil: shadowOpenUntil,
+  }
+}
+
+/** Zera cache, circuit breaker, observações e judge memoizado (testes). */
+export function resetShadowRoutingState(): void {
+  shadowCache.clear()
+  shadowObservations.length = 0
+  shadowConsecutiveFailures = 0
+  shadowOpenUntil = 0
+  defaultShadowJudge = undefined
+}
+
+/**
+ * Seleção EXPLÍCITA: o provedor escolhido é o único elegível no turno.
+ * Nunca troca automaticamente para outro provedor (em especial Codex).
+ * Lista vazia = indisponível; a UI recebe erro estruturado com motivo.
  */
 export function orderProvidersForTask(
   preferred: AgentProviderId,
   readyIds: readonly AgentProviderId[]
 ): AgentProviderId[] {
-  const ready = new Set(readyIds)
-  const ordered: AgentProviderId[] = []
-  if (ready.has(preferred)) ordered.push(preferred)
-  for (const id of AGENT_CLI_PROVIDER_IDS) {
-    if (id !== preferred && ready.has(id)) ordered.push(id)
-  }
-  if (!ready.has(preferred)) ordered.push(preferred)
-  return ordered
+  return readyIds.includes(preferred) ? [preferred] : []
 }
 
-export function selectProviderWithFallback(
+export type ProviderUnavailableCode = 'provider-not-ready' | 'provider-missing'
+
+export interface ProviderUnavailableError {
+  code: ProviderUnavailableCode
+  provider: AgentProviderId
+  message: string
+}
+
+/**
+ * Erro estruturado (motivo) quando o provedor explícito não pode executar.
+ * `undefined` = pronto. Nunca sugere nem substitui por outro provedor.
+ */
+export function providerUnavailableError(
   preferred: AgentProviderId,
   health: readonly { id: AgentProviderId; state: string }[]
-): { provider: AgentProviderId; fellBack: boolean } {
-  const ready = health.filter((item) => item.state === 'ready').map((item) => item.id)
-  const ordered = orderProvidersForTask(preferred, ready)
-  const selected = ordered[0] || preferred
-  return { provider: selected, fellBack: selected !== preferred }
+): ProviderUnavailableError | undefined {
+  const status = health.find((item) => item.id === preferred)
+  if (status?.state === 'ready') return undefined
+  const label = providerDefinition(preferred).label
+  return {
+    code: status ? 'provider-not-ready' : 'provider-missing',
+    provider: preferred,
+    message:
+      `${label} não está disponível (${status ? 'CLI ausente ou não executável' : 'provedor não reconhecido'}). ` +
+      'Nenhum outro provedor será usado automaticamente; ajuste o caminho em Configurações ou instale o CLI.',
+  }
 }
 
 const CONFIGURED_COMMAND_KEYS: Record<
@@ -779,34 +1290,45 @@ export interface AgentTurnResolution {
   model: string
   authConfigured: boolean
   provider: AgentProviderId
-  fellBack: boolean
+  /** Nunca há fallback automático: provedor explícito ou erro estruturado. */
+  fellBack: false
+  available: boolean
+  error?: ProviderUnavailableError
   reason: string
   explanation: ClassificationExplanation
 }
 
 /**
- * Resolução por turno: recebe o prompt, seleciona tier/modelo/provedor. Não
- * executa nada — só decide. Chaves nunca saem daqui.
+ * Resolução por turno: recebe o prompt e o provedor EXPLÍCITO, seleciona
+ * tier/modelo. Não executa nada — só decide. Quando o provedor não está
+ * pronto, devolve `available: false` + `error` estruturado (a UI decide).
+ * Chaves nunca saem daqui.
  */
 export async function resolveAgentTurn(
   config: AppConfig,
   preferred: AgentProviderId,
-  prompt: unknown
+  prompt: unknown,
+  shadowDeps?: ShadowDependencies
 ): Promise<AgentTurnResolution> {
   const explanation = explainClassification(prompt)
+  // SOMBRA (piloto TypeSafe): observa fast/deep/review sem alterar a decisão
+  // do produto. Fire-and-forget — nunca bloqueia nem lança no caminho do turno.
+  void classifyPromptShadow(prompt, shadowDeps).catch(() => undefined)
   const routing = config.modelRouting
   const { model, authConfigured } = resolveModelForTier(explanation.tier, routing)
   const health = await getAgentProviderHealth(config)
-  const { provider, fellBack } = selectProviderWithFallback(preferred, health)
+  const unavailable = providerUnavailableError(preferred, health)
   return {
     tier: explanation.tier,
     model,
     authConfigured,
-    provider,
-    fellBack,
-    reason: fellBack
-      ? `Provedor preferido indisponível; turno ${explanation.tier} encaminhado para ${provider}.`
-      : `Turno ${explanation.tier} encaminhado para ${provider}.`,
+    provider: preferred,
+    fellBack: false,
+    available: !unavailable,
+    ...(unavailable ? { error: unavailable } : {}),
+    reason: unavailable
+      ? unavailable.message
+      : `Turno ${explanation.tier} encaminhado para ${preferred}.`,
     explanation,
   }
 }
@@ -824,55 +1346,44 @@ export interface TurnExecution<T> {
 }
 
 /**
- * Executa um turno tentando os provedores em ordem; o fallback acontece SOMENTE
- * para erros transitórios classificados. Retorna o provedor efetivamente usado.
+ * Executa o turno do provedor EXPLÍCITO. Não há tentativa de outro provedor:
+ * uma falha (transitória ou permanente) retorna o erro com `attempts` para a
+ * UI. `attempts` fica no erro para auditoria — nenhum segredo é incluído.
  */
-export async function executeAgentTurnWithFallback<T>(
-  orderedProviders: readonly AgentProviderId[],
+export async function executeExplicitAgentTurn<T>(
+  provider: AgentProviderId,
   execute: (provider: AgentProviderId) => Promise<T>
 ): Promise<TurnExecution<T>> {
-  if (orderedProviders.length === 0) throw new Error('Nenhum provedor disponível para o turno.')
   const attempts: TurnAttempt[] = []
-  let lastError: unknown
-  for (const provider of orderedProviders) {
-    try {
-      const result = await execute(provider)
-      attempts.push({ provider, ok: true })
-      return { provider, result, attempts }
-    } catch (error) {
-      lastError = error
-      const message = error instanceof Error ? error.message : String(error)
-      attempts.push({ provider, ok: false, error: redactSecrets(message).slice(0, 300) })
-      if (!isTransientProviderError(error)) break
-    }
+  try {
+    const result = await execute(provider)
+    attempts.push({ provider, ok: true })
+    return { provider, result, attempts }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    attempts.push({ provider, ok: false, error: redactSecrets(message).slice(0, 300) })
+    throw Object.assign(
+      new Error(`Turno falhou com ${provider}: ${redactSecrets(message).slice(0, 200)}`),
+      { code: 'provider-failed', provider, attempts }
+    )
   }
-  throw Object.assign(
-    new Error(`Turno falhou em ${attempts.length} provedor(es): ${redactSecrets(lastError instanceof Error ? lastError.message : String(lastError)).slice(0, 200)}`),
-    { attempts }
-  )
 }
 
 /**
- * Resolve o provedor preferido com fallback automático para o próximo CLI
- * pronto quando o preferido está ausente (rate limit/indisponibilidade nunca
- * devem travar o turno sem alternativa).
+ * Resolve APENAS o provedor explícito — nunca troca para outro CLI quando o
+ * escolhido está ausente. `path: null` + mensagem acionável para a UI.
  */
 export async function resolveAgentProviderWithFallback(
   config: AppConfig,
   preferred: AgentProviderId
-): Promise<{ path: string | null; message: string; provider: AgentProviderId; fellBack: boolean }> {
-  const health = await getAgentProviderHealth(config)
-  const { provider, fellBack } = selectProviderWithFallback(preferred, health)
-  const resolution = await resolveAgentProviderCommand(config, provider)
-  if (fellBack && resolution.path) {
-    return {
-      ...resolution,
-      provider,
-      fellBack,
-      message: `${providerDefinition(preferred).label} indisponível; usando ${providerDefinition(provider).label}. ${resolution.message}`,
-    }
-  }
-  return { ...resolution, provider, fellBack: fellBack && resolution.path !== null }
+): Promise<{
+  path: string | null
+  message: string
+  provider: AgentProviderId
+  fellBack: false
+}> {
+  const resolution = await resolveAgentProviderCommand(config, preferred)
+  return { ...resolution, provider: preferred, fellBack: false }
 }
 
 export async function getAgentProviderHealth(
@@ -898,6 +1409,9 @@ export async function getAgentProviderHealth(
 /**
  * Monta o env do processo filho para o turno: modelo/tier sempre, chaves
  * BYOK por família somente quando presentes. Chaves nunca retornam ao renderer.
+ *
+ * Fronteira de segurança: as variáveis do piloto TypeSafe são removidas do
+ * ambiente-base (inclusive `process.env`) — CLIs/PTYs nunca as herdam.
  */
 export function buildAgentTurnEnv(
   provider: AgentProviderId,
@@ -906,6 +1420,7 @@ export function buildAgentTurnEnv(
   routing?: ModelRoutingConfig,
   baseEnv: NodeJS.ProcessEnv = process.env
 ): NodeJS.ProcessEnv {
+  scrubShadowEnv(baseEnv)
   const env: NodeJS.ProcessEnv = {
     DEVORBIT_MODEL: model,
     DEVORBIT_MODEL_TIER: tier,

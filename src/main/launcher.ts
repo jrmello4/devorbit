@@ -13,6 +13,7 @@ import {
   ensureAccountDirectories,
   getAccountLabel,
   getBrowserLaunchArgs,
+  getCodexAccountEnvironment,
   hasValidCodexAuth,
   resolveCodexCommand,
   resolveBrowserPath,
@@ -264,6 +265,9 @@ export async function getToolHealth(config: AppConfig): Promise<ToolHealth[]> {
         : powershellPath
           ? 'Windows Terminal não foi encontrado; o DevOrbit usará PowerShell como alternativa.'
           : 'Nenhum terminal compatível foi encontrado.',
+      configuredPath: custom.wt || undefined,
+      effectivePath: terminalPath || powershellPath || undefined,
+      isConfigured: Boolean(custom.wt && custom.wt !== 'wt.exe'),
     },
     {
       id: 'vscode',
@@ -271,6 +275,9 @@ export async function getToolHealth(config: AppConfig): Promise<ToolHealth[]> {
       state: vscodePath ? 'ready' : 'missing',
       path: vscodePath || custom.vscode,
       message: vscodePath ? 'Editor pronto para abrir projetos.' : 'VS Code não foi encontrado.',
+      configuredPath: custom.vscode || undefined,
+      effectivePath: vscodePath || undefined,
+      isConfigured: Boolean(custom.vscode && custom.vscode !== 'code.cmd'),
     },
     {
       id: 'codex',
@@ -278,6 +285,9 @@ export async function getToolHealth(config: AppConfig): Promise<ToolHealth[]> {
       state: codexPath ? 'ready' : 'missing',
       path: codexPath || custom.codex,
       message: codexPath ? 'CLI do Codex pronto.' : 'Codex CLI não foi encontrado.',
+      configuredPath: custom.codex || undefined,
+      effectivePath: codexPath || undefined,
+      isConfigured: Boolean(custom.codex && custom.codex !== 'codex.cmd'),
     },
     {
       id: 'agy',
@@ -285,6 +295,9 @@ export async function getToolHealth(config: AppConfig): Promise<ToolHealth[]> {
       state: agyPath ? 'ready' : 'missing',
       path: agyPath || custom.agy,
       message: agyPath ? 'CLI do Antigravity pronto.' : 'Antigravity não foi encontrado.',
+      configuredPath: custom.agy || undefined,
+      effectivePath: agyPath || undefined,
+      isConfigured: Boolean(custom.agy),
     },
     {
       id: 'brave',
@@ -292,6 +305,9 @@ export async function getToolHealth(config: AppConfig): Promise<ToolHealth[]> {
       state: bravePath ? 'ready' : 'missing',
       path: bravePath || custom.brave,
       message: bravePath ? 'Navegador da Conta 2 pronto.' : 'Brave não foi encontrado.',
+      configuredPath: custom.brave || undefined,
+      effectivePath: bravePath || undefined,
+      isConfigured: Boolean(custom.brave),
     },
     {
       id: 'chrome',
@@ -299,6 +315,9 @@ export async function getToolHealth(config: AppConfig): Promise<ToolHealth[]> {
       state: chromePath ? 'ready' : 'missing',
       path: chromePath || custom.chrome,
       message: chromePath ? 'Navegador da Conta 1 pronto.' : 'Chrome não foi encontrado.',
+      configuredPath: custom.chrome || undefined,
+      effectivePath: chromePath || undefined,
+      isConfigured: Boolean(custom.chrome),
     },
     {
       id: 'mimo',
@@ -306,10 +325,25 @@ export async function getToolHealth(config: AppConfig): Promise<ToolHealth[]> {
       state: mimoPath ? 'ready' : 'missing',
       path: mimoPath || custom.mimo,
       message: mimoPath ? 'Aplicativo MiMo AI pronto.' : 'MiMo AI não foi encontrado.',
+      configuredPath: custom.mimo || undefined,
+      effectivePath: mimoPath || undefined,
+      isConfigured: Boolean(custom.mimo),
     },
-    ...agentHealth.filter((item) => item.id !== 'codex' && item.id !== 'agy'),
+    ...agentHealth
+      .filter((item) => item.id !== 'codex' && item.id !== 'agy')
+      .map((item) => {
+        const configuredKey = item.id === 'custom' ? 'customAgent' : item.id
+        const configured = custom[configuredKey as keyof typeof custom]?.trim() || undefined
+        return {
+          ...item,
+          configuredPath: configured,
+          effectivePath: item.state === 'ready' ? (item.path || undefined) : undefined,
+          isConfigured: Boolean(configured),
+        }
+      }),
   ]
 }
+
 function redactProjectPath(content: string, projectPath: string): string {
   const variants = new Set([projectPath, projectPath.replaceAll('\\', '/')])
   let redacted = content
@@ -335,7 +369,14 @@ export async function launchTool(
     | 'folder',
   projectPath: string,
   options?: { account?: 'account1' | 'account2'; url?: string }
-): Promise<{ success: boolean; message?: string; needsAuth?: boolean; account?: string }> {
+): Promise<{
+  success: boolean
+  message?: string
+  needsAuth?: boolean
+  account?: string
+  /** Contrato: nunca há substituição automática de provedor/conta. */
+  fallback?: false
+}> {
   const config = await loadConfig()
   const custom = config.customPaths
 
@@ -352,7 +393,16 @@ export async function launchTool(
       }
 
       case 'codex-cli': {
-        const account: AccountId = options?.account || 'account1'
+        // Conta é explícita: o DevOrbit nunca escolhe account1/account2 sozinho.
+        const account = options?.account
+        if (account !== 'account1' && account !== 'account2') {
+          return {
+            success: false,
+            fallback: false,
+            message:
+              'Selecione explicitamente a conta Codex (1 ou 2) antes de abrir o CLI; o DevOrbit não escolhe uma conta automaticamente.',
+          }
+        }
         const { codexHome } = await ensureAccountDirectories(account)
         const accountLabel = getAccountLabel(account, {
           account1: config.chatGptAccount1Name,
@@ -366,6 +416,7 @@ export async function launchTool(
           return {
             success: false,
             needsAuth: true,
+            fallback: false,
             account,
             message: `${accountLabel} ainda não está conectada! Clique no botão de login para conectar.`,
           }
@@ -373,10 +424,22 @@ export async function launchTool(
 
         const wtCmd = custom.wt || 'wt.exe'
         const codexCmd = await resolveCodexCommand(custom.codex)
-        const env = { ...process.env, CODEX_HOME: codexHome }
+        if (!(await resolveCommandPath(codexCmd))) {
+          return {
+            success: false,
+            fallback: false,
+            account,
+            message: `Codex CLI não encontrado (${codexCmd}). Ajuste o caminho em Configurações ou instale o CLI.`,
+          }
+        }
+        // A conta escolhida define o perfil: o PTY nasce com o CODEX_HOME da
+        // conta, sem reaproveitar autenticação de outra sessão.
+        const env = { ...process.env, ...getCodexAccountEnvironment(account) }
         await openCmdSession(wtCmd, projectPath, codexCmd, env)
         return {
           success: true,
+          account,
+          fallback: false,
           message: `Codex CLI iniciado no terminal (${accountLabel})!`,
         }
       }

@@ -38,6 +38,59 @@ describe('summarizeTerminalEnd', () => {
     expect(summary.projectPath).toBeUndefined()
   })
 
+  it('uses the JSON outcome even when a legacy mirror follows it', () => {
+    const summary = summarizeTerminalEnd({
+      terminalId: 'agent-json',
+      code: 0,
+      outputTail: 'DEVORBIT_RESULT: {"version":1,"outcome":"blocked","summary":"JSON bloqueou"}\nDEVORBIT_RESULT: CONCLUIDO: espelho\n',
+    })
+    expect(summary.outcome).toBe('blocked')
+    expect(summary.message).toContain('JSON bloqueou')
+    expect(summary.message).not.toContain('espelho')
+  })
+
+  it('keeps an invalid JSON result uncertain when no legacy mirror exists', () => {
+    const summary = summarizeTerminalEnd({
+      terminalId: 'agent-invalid',
+      code: 0,
+      outputTail: 'DEVORBIT_RESULT: {"version":1,"outcome":"completed","summary":oops}\n',
+    })
+    expect(summary.outcome).toBe('failed')
+    expect(summary.title).toBe('Resultado do agente incerto')
+    expect(summary.message).toContain('invalid-json')
+  })
+
+  it('preserves an explicit failed outcome as a failed terminal result', () => {
+    const summary = summarizeTerminalEnd({
+      terminalId: 'agent-failed',
+      code: 0,
+      outputTail: 'DEVORBIT_RESULT: {"version":1,"outcome":"failed","summary":"teste falhou"}\n',
+    })
+    expect(summary).toMatchObject({ outcome: 'failed', code: 0 })
+    expect(summary.message).toContain('teste falhou')
+  })
+
+  it('keeps versionless JSON uncertain when no legacy mirror exists', () => {
+    const summary = summarizeTerminalEnd({
+      terminalId: 'agent-no-version',
+      code: 0,
+      outputTail: 'DEVORBIT_RESULT: {"outcome":"completed","summary":"sem versao"}\n',
+    })
+    expect(summary).toMatchObject({ outcome: 'failed', code: 0, title: 'Resultado do agente incerto' })
+    expect(summary.message).toContain('invalid-version')
+  })
+
+  it('falls back to a valid legacy mirror after versionless JSON', () => {
+    const summary = summarizeTerminalEnd({
+      terminalId: 'agent-versionless-mirror',
+      code: 0,
+      outputTail: 'DEVORBIT_RESULT: {"outcome":"completed","summary":"sem versao"}\nDEVORBIT_RESULT: CONCLUIDO: espelho legado\n',
+    })
+    expect(summary).toMatchObject({ outcome: 'completed', code: 0 })
+    expect(summary.message).toContain('espelho legado')
+    expect(summary.message).not.toContain('sem versao')
+  })
+
   it('reports non-zero exits as failures', () => {
     const summary = summarizeTerminalEnd({ terminalId: 'shell-1', code: 1, outputTail: 'boom' })
     expect(summary).toMatchObject({ outcome: 'failed', code: 1 })
@@ -63,6 +116,17 @@ describe('companion sentinel', () => {
     expect(summaries[0]).toMatchObject({ terminalId: 'a1', outcome: 'completed' })
     expect(summaries[0].message).toContain('feito')
     expect(sentinel.pendingCount()).toBe(0)
+  })
+
+  it('buffers output and summarizes a version 1 JSON result on exit', () => {
+    const summaries: CompanionSummary[] = []
+    const sentinel = createCompanionSentinel((summary) => summaries.push(summary))
+    sentinel.handleTerminalEvent({ id: 'a2', type: 'data', data: 'trabalhando...\n' })
+    sentinel.handleTerminalEvent({ id: 'a2', type: 'data', data: 'DEVORBIT_RESULT: {"version":1,"outcome":"completed","summary":"feito com versao"}\n' })
+    sentinel.handleTerminalEvent({ id: 'a2', type: 'exit', code: 0 })
+    expect(summaries).toHaveLength(1)
+    expect(summaries[0]).toMatchObject({ terminalId: 'a2', outcome: 'completed' })
+    expect(summaries[0].message).toContain('feito com versao')
   })
 
   it('ignores resize noise and tracks sessions independently', () => {

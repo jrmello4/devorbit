@@ -3,7 +3,7 @@ import {
   AlertCircle, ArrowLeft, ArrowRight, Check, Code2, Globe, GripVertical,
   RefreshCw, Send, Terminal, X,
 } from 'lucide-react'
-import type { AgentProvider, AgentProviderId, Project, ToolHealth, WebPanelEvent } from '../types'
+import type { AgentProvider, AgentProviderId, CodexAccountStatus, Project, ToolHealth, WebPanelEvent } from '../types'
 import type { PendingCanvasNode, WorkspaceUiRequest } from './workspace-request-helpers'
 import { applyWorkspaceUiRequest, computePipeSync, isPendingNodeForProject } from './workspace-request-helpers'
 import { createPipeCallQueue } from './pipe-ipc-queue'
@@ -20,6 +20,7 @@ interface IntegratedWorkspaceProps {
   isWebSuppressed?: boolean
   isSuspended?: boolean
   onRequestCodexAuth?: (account: 'account1' | 'account2') => void
+  codexAuthStatus?: CodexAccountStatus | null
   onDirtyChange?: (dirty: boolean) => void
   onCanvasFocusChange?: (node: { id: string; title: string; kind: string } | null) => void
   uiRequest?: WorkspaceUiRequest | null
@@ -80,7 +81,7 @@ export function agentTerminalId(projectId: string, nodeId: string): string {
 }
 
 export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
-  project, onClose, onNotify, codexAccount = 'account1', isWebSuppressed = false, isSuspended = false, onRequestCodexAuth, onDirtyChange, onCanvasFocusChange,
+  project, onClose, onNotify, codexAccount = 'account1', codexAuthStatus = null, isWebSuppressed = false, isSuspended = false, onRequestCodexAuth, onDirtyChange, onCanvasFocusChange,
   uiRequest = null, onUiRequestConsumed, pendingCanvasNode = null, onPendingCanvasNodeConsumed,
 }) => {
   const [webUrl, setWebUrl] = useState('https://www.google.com/')
@@ -120,7 +121,7 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
     const pending = pendingCanvasNode
     onPendingCanvasNodeConsumed?.(nonce)
     if (pending && pending.nonce === nonce && isPendingNodeForProject(pending, project.id)) {
-      onNotify(pending.kind === 'note' ? 'Nova nota criada no canvas.' : 'Novo terminal de agente criado no canvas.', 'success')
+      onNotify(pending.kind === 'note' ? 'Nova nota criada no canvas.' : 'Escolha os participantes e confirme a criação.', 'info')
     }
   }, [onNotify, onPendingCanvasNodeConsumed, pendingCanvasNode, project.id])
   const [agentProviders, setAgentProviders] = useState<AgentProvider[]>([])
@@ -442,7 +443,7 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
   const canvasWorkbench = (
     <div className="workspace-editor-stack">
       <WorkspaceEditor projectPath={project.path} onNotify={onNotify} onContextChange={setEditorContext} onDirtyChange={(dirty) => { setIsEditorDirty(dirty); onDirtyChange?.(dirty) }} />
-      {layout.terminalVisible && <WorkspaceTerminal projectPath={project.path} terminalId={terminalId} codexAccount={codexAccount} onNotify={onNotify} onRequestCodexAuth={onRequestCodexAuth} />}
+      {layout.terminalVisible && <WorkspaceTerminal projectPath={project.path} terminalId={terminalId} codexAccount={codexAccount} provider="codex" onNotify={onNotify} onRequestCodexAuth={onRequestCodexAuth} />}
     </div>
   )
   const canvasBrowser = (
@@ -485,7 +486,7 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
         </div>
       </header>
 
-      {isCanvas ? <WorkspaceCanvas project={project} workbench={canvasWorkbench} browser={layout.webVisible ? canvasBrowser : undefined} agentAccount={codexAccount} agentProviders={agentProviders} onSendAgentTask={queueAgentTask} onCreateAgentWorktree={(node) => void isolateAgent(node)} onSelectionChange={onCanvasFocusChange} onConnectionsChange={syncCanvasPipes} pendingNodeRequest={pendingCanvasNode && isPendingNodeForProject(pendingCanvasNode, project.id) ? { kind: pendingCanvasNode.kind, nonce: pendingCanvasNode.nonce } : null} onPendingNodeConsumed={handlePendingCanvasNodeConsumed} renderAgent={(node: CanvasNode, onAgentResult, onAgentTaskFailure) => <div className="canvas-agent-terminal"><div className="canvas-agent-review"><span>Worktree</span><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void reviewAgent(node)}>Alterações</button><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void mergeAgent(node)}>Integrar</button></div><WorkspaceTerminal projectPath={agentWorktrees[node.id]?.path || project.path} terminalId={agentTerminalId(project.id, node.id)} codexAccount={node.account || codexAccount} provider={node.provider || 'codex'} agentTask={agentTasks[node.id]} onAgentResult={onAgentResult} onAgentTaskFailure={onAgentTaskFailure} onNotify={onNotify} onRequestCodexAuth={onRequestCodexAuth} /></div>} /> : <>
+      {isCanvas ? <WorkspaceCanvas project={project} workbench={canvasWorkbench} browser={layout.webVisible ? canvasBrowser : undefined} codexAuthStatus={codexAuthStatus} onRequestCodexAuth={onRequestCodexAuth} agentProviders={agentProviders} onSendAgentTask={queueAgentTask} onCreateAgentWorktree={(node) => void isolateAgent(node)} onSelectionChange={onCanvasFocusChange} onConnectionsChange={syncCanvasPipes} pendingNodeRequest={pendingCanvasNode && isPendingNodeForProject(pendingCanvasNode, project.id) ? { kind: pendingCanvasNode.kind, nonce: pendingCanvasNode.nonce } : null} onPendingNodeConsumed={handlePendingCanvasNodeConsumed} renderAgent={(node: CanvasNode, onAgentResult, onAgentTaskFailure) => node.provider ? (<div className="canvas-agent-terminal"><div className="canvas-agent-review"><span>Worktree</span><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void reviewAgent(node)}>Alterações</button><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void mergeAgent(node)}>Integrar</button></div><WorkspaceTerminal projectPath={agentWorktrees[node.id]?.path || project.path} terminalId={agentTerminalId(project.id, node.id)} codexAccount={node.account} provider={node.provider} agentTask={agentTasks[node.id]} onAgentResult={onAgentResult} onAgentTaskFailure={onAgentTaskFailure} onNotify={onNotify} onRequestCodexAuth={onRequestCodexAuth} /></div>) : null} /> : <>
       <div className="workspace-editor-stack">
         <WorkspaceEditor
           projectPath={project.path}
@@ -504,6 +505,7 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
               projectPath={project.path}
               terminalId={terminalId}
               codexAccount={codexAccount}
+              provider="codex"
               onNotify={onNotify}
               onRequestCodexAuth={onRequestCodexAuth}
             />

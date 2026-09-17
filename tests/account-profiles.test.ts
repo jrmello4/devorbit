@@ -6,6 +6,7 @@ import {
   getAuthFilePaths,
   getBrowserLaunchArgs,
   getBrowserProfileDirectory,
+  getCodexAccountEnvironment,
   getCodexHome,
   hasValidCodexAuth,
   isAuthOrReopenUrl,
@@ -56,15 +57,28 @@ describe('isolated account profiles', () => {
     expect(await hasValidCodexAuth(root)).toBe(false)
   })
 
-  it('shares one auth-path list between usage and auth checks', () => {
+  it('keeps auth strictly inside the chosen account home (no legacy ~/.codex reuse)', () => {
     const root = path.join(os.tmpdir(), 'devorbit-account-paths')
     expect(getAuthFilePaths('account1', root)).toEqual([
       path.join(root, '.codex-conta1', 'auth.json'),
-      path.join(root, '.codex', 'auth.json'),
     ])
     expect(getAuthFilePaths('account2', root)).toEqual([
       path.join(root, '.codex-conta2', 'auth.json'),
     ])
+    expect(getAuthFilePaths('account1', root)).not.toContain(path.join(root, '.codex', 'auth.json'))
+  })
+
+  it('derives the PTY environment from the chosen account without exposing secrets', () => {
+    const root = path.join(os.tmpdir(), 'devorbit-account-env')
+    const account1 = getCodexAccountEnvironment('account1', root)
+    const account2 = getCodexAccountEnvironment('account2', root)
+
+    expect(account1).toEqual({ CODEX_HOME: path.join(root, '.codex-conta1') })
+    expect(account2).toEqual({ CODEX_HOME: path.join(root, '.codex-conta2') })
+    expect(Object.keys(account1)).toEqual(['CODEX_HOME'])
+    expect(JSON.stringify(account1)).not.toMatch(/token|key|secret|auth/i)
+    // Alternar a conta alterna o perfil do processo, sem reaproveitar o anterior.
+    expect(account1.CODEX_HOME).not.toBe(account2.CODEX_HOME)
   })
 
   it('prefers an existing custom browser executable', async () => {

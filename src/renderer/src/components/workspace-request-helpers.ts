@@ -1,12 +1,17 @@
-export type PendingCanvasNodeKind = 'note' | 'agent'
+import type { PendingCreationPayload, PendingCreationKind } from '../types'
 
-export interface PendingCanvasNode {
+export type PendingCanvasNodeKind = 'note' | PendingCreationKind
+
+export interface PendingCanvasNode extends Omit<PendingCreationPayload, 'kind'> {
   projectId: string
   kind: PendingCanvasNodeKind
-  nonce: number
 }
 
 export function buildPendingCanvasNode(projectId: string, kind: PendingCanvasNodeKind): PendingCanvasNode {
+  return { projectId, kind, nonce: Date.now() + Math.floor(Math.random() * 1000) }
+}
+
+export function buildPendingCreation(projectId: string, kind: PendingCreationKind): PendingCreationPayload {
   return { projectId, kind, nonce: Date.now() + Math.floor(Math.random() * 1000) }
 }
 

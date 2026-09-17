@@ -13,7 +13,32 @@ const ts = require('typescript')
 const projectRoot = path.resolve(__dirname, '..')
 const preloadPath = path.join(projectRoot, 'dist-electron', 'preload', 'index.cjs')
 const validationSourcePath = path.join(projectRoot, 'src', 'main', 'validation.ts')
-const scratchRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'devorbit-smoke-'))
+// Chromium canonicaliza a URL do frame (caminho longo). Sem realpath, o
+// `os.tmpdir()` em 8.3 (ADENIL~1.J) faria a origem confiável divergir.
+// `realpathSync.native` é o que expande o alias 8.3; o realpath JS não.
+function realDirectory(candidate) {
+  try {
+    return fs.realpathSync.native(candidate)
+  } catch {
+    try {
+      return fs.realpathSync(candidate)
+    } catch {
+      return candidate
+    }
+  }
+}
+const scratchRoot = fs.mkdtempSync(path.join(realDirectory(os.tmpdir()), 'devorbit-smoke-'))
+// O contrato de validação importa módulos do próprio projeto (ex.:
+// ./agent-providers -> @typesafe-ai/sdk). Emitimos o grafo completo para um
+// diretório dentro de node_modules para que a resolução real ocorra, sem
+// replicar dependências à mão.
+const emitRoot = (() => {
+  const cacheRoot = path.join(projectRoot, 'node_modules', '.cache')
+  fs.mkdirSync(cacheRoot, { recursive: true })
+  const directory = fs.mkdtempSync(path.join(cacheRoot, 'devorbit-smoke-'))
+  fs.writeFileSync(path.join(directory, 'package.json'), JSON.stringify({ type: 'commonjs' }))
+  return directory
+})()
 const userDataDir = path.join(scratchRoot, 'userData')
 fs.mkdirSync(userDataDir, { recursive: true })
 app.setPath('userData', userDataDir)
@@ -29,6 +54,13 @@ const EXPECTED_METHODS = [
   'getProjects',
   'refreshProjects',
   'getOtherDirs',
+  'listProjectFiles',
+  'readProjectFile',
+  'saveProjectFile',
+  'createProjectFile',
+  'createProjectDirectory',
+  'moveProjectEntry',
+  'deleteProjectEntry',
   'syncGit',
   'getGitBranches',
   'switchGitBranch',
@@ -36,11 +68,35 @@ const EXPECTED_METHODS = [
   'stashSwitchGitBranch',
   'pushGit',
   'getGitChanges',
+  'getGitFileDiff',
   'syncAllGit',
   'onSyncProgress',
   'getGitInitPreview',
   'initGitRepository',
   'cloneGitRepository',
+  'restoreManagedProject',
+  'finalizeManagedProject',
+  'createAgentWorktree',
+  'integrateAgentWorktree',
+  'startTerminal',
+  'startCodexTerminal',
+  'startAgentTerminal',
+  'resizeTerminal',
+  'writeTerminal',
+  'stopTerminal',
+  'pipeTerminals',
+  'sendAgentTurn',
+  'onTerminalEvent',
+  'onCompanionEvent',
+  'navigateWeb',
+  'getWebState',
+  'goBackWeb',
+  'goForwardWeb',
+  'reloadWeb',
+  'setWebVisible',
+  'disposeWebPanel',
+  'setWebBounds',
+  'onWebEvent',
   'launchTool',
   'copyProjectContext',
   'getConfig',
@@ -53,6 +109,7 @@ const EXPECTED_METHODS = [
   'importConfig',
   'selectDirectory',
   'testToolPath',
+  'getToolHealth',
   'windowControl',
   'getCodexAuthStatus',
   'startCodexLogin',
@@ -61,12 +118,7 @@ const EXPECTED_METHODS = [
   'getProjectMemory',
   'saveProjectMemory',
   'generateMemoryFromGit',
-  'getUsageState',
   'getRealUsage',
-  'incrementUsage',
-  'decrementUsage',
-  'resetUsage',
-  'updateUsageLimits',
 ]
 
 const checks = []
@@ -81,16 +133,19 @@ function pass(message) {
 }
 
 function compileValidationContract() {
-  const source = fs.readFileSync(validationSourcePath, 'utf8')
-  const output = ts.transpileModule(source, {
-    compilerOptions: {
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2022,
-      esModuleInterop: true,
-    },
-  }).outputText
-  const compiledPath = path.join(scratchRoot, 'validation.contract.cjs')
-  fs.writeFileSync(compiledPath, output)
+  const program = ts.createProgram([validationSourcePath], {
+    module: ts.ModuleKind.CommonJS,
+    target: ts.ScriptTarget.ES2022,
+    esModuleInterop: true,
+    outDir: emitRoot,
+    rootDir: projectRoot,
+    skipLibCheck: true,
+    types: [],
+  })
+  const emitted = program.emit()
+  assert(!emitted.emitSkipped, 'não foi possível emitir o contrato de validação do smoke')
+  const compiledPath = path.join(emitRoot, 'src', 'main', 'validation.js')
+  assert(fs.existsSync(compiledPath), `contrato de validação não emitido em ${compiledPath}`)
   return require(compiledPath)
 }
 
@@ -224,6 +279,8 @@ async function main() {
     assert(surface.hasApi, 'window.devorbit não foi exposto pelo preload real')
     const missing = EXPECTED_METHODS.filter((name) => !surface.methods.includes(name))
     assert(missing.length === 0, `métodos ausentes em window.devorbit: ${missing.join(', ')}`)
+    const unexpected = surface.methods.filter((name) => !EXPECTED_METHODS.includes(name))
+    assert(unexpected.length === 0, `métodos inesperados em window.devorbit: ${unexpected.join(', ')}`)
     pass(`preload real expôs ${surface.methods.length} métodos em window.devorbit`)
     assert(surface.nodeRequire === 'undefined', 'window.require não deveria existir')
     pass('nodeIntegration permanece desativado no renderer')
@@ -275,10 +332,17 @@ app.whenReady().then(async () => {
     process.exitCode = 1
   } finally {
     try {
-      fs.rmSync(scratchRoot, { recursive: true, force: true })
+      fs.rmSync(scratchRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 })
     } catch (error) {
       if (error && error.code !== 'ENOENT') {
         console.error('Falha ao limpar o diretório temporário do smoke:', error.message)
+      }
+    }
+    try {
+      fs.rmSync(emitRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 })
+    } catch (error) {
+      if (error && error.code !== 'ENOENT') {
+        console.error('Falha ao limpar o contrato emitido do smoke:', error.message)
       }
     }
     app.quit()

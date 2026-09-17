@@ -108,6 +108,14 @@ export interface AgentTurnResult {
   message?: string
 }
 
+export type PendingCreationKind = 'agent' | 'squad'
+
+export interface PendingCreationPayload {
+  projectId: string
+  kind: PendingCreationKind
+  nonce: number
+}
+
 export interface TerminalEvent {
   id: string
   type: 'data' | 'exit' | 'error' | 'resize'
@@ -280,6 +288,9 @@ export interface AgentProvider {
   state: ToolHealthState
   path?: string
   message: string
+  configuredPath?: string
+  effectivePath?: string
+  isConfigured?: boolean
 }
 
 export interface ToolHealth {
@@ -288,6 +299,9 @@ export interface ToolHealth {
   state: ToolHealthState
   path?: string
   message: string
+  configuredPath?: string
+  effectivePath?: string
+  isConfigured?: boolean
 }
 
 export type UpdateStatus = 'unavailable' | 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error'
@@ -337,21 +351,24 @@ export interface GitInitResult {
   output?: string
 }
 
+export type CodexAccountId = 'account1' | 'account2'
+
+export interface CodexAccountInfo {
+  id: CodexAccountId
+  connected: boolean
+  label: string
+  path: string
+  browserOk: boolean
+  browserPath: string
+  active?: boolean
+  hasAuthFile?: boolean
+}
+
 export interface CodexAccountStatus {
-  account1: {
-    connected: boolean
-    label: string
-    path: string
-    browserOk: boolean
-    browserPath: string
-  }
-  account2: {
-    connected: boolean
-    label: string
-    path: string
-    browserOk: boolean
-    browserPath: string
-  }
+  account1: CodexAccountInfo
+  account2: CodexAccountInfo
+  activeAccount?: CodexAccountId
+  accounts?: CodexAccountInfo[]
 }
 
 export interface CodexAuthProgress {

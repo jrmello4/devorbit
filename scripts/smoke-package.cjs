@@ -13,14 +13,27 @@ const MARKER_KIND = 'devorbit-packaged-smoke'
 
 const tempRoot = (() => {
   const candidates = [process.env.RUNNER_TEMP, os.tmpdir(), process.env.TEMP, process.env.TMP]
+  // `realpathSync.native` expande aliases 8.3 (ex.: ADENIL~1.J); o realpath JS
+  // não. Caminhos curtos fariam a URL do frame (`%7E`) divergir da URL de
+  // produção do app, derrubando o IPC do smoke.
+  const canonicalize = (candidate) => {
+    for (const resolve of [
+      () => fs.realpathSync.native(candidate),
+      () => fs.realpathSync(candidate),
+    ]) {
+      try {
+        const real = resolve()
+        if (fs.statSync(real).isDirectory()) return real
+      } catch {
+        // try the next resolution
+      }
+    }
+    return null
+  }
   for (const candidate of candidates) {
     if (!candidate) continue
-    try {
-      const real = fs.realpathSync(candidate)
-      if (fs.statSync(real).isDirectory()) return real
-    } catch {
-      // try the next candidate
-    }
+    const real = canonicalize(candidate)
+    if (real) return real
   }
   return os.tmpdir()
 })()

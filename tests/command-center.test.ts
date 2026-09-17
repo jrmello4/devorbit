@@ -20,6 +20,7 @@ describe('command center two-stroke', () => {
 
   it('mapeia C + tecla para criação', () => {
     expect(matchTwoStroke('c', 't')?.action).toBe('create-agent-terminal')
+    expect(matchTwoStroke('c', 's')?.action).toBe('create-squad')
     expect(matchTwoStroke('c', 'n')?.action).toBe('create-note')
     expect(matchTwoStroke('c', 'b')?.action).toBe('create-branch')
     expect(matchTwoStroke('c', 'p')?.action).toBe('create-project')
@@ -32,6 +33,7 @@ describe('command center two-stroke', () => {
     expect(detectPrefixQuery('g')).toBe('g')
     expect(detectPrefixQuery('projeto')).toBeNull()
     expect(parseSpacedTwoStroke('g p')?.action).toBe('nav-projects')
+    expect(parseSpacedTwoStroke('c s')?.action).toBe('create-squad')
     expect(parseSpacedTwoStroke('c n')?.action).toBe('create-note')
     expect(parseSpacedTwoStroke('busca livre')).toBeNull()
   })

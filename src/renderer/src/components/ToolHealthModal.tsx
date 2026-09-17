@@ -46,7 +46,8 @@ export const ToolHealthModal: React.FC<ToolHealthModalProps> = ({ isOpen, onClos
             </div>
             <h2 id="tool-health-title" className="text-lg font-bold text-stone-900">Diagnóstico de ferramentas</h2>
             <p className="mt-1 max-w-xl text-xs leading-5 text-stone-600">
-              Confira se cada programa foi encontrado e qual caminho o DevOrbit usará para abri-lo.
+              Confira se cada programa foi encontrado. <strong>Em uso</strong> é o caminho que o DevOrbit abrirá;{' '}
+              <strong>Configurado</strong> é o valor definido em Configurações, quando houver.
             </p>
           </div>
           <button type="button" onClick={onClose} className="rounded-lg p-2 text-stone-500 hover:bg-stone-200 hover:text-stone-900" aria-label="Fechar diagnóstico">
@@ -63,13 +64,34 @@ export const ToolHealthModal: React.FC<ToolHealthModalProps> = ({ isOpen, onClos
               {items.map((item) => {
                 const isReady = item.state === 'ready'
                 const isFallback = item.state === 'fallback'
+                const effectivePath = item.effectivePath || ''
+                const configuredPath = item.isConfigured && item.configuredPath ? item.configuredPath : ''
                 return (
                   <article key={item.id} className="rounded-xl border border-stone-200 bg-white p-3 shadow-sm">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <h3 className="font-semibold text-stone-900">{item.label}</h3>
                         <p className="mt-0.5 text-xs text-stone-600">{item.message}</p>
-                        <p className="mt-1 truncate font-mono text-[11px] text-stone-500" title={item.path || 'Nenhum caminho detectado'}>{item.path || 'Nenhum caminho detectado'}</p>
+                        <dl className="mt-1.5 space-y-0.5 text-[11px]">
+                          <div className="flex min-w-0 items-baseline gap-1.5">
+                            <dt className="shrink-0 font-semibold text-stone-500">Em uso:</dt>
+                            <dd
+                              className={`min-w-0 truncate font-mono ${effectivePath ? 'text-stone-600' : 'text-stone-400'}`}
+                              title={effectivePath || 'Nenhum caminho efetivo detectado'}
+                            >
+                              {effectivePath || 'Não detectado'}
+                            </dd>
+                          </div>
+                          <div className="flex min-w-0 items-baseline gap-1.5">
+                            <dt className="shrink-0 font-semibold text-stone-500">Configurado:</dt>
+                            <dd
+                              className={`min-w-0 truncate font-mono ${configuredPath ? 'text-stone-600' : 'text-stone-400'}`}
+                              title={configuredPath || 'Padrão (detecção automática)'}
+                            >
+                              {configuredPath || 'Padrão (detecção automática)'}
+                            </dd>
+                          </div>
+                        </dl>
                       </div>
                       <span className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-bold ${isReady ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : isFallback ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-red-200 bg-red-50 text-red-800'}`}>
                         {isReady ? <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" /> : <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />}

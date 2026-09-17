@@ -1,13 +1,14 @@
 import type { AgentProviderId, AppConfig } from '../renderer/src/types'
 import type { TerminalEvent } from './terminal-session'
+import { createAgentResultScanner, type AgentResultInvalidReason } from '../shared/agent-result'
 import {
   buildAgentTurnEnv,
   findTransientSnippet,
-  isTransientProviderError,
   resolveAgentProviderWithFallback,
   resolveProviderInvocation,
   type ModelRoutingConfig,
   type ModelTier,
+  type ProviderUnavailableError,
 } from './agent-providers'
 
 export { buildAgentTurnEnv }
@@ -30,9 +31,9 @@ export interface SpawnAgentTerminalDeps {
 }
 
 /**
- * Spawna o CLI de um turno usando SEMPRE o provedor efetivo devolvido pelo
- * resolver (health pode trocar o candidato entre a resolução e o spawn).
- * Uma única tentativa por chamada — o retry vive em executeAgentTurnWithFallback.
+ * Spawna o CLI do turno SEMPRE com o provedor EXPLÍCITO. Se o resolver
+ * devolver outro provedor, a chamada falha com erro estruturado em vez de
+ * trocar o CLI silenciosamente. Uma única tentativa por chamada.
  */
 export async function spawnAgentProviderTerminal(
   deps: SpawnAgentTerminalDeps,
@@ -49,6 +50,14 @@ export async function spawnAgentProviderTerminal(
 ): Promise<{ started: SpawnAgentTerminal; provider: AgentProviderId; command: string }> {
   const resolved = await deps.resolveWithFallback(config, input.candidate)
   if (!resolved.path) throw new Error(resolved.message)
+  if (resolved.provider !== input.candidate) {
+    throw Object.assign(
+      new Error(
+        `${input.candidate} é o provedor explícito e não pode ser substituído por ${resolved.provider}.`
+      ),
+      { code: 'provider-mismatch', provider: input.candidate }
+    )
+  }
   if (/[%!]/.test(resolved.path)) {
     throw new Error('O caminho do provedor contém caracteres que o terminal não pode executar com segurança.')
   }
@@ -91,6 +100,9 @@ export interface TurnResolution {
   model: string
   provider: AgentProviderId
   fellBack: boolean
+  /** false = provedor explícito indisponível; `error` traz o motivo para a UI. */
+  available?: boolean
+  error?: ProviderUnavailableError
 }
 
 export interface TurnAttemptRecord {
@@ -106,6 +118,8 @@ export interface TurnOutcome {
   result?: string
   blocked?: string
   attempts: TurnAttemptRecord[]
+  /** Contrato: o provedor executado é sempre o explícito. */
+  fallback: false
 }
 
 export interface TurnWaiter {
@@ -115,6 +129,8 @@ export interface TurnWaiter {
   code?: number | null
   timedOut?: boolean
   idleTimedOut?: boolean
+  /** Resultado inválido/incerto; nunca é considerado conclusão. */
+  invalidResult?: AgentResultInvalidReason
   /** Cauda de saída para classificar texto transitório sem marcador. */
   tail?: string
 }
@@ -124,8 +140,8 @@ export interface TurnDependencies {
   setSession: (id: string, session: { provider: AgentProviderId; model: string }) => void
   clearSession: (id: string) => void
   hasTerminal: (id: string) => boolean
-  // Devolve o provedor EFETIVO do spawn quando a resolução de saúde troca o
-  // candidato (opencode -> claude); void quando o spawn é o próprio candidato.
+  // O spawn usa o provedor EXPLÍCITO; um resolver que devolva outro provedor
+  // falha com erro estruturado (sem troca silenciosa).
   spawn: (
     id: string,
     turn: { provider: AgentProviderId; model: string; tier: ModelTier }
@@ -147,6 +163,7 @@ function outcomeFromWait(waiter: TurnWaiter): { result?: string; blocked?: strin
   if (waiter.blocked) return { blocked: waiter.blocked }
   if (waiter.result) return { result: waiter.result }
   if (waiter.error) return { error: waiter.error }
+  if (waiter.invalidResult) return { error: `Resultado DEVORBIT_RESULT inválido ou incerto (${waiter.invalidResult}).` }
   // CLI imprimiu rate limit/indisponibilidade e saiu sem marcador (mesmo com
   // código 0): texto transitório na cauda também autoriza failover.
   const transient = findTransientSnippet(waiter.tail)
@@ -198,54 +215,80 @@ async function runTurn(
   overallMs: number
 ): Promise<TurnOutcome> {
   const turn = await deps.resolveTurn(preferred, prompt)
+  if (turn.available === false) {
+    const unavailable = turn.error
+    throw Object.assign(
+      new Error(unavailable?.message || `${turn.provider} indisponível para o turno.`),
+      {
+        code: unavailable?.code || 'provider-not-ready',
+        provider: turn.provider,
+        attempts: [],
+      }
+    )
+  }
   const ready = await deps.readyProviders()
   const ordered = deps.orderProviders(turn.provider, ready)
-  if (ordered.length === 0) throw new Error('Nenhum provedor disponível para o turno.')
-  const attempts: TurnAttemptRecord[] = []
-  // Provedores efetivamente tentados: evita repetir um provedor que já foi
-  // usado via fallback de saúde quando ele reaparece como candidato seguinte.
-  const attemptedProviders = new Set<AgentProviderId>()
-  let lastError = 'falha desconhecida'
-
-  for (const candidate of ordered) {
-    if (attemptedProviders.has(candidate)) continue
-    const session = deps.getSession(terminalId)
-    let effective: AgentProviderId = candidate
-    try {
-      if (!deps.hasTerminal(terminalId) || !session || session.provider !== candidate || session.model !== turn.model) {
-        // Mesmo id: stop + start reutiliza a sessão (sem PTYs duplicados).
-        // O spawn pode resolver um provedor diferente do candidato; sessão e
-        // desfecho usam o efetivo devolvido, e o candidato é só o id tentado.
-        const spawnResult = await deps.spawn(terminalId, { provider: candidate, model: turn.model, tier: turn.tier })
-        effective = spawnResult?.provider ?? candidate
-        deps.setSession(terminalId, { provider: effective, model: turn.model })
-      } else {
-        effective = session.provider
-      }
-      attemptedProviders.add(effective)
-      if (!deps.write(terminalId, prompt + '\r')) {
-        throw new Error('O terminal recusou a tarefa (ENETUNREACH).')
-      }
-      const waiter = await deps.waitResult(terminalId, { idleMs, overallMs })
-      const outcome = outcomeFromWait(waiter)
-      if (outcome.blocked !== undefined) {
-        attempts.push({ provider: effective, ok: true })
-        return { provider: effective, model: turn.model, tier: turn.tier, blocked: outcome.blocked, attempts }
-      }
-      if (outcome.result !== undefined) {
-        attempts.push({ provider: effective, ok: true })
-        return { provider: effective, model: turn.model, tier: turn.tier, result: outcome.result, attempts }
-      }
-      throw new Error((outcome as { error: string }).error)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      attempts.push({ provider: effective, ok: false, error: message.slice(0, 300) })
-      lastError = message
-      deps.clearSession(terminalId)
-      if (!isTransientProviderError(error)) break
-    }
+  if (ordered.length === 0) {
+    throw Object.assign(
+      new Error(`${turn.provider} não está pronto para o turno; nenhum outro provedor será usado.`),
+      { code: 'provider-not-ready', provider: turn.provider, attempts: [] }
+    )
   }
-  throw Object.assign(new Error(`Turno falhou: ${lastError.slice(0, 200)}`), { attempts })
+  // Uma única tentativa: o provedor explícito. Nenhum outro CLI entra no
+  // lugar dele — nem em erro transitório.
+  const [candidate] = ordered
+  if (!candidate) {
+    throw Object.assign(
+      new Error(`${turn.provider} não está pronto para o turno; nenhum outro provedor será usado.`),
+      { code: 'provider-not-ready', provider: turn.provider, attempts: [] }
+    )
+  }
+  const attempts: TurnAttemptRecord[] = []
+  const session = deps.getSession(terminalId)
+  let effective: AgentProviderId = candidate
+  try {
+    if (!deps.hasTerminal(terminalId) || !session || session.provider !== candidate || session.model !== turn.model) {
+      // Mesmo id: stop + start reutiliza a sessão (sem PTYs duplicados).
+      const spawnResult = await deps.spawn(terminalId, { provider: candidate, model: turn.model, tier: turn.tier })
+      effective = spawnResult?.provider ?? candidate
+      if (effective !== candidate) {
+        throw Object.assign(
+          new Error(`${candidate} é o provedor explícito e não pode ser substituído por ${effective}.`),
+          { code: 'provider-mismatch', provider: candidate }
+        )
+      }
+      deps.setSession(terminalId, { provider: effective, model: turn.model })
+    } else {
+      effective = session.provider
+    }
+    if (!deps.write(terminalId, prompt + '\r')) {
+      throw new Error('O terminal recusou a tarefa (ENETUNREACH).')
+    }
+    const waiter = await deps.waitResult(terminalId, { idleMs, overallMs })
+    const outcome = outcomeFromWait(waiter)
+    if (outcome.blocked !== undefined) {
+      attempts.push({ provider: effective, ok: true })
+      return { provider: effective, model: turn.model, tier: turn.tier, blocked: outcome.blocked, attempts, fallback: false }
+    }
+    if (outcome.result !== undefined) {
+      attempts.push({ provider: effective, ok: true })
+      return { provider: effective, model: turn.model, tier: turn.tier, result: outcome.result, attempts, fallback: false }
+    }
+    throw new Error((outcome as { error: string }).error)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    const code = error instanceof Error && 'code' in error
+      ? (error as { code?: string }).code
+      : 'provider-failed'
+    attempts.push({ provider: effective, ok: false, error: message.slice(0, 300) })
+    deps.clearSession(terminalId)
+    throw Object.assign(new Error(`Turno falhou: ${message.slice(0, 200)}`), {
+      attempts,
+      ...(code ? { code } : {}),
+      // O provedor explícito do turno — nunca o efetivo de uma troca indevida.
+      provider: candidate,
+    })
+  }
 }
 
 /** Espera o marcador DEVORBIT_RESULT sobre eventos reais do PTY. */
@@ -255,6 +298,8 @@ export function createResultWaiter(
   return (id, timeouts) => new Promise<TurnWaiter>((resolve) => {
     let settled = false
     let buffer = ''
+    const resultScanner = createAgentResultScanner()
+    let invalidResult: AgentResultInvalidReason | undefined
     const tail = () => buffer.split('\n').slice(-20).join('\n').slice(-2000)
     const finish = (value: TurnWaiter) => {
       if (settled) return
@@ -275,11 +320,19 @@ export function createResultWaiter(
       if (event.type === 'data' && typeof event.data === 'string') {
         buffer = (buffer + event.data).slice(-16_000)
         poke()
-        const match = buffer.match(TURN_RESULT_PATTERN)
-        if (match?.[1]?.trim()) {
-          const text = match[1].trim()
-          if (TURN_BLOCKED_PATTERN.test(text)) finish({ blocked: text.slice(0, 500) })
-          else finish({ result: text.slice(0, 1000) })
+        for (const parsed of resultScanner.push(event.data)) {
+          if (parsed.kind === 'invalid') {
+            invalidResult = invalidResult || parsed.reason
+            continue
+          }
+          if (parsed.kind !== 'result') continue
+          if (parsed.result.outcome === 'blocked') {
+            finish({ blocked: parsed.result.summary })
+          } else if (parsed.result.outcome === 'completed') {
+            finish({ result: parsed.result.summary })
+          } else {
+            finish({ error: `O agente reportou falha: ${parsed.result.summary}` })
+          }
         }
         return
       }
@@ -288,14 +341,19 @@ export function createResultWaiter(
         return
       }
       if (event.type === 'exit') {
-        const match = buffer.match(TURN_RESULT_PATTERN)
-        if (match?.[1]?.trim()) {
-          const text = match[1].trim()
-          if (TURN_BLOCKED_PATTERN.test(text)) finish({ blocked: text.slice(0, 500) })
-          else finish({ result: text.slice(0, 1000) })
-        } else {
-          finish({ code: event.code, tail: tail() })
+        for (const parsed of resultScanner.finish()) {
+          if (parsed.kind === 'invalid') invalidResult = invalidResult || parsed.reason
+          if (parsed.kind !== 'result') continue
+          if (parsed.result.outcome === 'blocked') {
+            finish({ blocked: parsed.result.summary })
+          } else if (parsed.result.outcome === 'completed') {
+            finish({ result: parsed.result.summary })
+          } else {
+            finish({ error: `O agente reportou falha: ${parsed.result.summary}` })
+          }
         }
+        if (settled) return
+        finish({ code: event.code, ...(invalidResult ? { invalidResult } : {}), tail: tail() })
       }
     })
   })

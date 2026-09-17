@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   applyWorkspaceUiRequest,
+  buildPendingCreation,
   buildPendingCanvasNode,
   buildWorkspaceUiRequest,
   computePipeSync,
@@ -24,6 +25,18 @@ describe('pending canvas node queue (C+N/C+T)', () => {
     expect(isPendingNodeForProject(pending, 'proj-1')).toBe(true)
     expect(isPendingNodeForProject(pending, 'proj-2')).toBe(false)
     expect(isPendingNodeForProject(null, 'proj-1')).toBe(false)
+  })
+
+  it('representa agente e squad sem selecionar squad automaticamente', () => {
+    const agent = buildPendingCreation('proj-1', 'agent')
+    const squad = buildPendingCreation('proj-1', 'squad')
+
+    expect(agent).toMatchObject({ projectId: 'proj-1', kind: 'agent' })
+    expect(squad).toMatchObject({ projectId: 'proj-1', kind: 'squad' })
+    expect('autoSelect' in agent).toBe(false)
+    expect('autoSelect' in squad).toBe(false)
+    expect(Number.isFinite(agent.nonce)).toBe(true)
+    expect(Number.isFinite(squad.nonce)).toBe(true)
   })
 
   it('cobre projeto ainda não aberto e modo grid (força canvas)', () => {

@@ -1,5 +1,10 @@
 import path from 'node:path'
 import type { TerminalEvent } from './terminal-session'
+import {
+  createAgentResultScanner,
+  type AgentResult,
+  type AgentResultInvalidReason,
+} from '../shared/agent-result'
 
 /**
  * DevOrbit Companion (FASE 3, inspirado no Ombro): sentinela em segundo plano
@@ -28,31 +33,33 @@ export interface CompanionSummary {
 export const COMPANION_TAIL_CHARS = 4_000
 export const COMPANION_MAX_SESSIONS = 50
 
-const BLOCKED_PATTERNS = [
-  /DEVORBIT_RESULT:\s*BLOQUEADO:/i,
-  /^\s*\[?\s*(BLOQUEADO|BLOCKED|FALHA|FAILURE|ERRO|ERROR)\s*[\]:-]/im,
-]
+const LEGACY_TERMINAL_PATTERN = /^\s*\[?\s*(BLOQUEADO|BLOCKED|FALHA|FAILURE|ERRO|ERROR)\s*[\]:-]/i
 
-const RESULT_PATTERN = /DEVORBIT_RESULT:[ \t]*([^\r\n]+)/i
-
-function detectBlocked(output: string): string | undefined {
-  const resultMatch = output.match(RESULT_PATTERN)
-  if (resultMatch && BLOCKED_PATTERNS.some((pattern) => pattern.test(resultMatch[0]))) {
-    return resultMatch[1].trim().slice(0, 200)
+function detectTerminalResult(output: string): { result?: AgentResult; invalid?: AgentResultInvalidReason } {
+  const scanner = createAgentResultScanner()
+  const events = [...scanner.push(output), ...scanner.finish()]
+  let invalid: AgentResultInvalidReason | undefined
+  for (const event of events) {
+    if (event.kind === 'invalid') {
+      invalid = invalid || event.reason
+      continue
+    }
+    if (event.kind === 'result') return { result: event.result, ...(invalid ? { invalid } : {}) }
   }
-  const lines = output.split(/\r?\n/).slice(-12)
-  for (const line of lines) {
-    if (BLOCKED_PATTERNS.some((pattern) => pattern.test(line))) {
-      return line.trim().slice(0, 200)
+  // Compatibilidade com saídas antigas que sinalizavam bloqueio sem o
+  // marcador. Isso continua sendo somente um fallback terminal, nunca uma
+  // conclusão estruturada.
+  for (const line of output.split(/\r?\n/).slice(-12).reverse()) {
+    if (LEGACY_TERMINAL_PATTERN.test(line)) {
+      const upper = line.toLocaleUpperCase()
+      const outcome = upper.includes('BLOQUEADO') || upper.includes('BLOCKED') ? 'blocked' : 'failed'
+      return {
+        invalid,
+        result: { format: 'legacy', version: 0, outcome, summary: line.trim().slice(0, 200) },
+      }
     }
   }
-  return undefined
-}
-
-function detectResult(output: string): string | undefined {
-  const match = output.match(RESULT_PATTERN)
-  const value = match?.[1]?.trim()
-  return value ? value.slice(0, 200) : undefined
+  return { ...(invalid ? { invalid } : {}) }
 }
 
 export function summarizeTerminalEnd(input: {
@@ -64,8 +71,9 @@ export function summarizeTerminalEnd(input: {
   outputTail?: string
 }): CompanionSummary {
   const output = input.outputTail || ''
-  const blockedReason = detectBlocked(output)
-  const result = detectResult(output)
+  const parsed = detectTerminalResult(output)
+  const result = parsed.result?.summary
+  const blockedReason = parsed.result?.outcome === 'blocked' ? result : undefined
   const location = input.projectPath ? `no projeto ${path.basename(input.projectPath)}` : 'no terminal'
   const actions: CompanionAction[] = [
     { id: 'view-workspace', label: 'Ver ambiente' },
@@ -104,6 +112,26 @@ export function summarizeTerminalEnd(input: {
       message: `Processo encerrado com falha ${location} (código ${input.code})${result ? `: ${result}` : '.'}`,
       suggestion: 'Confira a saída do terminal, ajuste e execute novamente.',
       code: input.code,
+    }
+  }
+  if (parsed.result?.outcome === 'failed') {
+    return {
+      ...base,
+      outcome: 'failed',
+      title: 'Agente reportou falha',
+      message: `Agente reportou falha ${location}: ${result}`,
+      suggestion: 'Confira o resumo e a saída do terminal antes de reenviar a tarefa.',
+      ...(input.code !== undefined ? { code: input.code } : {}),
+    }
+  }
+  if (!parsed.result && parsed.invalid) {
+    return {
+      ...base,
+      outcome: 'failed',
+      title: 'Resultado do agente incerto',
+      message: `Resultado DEVORBIT_RESULT inválido ou ausente ${location}${parsed.invalid ? ` (${parsed.invalid})` : '.'}`,
+      suggestion: 'Revise a saída do terminal e reenvie a tarefa com um resultado estruturado válido.',
+      ...(input.code !== undefined ? { code: input.code } : {}),
     }
   }
   return {

@@ -41,6 +41,9 @@ vi.mock('../src/main/account-profiles', () => ({
   getAccountLabel: vi.fn((account: string) => account),
   getBrowserLaunchArgs: vi.fn((_profile: string, url: string) => [url]),
   getBrowserProfileDirectory: vi.fn((account: string) => `C:/devorbit/browser/${account}`),
+  getCodexAccountEnvironment: vi.fn((account: string) => ({
+    CODEX_HOME: `C:/devorbit/${account}`,
+  })),
   getCodexHome: vi.fn((account: string) => `C:/devorbit/${account}`),
   hasValidCodexAuth: hasValidCodexAuthMock,
   resolveCodexCommand: vi.fn(async (configured: string | undefined) => configured || 'codex.cmd'),

@@ -25,6 +25,17 @@ export function getCodexHome(account: AccountId, homeDirectory = os.homedir()): 
   return path.join(homeDirectory, account === 'account2' ? '.codex-conta2' : '.codex-conta1')
 }
 
+/**
+ * Ambiente do processo Codex/PTY: a conta escolhida define o `CODEX_HOME`.
+ * Contém somente o caminho do perfil — nenhum token, chave ou credencial.
+ */
+export function getCodexAccountEnvironment(
+  account: AccountId,
+  homeDirectory = os.homedir()
+): NodeJS.ProcessEnv {
+  return { CODEX_HOME: getCodexHome(account, homeDirectory) }
+}
+
 export function getBrowserProfileDirectory(
   account: AccountId,
   userDataDirectory = getUserDataDirectory()
@@ -156,10 +167,13 @@ export async function checkBrowserAvailability(customPaths?: { chrome?: string; 
   return result
 }
 
+/**
+ * Auth SEMPRE no home isolado da conta escolhida. O `~/.codex` legado não é
+ * mais considerado: reaproveitar o perfil anterior mascarava a troca de conta
+ * (usage e login liam arquivos diferentes do PTY).
+ */
 export function getAuthFilePaths(account: AccountId, homeDirectory = os.homedir()): string[] {
-  const isolated = path.join(homeDirectory, account === 'account2' ? '.codex-conta2' : '.codex-conta1', 'auth.json')
-  if (account === 'account1') return [isolated, path.join(homeDirectory, '.codex', 'auth.json')]
-  return [isolated]
+  return [path.join(getCodexHome(account, homeDirectory), 'auth.json')]
 }
 
 export function getBrowserLaunchArgs(profileDirectory: string, url: string): string[] {
