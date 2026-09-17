@@ -36,6 +36,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Verificar binario do Electron
+        shell: bash
+        run: |
+          if ! node -e "require('electron')" >/dev/null 2>&1; then
+            rm -rf node_modules/electron/dist node_modules/electron/path.txt
+            node node_modules/electron/install.js
+          fi
+          node -e "require('electron')"
+
       - name: Typecheck
         run: npm run typecheck
 
