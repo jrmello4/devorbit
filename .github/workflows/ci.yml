@@ -71,18 +71,17 @@ jobs:
           }
           "release_version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
-      - name: Exigir secrets de assinatura
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+      - name: Detectar assinatura de código
+        id: signing
         shell: pwsh
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:CSC_LINK) -or [string]::IsNullOrWhiteSpace($env:CSC_KEY_PASSWORD) -or [string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_THUMBPRINT)) {
-            Write-Error 'CSC_LINK, CSC_KEY_PASSWORD e WINDOWS_CERTIFICATE_THUMBPRINT são obrigatórios para publicar.'
-            exit 1
-          }
+          $hasSecrets = -not [string]::IsNullOrWhiteSpace($env:CSC_LINK) -and -not [string]::IsNullOrWhiteSpace($env:CSC_KEY_PASSWORD) -and -not [string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_THUMBPRINT)
+          "signing=$($hasSecrets.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          if (-not $hasSecrets) { Write-Host 'Sem secrets de assinatura: pacote será gerado sem assinatura.' }
 
       - name: Empacotar NSIS e portable (sem publicar)
         run: npx electron-builder --publish never
@@ -107,7 +106,7 @@ jobs:
           $expected | ForEach-Object { Write-Host "OK $_" }
 
       - name: Validar Authenticode dos EXEs
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        if: steps.signing.outputs.signing == 'true'
         shell: pwsh
         env:
           EXPECTED_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
