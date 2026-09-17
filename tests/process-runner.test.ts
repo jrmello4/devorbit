@@ -18,8 +18,9 @@ const nodeEval = (code: string, args: string[] = []) => ({ command: node, args: 
 describe('ProcessRunner', () => {
   it('resolves Windows npm launchers to the real npm-cli.js without a generic shell', () => {
     const invocation = resolveProcessInvocation('npm.cmd', ['run', 'test', '--', 'x&y'], 'win32')
+    const commandName = path.basename(invocation.command).toLowerCase()
 
-    if (invocation.command.toLowerCase().endsWith('node.exe')) {
+    if (commandName === 'node' || commandName === 'node.exe') {
       expect(invocation.args[0]).toMatch(/npm-cli\.js$/u)
       expect(invocation.args.slice(1)).toEqual(['run', 'test', '--', 'x&y'])
       expect(invocation.windowsVerbatimArguments).toBe(false)

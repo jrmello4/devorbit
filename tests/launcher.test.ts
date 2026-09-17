@@ -168,7 +168,7 @@ describe('launchTool', () => {
     )
   })
 
-  it('encaminha um wrapper code.cmd pelo CMD sem duplicar as aspas', async () => {
+  it.skipIf(process.platform !== 'win32')('encaminha um wrapper code.cmd pelo CMD sem duplicar as aspas', async () => {
     const wrapper = path.join(temporaryUserData, 'code.cmd')
     await fs.writeFile(
       path.join(temporaryUserData, 'config.json'),
@@ -193,7 +193,7 @@ describe('launchTool', () => {
     )
   })
 
-  it('preserva o caminho do Antigravity ao abrir a sessÃ£o CMD', async () => {
+  it.skipIf(process.platform !== 'win32')('preserva o caminho do Antigravity ao abrir a sessÃ£o CMD', async () => {
     const directory = await fs.mkdtemp(path.join(temporaryUserData, 'agy space & '))
     const executable = path.join(directory, 'agy.exe')
     await fs.writeFile(executable, 'fixture')
@@ -218,7 +218,7 @@ describe('launchTool', () => {
     )
   })
 
-  it('recusa um wrapper com expansÃ£o de variÃ¡vel do CMD', async () => {
+  it.skipIf(process.platform !== 'win32')('recusa um wrapper com expansÃ£o de variÃ¡vel do CMD', async () => {
     const wrapper = path.join(temporaryUserData, 'code%PATH%.cmd')
     await fs.writeFile(wrapper, '@echo off')
     await fs.writeFile(

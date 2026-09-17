@@ -51,6 +51,7 @@ vi.mock('../src/main/account-profiles', () => ({
 }))
 
 import { cancelCodexLogin, startCodexDeviceLogin } from '../src/main/codex-auth'
+import { loadConfig } from '../src/main/config'
 
 class FakeChild extends EventEmitter {
   pid = 4242
@@ -67,7 +68,7 @@ afterEach(async () => {
 })
 
 describe('Codex login process lifecycle', () => {
-  it('terminates the Windows process tree and ignores late close callbacks after cancel', async () => {
+  it('terminates the login process tree and ignores late close callbacks after cancel', async () => {
     const child = new FakeChild()
     spawnMock.mockReturnValue(child)
     execFileMock.mockImplementation((_command: string, _args: string[], _options: unknown, callback: (error: Error | null, result?: unknown) => void) => {
@@ -84,12 +85,16 @@ describe('Codex login process lifecycle', () => {
     child.emit('close', 0)
     await Promise.resolve()
 
-    expect(execFileMock).toHaveBeenCalledWith(
-      'taskkill',
-      ['/PID', '4242', '/T', '/F'],
-      expect.objectContaining({ windowsHide: true }),
-      expect.any(Function),
-    )
+    if (process.platform === 'win32') {
+      expect(execFileMock).toHaveBeenCalledWith(
+        'taskkill',
+        ['/PID', '4242', '/T', '/F'],
+        expect.objectContaining({ windowsHide: true }),
+        expect.any(Function),
+      )
+    } else {
+      expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+    }
     expect(progress).toContain('cancelled')
     expect(progress).not.toContain('success')
   })
@@ -98,16 +103,32 @@ describe('Codex login process lifecycle', () => {
     const firstChild = new FakeChild()
     const newestChild = new FakeChild()
     spawnMock.mockReturnValueOnce(firstChild).mockReturnValueOnce(newestChild)
-
-    let releaseFirstKill: ((error: Error | null, result?: unknown) => void) | null = null
-    let deferFirstKill = true
     execFileMock.mockImplementation((_command: string, _args: string[], _options: unknown, callback: (error: Error | null, result?: unknown) => void) => {
-      if (deferFirstKill) {
-        deferFirstKill = false
-        releaseFirstKill = callback
-        return
-      }
       callback(null, { stdout: '', stderr: '' })
+    })
+
+    const baseConfig = {
+      projectDirs: [],
+      managedProjects: [],
+      projectAccounts: {},
+      activeChatGptAccount: 'account1' as const,
+      chatGptAccount1Name: 'Conta 1',
+      chatGptAccount2Name: 'Conta 2',
+      customPaths: {},
+    }
+    let releaseOlderLoad: (() => void) | null = null
+    let olderLoadEntered = false
+    const olderLoadGate = new Promise<void>((resolve) => {
+      releaseOlderLoad = resolve
+    })
+    let loadCalls = 0
+    vi.mocked(loadConfig).mockImplementation(async () => {
+      loadCalls += 1
+      if (loadCalls === 2) {
+        olderLoadEntered = true
+        await olderLoadGate
+      }
+      return baseConfig
     })
 
     const firstStart = startCodexDeviceLogin('account1', () => undefined)
@@ -117,22 +138,19 @@ describe('Codex login process lifecycle', () => {
 
     const olderRequestProgress: string[] = []
     const olderRequest = startCodexDeviceLogin('account2', (event) => olderRequestProgress.push(event.status))
-    await vi.waitFor(() => expect(releaseFirstKill).not.toBeNull())
+    await vi.waitFor(() => expect(olderLoadEntered).toBe(true))
 
-    // A third request arrives while request two is still awaiting taskkill.
-    // Request two must observe the newer generation and never spawn a child.
     const newestRequest = startCodexDeviceLogin('account1', () => undefined)
     await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledTimes(2))
     newestChild.emit('spawn')
     await newestRequest
 
-    if (releaseFirstKill === null) throw new Error('taskkill callback não foi capturado')
-    const release = releaseFirstKill as unknown as (error: Error | null, result?: unknown) => void
-    release(null, { stdout: '', stderr: '' })
+    if (releaseOlderLoad === null) throw new Error('loadConfig adiado não foi capturado')
+    const release = releaseOlderLoad as unknown as () => void
+    release()
     await olderRequest
 
     expect(olderRequestProgress).toContain('cancelled')
     expect(spawnMock).toHaveBeenCalledTimes(2)
-    deferFirstKill = false
   })
 })

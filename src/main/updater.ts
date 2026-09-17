@@ -121,7 +121,7 @@ export function getPortableExecutablePath(info?: {
   if (executableFile) return executableFile
   const executableDir = (info?.portableExecutableDir ?? process.env.PORTABLE_EXECUTABLE_DIR)?.trim()
   if (!executableDir) return null
-  return path.join(executableDir, path.basename(info?.executablePath ?? process.execPath))
+  return path.win32.join(executableDir, path.win32.basename(info?.executablePath ?? process.execPath))
 }
 
 function canUpdate(): boolean {
