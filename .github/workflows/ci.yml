@@ -54,8 +54,14 @@ jobs:
       - name: Bridge unit suite
         run: npm run verify:bridge
 
-      - name: Bridge Electron E2E (sem display; runner local)
-        run: npm run verify:bridge:e2e
+      - name: Bridge Electron E2E (Electron; xvfb no Ubuntu)
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a npm run verify:bridge:e2e
+          else
+            npm run verify:bridge:e2e
+          fi
 
       - name: Runtime verification (Electron; xvfb no Ubuntu)
         shell: bash
