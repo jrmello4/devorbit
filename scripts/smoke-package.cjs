@@ -11,6 +11,22 @@ const projectRoot = path.resolve(__dirname, '..')
 const releaseDir = path.join(projectRoot, 'release')
 const MARKER_KIND = 'devorbit-packaged-smoke'
 
+const tempRoot = (() => {
+  const candidates = [process.env.RUNNER_TEMP, os.tmpdir(), process.env.TEMP, process.env.TMP]
+  for (const candidate of candidates) {
+    if (!candidate) continue
+    try {
+      const real = fs.realpathSync(candidate)
+      if (fs.statSync(real).isDirectory()) return real
+    } catch {
+      // try the next candidate
+    }
+  }
+  return os.tmpdir()
+})()
+process.env.TEMP = tempRoot
+process.env.TMP = tempRoot
+
 function readVersion() {
   return JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8')).version
 }
@@ -84,13 +100,13 @@ function validateLatestYml(version) {
   const installerName = `DevOrbit-${version}-x64.exe`
   const installerPath = path.join(releaseDir, installerName)
 
-  if (!fs.existsSync(ymlPath)) return { label, ok: false, detail: 'latest.yml não encontrado' }
+  if (!fs.existsSync(ymlPath)) return { label, ok: false, detail: 'latest.yml nÃ£o encontrado' }
   if (!fs.existsSync(installerPath)) {
     return { label, ok: false, detail: `instalador referenciado ausente: ${installerName}` }
   }
 
   const parsed = parseLatestYml(fs.readFileSync(ymlPath, 'utf8'))
-  if (!parsed) return { label, ok: false, detail: 'latest.yml com estrutura não reconhecida' }
+  if (!parsed) return { label, ok: false, detail: 'latest.yml com estrutura nÃ£o reconhecida' }
   if (parsed.version !== version) {
     return { label, ok: false, detail: `latest.yml version=${parsed.version} != ${version}` }
   }
@@ -103,7 +119,7 @@ function validateLatestYml(version) {
 
   const entry = parsed.files[0]
   if (!entry.url || path.basename(entry.url) !== installerName) {
-    return { label, ok: false, detail: `latest.yml url inválida: ${entry.url}` }
+    return { label, ok: false, detail: `latest.yml url invÃ¡lida: ${entry.url}` }
   }
 
   const realSize = fs.statSync(installerPath).size
@@ -113,10 +129,10 @@ function validateLatestYml(version) {
 
   const realSha512 = crypto.createHash('sha512').update(fs.readFileSync(installerPath)).digest('base64')
   if (parsed.sha512 !== realSha512) {
-    return { label, ok: false, detail: 'latest.yml sha512 (raiz) não corresponde ao instalador' }
+    return { label, ok: false, detail: 'latest.yml sha512 (raiz) nÃ£o corresponde ao instalador' }
   }
   if (entry.sha512 !== realSha512) {
-    return { label, ok: false, detail: 'latest.yml sha512 (files[0]) não corresponde ao instalador' }
+    return { label, ok: false, detail: 'latest.yml sha512 (files[0]) nÃ£o corresponde ao instalador' }
   }
 
   return {
@@ -195,27 +211,27 @@ async function readMarker(file, timeoutMs) {
 }
 
 function checkMarker(marker, expected) {
-  if (!marker || typeof marker !== 'object') return { ok: false, detail: 'marcador ausente/inválido' }
+  if (!marker || typeof marker !== 'object') return { ok: false, detail: 'marcador ausente/invÃ¡lido' }
   if (marker.kind !== MARKER_KIND) return { ok: false, detail: 'kind do marcador inesperado' }
   if (marker.token !== expected.token) return { ok: false, detail: 'token do marcador divergente' }
   if (marker.version !== expected.version) {
-    return { ok: false, detail: `versão do marcador ${marker.version} != ${expected.version}` }
+    return { ok: false, detail: `versÃ£o do marcador ${marker.version} != ${expected.version}` }
   }
   if (marker.success !== true) {
     return { ok: false, detail: `marcador success=false (${marker.error || 'sem detalhe'})` }
   }
   if (marker.renderer !== true || marker.preload !== true || marker.ipc !== true) {
-    return { ok: false, detail: 'marcador sem evidência de renderer/preload/IPC' }
+    return { ok: false, detail: 'marcador sem evidÃªncia de renderer/preload/IPC' }
   }
   return { ok: true, detail: 'marcador validado' }
 }
 
 async function smokeExecutable(label, exePath, version) {
   if (!fs.existsSync(exePath)) {
-    return { label, ok: false, detail: `executável não encontrado: ${exePath}` }
+    return { label, ok: false, detail: `executÃ¡vel nÃ£o encontrado: ${exePath}` }
   }
 
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'devorbit-smoke-run-'))
+  const base = fs.mkdtempSync(path.join(tempRoot, 'devorbit-smoke-run-'))
   const userDataDir = path.join(base, 'user-data')
   const resultFile = path.join(base, 'result.json')
   const token = crypto.randomBytes(16).toString('hex')
@@ -257,7 +273,7 @@ async function smokeExecutable(label, exePath, version) {
       const marker = await readMarker(resultFile, 10_000)
       const check = checkMarker(marker, { version, token })
       outcome = check.ok
-        ? { label, ok: true, detail: `marcador OK token=${token.slice(0, 8)} versão=${version}` }
+        ? { label, ok: true, detail: `marcador OK token=${token.slice(0, 8)} versÃ£o=${version}` }
         : { label, ok: false, detail: check.detail }
     }
   } catch (error) {
@@ -266,20 +282,20 @@ async function smokeExecutable(label, exePath, version) {
 
   const cleaned = removeTempDir(base)
   if (!cleaned) {
-    return { label, ok: false, detail: `${outcome.detail}; resíduo temporário permaneceu` }
+    return { label, ok: false, detail: `${outcome.detail}; resÃ­duo temporÃ¡rio permaneceu` }
   }
   return outcome
 }
 
 async function silentInstallSmoke(label, installerPath, version) {
   if (!fs.existsSync(installerPath)) {
-    return { label, ok: false, detail: `instalador não encontrado: ${installerPath}` }
+    return { label, ok: false, detail: `instalador nÃ£o encontrado: ${installerPath}` }
   }
 
-  const installDir = fs.mkdtempSync(path.join(os.tmpdir(), 'devorbit-smoke-install-'))
+  const installDir = fs.mkdtempSync(path.join(tempRoot, 'devorbit-smoke-install-'))
   if (/\s/.test(installDir)) {
     removeTempDir(installDir)
-    return { label, ok: false, detail: 'diretório de instalação criado com espaços' }
+    return { label, ok: false, detail: 'diretÃ³rio de instalaÃ§Ã£o criado com espaÃ§os' }
   }
 
   const installedExe = path.join(installDir, 'DevOrbit.exe')
@@ -289,18 +305,18 @@ async function silentInstallSmoke(label, installerPath, version) {
   try {
     const install = await runProcess(installerPath, ['/S', `/D=${installDir}`], 180_000)
     if (install.timedOut) {
-      outcome = { label, ok: false, detail: 'timeout na instalação silenciosa' }
+      outcome = { label, ok: false, detail: 'timeout na instalaÃ§Ã£o silenciosa' }
     } else if (install.error) {
-      outcome = { label, ok: false, detail: `instalação: ${install.error.message}` }
+      outcome = { label, ok: false, detail: `instalaÃ§Ã£o: ${install.error.message}` }
     } else if (install.code !== 0) {
-      outcome = { label, ok: false, detail: `instalação exit ${install.code}` }
+      outcome = { label, ok: false, detail: `instalaÃ§Ã£o exit ${install.code}` }
     } else if (!fs.existsSync(installedExe)) {
-      outcome = { label, ok: false, detail: `instalador não gerou ${installedExe}` }
+      outcome = { label, ok: false, detail: `instalador nÃ£o gerou ${installedExe}` }
     } else {
       outcome = await smokeExecutable(label, installedExe, version)
     }
   } catch (error) {
-    outcome = { label, ok: false, detail: `erro na instalação: ${error.message}` }
+    outcome = { label, ok: false, detail: `erro na instalaÃ§Ã£o: ${error.message}` }
   }
 
   let uninstallerStatus = 'ausente'
@@ -317,7 +333,7 @@ async function silentInstallSmoke(label, installerPath, version) {
     return {
       label,
       ok: false,
-      detail: `${outcome.detail}; resíduo da instalação permaneceu ${suffix}`,
+      detail: `${outcome.detail}; resÃ­duo da instalaÃ§Ã£o permaneceu ${suffix}`,
     }
   }
   return { ...outcome, detail: `${outcome.detail} ${suffix}` }
