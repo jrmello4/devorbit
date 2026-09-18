@@ -5,6 +5,7 @@ import {
   buildPendingCanvasNode,
   buildWorkspaceUiRequest,
   computePipeSync,
+  computeStreamingPipeEdges,
   computeWebSuppressed,
   createsAgentCycle,
   isPendingNodeForProject,
@@ -93,6 +94,34 @@ describe('busca com espaço não degrada', () => {
     expect(parseSpacedTwoStroke('g p')?.action).toBe('nav-projects')
     expect(parseSpacedTwoStroke('meu projeto')).toBeNull()
     expect(parseSpacedTwoStroke('projeto final v2')).toBeNull()
+  })
+})
+
+describe('computeStreamingPipeEdges (sem espelhamento implícito)', () => {
+  it('não canaliza PTY para conexões agente -> agente do canvas', () => {
+    const nodes = new Map([
+      ['coordinator', 'agent'],
+      ['specialist', 'agent'],
+      ['note', 'note'],
+    ])
+
+    expect(computeStreamingPipeEdges(nodes, [
+      { from: 'coordinator', to: 'specialist' },
+      { from: 'specialist', to: 'coordinator' },
+    ])).toEqual([])
+  })
+
+  it('não canaliza nenhum outro tipo de cabo do canvas', () => {
+    const nodes = new Map([
+      ['note', 'note'],
+      ['agent', 'agent'],
+      ['workbench', 'workbench'],
+    ])
+
+    expect(computeStreamingPipeEdges(nodes, [
+      { from: 'note', to: 'agent' },
+      { from: 'workbench', to: 'agent' },
+    ])).toEqual([])
   })
 })
 

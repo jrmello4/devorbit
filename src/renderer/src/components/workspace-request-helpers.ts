@@ -85,6 +85,19 @@ export interface PipeSyncPlan {
   addEdges: Array<{ from: string; to: string }>
 }
 
+/**
+ * Política do canvas: cabos são relações visuais e de orquestração estruturada.
+ * Canalização bruta de PTY (stdout -> stdin) não é instalada implicitamente
+ * porque espelharia a digitação e a saída de TUI do usuário entre terminais.
+ * O mecanismo explícito continua disponível pelo IPC `devorbit:pipeTerminals`.
+ */
+export function computeStreamingPipeEdges(
+  _nodeKinds: ReadonlyMap<string, string>,
+  _connections: readonly { from: string; to: string }[],
+): Array<{ from: string; to: string }> {
+  return []
+}
+
 function sameStringSet(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
   if (left.size !== right.size) return false
   for (const entry of left) {

@@ -33,6 +33,7 @@ import {
   type AgentCreationSpec,
   type SquadCreationSpec,
 } from "./agent-creation-helpers";
+import { agentSendPolicy } from "./agent-send-policy";
 import "./WorkspaceCanvas.css";
 
 type NodeKind = "workbench" | "browser" | "note" | "agent";
@@ -549,6 +550,7 @@ export const WorkspaceCanvas: React.FC<{
   const [agentProgress, setAgentProgress] = useState<
     Record<string, AgentProgress>
   >({});
+  const manualTasksRef = useRef<Set<string>>(new Set());
   const canvasRef = useRef(canvas);
   const orchestrationRef = useRef<OrchestrationRun | null>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -1266,6 +1268,14 @@ export const WorkspaceCanvas: React.FC<{
     return node && !fixedKinds.has(node.kind);
   });
   const canDelete = deletableSelection.length > 0;
+  const sendPolicyFor = (node: CanvasNode) =>
+    agentSendPolicy({
+      configured: isAgentNodeConfigured(node, agentProviders),
+      configuredMessage: agentNodeSetupMessage(node, agentProviders),
+      orchestrationActive,
+      noteCount: connectedNotes(canvas, node.id).length,
+      progressState: agentProgress[node.id]?.state ?? null,
+    });
   const removeLinks = () => {
     const ids = new Set(selected);
     update(
@@ -1346,6 +1356,12 @@ export const WorkspaceCanvas: React.FC<{
   );
   const reportAgentTaskFailure = useCallback(
     (agentId: string, taskId: string, message: string) => {
+      if (manualTasksRef.current.delete(agentId)) {
+        setAgentProgress((current) => ({
+          ...current,
+          [agentId]: { state: "blocked", label: message || "A tarefa falhou" },
+        }));
+      }
       const run = orchestrationRef.current;
       if (
         !run ||
@@ -1455,22 +1471,29 @@ export const WorkspaceCanvas: React.FC<{
         (node) => node.id === agent.id && node.kind === "agent",
       );
       if (!currentAgent || !onSendAgentTask) return;
+      const currentProgress = agentProgress[currentAgent.id];
+      if (
+        currentProgress?.state === "queued" ||
+        currentProgress?.state === "running"
+      )
+        return;
       const linkedNotes = connectedNotes(current, currentAgent.id);
       if (!linkedNotes.length) return;
-      setAgentProgress((progress) => {
-        const next = { ...progress };
-        delete next[currentAgent.id];
-        return next;
-      });
+      manualTasksRef.current.add(currentAgent.id);
       const prompt = [
         `Você atua como ${currentAgent.role || "Implementação"} neste projeto.`,
         "Execute a tarefa usando o contexto conectado abaixo.",
         formatOrchestrationNotes(linkedNotes),
         orchestrationResultInstruction,
       ].join("\n");
-      dispatchAgentTask(currentAgent, prompt);
+      const taskId = dispatchAgentTask(currentAgent, prompt, {
+        state: "running",
+        label: "Aguardando resultado",
+      });
+      if (!taskId) manualTasksRef.current.delete(currentAgent.id);
     },
     [
+      agentProgress,
       dispatchAgentTask,
       onSendAgentTask,
       startCoordinatorOrchestration,
@@ -1490,6 +1513,12 @@ export const WorkspaceCanvas: React.FC<{
         }),
         true,
       );
+      if (manualTasksRef.current.delete(agentId)) {
+        setAgentProgress((current) => ({
+          ...current,
+          [agentId]: { state: "completed", label: "Resultado recebido" },
+        }));
+      }
       if (!normalizedResult) return;
       const run = orchestrationRef.current;
       if (
@@ -2169,16 +2198,13 @@ export const WorkspaceCanvas: React.FC<{
                     data-agent-send
                     aria-label={"Enviar tarefa para " + node.title}
                     title={
-                      !isAgentNodeConfigured(node, agentProviders)
-                        ? agentNodeSetupMessage(node, agentProviders)
+                      sendPolicyFor(node).disabled
+                        ? sendPolicyFor(node).reason
                         : node.role === "Coordenador"
                           ? "Iniciar orquestração com as notas conectadas"
                           : "Enviar as notas conectadas ao agente"
                     }
-                    disabled={
-                      orchestrationActive || connectedNotes(canvas, node.id).length === 0 ||
-                      !isAgentNodeConfigured(node, agentProviders)
-                    }
+                    disabled={sendPolicyFor(node).disabled}
                     onPointerDown={(event) => event.stopPropagation()}
                     onClick={() => sendAgentTask(node)}
                   ><Send size={13} /></button>

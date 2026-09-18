@@ -6,7 +6,7 @@ import {
 import type { AgentBridgeEvent } from '../../../shared/agent-bridge-event'
 import type { AgentProvider, AgentProviderId, CodexAccountStatus, Project, ToolHealth, WebPanelEvent } from '../types'
 import type { PendingCanvasNode, WorkspaceUiRequest } from './workspace-request-helpers'
-import { applyWorkspaceUiRequest, computePipeSync, isPendingNodeForProject } from './workspace-request-helpers'
+import { applyWorkspaceUiRequest, computePipeSync, computeStreamingPipeEdges, isPendingNodeForProject } from './workspace-request-helpers'
 import { createPipeCallQueue } from './pipe-ipc-queue'
 import { WorkspaceEditor, type WorkspaceEditorContext } from './WorkspaceEditor'
 import { WorkspaceTerminal } from './WorkspaceTerminal'
@@ -131,23 +131,22 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
   // Fila seriada por origem: clear -> add sempre nessa ordem observável,
   // mesmo sob mudanças rápidas de fanout.
   const pipeQueueRef = useRef(createPipeCallQueue((from, to) => window.devorbit.pipeTerminals(from, to)))
-  // PTY piping (FASE 3): cabos agente -> agente no canvas canalizam stdout
-  // para stdin via `devorbit:pipeTerminals`. Fanout suportado; reconciliação
-  // determinística por origem via computePipeSync. Best-effort, sem spam.
+  // Cabos do canvas permanecem como relações de orquestração estruturada.
+  // O streaming bruto de PTY não é instalado implicitamente para não espelhar
+  // digitação/TUI entre terminais; o IPC `pipeTerminals` segue como mecanismo
+  // explícito para quem precisar canalizar saída.
   const syncCanvasPipes = useCallback((
     connections: Array<{ id: string; from: string; to: string }>,
     nodes: Array<{ id: string; kind: string }>,
   ) => {
     const kinds = new Map(nodes.map((node) => [node.id, node.kind] as const))
     const desired = new Map<string, Set<string>>()
-    for (const connection of connections) {
-      if (kinds.get(connection.from) === 'agent' && kinds.get(connection.to) === 'agent') {
-        const from = agentTerminalId(project.id, connection.from)
-        const to = agentTerminalId(project.id, connection.to)
-        const destinations = desired.get(from) || new Set<string>()
-        destinations.add(to)
-        desired.set(from, destinations)
-      }
+    for (const edge of computeStreamingPipeEdges(kinds, connections)) {
+      const from = agentTerminalId(project.id, edge.from)
+      const to = agentTerminalId(project.id, edge.to)
+      const destinations = desired.get(from) || new Set<string>()
+      destinations.add(to)
+      desired.set(from, destinations)
     }
     const plan = computePipeSync(appliedPipesRef.current, desired)
     const queue = pipeQueueRef.current

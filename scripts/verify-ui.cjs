@@ -317,6 +317,53 @@ async function verifyCoordinatorOrchestration(window, viewport) {
   await waitFor(window, `document.querySelector('.workspace-canvas-orchestration-status[data-orchestration-phase="blocked"]')`, `${viewport.label} race run halted`)
 }
 
+async function verifyManualAgentSend(window, viewport) {
+  await evaluate(window, `window.__devorbitVerifyFixture.resetCalls()`)
+  const started = await evaluate(window, `(() => {
+    const card = Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]'))
+      .find((node) => node.querySelector('select')?.value === 'Implementação')
+    const send = card?.querySelector('[data-agent-send]')
+    if (!send || send.disabled) return false
+    send.click()
+    return true
+  })()`)
+  assert(started, `${viewport.label}: envio manual do especialista indisponível`)
+
+  const promptWrite = await waitFor(window, `(() => Array.from(window.__devorbitVerifyFixture.getCalls())
+    .filter((call) => call.name === 'writeTerminal')
+    .find((call) => String(call.args[1]).includes('Você atua como Implementação neste projeto') && String(call.args[1]).includes('Tarefa automatizada de ponta a ponta')))()`, `${viewport.label} prompt manual do especialista`)
+
+  await evaluate(window, `(() => {
+    const card = Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]'))
+      .find((node) => node.querySelector('select')?.value === 'Implementação')
+    const send = card?.querySelector('[data-agent-send]')
+    if (send) send.click()
+    return true
+  })()`)
+  await new Promise((resolve) => setTimeout(resolve, 150))
+  const manualWrites = await evaluate(window, `window.__devorbitVerifyFixture.getCalls()
+    .filter((call) => call.name === 'writeTerminal' && String(call.args[1]).includes('Você atua como Implementação neste projeto')).length`)
+  assert(manualWrites === 1, `${viewport.label}: envio manual duplicou a tarefa (${manualWrites})`)
+  const busyDisabled = await evaluate(window, `(() => {
+    const card = Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]'))
+      .find((node) => node.querySelector('select')?.value === 'Implementação')
+    const send = card?.querySelector('[data-agent-send]')
+    return Boolean(send && send.disabled)
+  })()`)
+  assert(busyDisabled, `${viewport.label}: controle de envio não foi desabilitado durante a tarefa`)
+
+  const manualEvent = JSON.stringify({ id: promptWrite.args[0], type: 'data', data: '\r\nDEVORBIT_RESULT: {"version":1,"outcome":"completed","summary":"manual concluido"}\r\n' })
+  await evaluate(window, `(() => { window.__devorbitVerifyFixture.emitTerminalEvent(${manualEvent}); return true })()`)
+  await waitFor(window, `(() => {
+    const card = Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]'))
+      .find((node) => node.querySelector('select')?.value === 'Implementação')
+    const send = card?.querySelector('[data-agent-send]')
+    return Boolean(send && !send.disabled)
+  })()`, `${viewport.label} reabilitacao do envio manual`)
+  recordPass(viewport.label, 'nota conectada é enviada uma vez ao especialista e o envio reabilita após o resultado')
+}
+
+
 async function key(window, keyName, options = {}) {
   await evaluate(window, `(function () {
     document.dispatchEvent(new KeyboardEvent('keydown', {
@@ -696,7 +743,11 @@ async function inspectProjectInteractions(window, viewport) {
   await waitFor(window, `document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]').length === 4 && document.querySelectorAll('.workspace-canvas [data-canvas-card="note"]').length >= 2`, `${viewport.label} squad canvas nodes`)
   await waitFor(window, `document.querySelectorAll('.workspace-canvas-connections path').length >= 4`, `${viewport.label} squad task connections`)
   recordPass(viewport.label, 'template cria squad conectado a uma nota de tarefa')
+  const implicitStreaming = await evaluate(window, `window.__devorbitVerifyFixture.getCalls().filter((call) => call.name === 'pipeTerminals').length`)
+  assert(implicitStreaming === 0, `${viewport.label}: conexões do canvas canalizaram PTY implicitamente (${implicitStreaming})`)
+  recordPass(viewport.label, 'conexões do canvas não espelham digitação/TUI entre agentes')
   await verifyCoordinatorOrchestration(window, viewport)
+  await verifyManualAgentSend(window, viewport)
   await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Voltar ao layout integrado', `${viewport.label} canvas close`)
   await waitFor(window, `!document.querySelector('.workspace-canvas')`, `${viewport.label} grid layout restore`)
   await clickButtonByText(window, (node) => node.getAttribute('title') === 'Projetos', `${viewport.label} multi-project navigation`)
