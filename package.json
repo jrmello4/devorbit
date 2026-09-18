@@ -1,6 +1,6 @@
 {
   "name": "devorbit",
-  "version": "1.0.29",
+  "version": "1.0.30",
   "description": "Developer Workspace Hub & AI Launcher",
   "author": "DevOrbit contributors",
   "main": "dist-electron/main/index.js",
