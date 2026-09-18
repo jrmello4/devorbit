@@ -12,6 +12,48 @@ const mainEntry = path.join(projectRoot, 'dist-electron', 'main', 'index.js')
 const preloadEntry = path.join(projectRoot, 'dist-electron', 'preload', 'index.cjs')
 const rendererEntry = path.join(projectRoot, 'dist', 'index.html')
 
+// O ambiente de validação (RDP/VM/CI) não tem GPU confiável; o Chromium pode
+// perder o processo de GPU e falhar o load do file://. Este harness valida
+// preload/IPC/scan — não rasterização — então segue o mesmo padrão de
+// smoke-ipc, verify-bridge e verify-ui: sem aceleração de hardware.
+app.disableHardwareAcceleration()
+app.commandLine.appendSwitch('disable-gpu')
+
+const diagnostics = []
+app.on('child-process-gone', (_event, details) => {
+  diagnostics.push({ kind: 'child-process-gone', details })
+})
+
+function trackWindowDiagnostics(target) {
+  target.webContents.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
+    diagnostics.push({ kind: 'did-fail-load', code, description, url, isMainFrame: Boolean(isMainFrame) })
+  })
+  target.webContents.on('render-process-gone', (_event, details) => {
+    diagnostics.push({ kind: 'render-process-gone', details })
+  })
+}
+
+app.on('browser-window-created', (_event, target) => {
+  trackWindowDiagnostics(target)
+})
+
+function formatDiagnostics() {
+  return diagnostics
+    .map((entry) => {
+      if (entry.kind === 'did-fail-load') {
+        return `did-fail-load ${entry.code} ${entry.description} ${entry.url} mainFrame=${entry.isMainFrame}`
+      }
+      return `${entry.kind} ${JSON.stringify(entry.details)}`
+    })
+    .join(' | ')
+}
+
+function fatalRendererFailure() {
+  return diagnostics.find(
+    (entry) => entry.kind === 'render-process-gone' || (entry.kind === 'did-fail-load' && entry.isMainFrame)
+  )
+}
+
 function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
@@ -32,19 +74,24 @@ async function waitFor(label, predicate, timeoutMs = 20_000) {
 }
 
 async function waitForRendererLoad(window) {
-  if (!window.webContents.isLoadingMainFrame()) return
-  await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('Tempo limite carregando o renderer')), 20_000)
-    const cleanup = () => clearTimeout(timer)
-    window.webContents.once('did-finish-load', () => {
-      cleanup()
-      resolve()
-    })
-    window.webContents.once('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
-      cleanup()
-      reject(new Error(`Falha carregando ${validatedURL}: ${errorCode} ${errorDescription}`))
-    })
-  })
+  const webContents = window.webContents
+  const deadline = Date.now() + 20_000
+  while (Date.now() < deadline) {
+    const failure = fatalRendererFailure()
+    if (failure) throw new Error(`Renderer não carregou: ${formatDiagnostics()}`)
+    if (!webContents.isLoadingMainFrame()) {
+      // `did-fail-load` pode chegar logo depois do fim do loading; concede um
+      // ciclo curto antes de considerar a carga concluída.
+      await delay(200)
+      if (fatalRendererFailure()) throw new Error(`Renderer não carregou: ${formatDiagnostics()}`)
+      if (!webContents.getURL()) {
+        throw new Error(`Renderer terminou a carga sem URL${diagnostics.length ? `; ${formatDiagnostics()}` : ''}`)
+      }
+      return
+    }
+    await delay(50)
+  }
+  throw new Error(`Tempo limite carregando o renderer${diagnostics.length ? `; ${formatDiagnostics()}` : ''}`)
 }
 
 async function quitElectron() {
@@ -162,6 +209,7 @@ async function main() {
     process.stdout.write('Runtime verification passed: preload real, IPC, scan, read, save e validação de caminho\n')
   } catch (error) {
     process.stderr.write(`runtime verification: error ${error instanceof Error ? error.stack || error.message : String(error)}\n`)
+    if (diagnostics.length) process.stderr.write(`runtime verification: diagnostics ${formatDiagnostics()}\n`)
     throw error
   } finally {
     await quitElectron()
