@@ -19,7 +19,43 @@ export interface ThemeRoot {
 export const THEME_STORAGE_KEY = 'devorbit:theme'
 export const DEFAULT_THEME: ThemeMode = 'light'
 
+const HERO_OPS_TOKENS = {
+  '--ops-surface-0': '#08090c',
+  '--ops-surface-1': '#0d0f14',
+  '--ops-surface-2': '#11141b',
+  '--ops-surface-3': '#171a22',
+  '--ops-surface-4': '#1d212b',
+  '--ops-border-subtle': '#252a34',
+  '--ops-border-strong': '#343b48',
+  '--ops-text-primary': '#f5f7fa',
+  '--ops-text-secondary': '#b7bdc8',
+  '--ops-text-muted': '#7e8491',
+  '--ops-focus': '#8797b4',
+  '--ops-success': '#69a986',
+  '--ops-warning': '#c79a59',
+  '--ops-danger': '#b56e76',
+  '--ops-connection': '#5b667a',
+  '--ops-selection': 'rgba(135, 151, 180, 0.16)',
+  '--ops-overlay': 'rgba(4, 5, 8, 0.78)',
+  '--ops-grid-line': 'rgba(255, 255, 255, 0.032)',
+  '--ops-shadow-node': 'rgba(0, 0, 0, 0.45)',
+  '--space-1': '4px',
+  '--space-2': '8px',
+  '--space-3': '12px',
+  '--space-4': '16px',
+  '--space-5': '20px',
+  '--space-6': '24px',
+  '--space-8': '32px',
+  '--radius-icon': '6px',
+  '--radius-control': '8px',
+  '--radius-node': '12px',
+  '--radius-panel': '16px',
+  '--font-ui': "'Segoe UI', system-ui, sans-serif",
+  '--font-mono': "'Cascadia Code', Consolas, 'JetBrains Mono', ui-monospace, monospace",
+} as const
+
 const LIGHT_TOKENS = {
+  ...HERO_OPS_TOKENS,
   '--color-bg-page': '#f5f5f2',
   '--color-bg-header': '#fcfcfa',
   '--color-bg-toolbar': '#f0f1ed',
@@ -43,6 +79,7 @@ const LIGHT_TOKENS = {
 } as const
 
 const DARK_TOKENS = {
+  ...HERO_OPS_TOKENS,
   '--color-bg-page': '#171b17',
   '--color-bg-header': '#1c211c',
   '--color-bg-toolbar': '#222922',

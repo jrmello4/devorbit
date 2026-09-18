@@ -379,6 +379,11 @@ async function key(window, keyName, options = {}) {
 }
 
 async function screenshot(window, label) {
+  window.webContents.invalidate()
+  await new Promise((resolve) => setTimeout(resolve, 120))
+  await window.webContents.capturePage()
+  await window.webContents.invalidate()
+  await new Promise((resolve) => setTimeout(resolve, 120))
   const image = await window.webContents.capturePage()
   await fs.writeFile(path.join(artifactsRoot, `${label}.png`), image.toPNG())
 }
@@ -513,6 +518,27 @@ async function inspectProjectInteractions(window, viewport) {
   await waitFor(window, `document.querySelectorAll('.workspace-canvas [data-canvas-card]').length === 3`, `${viewport.label} canvas cards`)
   const canvasCards = await evaluate(window, `Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card]')).map((node) => node.getAttribute('data-canvas-card')).sort().join(',')`)
   assert(canvasCards === 'browser,note,workbench', `${viewport.label}: cards do canvas incompletos (${canvasCards})`)
+  const canvasVisible = await evaluate(window, `(() => {
+    const panel = document.querySelector('.integrated-workspace-view')
+    const canvas = document.querySelector('.workspace-canvas')
+    if (!panel || panel.hidden || !canvas) return false
+    const rect = canvas.getBoundingClientRect()
+    return rect.width > 100 && rect.height > 100 && canvas.offsetParent !== null
+  })()`)
+  assert(canvasVisible, `${viewport.label}: canvas montado mas não visível para interação`)
+  recordPass(viewport.label, 'canvas ativo e visível para interação real')
+  const canvasTheme = await evaluate(window, `(() => {
+    const canvas = document.querySelector('.workspace-canvas')
+    const cards = Array.from(document.querySelectorAll('.workspace-canvas-card'))
+    const backgrounds = cards.map((card) => getComputedStyle(card).backgroundColor)
+    return {
+      canvas: getComputedStyle(canvas).backgroundColor,
+      uniqueCardBackgrounds: new Set(backgrounds).size,
+    }
+  })()`)
+  assert(canvasTheme.canvas === 'rgb(8, 9, 12)', `${viewport.label}: canvas fora do Carbon esperado (${canvasTheme.canvas})`)
+  assert(canvasTheme.uniqueCardBackgrounds === 1, `${viewport.label}: nós não compartilham família neutra (${canvasTheme.uniqueCardBackgrounds} fundos)`)
+  recordPass(viewport.label, 'canvas usa base Carbon e família neutra de nós')
   await waitFor(window, `(() => {
     const viewport = document.querySelector('.workspace-canvas .workspace-web-viewport')
     const boundsCall = Array.from(window.__devorbitVerifyFixture.getCalls()).filter((call) => call.name === 'setWebBounds').at(-1)
@@ -726,6 +752,8 @@ async function inspectProjectInteractions(window, viewport) {
   await waitFor(window, `document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]').length === 1`, `${viewport.label} agent canvas node`)
   await waitFor(window, `Array.from(window.__devorbitVerifyFixture.getCalls()).some((call) => call.name === 'startTerminal' && String(call.args[0]).startsWith('agent-'))`, `${viewport.label} agent terminal`)
   recordPass(viewport.label, 'canvas cria agente configurado com terminal independente')
+  await key(window, '0', { ctrlKey: true })
+  await waitFor(window, `(() => { const canvas = document.querySelector('.workspace-canvas'); const id = canvas?.getAttribute('data-canvas-project-id'); const raw = id ? window.localStorage.getItem('devorbit:workspace-canvas:' + id) : null; return Boolean(raw && JSON.parse(raw).viewport.zoom === 1) })()`, `${viewport.label} canvas zoom reset for screenshot`)
   await screenshot(window, `desktop-${viewport.label}-canvas-agent`)
   await evaluate(window, `document.querySelector('[data-canvas-card="agent"] .canvas-delete-node')?.click()`)
   await waitFor(window, `document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]').length === 0`, `${viewport.label} agent terminal deletion`)
@@ -898,6 +926,7 @@ async function runViewport(viewport) {
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
+        backgroundThrottling: false,
       },
     })
     window.webContents.on('console-message', (_event, level, message, line, source) => {
