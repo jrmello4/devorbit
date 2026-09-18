@@ -1,3 +1,5 @@
+import { stripAnsiEscapes } from './ansi'
+
 export const AGENT_RESULT_PREFIX = 'DEVORBIT_RESULT:'
 export const AGENT_RESULT_VERSION = 1
 export const AGENT_RESULT_MAX_FRAME_CHARS = 4_096
@@ -44,16 +46,6 @@ function hasControlCharacters(value: string): boolean {
     const code = character.charCodeAt(0)
     return code <= 0x1f || code === 0x7f
   })
-}
-
-// SAÍDA de PTY chega colorida; removemos apenas sequências de escape ECMA-48
-// (CSI, OSC e escapes de dois caracteres) antes do parse. O corpo continua
-// submetido às mesmas validações de schema — nada malformado passa a valer.
-// eslint-disable-next-line no-control-regex -- os caracteres de controle são exatamente o alvo da limpeza
-const ANSI_ESCAPE_PATTERN = /(?:\u001B\[|\u009B)[0-?]*[ -/]*[@-~]|\u001B\][^\u0007\u001B]*(?:\u0007|\u001B\\)|\u001B[@-Z\\-_]/g
-
-function stripAnsiEscapes(value: string): string {
-  return value.replace(ANSI_ESCAPE_PATTERN, '')
 }
 
 function parseSummary(value: unknown): string | undefined {
@@ -103,11 +95,16 @@ function parseLegacyBody(body: string): AgentResultParse {
   }
 }
 
-/** Parses one complete physical DEVORBIT_RESULT line. */
+/**
+ * Parses one complete physical DEVORBIT_RESULT line. A saída de PTY chega
+ * colorida: a limpeza ECMA-48 (src/shared/ansi.ts) roda antes do parse e antes
+ * do limite de frame — decoração não pode invalidar um frame legítimo. Linhas
+ * longas sem marcador continuam sendo ruído (`none`), nunca resultado inválido.
+ */
 export function parseAgentResultLine(line: string): AgentResultParse {
-  if (line.length > AGENT_RESULT_MAX_FRAME_CHARS) return { kind: 'invalid', reason: 'frame-too-large' }
   const candidate = stripAnsiEscapes(line).trimStart()
   if (!candidate.startsWith(AGENT_RESULT_PREFIX)) return { kind: 'none' }
+  if (candidate.length > AGENT_RESULT_MAX_FRAME_CHARS) return { kind: 'invalid', reason: 'frame-too-large' }
   const body = candidate.slice(AGENT_RESULT_PREFIX.length).trim()
   if (!body) return { kind: 'invalid', reason: 'empty' }
   if (body.startsWith('{') || body.startsWith('[')) return parseJsonBody(body)

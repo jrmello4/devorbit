@@ -6,6 +6,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import { choice, TypeSafeClient } from '@typesafe-ai/sdk'
 import type { Fetch } from '@typesafe-ai/sdk'
+import { stripAnsiEscapes } from '../shared/ansi'
 import type { AgentProvider, AgentProviderId, AppConfig } from '../renderer/src/types'
 
 const execFileAsync = promisify(execFile)
@@ -339,15 +340,13 @@ const SHADOW_TIER_QUESTIONS = {
 
 // Sanitização de saída de terminal exige casar códigos de controle.
 /* eslint-disable no-control-regex */
-const ANSI_ESCAPE_PATTERN = /\u001b\[[0-9;?]*[ -/]*[@-~]/g
-const UNSAFE_CONTROL_PATTERN = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g
+const UNSAFE_CONTROL_PATTERN = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g
 /* eslint-enable no-control-regex */
 
 /** Remove ANSI/controles, apara e limita o state do julgamento. */
 export function sanitizePromptForJudgment(prompt: unknown): string | undefined {
   if (typeof prompt !== 'string') return undefined
-  const cleaned = prompt
-    .replace(ANSI_ESCAPE_PATTERN, '')
+  const cleaned = stripAnsiEscapes(prompt)
     .replace(UNSAFE_CONTROL_PATTERN, '')
     .trim()
   if (!cleaned) return undefined
@@ -1243,9 +1242,10 @@ const PERMANENT_PATTERNS = [
 const UNAVAILABLE_BINARY_PATTERNS = [/ENOENT/i, /command not found/i, /not recognized as .*command/i]
 
 export function isTransientProviderError(error: unknown): boolean {
-  const text = error instanceof Error
+  const rawText = error instanceof Error
     ? `${error.message} ${(error as NodeJS.ErrnoException).code || ''}`
     : String(error ?? '')
+  const text = stripAnsiEscapes(rawText)
   if (PERMANENT_PATTERNS.some((pattern) => pattern.test(text))) return false
   if (UNAVAILABLE_BINARY_PATTERNS.some((pattern) => pattern.test(text))) return true
   return TRANSIENT_PATTERNS.some((pattern) => pattern.test(text))
@@ -1255,11 +1255,14 @@ export function isTransientProviderError(error: unknown): boolean {
  * Extrai da cauda de saída a última linha com sinal transitório (rate limit,
  * 429, indisponibilidade). Retorna undefined para texto permanente ou limpo —
  * inclusive quando há padrão permanente junto (auth prevalece: sem retry).
+ * A cor de terminal é removida antes da classificação e do retorno para que a
+ * linha exibida na UI não carregue códigos de escape.
  */
 export function findTransientSnippet(tail: unknown, maxLength = 300): string | undefined {
   if (typeof tail !== 'string' || !tail.trim()) return undefined
-  if (PERMANENT_PATTERNS.some((pattern) => pattern.test(tail))) return undefined
-  const lines = tail.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+  const cleanedTail = stripAnsiEscapes(tail)
+  if (PERMANENT_PATTERNS.some((pattern) => pattern.test(cleanedTail))) return undefined
+  const lines = cleanedTail.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const line = lines[index]
     if (TRANSIENT_PATTERNS.some((pattern) => pattern.test(line))) {

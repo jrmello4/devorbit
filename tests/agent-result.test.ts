@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  AGENT_RESULT_MAX_FRAME_CHARS,
   createAgentResultScanner,
   createLegacyAgentResult,
   parseAgentResultLine,
@@ -142,6 +143,51 @@ describe('shared agent result protocol (src/shared/agent-result.ts)', () => {
       expect(coloredLegacy).toEqual({
         kind: 'result',
         result: { format: 'legacy', version: 0, outcome: 'completed', summary: 'CONCLUIDO: entrega ok' },
+      })
+    })
+
+    it('accepts ECMA-48 sequences beyond SGR: 8-bit CSI, OSC, DCS and colon params', () => {
+      const eightBit = parseAgentResultLine('\u009b32mDEVORBIT_RESULT: CONCLUIDO: oito bits\u009b0m')
+      expect(eightBit).toEqual({
+        kind: 'result',
+        result: { format: 'legacy', version: 0, outcome: 'completed', summary: 'CONCLUIDO: oito bits' },
+      })
+
+      const oscBefore = parseAgentResultLine(
+        '\u001b]0;título da janela\u0007DEVORBIT_RESULT: {"version":1,"outcome":"completed","summary":"com título"}'
+      )
+      expect(oscBefore).toEqual({
+        kind: 'result',
+        result: { format: 'json', version: 1, outcome: 'completed', summary: 'com título' },
+      })
+
+      const dcsBefore = parseAgentResultLine('\u001bP1;2|payload\u001b\\DEVORBIT_RESULT: CONCLUIDO: depois do dcs')
+      expect(dcsBefore).toEqual({
+        kind: 'result',
+        result: { format: 'legacy', version: 0, outcome: 'completed', summary: 'CONCLUIDO: depois do dcs' },
+      })
+
+      const colonParams = parseAgentResultLine('\u001b[38:5:196mDEVORBIT_RESULT: CONCLUIDO: colon param\u001b[0m')
+      expect(colonParams).toEqual({
+        kind: 'result',
+        result: { format: 'legacy', version: 0, outcome: 'completed', summary: 'CONCLUIDO: colon param' },
+      })
+    })
+
+    it('applies the frame limit to the stripped frame and ignores long noise', () => {
+      const summary = 'x'.repeat(600)
+      const decorated = `\u001b[32m${[...`DEVORBIT_RESULT: {"version":1,"outcome":"completed","summary":"${summary}"}`]
+        .map((character) => `\u001b[38:5:196m${character}\u001b[0m`)
+        .join('')}`
+      expect(decorated.length).toBeGreaterThan(AGENT_RESULT_MAX_FRAME_CHARS)
+      const parsed = parseAgentResultLine(decorated)
+      expect(parsed.kind).toBe('result')
+      if (parsed.kind === 'result') expect(parsed.result.summary).toBe(summary)
+
+      expect(parseAgentResultLine('x'.repeat(AGENT_RESULT_MAX_FRAME_CHARS + 10))).toEqual({ kind: 'none' })
+      expect(parseAgentResultLine(`DEVORBIT_RESULT: ${'x'.repeat(AGENT_RESULT_MAX_FRAME_CHARS)}`)).toEqual({
+        kind: 'invalid',
+        reason: 'frame-too-large',
       })
     })
 

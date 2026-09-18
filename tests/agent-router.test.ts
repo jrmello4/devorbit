@@ -294,6 +294,14 @@ describe('findTransientSnippet', () => {
   it('lets permanent text win over transient noise', () => {
     expect(findTransientSnippet('429 rate limit\ninvalid api key')).toBeUndefined()
   })
+
+  it('strips terminal colors before classifying and returning the snippet', () => {
+    expect(findTransientSnippet('\u001b[31mError: 429 rate limit exceeded\u001b[0m\n')).toBe(
+      'Error: 429 rate limit exceeded'
+    )
+    expect(findTransientSnippet('\u001b[33m429 rate limit\u001b[0m\n\u001b[31minvalid api key\u001b[0m')).toBeUndefined()
+    expect(findTransientSnippet('\u001b]0;título\u0007service unavailable, retrying')).toBe('service unavailable, retrying')
+  })
 })
 
 describe('executeExplicitAgentTurn', () => {
@@ -363,6 +371,9 @@ describe('TypeSafe shadow tier classification', () => {
 
   it('sanitizes the state: strips ANSI/control chars, trims and caps the length', () => {
     expect(sanitizePromptForJudgment('\u001b[31mgrep\u001b[0m por TODO\u0007')).toBe('grep por TODO')
+    expect(sanitizePromptForJudgment('\u001b]0;título\u0007listar arquivos da pasta')).toBe('listar arquivos da pasta')
+    expect(sanitizePromptForJudgment('\u001b[38:5:196mrodar testes\u001b[0m')).toBe('rodar testes')
+    expect(sanitizePromptForJudgment('\u001bP1;2|payload\u001b\\rodar build')).toBe('rodar build')
     expect(sanitizePromptForJudgment('x'.repeat(SHADOW_MAX_STATE_CHARS + 500))?.length).toBe(
       SHADOW_MAX_STATE_CHARS
     )

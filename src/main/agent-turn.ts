@@ -1,6 +1,7 @@
 import type { AgentProviderId, AppConfig } from '../renderer/src/types'
 import type { TerminalEvent } from './terminal-session'
 import { createAgentResultScanner, type AgentResultInvalidReason } from '../shared/agent-result'
+import { stripAnsiEscapes } from '../shared/ansi'
 import {
   buildAgentTurnEnv,
   findTransientSnippet,
@@ -175,7 +176,7 @@ function outcomeFromWait(waiter: TurnWaiter): { result?: string; blocked?: strin
   }
   if (typeof waiter.code === 'number' && waiter.code !== 0) {
     const lastLine = typeof waiter.tail === 'string'
-      ? waiter.tail.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1)?.slice(0, 200)
+      ? stripAnsiEscapes(waiter.tail).split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1)?.slice(0, 200)
       : undefined
     return { error: `Processo terminou com código ${waiter.code}${lastLine ? `: ${lastLine}` : '.'}` }
   }
