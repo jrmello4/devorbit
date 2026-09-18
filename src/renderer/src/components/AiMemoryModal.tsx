@@ -183,48 +183,48 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
       isOpen={isOpen}
       titleId="ai-memory-dialog-title"
       onClose={handleClose}
-      className="w-full max-w-3xl bg-white border border-stone-200 rounded-[10px] shadow-[0_18px_42px_rgba(28,25,23,0.14)] overflow-hidden flex flex-col max-h-[calc(100dvh-48px)]"
+      className="w-full max-w-3xl bg-[var(--color-bg-panel)] border border-[var(--color-border-subtle)] rounded-[10px] shadow-[0_18px_42px_rgba(28,25,23,0.14)] overflow-hidden flex flex-col max-h-[calc(100dvh-48px)]"
     >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-stone-200 bg-stone-50">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border-subtle)] bg-[var(--surface-muted)]">
           <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-[8px] bg-[#edf3e8] text-[#3e562f] border border-[#cbd8bf]">
+            <div className="p-2 rounded-[8px] bg-[var(--surface-selected)] text-[var(--color-accent-strong)] border border-[var(--color-border-subtle)]">
               <Brain aria-hidden="true" className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 id="ai-memory-dialog-title" className="text-base font-bold text-stone-900">
+                <h2 id="ai-memory-dialog-title" className="text-base font-bold text-[var(--text-primary)]">
                   Memória e handoff
                 </h2>
-                <span className="text-[11px] font-semibold px-2 py-0.5 rounded-[4px] bg-white text-stone-700 border border-stone-300">
+                <span className="text-[11px] font-semibold px-2 py-0.5 rounded-[4px] bg-[var(--color-bg-panel)] text-[var(--color-text-secondary)] border border-[var(--color-border-subtle)]">
                   {project.name}
                 </span>
                 {exists ? (
-                  <span className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-[4px] font-medium">
+                  <span className="text-[10px] text-[var(--color-success)] bg-[color-mix(in_srgb,var(--color-success)_14%,transparent)] border border-[var(--color-success)] px-2 py-0.5 rounded-[4px] font-medium">
                     Ativa
                   </span>
                 ) : (
-                  <span className="text-[10px] text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-[4px] font-medium">
+                  <span className="text-[10px] text-[var(--color-warning)] bg-[color-mix(in_srgb,var(--color-warning)_14%,transparent)] border border-[var(--color-warning)] px-2 py-0.5 rounded-[4px] font-medium">
                     Rascunho
                   </span>
                 )}
                 {stale === true && (
-                  <span className="text-[10px] text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-[4px] font-medium">
+                  <span className="text-[10px] text-[var(--color-warning)] bg-[color-mix(in_srgb,var(--color-warning)_14%,transparent)] border border-[var(--color-warning)] px-2 py-0.5 rounded-[4px] font-medium">
                     Desatualizada
                   </span>
                 )}
                 {stale === false && exists && (
-                  <span className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-[4px] font-medium">
+                  <span className="text-[10px] text-[var(--color-success)] bg-[color-mix(in_srgb,var(--color-success)_14%,transparent)] border border-[var(--color-success)] px-2 py-0.5 rounded-[4px] font-medium">
                     Atualizada
                   </span>
                 )}
                 {stale === 'unknown' && exists && (
-                  <span className="text-[10px] text-stone-600 bg-stone-100 border border-stone-300 px-2 py-0.5 rounded-[4px] font-medium">
+                  <span className="text-[10px] text-[var(--color-text-muted)] bg-[var(--surface-hover)] border border-[var(--color-border-subtle)] px-2 py-0.5 rounded-[4px] font-medium">
                     Status desconhecido
                   </span>
                 )}
               </div>
-              <p className="text-xs text-stone-600 mt-0.5">
+              <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
                 Memória contínua compartilhada entre Codex, Antigravity, Claude e ChatGPT
               </p>
             </div>
@@ -232,42 +232,42 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
           <button
             onClick={handleClose}
             aria-label="Fechar memória da IA"
-            className="min-w-8 min-h-8 inline-flex items-center justify-center rounded-lg text-stone-500 hover:text-stone-900 hover:bg-stone-100 transition-colors"
+            className="min-w-8 min-h-8 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-hover)] transition-colors"
           >
             <X aria-hidden="true" className="w-4 h-4" />
           </button>
         </div>
 
         {/* Toolbar */}
-        <div className="px-6 py-2.5 bg-[#f0f1ed] border-b border-stone-200 flex flex-wrap items-center justify-between gap-2">
+        <div className="px-6 py-2.5 bg-[var(--color-bg-toolbar)] border-b border-[var(--color-border-subtle)] flex flex-wrap items-center justify-between gap-2">
           {/* Quick Insert Badges */}
           <div className="flex items-center gap-1.5 overflow-x-auto text-[11px]">
-            <span className="text-stone-600 text-xs me-1">Inserir:</span>
+            <span className="text-[var(--color-text-muted)] text-xs me-1">Inserir:</span>
             <button
               type="button"
               onClick={() => insertSnippet('Objetivo atual', 'O que estamos implementando')}
-              className="px-2 py-0.5 rounded-[4px] bg-white hover:bg-[#eceee7] text-stone-700 border border-stone-300 transition-colors cursor-pointer"
+              className="px-2 py-0.5 rounded-[4px] bg-[var(--color-bg-panel)] hover:bg-[var(--surface-hover)] text-[var(--color-text-secondary)] border border-[var(--color-border-subtle)] transition-colors cursor-pointer"
             >
               + Objetivo
             </button>
             <button
               type="button"
               onClick={() => insertSnippet('Onde paramos', 'Ponto exato da última alteração')}
-              className="px-2 py-0.5 rounded-[4px] bg-white hover:bg-[#eceee7] text-stone-700 border border-stone-300 transition-colors cursor-pointer"
+              className="px-2 py-0.5 rounded-[4px] bg-[var(--color-bg-panel)] hover:bg-[var(--surface-hover)] text-[var(--color-text-secondary)] border border-[var(--color-border-subtle)] transition-colors cursor-pointer"
             >
               + Onde Paramos
             </button>
             <button
               type="button"
               onClick={() => insertSnippet('O que falhou', 'Soluções descartadas para a IA não repetir')}
-              className="px-2 py-0.5 rounded-[4px] bg-white hover:bg-[#eceee7] text-stone-700 border border-stone-300 transition-colors cursor-pointer"
+              className="px-2 py-0.5 rounded-[4px] bg-[var(--color-bg-panel)] hover:bg-[var(--surface-hover)] text-[var(--color-text-secondary)] border border-[var(--color-border-subtle)] transition-colors cursor-pointer"
             >
               + O que Falhou
             </button>
             <button
               type="button"
               onClick={() => insertSnippet('Próximos passos', '[ ] Passo 1')}
-              className="px-2 py-0.5 rounded-[4px] bg-white hover:bg-[#eceee7] text-stone-700 border border-stone-300 transition-colors cursor-pointer"
+              className="px-2 py-0.5 rounded-[4px] bg-[var(--color-bg-panel)] hover:bg-[var(--surface-hover)] text-[var(--color-text-secondary)] border border-[var(--color-border-subtle)] transition-colors cursor-pointer"
             >
               + Próximos Passos
             </button>
@@ -279,7 +279,7 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
               type="button"
               onClick={() => void handleReload()}
               disabled={isLoading || isSaving || isGenerating}
-              className="flex items-center gap-1.5 rounded-[6px] border border-stone-300 bg-white px-3 py-1 text-xs font-semibold text-stone-700 transition-colors hover:bg-[#eceee7] disabled:cursor-wait disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-[6px] border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-3 py-1 text-xs font-semibold text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--surface-hover)] disabled:cursor-wait disabled:opacity-50"
               title="Reler a memória e recalcular se ela está desatualizada em relação ao Git"
             >
               <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? 'motion-safe:animate-spin' : ''}`} aria-hidden="true" />
@@ -290,7 +290,7 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
               type="button"
               onClick={handleGenerateFromGit}
               disabled={isGenerating}
-              className="flex items-center gap-1.5 px-3 py-1 rounded-[6px] text-xs font-semibold bg-[#edf3e8] text-[#3e562f] border border-[#bdcfb0] hover:bg-[#e3ecdc] transition-colors cursor-pointer disabled:opacity-50"
+              className="flex items-center gap-1.5 px-3 py-1 rounded-[6px] text-xs font-semibold bg-[var(--surface-selected)] text-[var(--color-accent-strong)] border border-[var(--color-border-subtle)] hover:bg-[var(--surface-hover)] transition-colors cursor-pointer disabled:opacity-50"
               title="Analisa branches, commits recentes e arquivos alterados para rascunhar o handoff. Preserva anotações existentes."
               aria-label="Puxar handoff do Git (preserva anotações existentes)"
             >
@@ -301,13 +301,13 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
             <button
               type="button"
               onClick={handleCopyHandoff}
-              className="flex items-center gap-1.5 px-3 py-1 rounded-[6px] text-xs font-semibold bg-white hover:bg-[#eceee7] text-stone-700 border border-stone-300 transition-colors cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-1 rounded-[6px] text-xs font-semibold bg-[var(--color-bg-panel)] hover:bg-[var(--surface-hover)] text-[var(--color-text-secondary)] border border-[var(--color-border-subtle)] transition-colors cursor-pointer"
               title="Copiar texto formatado para colar em qualquer chat de IA"
             >
               {copied ? (
                 <>
-                  <Check className="w-3.5 h-3.5 text-emerald-700" />
-                  <span className="text-emerald-700">Copiado</span>
+                  <Check className="w-3.5 h-3.5 text-[var(--color-success)]" />
+                  <span className="text-[var(--color-success)]">Copiado</span>
                 </>
               ) : (
                 <>
@@ -322,8 +322,8 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
         {/* Editor Area */}
         <div className="p-6 flex-1 overflow-y-auto flex flex-col min-h-[300px]">
           {isLoading ? (
-            <div className="flex-1 flex flex-col items-center justify-center text-stone-600">
-              <RefreshCw aria-hidden="true" className="w-6 h-6 motion-safe:animate-spin mb-2 text-[#3e562f]" />
+            <div className="flex-1 flex flex-col items-center justify-center text-[var(--color-text-muted)]">
+              <RefreshCw aria-hidden="true" className="w-6 h-6 motion-safe:animate-spin mb-2 text-[var(--color-accent-strong)]" />
               <span className="text-xs">Carregando memória do projeto...</span>
             </div>
           ) : (
@@ -335,15 +335,15 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
               value={content}
               onChange={(e) => { setContent(e.target.value); setIsDirty(true) }}
               placeholder="Descreva o contexto do projeto, o objetivo atual e onde paramos para que qualquer IA continue de onde você parou..."
-              className="w-full flex-1 min-h-[340px] bg-white border border-stone-300 rounded-[8px] p-4 font-mono text-xs text-stone-800 placeholder:text-stone-500 focus:border-[#3e562f] focus:ring-1 focus:ring-[#3e562f]/30 resize-none leading-relaxed transition-[border-color,box-shadow]"
+              className="w-full flex-1 min-h-[340px] bg-[var(--color-bg-panel)] border border-[var(--color-border-subtle)] rounded-[8px] p-4 font-mono text-xs text-[var(--text-primary)] placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-accent)] focus:ring-1 focus:ring-[var(--color-focus-ring)]/30 resize-none leading-relaxed transition-[border-color,box-shadow]"
             />
             </>
           )}
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between px-6 py-3.5 border-t border-stone-200 bg-stone-50 text-xs">
-          <div className="flex items-center gap-2 text-stone-600">
+        <div className="flex items-center justify-between px-6 py-3.5 border-t border-[var(--color-border-subtle)] bg-[var(--surface-muted)] text-xs">
+          <div className="flex items-center gap-2 text-[var(--color-text-muted)]">
             <Clock aria-hidden="true" className="w-3.5 h-3.5" />
             <span>
               {lastUpdated
@@ -351,12 +351,12 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
                 : 'Ainda não salvo em disco'}
             </span>
             {sourceCommit && (
-              <span className="text-stone-600" title={sourceCommit}>
+              <span className="text-[var(--color-text-muted)]" title={sourceCommit}>
                 • Git {sourceCommit.slice(0, 7)}
               </span>
             )}
             {generatedAt && (
-              <span className="hidden lg:inline text-stone-600">
+              <span className="hidden lg:inline text-[var(--color-text-muted)]">
                 • Snapshot {new Date(generatedAt).toLocaleString('pt-BR')}
               </span>
             )}
@@ -365,7 +365,7 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
           <div className="flex items-center gap-2.5">
             <button
               onClick={handleClose}
-              className="px-4 py-1.5 rounded-[6px] text-xs font-semibold text-stone-600 hover:text-stone-900 hover:bg-stone-100 transition-colors cursor-pointer"
+              className="px-4 py-1.5 rounded-[6px] text-xs font-semibold text-[var(--color-text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-hover)] transition-colors cursor-pointer"
             >
               Cancelar
             </button>
@@ -373,7 +373,7 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
             <button
               onClick={handleSave}
               disabled={isSaving}
-              className="flex items-center gap-1.5 px-4 py-1.5 rounded-[6px] text-xs font-semibold bg-[#3e562f] hover:bg-[#304426] text-white transition-[background-color,color] cursor-pointer disabled:opacity-50"
+              className="flex items-center gap-1.5 px-4 py-1.5 rounded-[6px] text-xs font-semibold bg-[var(--color-accent-strong)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-contrast)] transition-[background-color,color] cursor-pointer disabled:opacity-50"
             >
               <Save className="w-3.5 h-3.5" />
               <span>{isSaving ? 'Salvando...' : 'Salvar Memória'}</span>

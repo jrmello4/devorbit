@@ -1,43 +1,43 @@
 :root {
-  --evolution-surface: var(--color-bg-panel, #ffffff);
-  --evolution-surface-raised: var(--color-bg-popover, #ffffff);
-  --evolution-surface-muted: var(--surface-muted, #f0f1ec);
-  --evolution-border: var(--color-border-subtle, #d9dcd5);
-  --evolution-text: var(--text-primary, #242923);
-  --evolution-muted: var(--color-text-muted, #62695f);
-  --evolution-accent: var(--color-accent, #49643b);
-  --evolution-accent-strong: var(--color-accent-strong, #3e562f);
-  --evolution-accent-contrast: var(--color-accent-contrast, #ffffff);
-  --evolution-focus: var(--color-focus-ring, #49643b);
-  --evolution-danger: var(--color-danger, #993c32);
-  --evolution-warning: var(--color-warning, #8a5d16);
-  --evolution-success: var(--color-success, #3e6a45);
-  --evolution-add-bg: #e7f2e3;
-  --evolution-add-text: #2f5d38;
-  --evolution-del-bg: #f5e5e1;
-  --evolution-del-text: #8d3e35;
-  --evolution-hunk-bg: #e8ede4;
+  --evolution-surface: var(--color-bg-panel);
+  --evolution-surface-raised: var(--color-bg-popover);
+  --evolution-surface-muted: var(--surface-muted);
+  --evolution-border: var(--color-border-subtle);
+  --evolution-text: var(--text-primary);
+  --evolution-muted: var(--color-text-muted);
+  --evolution-accent: var(--color-accent);
+  --evolution-accent-strong: var(--color-accent-strong);
+  --evolution-accent-contrast: var(--color-accent-contrast);
+  --evolution-focus: var(--color-focus-ring);
+  --evolution-danger: var(--color-danger);
+  --evolution-warning: var(--color-warning);
+  --evolution-success: var(--color-success);
+  --evolution-add-bg: color-mix(in srgb, var(--color-success) 14%, transparent);
+  --evolution-add-text: var(--color-success);
+  --evolution-del-bg: color-mix(in srgb, var(--color-danger) 12%, transparent);
+  --evolution-del-text: var(--color-danger);
+  --evolution-hunk-bg: var(--surface-muted);
 }
 
 :root[data-theme='dark'] {
-  --evolution-surface: var(--color-bg-panel, #202620);
-  --evolution-surface-raised: var(--color-bg-popover, #252c25);
-  --evolution-surface-muted: var(--surface-muted, #273027);
-  --evolution-border: var(--color-border-subtle, #3b473a);
-  --evolution-text: var(--text-primary, #edf1e8);
-  --evolution-muted: var(--color-text-muted, #aeb8a7);
-  --evolution-accent: var(--color-accent, #9dbd83);
-  --evolution-accent-strong: var(--color-accent-strong, #9dbd83);
-  --evolution-accent-contrast: var(--color-accent-contrast, #172017);
-  --evolution-focus: var(--color-focus-ring, #b9d89d);
-  --evolution-danger: var(--color-danger, #e08b80);
-  --evolution-warning: var(--color-warning, #d3ae6d);
-  --evolution-success: var(--color-success, #9cc28d);
-  --evolution-add-bg: #243827;
-  --evolution-add-text: #b8d8a9;
-  --evolution-del-bg: #432c2a;
-  --evolution-del-text: #f0aaa0;
-  --evolution-hunk-bg: #2f3a2e;
+  --evolution-surface: var(--color-bg-panel);
+  --evolution-surface-raised: var(--color-bg-popover);
+  --evolution-surface-muted: var(--surface-muted);
+  --evolution-border: var(--color-border-subtle);
+  --evolution-text: var(--text-primary);
+  --evolution-muted: var(--color-text-muted);
+  --evolution-accent: var(--color-accent);
+  --evolution-accent-strong: var(--color-accent-strong);
+  --evolution-accent-contrast: var(--color-accent-contrast);
+  --evolution-focus: var(--color-focus-ring);
+  --evolution-danger: var(--color-danger);
+  --evolution-warning: var(--color-warning);
+  --evolution-success: var(--color-success);
+  --evolution-add-bg: color-mix(in srgb, var(--color-success) 14%, transparent);
+  --evolution-add-text: var(--color-success);
+  --evolution-del-bg: color-mix(in srgb, var(--color-danger) 12%, transparent);
+  --evolution-del-text: var(--color-danger);
+  --evolution-hunk-bg: var(--surface-muted);
 }
 
 .evolution-visually-hidden {
@@ -66,7 +66,7 @@
   min-width: 0;
   min-height: 100%;
   padding: 24px;
-  background: var(--color-bg-page, #f5f5f2);
+  background: var(--color-bg-page);
 }
 
 .evolution-dashboard__header,
@@ -500,7 +500,7 @@
 
 .evolution-button:hover {
   border-color: var(--evolution-accent);
-  background: var(--surface-hover, #eceee7);
+  background: var(--surface-hover);
 }
 
 .evolution-button:disabled,
@@ -542,7 +542,7 @@
 .evolution-button[aria-pressed='true'] {
   border-color: var(--evolution-accent);
   color: var(--evolution-accent-strong);
-  background: var(--surface-selected, #e7ecdf);
+  background: var(--surface-selected);
 }
 
 .evolution-button svg {

@@ -1,11 +1,11 @@
 .detail-workspace {
-  --detail-page: var(--color-bg-page, #f5f5f2);
+  --detail-page: var(--color-bg-page, #f4f5f7);
   --detail-panel: var(--color-bg-panel, #ffffff);
-  --detail-border: var(--color-border-subtle, #d9dcd5);
-  --detail-muted: var(--color-text-muted, #62695f);
-  --detail-accent: var(--color-accent, #49643b);
-  --detail-accent-strong: var(--color-accent-strong, #3e562f);
-  --detail-text: #242923;
+  --detail-border: var(--color-border-subtle, #d8dbe1);
+  --detail-muted: var(--color-text-muted, #646b78);
+  --detail-accent: var(--color-accent, #5b6b86);
+  --detail-accent-strong: var(--color-accent-strong, #46536b);
+  --detail-text: var(--text-primary, #20242b);
   --detail-accent-soft: color-mix(in srgb, var(--detail-accent) 10%, var(--detail-panel));
   --detail-accent-border: color-mix(in srgb, var(--detail-accent) 38%, var(--detail-border));
 
@@ -422,7 +422,7 @@
   border: 1px solid var(--detail-accent-strong);
   border-radius: 8px;
   background: var(--detail-accent-strong);
-  color: #ffffff;
+  color: var(--color-accent-contrast);
   padding: 9px 16px;
   font-size: 0.78rem;
   font-weight: 750;
@@ -569,13 +569,13 @@
 .work-primary-action-accent {
   border-color: var(--detail-accent-strong);
   background: var(--detail-accent-strong);
-  color: #ffffff;
+  color: var(--color-accent-contrast);
 }
 
 .work-primary-action-accent:hover:not(:disabled) {
   border-color: var(--detail-accent-strong);
   background: var(--detail-accent);
-  color: #ffffff;
+  color: var(--color-accent-contrast);
 }
 
 .work-primary-action > svg:first-child {

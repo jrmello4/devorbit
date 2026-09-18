@@ -139,19 +139,19 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
       isOpen={isOpen}
       titleId="codex-auth-dialog-title"
       onClose={handleCancel}
-      className="w-full max-w-lg max-h-[calc(100dvh-48px)] bg-white border border-stone-200 rounded-[10px] shadow-[0_18px_42px_rgba(28,25,23,0.14)] overflow-hidden flex flex-col motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95 motion-safe:duration-200"
+      className="w-full max-w-lg max-h-[calc(100dvh-48px)] bg-[var(--color-bg-panel)] border border-[var(--color-border-subtle)] rounded-[10px] shadow-[0_18px_42px_rgba(28,25,23,0.14)] overflow-hidden flex flex-col motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95 motion-safe:duration-200"
     >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-stone-200 bg-stone-50">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border-subtle)] bg-[var(--surface-muted)]">
           <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-[8px] bg-[#edf3e8] text-[#3e562f] border border-[#cbd8bf]">
+            <div className="p-2 rounded-[8px] bg-[var(--surface-selected)] text-[var(--color-accent-strong)] border border-[var(--color-border-subtle)]">
               <Bot className="w-5 h-5" />
             </div>
             <div>
-              <h2 id="codex-auth-dialog-title" className="text-base font-bold text-stone-900">
+              <h2 id="codex-auth-dialog-title" className="text-base font-bold text-[var(--text-primary)]">
                 Conectar OpenAI Codex
               </h2>
-              <p className="text-xs text-stone-600">
+              <p className="text-xs text-[var(--color-text-secondary)]">
                 {accountLabel} • Sessão isolada permanente
               </p>
             </div>
@@ -159,38 +159,38 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
           <button
             onClick={handleCancel}
             aria-label="Cancelar conexão do Codex"
-            className="p-1.5 rounded-lg text-stone-500 hover:text-stone-900 hover:bg-stone-100 transition-colors"
+            className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-hover)] transition-colors"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Body */}
-        <div className="p-6 space-y-5 overflow-y-auto min-h-0 text-sm text-stone-900">
+        <div className="p-6 space-y-5 overflow-y-auto min-h-0 text-sm text-[var(--text-primary)]">
           {/* Status: Success */}
           {status === 'success' ? (
             <div className="py-8 flex flex-col items-center justify-center text-center space-y-3">
-              <div className="w-16 h-16 rounded-full bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-700">
+              <div className="w-16 h-16 rounded-full bg-[color-mix(in_srgb,var(--color-success)_12%,transparent)] border border-[color-mix(in_srgb,var(--color-success)_35%,transparent)] flex items-center justify-center text-[var(--color-success)]">
                 <CheckCircle2 className="w-8 h-8" />
               </div>
-              <h3 className="text-lg font-bold text-stone-900">
+              <h3 className="text-lg font-bold text-[var(--text-primary)]">
                 {accountLabel} Conectada com Sucesso!
               </h3>
-              <p className="text-xs text-stone-600 max-w-xs">
+              <p className="text-xs text-[var(--color-text-secondary)] max-w-xs">
                 As credenciais foram salvas e isoladas. Agora você pode abrir o Codex no terminal em qualquer projeto com 1 clique, sem deslogar da outra conta!
               </p>
             </div>
           ) : status === 'error' ? (
             /* Status: Error */
             <div className="py-6 flex flex-col items-center justify-center text-center space-y-3">
-              <div className="w-12 h-12 rounded-full bg-red-50 border border-red-200 flex items-center justify-center text-red-700">
+              <div className="w-12 h-12 rounded-full bg-[color-mix(in_srgb,var(--color-danger)_12%,transparent)] border border-[color-mix(in_srgb,var(--color-danger)_35%,transparent)] flex items-center justify-center text-[var(--color-danger)]">
                 <AlertCircle className="w-6 h-6" />
               </div>
-              <h3 className="text-base font-bold text-stone-900">Falha na Autenticação</h3>
-              <p className="text-xs text-red-700 max-w-sm">{message}</p>
+              <h3 className="text-base font-bold text-[var(--text-primary)]">Falha na Autenticação</h3>
+              <p className="text-xs text-[var(--color-danger)] max-w-sm">{message}</p>
               <button
                 onClick={handleStartLogin}
-                className="mt-2 flex items-center gap-2 px-4 py-2 rounded-[8px] bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-semibold border border-stone-300 transition-[background-color,color] cursor-pointer"
+                className="mt-2 flex items-center gap-2 px-4 py-2 rounded-[8px] bg-[var(--surface-muted)] hover:bg-[var(--surface-hover)] text-[var(--color-text-secondary)] text-xs font-semibold border border-[var(--color-border-subtle)] transition-[background-color,color] cursor-pointer"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
                 Tentar Novamente
@@ -201,29 +201,29 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
             <>
               {/* Box de Instruções */}
               <div className="space-y-3">
-                <div className="flex items-start gap-3 p-3.5 rounded-[8px] bg-stone-50 border border-stone-200">
-                  <div className="w-6 h-6 rounded-full bg-[#edf3e8] text-[#3e562f] font-bold text-xs flex items-center justify-center shrink-0 mt-0.5 border border-[#cbd8bf]">
+                <div className="flex items-start gap-3 p-3.5 rounded-[8px] bg-[var(--surface-muted)] border border-[var(--color-border-subtle)]">
+                  <div className="w-6 h-6 rounded-full bg-[var(--surface-selected)] text-[var(--color-accent-strong)] font-bold text-xs flex items-center justify-center shrink-0 mt-0.5 border border-[var(--color-border-subtle)]">
                     <Globe className="w-3.5 h-3.5" />
                   </div>
-                  <div className="text-xs text-stone-700 space-y-1">
-                    <p className="font-semibold text-stone-900">
+                  <div className="text-xs text-[var(--color-text-secondary)] space-y-1">
+                    <p className="font-semibold text-[var(--text-primary)]">
                       Abrindo autorização no {browserName}
                     </p>
-                    <p className="text-stone-600">
+                    <p className="text-[var(--color-text-secondary)]">
                       Disparamos a página oficial de login da OpenAI no seu navegador <strong>{browserName}</strong>, onde a conta selecionada está ativa.
                     </p>
                   </div>
                 </div>
 
-                <div className="flex items-start gap-3 p-3.5 rounded-[8px] bg-stone-50 border border-stone-200">
-                  <div className="w-6 h-6 rounded-full bg-[#edf3e8] text-[#3e562f] font-bold text-xs flex items-center justify-center shrink-0 mt-0.5 border border-[#cbd8bf]">
+                <div className="flex items-start gap-3 p-3.5 rounded-[8px] bg-[var(--surface-muted)] border border-[var(--color-border-subtle)]">
+                  <div className="w-6 h-6 rounded-full bg-[var(--surface-selected)] text-[var(--color-accent-strong)] font-bold text-xs flex items-center justify-center shrink-0 mt-0.5 border border-[var(--color-border-subtle)]">
                     <ShieldCheck className="w-3.5 h-3.5" />
                   </div>
-                  <div className="text-xs text-stone-700 space-y-1">
-                    <p className="font-semibold text-stone-900">
+                  <div className="text-xs text-[var(--color-text-secondary)] space-y-1">
+                    <p className="font-semibold text-[var(--text-primary)]">
                       Clique em &quot;Continuar&quot; no navegador
                     </p>
-                    <p className="text-stone-600">
+                    <p className="text-[var(--color-text-secondary)]">
                       Na aba do {browserName}, basta autorizar o Codex clicando no botão <strong>Continuar</strong>. O DevOrbit detectará a resposta automaticamente!
                     </p>
                   </div>
@@ -231,8 +231,8 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
               </div>
 
               {/* Botões de Apoio */}
-              <div className="p-4 rounded-[10px] bg-[#f4f7f1] border border-[#cbd8bf] text-center space-y-3">
-                <span className="text-[11px] uppercase tracking-wider font-semibold text-[#3e562f] block">
+              <div className="p-4 rounded-[10px] bg-[var(--surface-selected)] border border-[var(--color-border-subtle)] text-center space-y-3">
+                <span className="text-[11px] uppercase tracking-wider font-semibold text-[var(--color-accent-strong)] block">
                   Link de Autorização Direto
                 </span>
 
@@ -240,12 +240,12 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
                   <button
                     onClick={handleCopyUrl}
                     disabled={!authUrl}
-                    className="flex items-center gap-2 px-3.5 py-2 rounded-[8px] bg-white hover:bg-stone-100 text-stone-700 border border-stone-300 text-xs font-medium transition-[background-color,color,border-color,opacity] cursor-pointer disabled:opacity-50"
+                    className="flex items-center gap-2 px-3.5 py-2 rounded-[8px] bg-[var(--color-bg-panel)] hover:bg-[var(--surface-hover)] text-[var(--color-text-secondary)] border border-[var(--color-border-subtle)] text-xs font-medium transition-[background-color,color,border-color,opacity] cursor-pointer disabled:opacity-50"
                   >
                     {copied ? (
                       <>
-                        <Check className="w-3.5 h-3.5 text-emerald-700" />
-                        <span className="text-emerald-700 font-semibold">Link Copiado!</span>
+                        <Check className="w-3.5 h-3.5 text-[var(--color-success)]" />
+                        <span className="text-[var(--color-success)] font-semibold">Link Copiado!</span>
                       </>
                     ) : (
                       <>
@@ -258,7 +258,7 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
                   <button
                     onClick={handleOpenBrowserAgain}
                     disabled={!authUrl}
-                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-[8px] bg-[#edf3e8] hover:bg-[#e3ecdc] text-[#3e562f] border border-[#bdcfb0] text-xs font-semibold transition-[background-color,border-color,color] cursor-pointer disabled:opacity-50"
+                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-[8px] bg-[var(--surface-selected)] hover:bg-[var(--surface-hover)] text-[var(--color-accent-strong)] border border-[var(--color-border-subtle)] text-xs font-semibold transition-[background-color,border-color,color] cursor-pointer disabled:opacity-50"
                   >
                     <span>Reabrir {browserName}</span>
                     <ExternalLink className="w-3 h-3" />
@@ -266,19 +266,19 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
                 </div>
 
                 {browserReopenError && (
-                  <p className="text-xs text-red-700" role="alert">
+                  <p className="text-xs text-[var(--color-danger)]" role="alert">
                     {browserReopenError}
                   </p>
                 )}
 
-                <p className="text-[11px] text-stone-600">
+                <p className="text-[11px] text-[var(--color-text-secondary)]">
                   💡 Caso o Google Chrome também tenha aberto por ser o navegador padrão, você pode fechá-lo e confirmar na janela do <strong>{browserName}</strong>.
                 </p>
               </div>
 
               {/* Loading Status */}
-              <div className="flex items-center justify-center gap-2.5 text-xs text-stone-600 py-1">
-                <Loader2 className="w-4 h-4 motion-safe:animate-spin text-[#3e562f]" />
+              <div className="flex items-center justify-center gap-2.5 text-xs text-[var(--color-text-secondary)] py-1">
+                <Loader2 className="w-4 h-4 motion-safe:animate-spin text-[var(--color-accent-strong)]" />
                 <span>Aguardando você clicar em Continuar na aba do {browserName}...</span>
               </div>
             </>
@@ -286,10 +286,10 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end px-6 py-3.5 border-t border-stone-200 bg-stone-50 gap-2">
+        <div className="flex items-center justify-end px-6 py-3.5 border-t border-[var(--color-border-subtle)] bg-[var(--surface-muted)] gap-2">
           <button
             onClick={handleCancel}
-            className="px-4 py-2 rounded-[8px] text-xs font-semibold text-stone-600 hover:text-stone-900 hover:bg-stone-100 transition-colors cursor-pointer"
+            className="px-4 py-2 rounded-[8px] text-xs font-semibold text-[var(--color-text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-hover)] transition-colors cursor-pointer"
           >
             {status === 'success' ? 'Fechar' : 'Cancelar'}
           </button>

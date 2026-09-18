@@ -190,7 +190,7 @@ function createWindow() {
     minHeight: 600,
     frame: false, // Frameless para controle visual total estilo Linear/Raycast
     show: true,
-    backgroundColor: '#f5f5f2',
+    backgroundColor: '#f4f5f7',
     title: 'DevOrbit',
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.cjs'),

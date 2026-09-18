@@ -435,7 +435,7 @@ export const GitDock: React.FC<GitDockProps> = ({
         flexShrink: 0,
       }}
     >
-      <div className="flex items-center justify-between border-b border-stone-200 bg-stone-50 px-3 py-2">
+      <div className="flex items-center justify-between border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-toolbar)] px-3 py-2">
         <div className="flex min-w-0 items-center gap-2">
           <button
             type="button"
@@ -443,12 +443,12 @@ export const GitDock: React.FC<GitDockProps> = ({
             aria-label={collapsed ? 'Expandir painel Git' : 'Recolher painel Git'}
             aria-expanded={!collapsed}
             title={collapsed ? 'Expandir painel Git' : 'Recolher painel Git'}
-            className="inline-flex min-h-8 min-w-8 items-center justify-center rounded-lg text-stone-600 hover:bg-stone-100 hover:text-stone-900"
+            className="inline-flex min-h-8 min-w-8 items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
           >
             {collapsed ? <PanelRightOpen size={15} aria-hidden="true" /> : <PanelRightClose size={15} aria-hidden="true" />}
           </button>
           {!collapsed && (
-            <strong className="truncate text-xs font-bold text-stone-900">
+            <strong className="truncate text-xs font-bold text-[var(--text-primary)]">
               Git{project ? ` · ${project.name}` : ''}
             </strong>
           )}
@@ -459,7 +459,7 @@ export const GitDock: React.FC<GitDockProps> = ({
             onClick={onClose}
             aria-label="Fechar painel Git"
             title="Fechar painel Git (o trabalho continua visível)"
-            className="inline-flex min-h-8 min-w-8 items-center justify-center rounded-lg text-stone-500 hover:bg-stone-100 hover:text-stone-900"
+            className="inline-flex min-h-8 min-w-8 items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
           >
             <X size={14} aria-hidden="true" />
           </button>
@@ -468,7 +468,7 @@ export const GitDock: React.FC<GitDockProps> = ({
 
       {!collapsed && (
         <>
-          <div role="tablist" aria-label="Operações Git" className="flex gap-1 border-b border-stone-200 bg-white px-3 py-2">
+          <div role="tablist" aria-label="Operações Git" className="flex gap-1 border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-3 py-2">
             {tabs.map((tab) => (
               <button
                 key={tab.id}
@@ -476,29 +476,29 @@ export const GitDock: React.FC<GitDockProps> = ({
                 role="tab"
                 aria-selected={activeTab === tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors ${activeTab === tab.id ? 'bg-[#3e562f] text-white' : 'text-stone-600 hover:bg-stone-100 hover:text-stone-900'}`}
+                className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors ${activeTab === tab.id ? 'bg-[var(--color-accent-strong)] text-[var(--color-accent-contrast)]' : 'text-[var(--color-text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]'}`}
               >
                 {tab.label}
               </button>
             ))}
           </div>
 
-          <div className="max-h-[calc(100vh-220px)] min-h-0 flex-1 overflow-y-auto p-4 text-sm text-stone-900">
+          <div className="max-h-[calc(100vh-220px)] min-h-0 flex-1 overflow-y-auto p-4 text-sm text-[var(--text-primary)]">
             {activeTab === 'push' && (
               <div className="space-y-4" role="tabpanel" aria-label="Enviar alterações">
                 {!project ? (
-                  <p className="text-xs text-stone-600">Selecione um projeto para enviar alterações. O painel permanece aberto sem bloquear o editor.</p>
+                  <p className="text-xs text-[var(--color-text-muted)]">Selecione um projeto para enviar alterações. O painel permanece aberto sem bloquear o editor.</p>
                 ) : (
                   <>
                     <div className="flex flex-wrap gap-2">
                       {project.git.ahead > 0 && (
-                        <span className="flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+                        <span className="flex items-center gap-1.5 rounded-lg border border-[var(--color-success)] bg-[var(--surface-selected)] px-2.5 py-1 text-xs font-semibold text-[var(--color-success)]">
                           <ArrowUpCircle size={14} aria-hidden="true" />
                           {project.git.ahead} commit(s) pronto(s) para push
                         </span>
                       )}
                       {project.git.hasChanges && (
-                        <span className="flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800">
+                        <span className="flex items-center gap-1.5 rounded-lg border border-[var(--color-warning)] bg-[var(--surface-selected)] px-2.5 py-1 text-xs font-semibold text-[var(--color-warning)]">
                           <AlertTriangle size={14} aria-hidden="true" />
                           {project.git.modifiedCount + project.git.untrackedCount} arquivo(s) com alterações
                         </span>
@@ -506,32 +506,32 @@ export const GitDock: React.FC<GitDockProps> = ({
                     </div>
                     {project.git.hasChanges && (
                       <div>
-                        <label htmlFor="gitdock-commit" className="mb-1.5 block text-xs font-semibold text-stone-800">Mensagem do commit</label>
+                        <label htmlFor="gitdock-commit" className="mb-1.5 block text-xs font-semibold text-[var(--text-primary)]">Mensagem do commit</label>
                         <input
                           id="gitdock-commit"
                           value={commitMessage}
                           onChange={(event) => setCommitMessage(event.target.value)}
                           placeholder="Ex: feat: adiciona nova funcionalidade"
                           disabled={isPushing}
-                          className="w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm"
+                          className="w-full rounded-lg border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-3 py-2 text-sm"
                         />
                       </div>
                     )}
                     {project.git.hasChanges && (
                       <div>
-                        <span className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-stone-700">
+                        <span className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-[var(--color-text-secondary)]">
                           <FileCode size={14} aria-hidden="true" /> Arquivos selecionados — clique para ver o diff
                         </span>
-                        <div className="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-stone-200 bg-stone-50 p-2 font-mono text-xs">
+                        <div className="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-[var(--color-border-subtle)] bg-[var(--surface-muted)] p-2 font-mono text-xs">
                           {isLoadingFiles ? (
-                            <p className="py-2 text-center text-stone-600">Listando alterações…</p>
+                            <p className="py-2 text-center text-[var(--color-text-muted)]">Listando alterações…</p>
                           ) : changedFiles.length === 0 ? (
-                            <p className="py-2 text-center text-stone-600">Nenhum arquivo listado.</p>
+                            <p className="py-2 text-center text-[var(--color-text-muted)]">Nenhum arquivo listado.</p>
                           ) : (
                             changedFiles.map((file) => {
                               const isSelected = selectedDiffPath === file.path
                               return (
-                                <div key={`${file.status}:${file.path}`} className={`flex items-center gap-2 truncate rounded px-1 py-0.5 ${isSelected ? 'bg-[#edf3e8]' : 'hover:bg-stone-100'}`}>
+                                <div key={`${file.status}:${file.path}`} className={`flex items-center gap-2 truncate rounded px-1 py-0.5 ${isSelected ? 'bg-[var(--surface-selected)]' : 'hover:bg-[var(--surface-hover)]'}`}>
                                   <input
                                     type="checkbox"
                                     checked={selectedPaths.includes(file.path)}
@@ -548,8 +548,8 @@ export const GitDock: React.FC<GitDockProps> = ({
                                     title={`Ver diff de ${file.path} contra HEAD`}
                                     className="flex min-w-0 flex-1 items-center gap-2 text-left"
                                   >
-                                    <span className="text-[10px] font-bold text-stone-500">{file.status.trim() || '  '}</span>
-                                    <span className="truncate text-stone-700" title={file.path}>{file.path}</span>
+                                    <span className="text-[10px] font-bold text-[var(--color-text-muted)]">{file.status.trim() || '  '}</span>
+                                    <span className="truncate text-[var(--color-text-secondary)]" title={file.path}>{file.path}</span>
                                   </button>
                                 </div>
                               )
@@ -559,33 +559,33 @@ export const GitDock: React.FC<GitDockProps> = ({
                       </div>
                     )}
                     {project.git.hasChanges && selectedDiffPath && (
-                      <div className="rounded-lg border border-stone-200 bg-white" aria-label={`Diff de ${selectedDiffPath}`} aria-live="polite">
-                        <div className="flex items-center justify-between gap-2 border-b border-stone-200 bg-stone-50 px-3 py-2">
-                          <span className="truncate font-mono text-[11px] text-stone-800" title={selectedDiffPath}>{selectedDiffPath}</span>
+                      <div className="rounded-lg border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)]" aria-label={`Diff de ${selectedDiffPath}`} aria-live="polite">
+                        <div className="flex items-center justify-between gap-2 border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-toolbar)] px-3 py-2">
+                          <span className="truncate font-mono text-[11px] text-[var(--text-primary)]" title={selectedDiffPath}>{selectedDiffPath}</span>
                           <button
                             type="button"
                             onClick={() => void loadFileDiff(selectedDiffPath)}
                             disabled={isLoadingDiff}
-                            className="inline-flex items-center gap-1 rounded-md border border-stone-300 bg-white px-2 py-1 text-[11px] font-semibold text-stone-700 hover:text-stone-900 disabled:opacity-60"
+                            className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-2 py-1 text-[11px] font-semibold text-[var(--color-text-secondary)] hover:text-[var(--text-primary)] disabled:opacity-60"
                           >
                             <RefreshCw size={12} className={isLoadingDiff ? 'animate-spin' : ''} aria-hidden="true" /> Recarregar diff
                           </button>
                         </div>
                         {isLoadingDiff ? (
-                          <p className="px-3 py-4 text-center text-xs text-stone-600">Lendo working tree contra HEAD…</p>
+                          <p className="px-3 py-4 text-center text-xs text-[var(--color-text-muted)]">Lendo working tree contra HEAD…</p>
                         ) : diffError ? (
-                          <p className="px-3 py-3 text-xs text-red-700" role="alert">{diffError}</p>
+                          <p className="px-3 py-3 text-xs text-[var(--color-danger)]" role="alert">{diffError}</p>
                         ) : fileDiff ? (
                           <div className="space-y-2 p-3">
-                            <p className="text-[11px] text-stone-600">{fileDiff.message}{fileDiff.truncated ? ' (truncado)' : ''}</p>
+                            <p className="text-[11px] text-[var(--color-text-muted)]">{fileDiff.message}{fileDiff.truncated ? ' (truncado)' : ''}</p>
                             {fileDiff.binary ? (
-                              <p className="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs text-amber-800">Arquivo binário: diff textual indisponível.</p>
+                              <p className="rounded-md border border-[var(--color-warning)] bg-[var(--surface-selected)] px-2.5 py-2 text-xs text-[var(--color-warning)]">Arquivo binário: diff textual indisponível.</p>
                             ) : (
                               <>
                                 <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
                                   <div className="min-w-0">
-                                    <p className="mb-1 text-[11px] font-semibold text-stone-700">HEAD{fileDiff.headExists ? '' : ' (ausente)'}</p>
-                                    <pre className="max-h-56 overflow-auto rounded-md border border-stone-200 bg-stone-50 p-2 font-mono text-[11px] leading-5 text-stone-800" aria-label="Conteúdo no HEAD">
+                                    <p className="mb-1 text-[11px] font-semibold text-[var(--color-text-secondary)]">HEAD{fileDiff.headExists ? '' : ' (ausente)'}</p>
+                                    <pre className="max-h-56 overflow-auto rounded-md border border-[var(--color-border-subtle)] bg-[var(--surface-muted)] p-2 font-mono text-[11px] leading-5 text-[var(--text-primary)]" aria-label="Conteúdo no HEAD">
                                       {(() => {
                                         const { lines, truncated } = splitPreviewLines(fileDiff.headContent || '(sem conteúdo no HEAD)')
                                         return <>{lines.join('\n')}{truncated ? '\n… (truncado)' : ''}</>
@@ -593,8 +593,8 @@ export const GitDock: React.FC<GitDockProps> = ({
                                     </pre>
                                   </div>
                                   <div className="min-w-0">
-                                    <p className="mb-1 text-[11px] font-semibold text-stone-700">Working tree{fileDiff.worktreeExists ? '' : ' (removido)'}</p>
-                                    <pre className="max-h-56 overflow-auto rounded-md border border-stone-200 bg-white p-2 font-mono text-[11px] leading-5 text-stone-800" aria-label="Conteúdo atual">
+                                    <p className="mb-1 text-[11px] font-semibold text-[var(--color-text-secondary)]">Working tree{fileDiff.worktreeExists ? '' : ' (removido)'}</p>
+                                    <pre className="max-h-56 overflow-auto rounded-md border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] p-2 font-mono text-[11px] leading-5 text-[var(--text-primary)]" aria-label="Conteúdo atual">
                                       {(() => {
                                         const { lines, truncated } = splitPreviewLines(fileDiff.worktreeContent || '(sem conteúdo atual)')
                                         return <>{lines.join('\n')}{truncated ? '\n… (truncado)' : ''}</>
@@ -620,7 +620,7 @@ export const GitDock: React.FC<GitDockProps> = ({
                             )}
                           </div>
                         ) : (
-                          <p className="px-3 py-3 text-xs text-stone-600">Selecione um arquivo para ver o conteúdo e o diff.</p>
+                          <p className="px-3 py-3 text-xs text-[var(--color-text-muted)]">Selecione um arquivo para ver o conteúdo e o diff.</p>
                         )}
                       </div>
                     )}
@@ -628,7 +628,7 @@ export const GitDock: React.FC<GitDockProps> = ({
                       type="button"
                       onClick={() => void handlePush()}
                       disabled={isPushing}
-                      className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-[#3e562f] px-4 py-2 text-xs font-semibold text-white hover:bg-[#334827] disabled:opacity-50"
+                      className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-[var(--color-accent-strong)] px-4 py-2 text-xs font-semibold text-[var(--color-accent-contrast)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
                     >
                       {isPushing ? <><Loader2 size={14} className="animate-spin" aria-hidden="true" /> Subindo…</> : <><UploadCloud size={14} aria-hidden="true" /> Subir para o GitHub (Push)</>}
                     </button>
@@ -640,25 +640,25 @@ export const GitDock: React.FC<GitDockProps> = ({
             {activeTab === 'branches' && (
               <div className="space-y-4" role="tabpanel" aria-label="Branches">
                 {!project ? (
-                  <p className="text-xs text-stone-600">Selecione um projeto para trocar de branch.</p>
+                  <p className="text-xs text-[var(--color-text-muted)]">Selecione um projeto para trocar de branch.</p>
                 ) : (
                   <>
                     <div className="flex items-center justify-between gap-2">
-                      <p className="text-xs text-stone-600">Atual: <span className="font-mono text-[#3e562f]">{project.git.branch || 'sem branch'}</span></p>
+                      <p className="text-xs text-[var(--color-text-muted)]">Atual: <span className="font-mono text-[var(--color-accent-strong)]">{project.git.branch || 'sem branch'}</span></p>
                       <button
                         type="button"
                         onClick={() => void loadBranches(true)}
                         disabled={isLoadingBranches || Boolean(switchingBranch)}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 bg-stone-100 px-2.5 py-1.5 text-xs font-semibold text-stone-700 hover:text-stone-900 disabled:opacity-60"
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-subtle)] bg-[var(--surface-muted)] px-2.5 py-1.5 text-xs font-semibold text-[var(--color-text-secondary)] hover:text-[var(--text-primary)] disabled:opacity-60"
                       >
                         <RefreshCw size={13} className={isLoadingBranches ? 'animate-spin' : ''} aria-hidden="true" /> Atualizar
                       </button>
                     </div>
-                    <div className="max-h-64 space-y-1.5 overflow-y-auto rounded-lg border border-stone-200 bg-stone-50 p-2">
+                    <div className="max-h-64 space-y-1.5 overflow-y-auto rounded-lg border border-[var(--color-border-subtle)] bg-[var(--surface-muted)] p-2">
                       {isLoadingBranches && branches.length === 0 ? (
-                        <p className="py-6 text-center text-xs text-stone-600">Lendo branches…</p>
+                        <p className="py-6 text-center text-xs text-[var(--color-text-muted)]">Lendo branches…</p>
                       ) : localBranches.length === 0 ? (
-                        <p className="py-6 text-center text-xs text-stone-600">Nenhuma branch local encontrada.</p>
+                        <p className="py-6 text-center text-xs text-[var(--color-text-muted)]">Nenhuma branch local encontrada.</p>
                       ) : (
                         localBranches.map((branch) => (
                           <button
@@ -666,13 +666,13 @@ export const GitDock: React.FC<GitDockProps> = ({
                             type="button"
                             onClick={() => void handleSwitch(branch)}
                             disabled={branch.isCurrent || Boolean(switchingBranch)}
-                            className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm hover:bg-[#edf3e8] disabled:opacity-70"
+                            className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm hover:bg-[var(--surface-hover)] disabled:opacity-70"
                           >
                             <span className="flex min-w-0 items-center gap-2">
-                              {branch.isCurrent ? <Check size={14} className="shrink-0 text-emerald-700" aria-hidden="true" /> : <GitBranch size={14} className="shrink-0 text-stone-500" aria-hidden="true" />}
-                              <span className="truncate font-mono text-xs text-stone-800">{branch.name}</span>
+                              {branch.isCurrent ? <Check size={14} className="shrink-0 text-[var(--color-success)]" aria-hidden="true" /> : <GitBranch size={14} className="shrink-0 text-[var(--color-text-muted)]" aria-hidden="true" />}
+                              <span className="truncate font-mono text-xs text-[var(--text-primary)]">{branch.name}</span>
                             </span>
-                            <span className="shrink-0 text-[10px] text-stone-600">
+                            <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">
                               {switchingBranch === branch.name ? 'Trocando…' : branch.isCurrent ? 'atual' : 'trocar'}
                             </span>
                           </button>
@@ -680,8 +680,8 @@ export const GitDock: React.FC<GitDockProps> = ({
                       )}
                     </div>
                     {dirtyBranch && onStashSwitch && (
-                      <div className="flex items-center justify-between gap-3 rounded-lg border border-[#cbd8bf] bg-[#f4f7f1] px-3 py-2.5">
-                        <p className="text-xs text-stone-700">Há alterações locais. Guardar em stash e trocar?</p>
+                      <div className="flex items-center justify-between gap-3 rounded-lg border border-[var(--color-border-subtle)] bg-[var(--surface-selected)] px-3 py-2.5">
+                        <p className="text-xs text-[var(--color-text-secondary)]">Há alterações locais. Guardar em stash e trocar?</p>
                         <button
                           type="button"
                           onClick={() => {
@@ -689,7 +689,7 @@ export const GitDock: React.FC<GitDockProps> = ({
                             if (target) void handleStashSwitch(target)
                           }}
                           disabled={Boolean(switchingBranch)}
-                          className="shrink-0 rounded-lg bg-[#3e562f] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#334827] disabled:opacity-60"
+                          className="shrink-0 rounded-lg bg-[var(--color-accent-strong)] px-3 py-1.5 text-xs font-semibold text-[var(--color-accent-contrast)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60"
                         >
                           Stash + trocar
                         </button>
@@ -697,18 +697,18 @@ export const GitDock: React.FC<GitDockProps> = ({
                     )}
                     {remoteBranches.length > 0 && (
                       <div>
-                        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-600">Remotas</p>
-                        <div className="max-h-32 space-y-1 overflow-y-auto rounded-lg border border-stone-200 bg-stone-50 p-2">
+                        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Remotas</p>
+                        <div className="max-h-32 space-y-1 overflow-y-auto rounded-lg border border-[var(--color-border-subtle)] bg-[var(--surface-muted)] p-2">
                           {remoteBranches.map((branch) => (
                             <button
                               key={`remote-${branch.name}`}
                               type="button"
                               onClick={() => void handleSwitch(branch)}
                               disabled={Boolean(switchingBranch)}
-                              className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-1.5 text-left hover:bg-[#edf3e8] disabled:opacity-60"
+                              className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-1.5 text-left hover:bg-[var(--surface-hover)] disabled:opacity-60"
                             >
-                              <span className="truncate font-mono text-xs text-[#3e562f]">{branch.name}</span>
-                              <span className="text-[10px] text-stone-600">{switchingBranch === branch.name ? 'Criando…' : 'usar'}</span>
+                              <span className="truncate font-mono text-xs text-[var(--color-accent-strong)]">{branch.name}</span>
+                              <span className="text-[10px] text-[var(--color-text-muted)]">{switchingBranch === branch.name ? 'Criando…' : 'usar'}</span>
                             </button>
                           ))}
                         </div>
@@ -722,46 +722,46 @@ export const GitDock: React.FC<GitDockProps> = ({
             {activeTab === 'init' && (
               <form onSubmit={(event) => void handleInit(event)} className="space-y-3" role="tabpanel" aria-label="Inicializar repositório">
                 {!project ? (
-                  <p className="text-xs text-stone-600">Selecione uma pasta sem Git para inicializar.</p>
+                  <p className="text-xs text-[var(--color-text-muted)]">Selecione uma pasta sem Git para inicializar.</p>
                 ) : (
                   <>
-                    <p className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-xs text-stone-600">
+                    <p className="rounded-lg border border-[var(--color-border-subtle)] bg-[var(--surface-muted)] px-3 py-2 text-xs text-[var(--color-text-muted)]">
                       {isLoadingPreview ? 'Analisando arquivos…' : initPreview?.message || 'Prévia indisponível.'}
                     </p>
                     {initPreview && !isLoadingPreview && initPreview.files.length > 0 && (
-                      <div className="max-h-28 overflow-y-auto rounded-lg border border-stone-200 bg-white p-2 font-mono text-[11px] text-stone-700">
+                      <div className="max-h-28 overflow-y-auto rounded-lg border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] p-2 font-mono text-[11px] text-[var(--color-text-secondary)]">
                         {initPreview.files.map((file) => <div key={file} className="truncate py-0.5" title={file}>{file}</div>)}
                       </div>
                     )}
                     <div className="grid grid-cols-1 gap-3">
                       <div>
-                        <label htmlFor="gitdock-init-branch" className="mb-1 block text-xs font-semibold text-stone-800">Branch inicial</label>
-                        <input id="gitdock-init-branch" value={initBranch} onChange={(event) => setInitBranch(event.target.value)} disabled={isInitializing} className="w-full rounded-lg border border-stone-300 px-3 py-2 text-sm" />
+                        <label htmlFor="gitdock-init-branch" className="mb-1 block text-xs font-semibold text-[var(--text-primary)]">Branch inicial</label>
+                        <input id="gitdock-init-branch" value={initBranch} onChange={(event) => setInitBranch(event.target.value)} disabled={isInitializing} className="w-full rounded-lg border border-[var(--color-border-subtle)] px-3 py-2 text-sm" />
                       </div>
                       <div>
-                        <label htmlFor="gitdock-init-remote" className="mb-1 block text-xs font-semibold text-stone-800">Remote HTTPS (opcional)</label>
-                        <input id="gitdock-init-remote" type="url" value={initRemote} onChange={(event) => setInitRemote(event.target.value)} placeholder="https://github.com/usuario/projeto.git" disabled={isInitializing} className="w-full rounded-lg border border-stone-300 px-3 py-2 text-sm" />
+                        <label htmlFor="gitdock-init-remote" className="mb-1 block text-xs font-semibold text-[var(--text-primary)]">Remote HTTPS (opcional)</label>
+                        <input id="gitdock-init-remote" type="url" value={initRemote} onChange={(event) => setInitRemote(event.target.value)} placeholder="https://github.com/usuario/projeto.git" disabled={isInitializing} className="w-full rounded-lg border border-[var(--color-border-subtle)] px-3 py-2 text-sm" />
                       </div>
                     </div>
-                    <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-stone-200 bg-stone-50 p-3">
-                      <input type="checkbox" checked={initCommit} onChange={(event) => setInitCommit(event.target.checked)} disabled={isInitializing || isLoadingPreview || Boolean(initPreview?.truncated)} className="mt-0.5 h-4 w-4 accent-[#3e562f]" />
-                      <span className="text-xs text-stone-700">Criar primeiro commit com <code>git add -A</code>.</span>
+                    <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-[var(--color-border-subtle)] bg-[var(--surface-muted)] p-3">
+                      <input type="checkbox" checked={initCommit} onChange={(event) => setInitCommit(event.target.checked)} disabled={isInitializing || isLoadingPreview || Boolean(initPreview?.truncated)} className="mt-0.5 h-4 w-4 accent-[var(--color-accent-strong)]" />
+                      <span className="text-xs text-[var(--color-text-secondary)]">Criar primeiro commit com <code>git add -A</code>.</span>
                     </label>
                     {initCommit && (
-                      <div className="space-y-2 rounded-lg border border-[#cbd8bf] bg-[#f4f7f1] p-3">
-                        <input value={initMessage} onChange={(event) => setInitMessage(event.target.value)} disabled={isInitializing} aria-label="Mensagem do commit" className="w-full rounded-lg border border-stone-300 px-3 py-2 text-sm" />
-                        <label className="flex cursor-pointer items-start gap-2 text-xs text-stone-700">
-                          <input type="checkbox" checked={initConfirm} onChange={(event) => setInitConfirm(event.target.checked)} disabled={isInitializing} className="mt-0.5 h-4 w-4 accent-[#3e562f]" />
+                      <div className="space-y-2 rounded-lg border border-[var(--color-border-subtle)] bg-[var(--surface-selected)] p-3">
+                        <input value={initMessage} onChange={(event) => setInitMessage(event.target.value)} disabled={isInitializing} aria-label="Mensagem do commit" className="w-full rounded-lg border border-[var(--color-border-subtle)] px-3 py-2 text-sm" />
+                        <label className="flex cursor-pointer items-start gap-2 text-xs text-[var(--color-text-secondary)]">
+                          <input type="checkbox" checked={initConfirm} onChange={(event) => setInitConfirm(event.target.checked)} disabled={isInitializing} className="mt-0.5 h-4 w-4 accent-[var(--color-accent-strong)]" />
                           Confirmo que revisei a prévia e aceito incluir todos os arquivos não ignorados.
                         </label>
-                        <label className={`flex cursor-pointer items-start gap-2 text-xs ${pushAvailable ? 'text-stone-700' : 'text-stone-500'}`}>
+                        <label className={`flex cursor-pointer items-start gap-2 text-xs ${pushAvailable ? 'text-[var(--color-text-secondary)]' : 'text-[var(--color-text-muted)]'}`}>
                           <input
                             type="checkbox"
                             checked={initPush}
                             onChange={(event) => setInitPush(event.target.checked)}
                             disabled={isInitializing || !pushAvailable}
                             aria-label="Enviar para o remote após o commit"
-                            className="mt-0.5 h-4 w-4 accent-[#3e562f]"
+                            className="mt-0.5 h-4 w-4 accent-[var(--color-accent-strong)]"
                           />
                           <span>
                             <span className="block font-semibold">Enviar para o remote após o commit</span>
@@ -770,7 +770,7 @@ export const GitDock: React.FC<GitDockProps> = ({
                         </label>
                       </div>
                     )}
-                    <button type="submit" disabled={!canSubmitInit} className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-[#3e562f] px-4 py-2 text-xs font-semibold text-white hover:bg-[#334827] disabled:opacity-50">
+                    <button type="submit" disabled={!canSubmitInit} className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-[var(--color-accent-strong)] px-4 py-2 text-xs font-semibold text-[var(--color-accent-contrast)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
                       {isInitializing ? <><Loader2 size={14} className="animate-spin" aria-hidden="true" /> Processando…</> : initPush ? <><UploadCloud size={14} aria-hidden="true" /> Criar e enviar</> : initCommit ? <><GitCommit size={14} aria-hidden="true" /> Criar e commitar</> : <><GitBranch size={14} aria-hidden="true" /> Criar repositório</>}
                     </button>
                   </>
@@ -781,27 +781,27 @@ export const GitDock: React.FC<GitDockProps> = ({
             {activeTab === 'clone' && (
               <form onSubmit={(event) => void handleClone(event)} className="space-y-3" role="tabpanel" aria-label="Clonar repositório">
                 <div>
-                  <label htmlFor="gitdock-clone-parent" className="mb-1 block text-xs font-semibold text-stone-800">Pasta monitorada</label>
-                  <select id="gitdock-clone-parent" value={cloneParent} onChange={(event) => setCloneParent(event.target.value)} disabled={isCloning} className="w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm">
+                  <label htmlFor="gitdock-clone-parent" className="mb-1 block text-xs font-semibold text-[var(--text-primary)]">Pasta monitorada</label>
+                  <select id="gitdock-clone-parent" value={cloneParent} onChange={(event) => setCloneParent(event.target.value)} disabled={isCloning} className="w-full rounded-lg border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-3 py-2 text-sm">
                     {(config?.projectDirs || []).map((dir) => <option key={dir} value={dir}>{dir}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label htmlFor="gitdock-clone-url" className="mb-1 block text-xs font-semibold text-stone-800">Link HTTPS</label>
-                  <input id="gitdock-clone-url" type="url" value={cloneUrl} onChange={(event) => setCloneUrl(event.target.value)} placeholder="https://github.com/usuario/projeto.git" disabled={isCloning} className="w-full rounded-lg border border-stone-300 px-3 py-2 text-sm" />
+                  <label htmlFor="gitdock-clone-url" className="mb-1 block text-xs font-semibold text-[var(--text-primary)]">Link HTTPS</label>
+                  <input id="gitdock-clone-url" type="url" value={cloneUrl} onChange={(event) => setCloneUrl(event.target.value)} placeholder="https://github.com/usuario/projeto.git" disabled={isCloning} className="w-full rounded-lg border border-[var(--color-border-subtle)] px-3 py-2 text-sm" />
                 </div>
                 <div>
-                  <label htmlFor="gitdock-clone-name" className="mb-1 block text-xs font-semibold text-stone-800">Nome da pasta</label>
-                  <input id="gitdock-clone-name" value={cloneFolder} onChange={(event) => setCloneFolder(event.target.value)} placeholder="meu-projeto" disabled={isCloning} className="w-full rounded-lg border border-stone-300 px-3 py-2 text-sm" />
+                  <label htmlFor="gitdock-clone-name" className="mb-1 block text-xs font-semibold text-[var(--text-primary)]">Nome da pasta</label>
+                  <input id="gitdock-clone-name" value={cloneFolder} onChange={(event) => setCloneFolder(event.target.value)} placeholder="meu-projeto" disabled={isCloning} className="w-full rounded-lg border border-[var(--color-border-subtle)] px-3 py-2 text-sm" />
                 </div>
-                <button type="submit" disabled={!canSubmitClone} className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-[#3e562f] px-4 py-2 text-xs font-semibold text-white hover:bg-[#334827] disabled:opacity-50">
+                <button type="submit" disabled={!canSubmitClone} className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-[var(--color-accent-strong)] px-4 py-2 text-xs font-semibold text-[var(--color-accent-contrast)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
                   {isCloning ? <><Loader2 size={14} className="animate-spin" aria-hidden="true" /> Clonando…</> : <><GitPullRequest size={14} aria-hidden="true" /> Clonar main recente</>}
                 </button>
               </form>
             )}
           </div>
 
-          <div className="flex items-center justify-between border-t border-stone-200 bg-stone-50 px-3 py-2 text-[11px] text-stone-600">
+          <div className="flex items-center justify-between border-t border-[var(--color-border-subtle)] bg-[var(--color-bg-toolbar)] px-3 py-2 text-[11px] text-[var(--color-text-muted)]">
             <span className="inline-flex items-center gap-1"><ChevronRight size={12} aria-hidden="true" /> Não-bloqueante: o código continua visível</span>
             <span>Dif lado a lado no editor</span>
           </div>

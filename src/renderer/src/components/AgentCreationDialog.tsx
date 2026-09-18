@@ -87,7 +87,7 @@ export const AgentCreationDialog: React.FC<AgentCreationDialogProps> = ({
       aria-label={`Provider do agente ${spec.role}`}
       value={spec.provider || ''}
       onChange={(event) => onChange((event.target.value || null) as AgentProviderId | null)}
-      className="w-full rounded-md border border-stone-300 bg-white px-2 py-1.5 text-xs text-stone-800"
+      className="w-full rounded-md border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-2 py-1.5 text-xs text-[var(--text-primary)]"
     >
       <option value="">Escolha um provider</option>
       {providers.map((provider) => (
@@ -102,13 +102,13 @@ export const AgentCreationDialog: React.FC<AgentCreationDialogProps> = ({
     spec: AgentCreationSpec,
     onChange: (account: AgentAccountId | null) => void,
   ) => spec.provider === 'codex' ? (
-    <div className="space-y-1.5 rounded-md border border-stone-200 bg-stone-50 p-2">
-      <span className="block text-[11px] font-semibold text-stone-700">Conta Codex</span>
+    <div className="space-y-1.5 rounded-md border border-[var(--color-border-subtle)] bg-[var(--surface-muted)] p-2">
+      <span className="block text-[11px] font-semibold text-[var(--color-text-secondary)]">Conta Codex</span>
       <div className="grid grid-cols-2 gap-2">
         {(['account1', 'account2'] as AgentAccountId[]).map((account) => {
           const connected = codexAuthStatus?.[account]?.connected
           return (
-            <label key={account} className="flex cursor-pointer items-center gap-1.5 text-xs text-stone-700">
+            <label key={account} className="flex cursor-pointer items-center gap-1.5 text-xs text-[var(--color-text-secondary)]">
               <input
                 type="radio"
                 name={`codex-account-${spec.role}`}
@@ -123,7 +123,7 @@ export const AgentCreationDialog: React.FC<AgentCreationDialogProps> = ({
       {spec.account && !codexAuthStatus?.[spec.account]?.connected && onRequestCodexAuth && (
         <button
           type="button"
-          className="text-[11px] font-semibold text-[#3e562f] underline"
+          className="text-[11px] font-semibold text-[var(--color-accent-strong)] underline"
           onClick={() => onRequestCodexAuth(spec.account as AgentAccountId)}
         >
           Conectar conta selecionada
@@ -150,31 +150,31 @@ export const AgentCreationDialog: React.FC<AgentCreationDialogProps> = ({
       isOpen={isOpen}
       titleId="agent-creation-dialog-title"
       onClose={onClose}
-      className="w-full max-w-xl overflow-hidden rounded-xl border border-stone-200 bg-white shadow-xl"
+      className="w-full max-w-xl overflow-hidden rounded-xl border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] shadow-xl"
     >
-      <div className="flex items-center justify-between border-b border-stone-200 bg-stone-50 px-5 py-4">
+      <div className="flex items-center justify-between border-b border-[var(--color-border-subtle)] bg-[var(--surface-muted)] px-5 py-4">
         <div>
-          <h2 id="agent-creation-dialog-title" className="text-base font-bold text-stone-900">
+          <h2 id="agent-creation-dialog-title" className="text-base font-bold text-[var(--text-primary)]">
             {mode === 'agent' ? 'Configurar agente' : 'Configurar squad'}
           </h2>
-          <p className="mt-0.5 text-xs text-stone-600">Escolha explicitamente quem participa antes de criar.</p>
+          <p className="mt-0.5 text-xs text-[var(--color-text-secondary)]">Escolha explicitamente quem participa antes de criar.</p>
         </div>
-        <button type="button" onClick={onClose} aria-label="Cancelar criação" className="rounded-md p-1.5 text-stone-500 hover:bg-stone-100 hover:text-stone-900">
+        <button type="button" onClick={onClose} aria-label="Cancelar criação" className="rounded-md p-1.5 text-[var(--color-text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]">
           <X size={16} aria-hidden="true" />
         </button>
       </div>
 
       <div className="max-h-[calc(100dvh-220px)] space-y-4 overflow-y-auto p-5">
-        <label className="block text-xs font-semibold text-stone-700">
+        <label className="block text-xs font-semibold text-[var(--color-text-secondary)]">
           Nome
-          <input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={80} className="mt-1.5 w-full rounded-md border border-stone-300 px-3 py-2 text-sm text-stone-900" />
+          <input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={80} className="mt-1.5 w-full rounded-md border border-[var(--color-border-subtle)] px-3 py-2 text-sm text-[var(--text-primary)]" />
         </label>
 
         {mode === 'agent' ? (
-          <div className="space-y-3 rounded-lg border border-stone-200 bg-stone-50 p-3">
-            <label className="block text-xs font-semibold text-stone-700">
+          <div className="space-y-3 rounded-lg border border-[var(--color-border-subtle)] bg-[var(--surface-muted)] p-3">
+            <label className="block text-xs font-semibold text-[var(--color-text-secondary)]">
               Papel
-              <select value={agentSpec.role} onChange={(event) => setAgentSpec((current) => ({ ...current, role: event.target.value as AgentCreationRole }))} className="mt-1.5 w-full rounded-md border border-stone-300 bg-white px-2 py-1.5 text-xs text-stone-800">
+              <select value={agentSpec.role} onChange={(event) => setAgentSpec((current) => ({ ...current, role: event.target.value as AgentCreationRole }))} className="mt-1.5 w-full rounded-md border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-2 py-1.5 text-xs text-[var(--text-primary)]">
                 {roles.map((role) => <option key={role} value={role}>{role}</option>)}
               </select>
             </label>
@@ -187,8 +187,8 @@ export const AgentCreationDialog: React.FC<AgentCreationDialogProps> = ({
               const enabled = selectedRoles.includes(role)
               const spec = squadSpecs.find((item) => item.role === role) || emptySpec(role)
               return (
-                <div key={role} className="space-y-2 rounded-lg border border-stone-200 bg-stone-50 p-3">
-                  <label className="flex items-center gap-2 text-xs font-semibold text-stone-800">
+                <div key={role} className="space-y-2 rounded-lg border border-[var(--color-border-subtle)] bg-[var(--surface-muted)] p-3">
+                  <label className="flex items-center gap-2 text-xs font-semibold text-[var(--text-primary)]">
                     <input type="checkbox" checked={enabled} disabled={role === 'Coordenador'} onChange={(event) => setSquadRoleEnabled(role, event.target.checked)} />
                     {role}{role === 'Coordenador' ? ' (obrigatório)' : ''}
                   </label>
@@ -204,14 +204,14 @@ export const AgentCreationDialog: React.FC<AgentCreationDialogProps> = ({
           </div>
         )}
 
-        <p className="text-[11px] text-stone-500">
+        <p className="text-[11px] text-[var(--color-text-muted)]">
           Providers ausentes ou não prontos ficam desabilitados. A seleção não será preenchida automaticamente.
         </p>
       </div>
 
-      <div className="flex justify-end gap-2 border-t border-stone-200 bg-stone-50 px-5 py-3">
-        <button type="button" onClick={onClose} className="rounded-md border border-stone-300 px-3 py-2 text-xs font-semibold text-stone-700 hover:bg-white">Cancelar</button>
-        <button type="button" onClick={submit} disabled={mode === 'agent' ? !validAgent : !validSquad} className="inline-flex items-center gap-1.5 rounded-md bg-[#3e562f] px-3 py-2 text-xs font-semibold text-white hover:bg-[#334827] disabled:cursor-not-allowed disabled:opacity-45">
+      <div className="flex justify-end gap-2 border-t border-[var(--color-border-subtle)] bg-[var(--surface-muted)] px-5 py-3">
+        <button type="button" onClick={onClose} className="rounded-md border border-[var(--color-border-subtle)] px-3 py-2 text-xs font-semibold text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-panel)]">Cancelar</button>
+        <button type="button" onClick={submit} disabled={mode === 'agent' ? !validAgent : !validSquad} className="inline-flex items-center gap-1.5 rounded-md bg-[var(--color-accent-strong)] px-3 py-2 text-xs font-semibold text-[var(--color-accent-contrast)] hover:bg-[var(--color-accent-hover)] disabled:cursor-not-allowed disabled:opacity-45">
           <Check size={14} aria-hidden="true" /> Criar
         </button>
       </div>

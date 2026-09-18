@@ -811,14 +811,14 @@ export const App: React.FC = () => {
 
   if (bootstrapError) {
     return (
-      <main className="min-h-screen bg-[#f5f5f2] px-6 py-16 text-stone-900" role="alert">
-        <div className="mx-auto flex max-w-lg flex-col items-center rounded-xl border border-red-200 bg-white p-8 text-center shadow-sm">
-          <AlertCircle aria-hidden="true" className="h-10 w-10 text-red-700" />
+      <main className="min-h-screen bg-[var(--color-bg-page)] px-6 py-16 text-[var(--text-primary)]" role="alert">
+        <div className="mx-auto flex max-w-lg flex-col items-center rounded-xl border border-[color-mix(in_srgb,var(--color-danger)_35%,transparent)] bg-[var(--color-bg-panel)] p-8 text-center shadow-sm">
+          <AlertCircle aria-hidden="true" className="h-10 w-10 text-[var(--color-danger)]" />
           <h1 className="mt-4 text-xl font-semibold">Não foi possível iniciar o DevOrbit</h1>
-          <p className="mt-3 text-sm leading-6 text-stone-600">{bootstrapError}</p>
+          <p className="mt-3 text-sm leading-6 text-[var(--color-text-muted)]">{bootstrapError}</p>
           <button
             type="button"
-            className="mt-6 inline-flex items-center gap-2 rounded-md bg-[#3e562f] px-4 py-2 text-sm font-semibold text-white hover:bg-[#304624] disabled:cursor-wait disabled:opacity-60"
+            className="mt-6 inline-flex items-center gap-2 rounded-md bg-[var(--color-accent-strong)] px-4 py-2 text-sm font-semibold text-[var(--color-accent-contrast)] hover:bg-[var(--color-accent-hover)] disabled:cursor-wait disabled:opacity-60"
             onClick={() => void loadData()}
             disabled={isLoading}
           >
@@ -1099,29 +1099,29 @@ export const App: React.FC = () => {
         <div
           className={`app-toast fixed bottom-10 end-5 z-50 flex max-w-[min(28rem,calc(100vw-2rem))] items-center gap-2.5 rounded-lg border px-4 py-3 text-sm shadow-lg ${
             notification.type === 'success'
-              ? 'border-emerald-700/30 bg-white'
+              ? 'border-[color-mix(in_srgb,var(--color-success)_35%,transparent)] bg-[var(--color-bg-panel)]'
               : notification.type === 'error'
-                ? 'border-red-700/30 bg-white'
-                : 'border-stone-300 bg-white'
+                ? 'border-[color-mix(in_srgb,var(--color-danger)_35%,transparent)] bg-[var(--color-bg-panel)]'
+                : 'border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)]'
           }`}
           role="group"
           aria-label="Notificação"
         >
           {notification.type === 'success' && (
-            <CheckCircle2 aria-hidden="true" className="w-4 h-4 text-emerald-800 shrink-0" />
+            <CheckCircle2 aria-hidden="true" className="w-4 h-4 text-[var(--color-success)] shrink-0" />
           )}
           {notification.type === 'error' && (
-            <AlertCircle aria-hidden="true" className="w-4 h-4 text-red-800 shrink-0" />
+            <AlertCircle aria-hidden="true" className="w-4 h-4 text-[var(--color-danger)] shrink-0" />
           )}
           {notification.type === 'info' && (
-            <Info aria-hidden="true" className="w-4 h-4 text-stone-700 shrink-0" />
+            <Info aria-hidden="true" className="w-4 h-4 text-[var(--color-text-secondary)] shrink-0" />
           )}
-          <span className="text-pretty font-medium text-stone-800">{notification.message}</span>
+          <span className="text-pretty font-medium text-[var(--text-primary)]">{notification.message}</span>
           {notification.actions?.map((action) => (
             <button
               key={action.id}
               onClick={() => notificationActionRef.current?.(action.id)}
-              className="ms-1 inline-flex min-h-8 items-center justify-center rounded-lg bg-[#3e562f] px-3 text-xs font-semibold text-white transition-[background-color] hover:bg-[#334827]"
+              className="ms-1 inline-flex min-h-8 items-center justify-center rounded-lg bg-[var(--color-accent-strong)] px-3 text-xs font-semibold text-[var(--color-accent-contrast)] transition-[background-color] hover:bg-[var(--color-accent-hover)]"
             >
               {action.label}
             </button>
@@ -1129,7 +1129,7 @@ export const App: React.FC = () => {
           <button
             onClick={() => setNotification(null)}
             aria-label="Fechar notificação"
-            className="ms-2 inline-flex min-h-8 min-w-8 items-center justify-center rounded-lg text-stone-600 transition-[color,background-color] hover:bg-stone-100 hover:text-stone-900"
+              className="ms-2 inline-flex min-h-8 min-w-8 items-center justify-center rounded-lg text-[var(--color-text-secondary)] transition-[color,background-color] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
           >
             <X aria-hidden="true" className="w-3.5 h-3.5" />
           </button>

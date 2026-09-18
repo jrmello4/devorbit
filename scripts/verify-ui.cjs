@@ -495,6 +495,18 @@ async function inspectShell(window, viewport) {
       selectedRows: rows.filter((row) => row.matches('.selected,[aria-pressed="true"]')).length,
       strayRows: strayRows.length,
       strayActions: strayRows.filter((row) => row.querySelector('[aria-label^="Adicionar Git"]') && row.querySelector('[aria-label^="Abrir pasta"]')).length,
+      theme: (() => {
+        const rootStyle = getComputedStyle(document.documentElement)
+        const titlebar = document.querySelector('.app-titlebar')
+        const sidebar = document.querySelector('.workspace-sidebar')
+        return {
+          mode: document.documentElement.dataset.theme || '',
+          accent: rootStyle.getPropertyValue('--color-accent').trim(),
+          bodyBg: getComputedStyle(document.body).backgroundColor,
+          titlebarBg: titlebar ? getComputedStyle(titlebar).backgroundColor : '',
+          sidebarBg: sidebar ? getComputedStyle(sidebar).backgroundColor : '',
+        }
+      })(),
     }
   })()`)
 
@@ -510,7 +522,35 @@ async function inspectShell(window, viewport) {
   assert(result.longNameRows > 0, `${viewport.label}: fixture de nome longo não apareceu`)
   assert(result.selectedRows === 1, `${viewport.label}: seleção inicial inválida (${result.selectedRows})`)
   assert(result.strayRows >= 2 && result.strayActions === result.strayRows, `${viewport.label}: seção Outras pastas incompleta (${JSON.stringify({ stray: result.strayRows, actions: result.strayActions })})`)
-  recordPass(viewport.label, `shell bounded at ${result.viewport.width}×${result.viewport.height}; ${result.rows} project rows; ${result.strayRows} stray dirs; Git fixtures visible`)
+  assert(result.theme.mode === 'light', `${viewport.label}: tema padrão deveria ser claro (${result.theme.mode})`)
+  assert(result.theme.accent === '#5b6b86', `${viewport.label}: acento neutro Carbon ausente (${result.theme.accent})`)
+  assert(result.theme.bodyBg === 'rgb(244, 245, 247)', `${viewport.label}: fundo da página fora do Carbon claro (${result.theme.bodyBg})`)
+  assert(result.theme.titlebarBg === 'rgb(251, 251, 252)', `${viewport.label}: titlebar fora do Carbon claro (${result.theme.titlebarBg})`)
+  assert(result.theme.sidebarBg === 'rgb(238, 240, 243)', `${viewport.label}: sidebar fora do Carbon claro (${result.theme.sidebarBg})`)
+  recordPass(viewport.label, `shell bounded at ${result.viewport.width}×${result.viewport.height}; ${result.rows} project rows; ${result.strayRows} stray dirs; Git fixtures visible; Carbon claro sem verde legado`)
+}
+
+async function inspectDarkTheme(window, viewport) {
+  await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Ativar tema escuro', `${viewport.label} dark theme toggle`)
+  await waitFor(window, `document.documentElement.dataset.theme === 'dark'`, `${viewport.label} dark theme applied`)
+  const dark = await evaluate(window, `(() => {
+    const rootStyle = getComputedStyle(document.documentElement)
+    const titlebar = document.querySelector('.app-titlebar')
+    return {
+      mode: document.documentElement.dataset.theme || '',
+      accent: rootStyle.getPropertyValue('--color-accent').trim(),
+      bodyBg: getComputedStyle(document.body).backgroundColor,
+      titlebarBg: titlebar ? getComputedStyle(titlebar).backgroundColor : '',
+    }
+  })()`)
+  assert(dark.mode === 'dark', `${viewport.label}: tema escuro não aplicou (${dark.mode})`)
+  assert(dark.accent === '#8797b4', `${viewport.label}: acento Carbon escuro ausente (${dark.accent})`)
+  assert(dark.bodyBg === 'rgb(13, 15, 20)', `${viewport.label}: fundo escuro fora do Carbon (${dark.bodyBg})`)
+  assert(dark.titlebarBg === 'rgb(17, 20, 27)', `${viewport.label}: titlebar escura fora do Carbon (${dark.titlebarBg})`)
+  await screenshot(window, `desktop-${viewport.label}-dark`)
+  await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Ativar tema claro', `${viewport.label} light theme toggle`)
+  await waitFor(window, `document.documentElement.dataset.theme === 'light'`, `${viewport.label} light theme restored`)
+  recordPass(viewport.label, 'tema escuro Carbon aplicado e tema claro restaurado')
 }
 
 async function inspectProjectInteractions(window, viewport) {
@@ -1033,6 +1073,7 @@ async function runViewport(viewport) {
     await waitFor(window, `document.querySelector('.view-panel:not([hidden])')?.innerText.includes('Projetos')`, `${viewport.label} projects navigation restore`)
     await inspectToolHealth(window, viewport)
     await inspectSettingsAndPalette(window, viewport)
+    await inspectDarkTheme(window, viewport)
   } finally {
     if (window && !window.isDestroyed()) {
       window.destroy()
