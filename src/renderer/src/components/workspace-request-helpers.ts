@@ -98,6 +98,60 @@ export function computeStreamingPipeEdges(
   return []
 }
 
+export interface SquadNodeLike {
+  id: string
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export interface SquadLike {
+  id: string
+  title: string
+  coordinatorNodeId: string
+  memberNodeIds: readonly string[]
+}
+
+export interface SquadRegion {
+  id: string
+  title: string
+  coordinatorNodeId: string
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export function computeSquadRegions(
+  squads: readonly SquadLike[],
+  nodes: readonly SquadNodeLike[],
+  padding = 24,
+): SquadRegion[] {
+  const byId = new Map(nodes.map((node) => [node.id, node]))
+  const regions: SquadRegion[] = []
+  for (const squad of squads) {
+    const members = squad.memberNodeIds
+      .map((id) => byId.get(id))
+      .filter((node): node is SquadNodeLike => Boolean(node))
+    if (members.length === 0) continue
+    const minX = Math.min(...members.map((node) => node.x))
+    const minY = Math.min(...members.map((node) => node.y))
+    const maxX = Math.max(...members.map((node) => node.x + node.width))
+    const maxY = Math.max(...members.map((node) => node.y + node.height))
+    regions.push({
+      id: squad.id,
+      title: squad.title,
+      coordinatorNodeId: squad.coordinatorNodeId,
+      x: minX - padding,
+      y: minY - padding,
+      width: maxX - minX + padding * 2,
+      height: maxY - minY + padding * 2,
+    })
+  }
+  return regions.sort((left, right) => left.y - right.y || left.x - right.x || left.id.localeCompare(right.id))
+}
+
 function sameStringSet(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
   if (left.size !== right.size) return false
   for (const entry of left) {

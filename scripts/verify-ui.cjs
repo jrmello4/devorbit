@@ -351,6 +351,14 @@ async function verifyManualAgentSend(window, viewport) {
     return Boolean(send && send.disabled)
   })()`)
   assert(busyDisabled, `${viewport.label}: controle de envio não foi desabilitado durante a tarefa`)
+  const runningStatus = await evaluate(window, `(() => {
+    const card = Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]'))
+      .find((node) => node.querySelector('select')?.value === 'Implementação')
+    const chip = card?.querySelector('.canvas-agent-progress')
+    return { state: chip?.getAttribute('data-agent-progress') || '', label: chip?.getAttribute('aria-label') || '' }
+  })()`)
+  assert(runningStatus.state === 'running', `${viewport.label}: status de execução ilegível (${runningStatus.state})`)
+  assert(runningStatus.label.includes('Status da tarefa'), `${viewport.label}: status sem rótulo acessível (${runningStatus.label})`)
 
   const manualEvent = JSON.stringify({ id: promptWrite.args[0], type: 'data', data: '\r\nDEVORBIT_RESULT: {"version":1,"outcome":"completed","summary":"manual concluido"}\r\n' })
   await evaluate(window, `(() => { window.__devorbitVerifyFixture.emitTerminalEvent(${manualEvent}); return true })()`)
@@ -360,7 +368,80 @@ async function verifyManualAgentSend(window, viewport) {
     const send = card?.querySelector('[data-agent-send]')
     return Boolean(send && !send.disabled)
   })()`, `${viewport.label} reabilitacao do envio manual`)
+  const completedStatus = await evaluate(window, `(() => {
+    const card = Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]'))
+      .find((node) => node.querySelector('select')?.value === 'Implementação')
+    return card?.querySelector('.canvas-agent-progress')?.getAttribute('data-agent-progress') || ''
+  })()`)
+  assert(completedStatus === 'completed', `${viewport.label}: status final do especialista inesperado (${completedStatus})`)
   recordPass(viewport.label, 'nota conectada é enviada uma vez ao especialista e o envio reabilita após o resultado')
+}
+
+async function verifyAgentConfigDetails(window, viewport) {
+  const opened = await evaluate(window, `(() => {
+    const card = document.querySelector('.workspace-canvas [data-canvas-card="agent"]')
+    const toggle = card?.querySelector('.canvas-agent-config-toggle')
+    if (!toggle) return false
+    toggle.click()
+    return true
+  })()`)
+  assert(opened, `${viewport.label}: botão de configuração do agente ausente`)
+  await waitFor(window, `(() => {
+    const panel = document.querySelector('.canvas-agent-config')
+    return Boolean(panel && !panel.hidden && panel.querySelectorAll('select').length === 3)
+  })()`, `${viewport.label} painel de configuração do agente`)
+  const details = await evaluate(window, `(() => {
+    const card = document.querySelector('.workspace-canvas [data-canvas-card="agent"]')
+    const toggle = card?.querySelector('.canvas-agent-config-toggle')
+    return {
+      expanded: toggle?.getAttribute('aria-expanded') || '',
+      role: card?.querySelector('.canvas-node-meta')?.textContent || '',
+      labels: Array.from(document.querySelectorAll('.canvas-agent-config select')).map((select) => select.getAttribute('aria-label') || ''),
+    }
+  })()`)
+  assert(details.expanded === 'true', `${viewport.label}: toggle de configuração sem aria-expanded`)
+  assert(details.role.includes('Implementação'), `${viewport.label}: papel do agente ilegível (${details.role})`)
+  assert(details.labels.includes('Provedor do agente') && details.labels.includes('Conta Codex'), `sem campos de provider/conta no painel (${details.labels.join(', ')})`)
+  await evaluate(window, `document.querySelector('.canvas-agent-config-toggle')?.click()`)
+  await waitFor(window, `document.querySelector('.canvas-agent-config')?.hidden === true`, `${viewport.label} painel de configuração fechado`)
+  recordPass(viewport.label, 'detalhes de configuração do agente acessíveis, rotulados e fecháveis')
+}
+
+async function verifySquadLayer(window, viewport) {
+  await waitFor(window, `Boolean(document.querySelector('.canvas-squad-region'))`, `${viewport.label} região de squad`)
+  const layer = await evaluate(window, `(() => {
+    const region = document.querySelector('.canvas-squad-region')
+    const label = region?.querySelector('.canvas-squad-region-label')?.textContent || ''
+    const coordinator = Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]'))
+      .find((node) => node.querySelector('select')?.value === 'Coordenador')
+    const meta = coordinator?.querySelector('.canvas-node-meta')?.textContent || ''
+    const mark = coordinator?.querySelector('.canvas-command-mark')
+    const regionRect = region?.getBoundingClientRect()
+    const cardRect = coordinator?.getBoundingClientRect()
+    const canvasRect = document.querySelector('.workspace-canvas')?.getBoundingClientRect()
+    let topHitIsCard = false
+    if (cardRect && canvasRect) {
+      const left = (Math.max(cardRect.left, canvasRect.left) + Math.min(cardRect.right, canvasRect.right)) / 2
+      const top = (Math.max(cardRect.top, canvasRect.top) + Math.min(cardRect.bottom, canvasRect.bottom)) / 2
+      const hit = document.elementFromPoint(left, top)
+      topHitIsCard = Boolean(hit && hit.closest('[data-canvas-card]'))
+    }
+    return {
+      label,
+      pointerEvents: region ? getComputedStyle(region).pointerEvents : '',
+      meta,
+      commandMark: Boolean(mark && mark.getAttribute('aria-label') === 'Coordenador'),
+      containsCoordinator: Boolean(regionRect && cardRect && regionRect.left <= cardRect.left && regionRect.top <= cardRect.top && regionRect.right >= cardRect.right && regionRect.bottom >= cardRect.bottom),
+      topHitIsCard,
+    }
+  })()`)
+  assert(layer.label.includes('SQUAD ·'), `${viewport.label}: rótulo de squad ausente (${layer.label})`)
+  assert(layer.pointerEvents === 'none', `${viewport.label}: região de squad intercepta o ponteiro (${layer.pointerEvents})`)
+  assert(layer.meta.includes('Coordenador'), `${viewport.label}: papel do coordenador ilegível (${layer.meta})`)
+  assert(layer.commandMark, `${viewport.label}: coordenador sem indicador de comando`)
+  assert(layer.containsCoordinator, `${viewport.label}: região de squad não cobre o coordenador`)
+  assert(layer.topHitIsCard, `${viewport.label}: hit testing do nó afetado pela região de squad (${JSON.stringify(layer)})`)
+  recordPass(viewport.label, 'squad em região sutil atrás dos nós com coordenador identificável')
 }
 
 
@@ -744,6 +825,8 @@ async function inspectProjectInteractions(window, viewport) {
   })()`)
   await waitFor(window, `document.querySelector('[data-canvas-note-editor]').value === 'handoff persistente'`, `${viewport.label} canvas notes`)
   recordPass(viewport.label, 'canvas com cartões, arraste, redimensionamento e notas locais')
+  await key(window, '0', { ctrlKey: true })
+  await waitFor(window, `(() => { const canvas = document.querySelector('.workspace-canvas'); const id = canvas?.getAttribute('data-canvas-project-id'); const raw = id ? window.localStorage.getItem('devorbit:workspace-canvas:' + id) : null; return Boolean(raw && JSON.parse(raw).viewport.zoom === 1) })()`, `${viewport.label} canvas zoom reset before agent creation`)
   await clickButtonByText(window, (node) => node.closest('.workspace-canvas-toolbar') && /Agente/.test(node.innerText), `${viewport.label} agent node creation`)
   await waitFor(window, `Boolean(document.querySelector('[role="dialog"] #agent-creation-dialog-title'))`, `${viewport.label} agent creation dialog`)
   await selectCreationProvider(window, 'Implementação', 'codex', viewport.label)
@@ -752,8 +835,7 @@ async function inspectProjectInteractions(window, viewport) {
   await waitFor(window, `document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]').length === 1`, `${viewport.label} agent canvas node`)
   await waitFor(window, `Array.from(window.__devorbitVerifyFixture.getCalls()).some((call) => call.name === 'startTerminal' && String(call.args[0]).startsWith('agent-'))`, `${viewport.label} agent terminal`)
   recordPass(viewport.label, 'canvas cria agente configurado com terminal independente')
-  await key(window, '0', { ctrlKey: true })
-  await waitFor(window, `(() => { const canvas = document.querySelector('.workspace-canvas'); const id = canvas?.getAttribute('data-canvas-project-id'); const raw = id ? window.localStorage.getItem('devorbit:workspace-canvas:' + id) : null; return Boolean(raw && JSON.parse(raw).viewport.zoom === 1) })()`, `${viewport.label} canvas zoom reset for screenshot`)
+  await verifyAgentConfigDetails(window, viewport)
   await screenshot(window, `desktop-${viewport.label}-canvas-agent`)
   await evaluate(window, `document.querySelector('[data-canvas-card="agent"] .canvas-delete-node')?.click()`)
   await waitFor(window, `document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]').length === 0`, `${viewport.label} agent terminal deletion`)
@@ -771,6 +853,8 @@ async function inspectProjectInteractions(window, viewport) {
   await waitFor(window, `document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]').length === 4 && document.querySelectorAll('.workspace-canvas [data-canvas-card="note"]').length >= 2`, `${viewport.label} squad canvas nodes`)
   await waitFor(window, `document.querySelectorAll('.workspace-canvas-connections path').length >= 4`, `${viewport.label} squad task connections`)
   recordPass(viewport.label, 'template cria squad conectado a uma nota de tarefa')
+  await verifySquadLayer(window, viewport)
+  await screenshot(window, `desktop-${viewport.label}-canvas-squad`)
   const implicitStreaming = await evaluate(window, `window.__devorbitVerifyFixture.getCalls().filter((call) => call.name === 'pipeTerminals').length`)
   assert(implicitStreaming === 0, `${viewport.label}: conexões do canvas canalizaram PTY implicitamente (${implicitStreaming})`)
   recordPass(viewport.label, 'conexões do canvas não espelham digitação/TUI entre agentes')

@@ -6,24 +6,30 @@ import React, {
   useState,
 } from "react";
 import {
+  Bot,
+  Crown,
+  FileCode2,
   FileText,
-  Globe,
+  GitBranch,
+  Globe2,
   Grip,
   Link2,
   Maximize2,
   Minus,
   MousePointer2,
+  NotebookPen,
   Plus,
   RotateCcw,
   Send,
-  StickyNote,
+  Settings2,
   Terminal,
   Trash2,
   Unlink,
+  Users,
 } from "lucide-react";
 import type { AgentProvider, AgentProviderId, Project } from "../types";
 import type { AgentResult } from "../../../shared/agent-result";
-import { createsAgentCycle, sanitizeAgentCycles } from "./workspace-request-helpers";
+import { createsAgentCycle, computeSquadRegions, sanitizeAgentCycles } from "./workspace-request-helpers";
 import { AgentCreationDialog } from "./AgentCreationDialog";
 import {
   agentNodeBlockedLabel,
@@ -147,11 +153,11 @@ const MIN_ZOOM = 0.08;
 const MAX_ZOOM = 1.6;
 const GRID = 20;
 const fixedKinds = new Set<NodeKind>(["workbench", "browser"]);
-const nodeMeta: Record<NodeKind, { label: string; icon: React.ReactNode }> = {
-  workbench: { label: "Editor e terminal", icon: <Terminal size={13} /> },
-  browser: { label: "Navegador do projeto", icon: <Globe size={13} /> },
-  note: { label: "Nota", icon: <StickyNote size={13} /> },
-  agent: { label: "Agente", icon: <Terminal size={13} /> },
+const nodeMeta: Record<NodeKind, { label: string; meta: string; icon: React.ReactNode }> = {
+  workbench: { label: "Editor e terminal", meta: "WORKBENCH", icon: <FileCode2 size={13} /> },
+  browser: { label: "Navegador do projeto", meta: "BROWSER", icon: <Globe2 size={13} /> },
+  note: { label: "Nota", meta: "INTEL", icon: <NotebookPen size={13} /> },
+  agent: { label: "Agente", meta: "AGENTE", icon: <Bot size={13} /> },
 };
 const defaults = (): CanvasState => ({
   version: 3,
@@ -550,6 +556,7 @@ export const WorkspaceCanvas: React.FC<{
   const [agentProgress, setAgentProgress] = useState<
     Record<string, AgentProgress>
   >({});
+  const [configNodeId, setConfigNodeId] = useState<string | null>(null);
   const manualTasksRef = useRef<Set<string>>(new Set());
   const canvasRef = useRef(canvas);
   const orchestrationRef = useRef<OrchestrationRun | null>(null);
@@ -608,6 +615,7 @@ export const WorkspaceCanvas: React.FC<{
     orchestrationRef.current = null;
     setOrchestration(null);
     setAgentProgress({});
+    setConfigNodeId(null);
   }, [project.id]);
   useEffect(() => {
     window.addEventListener("pagehide", flush);
@@ -1243,6 +1251,10 @@ export const WorkspaceCanvas: React.FC<{
   const nodeMap = useMemo(
     () => new Map(canvas.nodes.map((node) => [node.id, node])),
     [canvas.nodes],
+  );
+  const squadRegions = useMemo(
+    () => computeSquadRegions(canvas.squads, canvas.nodes),
+    [canvas.nodes, canvas.squads],
   );
   const orchestrationActive = Boolean(
     orchestration &&
@@ -1887,14 +1899,14 @@ export const WorkspaceCanvas: React.FC<{
         role="toolbar"
         aria-label="Ferramentas do canvas"
       >
-        <button type="button" onClick={addNote} title="Criar nota">
-          <Plus size={14} /> Nota
+        <button type="button" onClick={addNote} title="Criar nota" aria-label="Criar nota">
+          <NotebookPen size={14} /> Nota
         </button>
-        <button type="button" onClick={openAgentCreation} title="Criar agente">
-          <Terminal size={14} /> Agente
+        <button type="button" onClick={openAgentCreation} title="Criar agente" aria-label="Criar agente">
+          <Bot size={14} /> Agente
         </button>
-        <button type="button" onClick={openSquadCreation} title="Criar squad de agentes conectado a uma tarefa">
-          <Terminal size={14} /> Squad
+        <button type="button" onClick={openSquadCreation} title="Criar squad de agentes conectado a uma tarefa" aria-label="Criar squad de agentes">
+          <Users size={14} /> Squad
         </button>
         <button
           type="button"
@@ -1975,6 +1987,24 @@ export const WorkspaceCanvas: React.FC<{
           startPan(event);
         }}
       >
+        {squadRegions.map((region) => (
+          <div
+            key={region.id}
+            className="canvas-squad-region"
+            data-canvas-squad-id={region.id}
+            style={{
+              left: region.x,
+              top: region.y,
+              width: region.width,
+              height: region.height,
+            }}
+          >
+            <span className="canvas-squad-region-label">
+              <Users size={11} aria-hidden="true" />
+              SQUAD · {region.title}
+            </span>
+          </div>
+        ))}
         <svg
           className="workspace-canvas-connections"
           width={WORLD_WIDTH}
@@ -2085,6 +2115,21 @@ export const WorkspaceCanvas: React.FC<{
                   {nodeMeta[node.kind].icon}
                   {node.title}
                 </strong>
+                <span className="canvas-node-meta">
+                  {node.kind === "agent"
+                    ? node.role || "Implementação"
+                    : nodeMeta[node.kind].meta}
+                </span>
+                {node.kind === "agent" && node.role === "Coordenador" && (
+                  <span
+                    className="canvas-command-mark"
+                    role="img"
+                    aria-label="Coordenador"
+                    title="Coordenador da squad"
+                  >
+                    <Crown size={11} aria-hidden="true" />
+                  </span>
+                )}
                 {node.kind === "agent" && agentProgress[node.id] && (
                   <span
                     className={
@@ -2102,94 +2147,35 @@ export const WorkspaceCanvas: React.FC<{
                   </span>
                 )}
                 {node.kind === "agent" && (
-                  <button type="button" className="canvas-send-task" title="Criar worktree isolado" aria-label={"Isolar " + node.title} onPointerDown={(event) => event.stopPropagation()} onClick={() => onCreateAgentWorktree?.(node)}>WT</button>
+                  <button
+                    type="button"
+                    className="canvas-icon-action"
+                    title="Criar worktree isolado"
+                    aria-label={"Isolar " + node.title}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={() => onCreateAgentWorktree?.(node)}
+                  >
+                    <GitBranch size={13} />
+                  </button>
                 )}
                 {node.kind === "agent" && (
-                  <label className="canvas-agent-role">
-                    <span className="sr-only">Papel e conta do agente</span>
-                    <select
-                      value={node.role || "Implementação"}
-                      onPointerDown={(event) => event.stopPropagation()}
-                      onChange={(event) =>
-                        update(
-                          (current) => ({
-                            ...current,
-                            nodes: current.nodes.map((item) =>
-                              item.id === node.id
-                                ? { ...item, role: event.target.value as AgentRole, title: "Agente: " + event.target.value }
-                                : item,
-                            ),
-                          }),
-                          true,
-                        )
-                      }
-                    >
-                      <option>Coordenador</option><option>Implementação</option><option>Revisão</option><option>Testes</option>
-                    </select>
-                    <select
-                      value={node.provider || ""}
-                      aria-label="Provedor do agente"
-                      onPointerDown={(event) => event.stopPropagation()}
-                      onChange={(event) =>
-                        update(
-                          (current) => ({
-                            ...current,
-                            nodes: current.nodes.map((item) => {
-                              if (item.id !== node.id) return item;
-                              const nextProvider = event.target.value
-                                ? (event.target.value as AgentProviderId)
-                                : undefined;
-                              return {
-                                ...item,
-                                provider: nextProvider,
-                                account:
-                                  nextProvider && requiresCodexAccount(nextProvider)
-                                    ? item.account
-                                    : undefined,
-                              };
-                            }),
-                          }),
-                          true,
-                        )
-                      }
-                    >
-                      <option value="">Configurar provider</option>
-                      {agentProviders.map((provider) => (
-                        <option key={provider.id} value={provider.id} disabled={provider.state !== "ready"}>
-                          {provider.label}{provider.state !== "ready" ? " (não encontrado)" : ""}
-                        </option>
-                      ))}
-                    </select>
-                    <select
-                      value={requiresCodexAccount(node.provider ?? null) ? node.account || "" : ""}
-                      aria-label="Conta Codex"
-                      title={
-                        requiresCodexAccount(node.provider ?? null)
-                          ? "Conta Codex deste agente"
-                          : "A conta só se aplica ao provider Codex"
-                      }
-                      disabled={!requiresCodexAccount(node.provider ?? null)}
-                      onPointerDown={(event) => event.stopPropagation()}
-                      onChange={(event) =>
-                        update(
-                          (current) => ({
-                            ...current,
-                            nodes: current.nodes.map((item) =>
-                              item.id === node.id
-                                ? {
-                                    ...item,
-                                    account: event.target.value
-                                      ? (event.target.value as "account1" | "account2")
-                                      : undefined,
-                                  }
-                                : item,
-                            ),
-                          }),
-                          true,
-                        )
-                      }
-                    ><option value="">—</option><option value="account1">C1</option><option value="account2">C2</option></select>
-                  </label>
+                  <button
+                    type="button"
+                    className="canvas-agent-config-toggle"
+                    aria-label={"Configurar " + node.title}
+                    aria-expanded={configNodeId === node.id}
+                    aria-controls={"agent-config-" + node.id}
+                    title="Configuração do agente"
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setConfigNodeId((current) =>
+                        current === node.id ? null : node.id,
+                      );
+                    }}
+                  >
+                    <Settings2 size={13} />
+                  </button>
                 )}
                 {node.kind === "agent" && (
                   <button
@@ -2231,6 +2217,106 @@ export const WorkspaceCanvas: React.FC<{
                   <Grip size={14} />
                 </button>
               </header>
+              {node.kind === "agent" && (
+                <div
+                  className="canvas-agent-config"
+                  id={"agent-config-" + node.id}
+                  role="group"
+                  aria-label={"Configuração de " + node.title}
+                  hidden={configNodeId !== node.id}
+                  onPointerDown={(event) => event.stopPropagation()}
+                >
+                  <label className="canvas-agent-config-field">
+                    <span>Papel</span>
+                    <select
+                      aria-label="Papel do agente"
+                      value={node.role || "Implementação"}
+                      onChange={(event) =>
+                        update(
+                          (current) => ({
+                            ...current,
+                            nodes: current.nodes.map((item) =>
+                              item.id === node.id
+                                ? { ...item, role: event.target.value as AgentRole, title: "Agente: " + event.target.value }
+                                : item,
+                            ),
+                          }),
+                          true,
+                        )
+                      }
+                    >
+                      <option>Coordenador</option><option>Implementação</option><option>Revisão</option><option>Testes</option>
+                    </select>
+                  </label>
+                  <label className="canvas-agent-config-field">
+                    <span>Provider</span>
+                    <select
+                      value={node.provider || ""}
+                      aria-label="Provedor do agente"
+                      onChange={(event) =>
+                        update(
+                          (current) => ({
+                            ...current,
+                            nodes: current.nodes.map((item) => {
+                              if (item.id !== node.id) return item;
+                              const nextProvider = event.target.value
+                                ? (event.target.value as AgentProviderId)
+                                : undefined;
+                              return {
+                                ...item,
+                                provider: nextProvider,
+                                account:
+                                  nextProvider && requiresCodexAccount(nextProvider)
+                                    ? item.account
+                                    : undefined,
+                              };
+                            }),
+                          }),
+                          true,
+                        )
+                      }
+                    >
+                      <option value="">Configurar provider</option>
+                      {agentProviders.map((provider) => (
+                        <option key={provider.id} value={provider.id} disabled={provider.state !== "ready"}>
+                          {provider.label}{provider.state !== "ready" ? " (não encontrado)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="canvas-agent-config-field">
+                    <span>Conta Codex</span>
+                    <select
+                      value={requiresCodexAccount(node.provider ?? null) ? node.account || "" : ""}
+                      aria-label="Conta Codex"
+                      title={
+                        requiresCodexAccount(node.provider ?? null)
+                          ? "Conta Codex deste agente"
+                          : "A conta só se aplica ao provider Codex"
+                      }
+                      disabled={!requiresCodexAccount(node.provider ?? null)}
+                      onChange={(event) =>
+                        update(
+                          (current) => ({
+                            ...current,
+                            nodes: current.nodes.map((item) =>
+                              item.id === node.id
+                                ? {
+                                    ...item,
+                                    account: event.target.value
+                                      ? (event.target.value as "account1" | "account2")
+                                      : undefined,
+                                  }
+                                : item,
+                            ),
+                          }),
+                          true,
+                        )
+                      }
+                    ><option value="">—</option><option value="account1">C1</option><option value="account2">C2</option></select>
+                  </label>
+                </div>
+              )}
               <div className="workspace-canvas-card-content">
                 {node.kind === "workbench" ? (
                   workbench

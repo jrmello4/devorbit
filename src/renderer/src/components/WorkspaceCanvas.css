@@ -59,6 +59,31 @@
     stroke-dashoffset: -24px;
   }
 }
+.canvas-squad-region {
+  position: absolute;
+  z-index: 0;
+  pointer-events: none;
+  border: 1px dashed var(--ops-border-strong);
+  border-radius: var(--radius-panel);
+  background: rgba(135, 151, 180, 0.045);
+}
+.canvas-squad-region-label {
+  position: absolute;
+  top: -10px;
+  left: var(--space-3);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-2);
+  border: 1px solid var(--ops-border-subtle);
+  border-radius: var(--radius-icon);
+  color: var(--ops-text-muted);
+  background: var(--ops-surface-1);
+  font: 650 9px/1.4 var(--font-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
 .workspace-canvas-card {
   position: absolute;
   display: flex;
@@ -155,24 +180,73 @@
   outline: 2px solid var(--ops-focus);
   outline-offset: 2px;
 }
-.canvas-agent-role {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
+.canvas-node-meta {
   flex: 0 1 auto;
-  margin-left: 0;
-}
-.canvas-agent-role select {
+  min-width: 0;
   max-width: 96px;
-  height: 24px;
+  overflow: hidden;
+  color: var(--ops-text-muted);
+  font: 650 9px/1 var(--font-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.canvas-command-mark {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  color: var(--ops-focus);
+}
+.canvas-agent-config-toggle[aria-expanded="true"],
+.workspace-canvas-card header button.canvas-agent-config-toggle[aria-expanded="true"] {
+  color: var(--ops-focus);
+  background: var(--ops-surface-4);
+}
+.canvas-agent-config[hidden] {
+  display: none;
+}
+.canvas-agent-config {
+  position: absolute;
+  top: 36px;
+  left: var(--space-2);
+  right: var(--space-2);
+  z-index: 4;
+  display: grid;
+  gap: var(--space-2);
+  max-height: calc(100% - 48px);
+  overflow-y: auto;
+  padding: var(--space-2);
+  border: 1px solid var(--ops-border-strong);
+  border-radius: var(--radius-control);
+  background: var(--ops-surface-1);
+  box-shadow: 0 12px 26px var(--ops-shadow-node);
+}
+.canvas-agent-config-field {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.canvas-agent-config-field > span {
+  color: var(--ops-text-muted);
+  font: 650 9px/1 var(--font-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.canvas-agent-config select {
+  width: 100%;
+  height: 28px;
   border: 1px solid var(--ops-border-strong);
   border-radius: var(--radius-icon);
   color: var(--ops-text-secondary);
   background: var(--ops-surface-2);
   font: 600 10px var(--font-ui);
 }
-.canvas-agent-role select:nth-child(2) { max-width: 112px; }
-.canvas-agent-role select:last-child { width: 32px; }
+.canvas-agent-config select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 .workspace-canvas-card header button.canvas-send-task { cursor: pointer; color: var(--ops-focus); }
 .workspace-canvas-card header button.canvas-send-task:hover { color: var(--ops-text-primary); }
 .workspace-canvas-card header button.canvas-send-task:disabled { opacity: .38; cursor: not-allowed; }

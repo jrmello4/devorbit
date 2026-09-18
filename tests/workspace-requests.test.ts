@@ -5,6 +5,7 @@ import {
   buildPendingCanvasNode,
   buildWorkspaceUiRequest,
   computePipeSync,
+  computeSquadRegions,
   computeStreamingPipeEdges,
   computeWebSuppressed,
   createsAgentCycle,
@@ -122,6 +123,49 @@ describe('computeStreamingPipeEdges (sem espelhamento implícito)', () => {
       { from: 'note', to: 'agent' },
       { from: 'workbench', to: 'agent' },
     ])).toEqual([])
+  })
+})
+
+describe('computeSquadRegions (Hero Ops squad layer)', () => {
+  const nodes = [
+    { id: 'coordinator', x: 100, y: 100, width: 300, height: 200 },
+    { id: 'specialist', x: 500, y: 260, width: 280, height: 180 },
+    { id: 'note', x: 20, y: 20, width: 200, height: 150 },
+  ]
+  const squad = {
+    id: 'squad-1',
+    title: 'Frontend Review',
+    coordinatorNodeId: 'coordinator',
+    memberNodeIds: ['coordinator', 'specialist'],
+  }
+
+  it('cobre todos os membros com padding simétrico', () => {
+    expect(computeSquadRegions([squad], nodes, 24)).toEqual([
+      {
+        id: 'squad-1',
+        title: 'Frontend Review',
+        coordinatorNodeId: 'coordinator',
+        x: 76,
+        y: 76,
+        width: 728,
+        height: 388,
+      },
+    ])
+  })
+
+  it('ignora membros ausentes e squads sem nós válidos', () => {
+    const partial = { ...squad, memberNodeIds: ['coordinator', 'missing'] }
+    const [region] = computeSquadRegions([partial, { ...squad, id: 'squad-2', memberNodeIds: ['missing'] }], nodes, 10)
+    expect(region).toMatchObject({ x: 90, y: 90, width: 320, height: 220 })
+    expect(computeSquadRegions([{ ...squad, memberNodeIds: [] }], nodes)).toEqual([])
+  })
+
+  it('ordena as regiões de forma determinística', () => {
+    const regions = computeSquadRegions([
+      { ...squad, id: 'b', memberNodeIds: ['specialist'] },
+      { ...squad, id: 'a', memberNodeIds: ['coordinator'] },
+    ], nodes)
+    expect(regions.map((region) => region.id)).toEqual(['a', 'b'])
   })
 })
 
