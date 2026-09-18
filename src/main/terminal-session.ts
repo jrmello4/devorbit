@@ -39,6 +39,17 @@ interface TerminalRecord {
 
 const sessions = new Map<string, TerminalRecord>()
 const listeners = new Set<(event: TerminalEvent) => void>()
+const startListeners = new Set<(id: string) => void>()
+
+function emitStart(id: string): void {
+  for (const listener of startListeners) {
+    try {
+      listener(id)
+    } catch {
+      // Um listener com defeito nunca pode derrubar o start do PTY.
+    }
+  }
+}
 
 function emit(event: TerminalEvent): void {
   for (const listener of listeners) {
@@ -71,6 +82,12 @@ function isValidId(id: unknown): id is string {
 export function onTerminalEvent(listener: (event: TerminalEvent) => void): () => void {
   listeners.add(listener)
   return () => listeners.delete(listener)
+}
+
+/** Notifica todo start de PTY (inclusive restart com o mesmo id). */
+export function onTerminalStart(listener: (id: string) => void): () => void {
+  startListeners.add(listener)
+  return () => startListeners.delete(listener)
 }
 
 export function getTerminalDimensions(id: string): TerminalDimensions | undefined {
@@ -114,6 +131,7 @@ export async function startTerminal(
   }
 
   sessions.set(id, { terminal, cols, rows })
+  emitStart(id)
 
   terminal.onData((data) => {
     if (isCurrent(id, terminal)) emit({ id, type: 'data', data })

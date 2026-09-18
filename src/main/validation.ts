@@ -26,10 +26,11 @@ export const LAUNCH_TOOLS = [
 
 export type LaunchToolName = (typeof LAUNCH_TOOLS)[number]
 export type CodexAccount = 'account1' | 'account2'
+export function isAgentProviderId(value: unknown): value is AgentProviderId {
+  return typeof value === 'string' && (AGENT_PROVIDER_IDS as readonly string[]).includes(value)
+}
 export function validateAgentProvider(value: unknown): AgentProviderId {
-  if (typeof value === 'string' && (AGENT_PROVIDER_IDS as readonly string[]).includes(value)) {
-    return value as AgentProviderId
-  }
+  if (isAgentProviderId(value)) return value
   throw new Error('Provedor de agente inválido.')
 }
 export type WindowAction = 'minimize' | 'maximize' | 'close'
@@ -428,6 +429,37 @@ function validateProjectAccounts(value: unknown): Record<string, 'account1' | 'a
   }
   return result
 }
+function validateAutomationConfig(value: unknown): NonNullable<AppConfig['automation']> {
+  if (!isRecord(value)) throw new Error('Configuração de automação inválida.')
+  const automation: NonNullable<AppConfig['automation']> = {}
+  if ('defaultExecutor' in value) {
+    automation.defaultExecutor = value.defaultExecutor === null || value.defaultExecutor === undefined
+      ? undefined
+      : validateAgentProvider(value.defaultExecutor)
+  }
+  if ('defaultCodexAccount' in value) {
+    automation.defaultCodexAccount = value.defaultCodexAccount === null || value.defaultCodexAccount === undefined
+      ? undefined
+      : validateCodexAccount(value.defaultCodexAccount)
+  }
+  if ('autoStartExecutor' in value && value.autoStartExecutor !== undefined) {
+    if (typeof value.autoStartExecutor !== 'boolean') throw new Error('Opção de iniciar executor inválida.')
+    automation.autoStartExecutor = value.autoStartExecutor
+  }
+  if ('restoreWorkspace' in value && value.restoreWorkspace !== undefined) {
+    if (typeof value.restoreWorkspace !== 'boolean') throw new Error('Opção de restaurar workspace inválida.')
+    automation.restoreWorkspace = value.restoreWorkspace
+  }
+  if ('restoreProjectId' in value) {
+    if (value.restoreProjectId === null || value.restoreProjectId === undefined || value.restoreProjectId === '') {
+      automation.restoreProjectId = undefined
+    } else {
+      automation.restoreProjectId = validateConfigText(value.restoreProjectId, 'Projeto a restaurar').trim()
+    }
+  }
+  return automation
+}
+
 export async function validateConfigUpdates(value: unknown): Promise<Partial<AppConfig>> {
   if (!isRecord(value)) throw new Error('Configuração inválida.')
 
@@ -457,6 +489,9 @@ export async function validateConfigUpdates(value: unknown): Promise<Partial<App
     const routing = validateModelRoutingConfig(value.modelRouting)
     if (routing) updates.modelRouting = routing
     else updates.modelRouting = undefined
+  }
+  if ('automation' in value && value.automation !== undefined) {
+    updates.automation = validateAutomationConfig(value.automation)
   }
   return updates
 }

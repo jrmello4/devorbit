@@ -28,6 +28,7 @@ import type {
   HitlRequestView,
 } from './types'
 import { CheckCircle2, AlertCircle, Info, X, FolderKanban, ChartNoAxesCombined, Settings, ArrowRightLeft, GitPullRequest, PanelLeftClose, PanelLeftOpen, Wrench, LayoutDashboard, RefreshCw } from 'lucide-react'
+import { resolveRestorableProjectId } from './components/workspace-restore'
 
 const IntegratedWorkspace = React.lazy(() => import('./components/IntegratedWorkspace').then((module) => ({ default: module.IntegratedWorkspace })))
 
@@ -59,6 +60,7 @@ export const App: React.FC = () => {
   const [isGitDockOpen, setIsGitDockOpen] = useState(false)
   const [activeWorkspaceProject, setActiveWorkspaceProject] = useState<Project | null>(null)
   const [workspaceProjects, setWorkspaceProjects] = useState<Project[]>([])
+  const restoredWorkspaceRef = useRef(false)
   const [workspaceDirty, setWorkspaceDirty] = useState<Record<string, boolean>>({})
   const [search, setSearch] = useState('')
   const [workspaceView, setWorkspaceView] = useState<'projects' | 'usage' | 'workspace' | 'audit'>('projects')
@@ -76,6 +78,10 @@ export const App: React.FC = () => {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [isSyncingAll, setIsSyncingAll] = useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const [canvasFocusProjectId, setCanvasFocusProjectId] = useState<string | null>(null)
+  const handleCanvasModeChange = useCallback((projectId: string, active: boolean) => {
+    setCanvasFocusProjectId((current) => (active ? projectId : current === projectId ? null : current))
+  }, [])
   const [isToolHealthOpen, setIsToolHealthOpen] = useState(false)
   const [isSwitchingAccount, setIsSwitchingAccount] = useState(false)
   const [isRefreshingRealUsage, setIsRefreshingRealUsage] = useState(false)
@@ -629,6 +635,23 @@ export const App: React.FC = () => {
     return unsubscribe
   }, [notify, openIntegratedWorkspace, projects])
 
+  // Restaura o workspace configurado uma única vez por sessão. `isLoading` só
+  // é tocado no bootstrap (handleRefresh usa isRefreshing), então o refresh
+  // manual/automático nunca reabre o ambiente.
+  useEffect(() => {
+    if (isLoading) return
+    const restorableId = resolveRestorableProjectId(
+      config?.automation,
+      projects.map((entry) => entry.id),
+      restoredWorkspaceRef.current,
+    )
+    if (!restorableId) return
+    const project = projects.find((entry) => entry.id === restorableId)
+    if (!project) return
+    restoredWorkspaceRef.current = true
+    openIntegratedWorkspace(project)
+  }, [config, isLoading, openIntegratedWorkspace, projects])
+
   useEffect(() => {
     const warnAboutDrafts = (event: BeforeUnloadEvent) => {
       if (!Object.values(workspaceDirty).some(Boolean)) return
@@ -864,7 +887,7 @@ export const App: React.FC = () => {
   }
 
   return (
-    <div className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
+    <div className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${workspaceView === 'workspace' && canvasFocusProjectId === activeWorkspaceProject?.id ? 'canvas-focus' : ''}`}>
       <Header search={search} setSearch={(value) => {setSearch(value); setWorkspaceView('projects')}}
         onOpenCommandPalette={openCommandPalette} onRefresh={handleRefresh} isRefreshing={isRefreshing}
         theme={theme} onToggleTheme={() => setThemeMode(setTheme(toggleTheme(theme)))} />
@@ -874,7 +897,7 @@ export const App: React.FC = () => {
         <nav>
           <button className={`nav-item ${workspaceView === 'projects' ? 'active' : ''}`} aria-current={workspaceView === 'projects' ? 'page' : undefined} title="Projetos" onClick={() => setWorkspaceView('projects')}><FolderKanban size={17}/><span>Projetos</span><small>{projects.length}</small></button>
           <button className={`nav-item ${workspaceView === 'usage' ? 'active' : ''}`} aria-current={workspaceView === 'usage' ? 'page' : undefined} title="Contas e uso" onClick={() => setWorkspaceView('usage')}><ChartNoAxesCombined size={17}/><span>Contas e uso</span></button>
-          <button className={`nav-item ${workspaceView === 'audit' ? 'active' : ''}`} aria-current={workspaceView === 'audit' ? 'page' : undefined} title="Auditoria e evolução" onClick={() => setWorkspaceView('audit')}><ChartNoAxesCombined size={17}/><span>Auditoria</span></button>
+          <button className={`nav-item ${workspaceView === 'audit' ? 'active' : ''}`} aria-current={workspaceView === 'audit' ? 'page' : undefined} title="Auditoria" onClick={() => setWorkspaceView('audit')}><ChartNoAxesCombined size={17}/><span>Auditoria</span></button>
           {activeWorkspaceProject && <button className={`nav-item ${workspaceView === 'workspace' ? 'active' : ''}`} aria-current={workspaceView === 'workspace' ? 'page' : undefined} title={`Ambiente integrado de ${activeWorkspaceProject.name}`} onClick={() => setWorkspaceView('workspace')}><LayoutDashboard size={17}/><span>Ambiente</span></button>}
         </nav>
         <div className="sidebar-tools"><span className="sidebar-label">Workspace</span><button className="nav-item" title="Sincronizar todos os repositórios" onClick={handleSyncAll} disabled={isSyncingAll}><GitPullRequest size={17}/><span>{isSyncingAll ? 'Sincronizando…' : 'Sincronizar Git'}</span></button><button className="nav-item" title="Configurações" onClick={() => setIsSettingsOpen(true)}><Settings size={17}/><span>Configurações</span></button><button className="nav-item" title="Diagnosticar ferramentas instaladas" onClick={() => setIsToolHealthOpen(true)}><Wrench size={17}/><span>Diagnóstico</span></button></div>
@@ -932,6 +955,8 @@ export const App: React.FC = () => {
                 onUiRequestConsumed={handleConsumeWorkspaceUiRequest}
                 pendingCanvasNode={pendingCanvasNode && pendingCanvasNode.projectId === workspaceProject.id ? pendingCanvasNode : null}
                 onPendingCanvasNodeConsumed={handleConsumePendingCanvasNode}
+                automation={config?.automation}
+                onCanvasModeChange={handleCanvasModeChange}
               />
               </Suspense>
             </div>
@@ -1066,6 +1091,7 @@ export const App: React.FC = () => {
         onNotify={notify}
         authStatus={authStatus}
         onOpenAuthModal={(acc) => setAuthModalAccount(acc)}
+        projects={projects}
       />
 
       {/* Modal de Conexão Assistida do OpenAI Codex */}

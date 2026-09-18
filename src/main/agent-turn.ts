@@ -95,6 +95,10 @@ export const TURN_BLOCKED_PATTERN = /BLOQUEADO/i
 export const TURN_DEFAULT_IDLE_TIMEOUT_MS = 5 * 60_000
 export const TURN_DEFAULT_OVERALL_TIMEOUT_MS = 30 * 60_000
 export const TURN_MAX_PROMPT_CHARS = 8_000
+// Prontidão da TUI no primeiro turno: silêncio após a primeira saída libera o
+// prompt; o teto é melhor esforço para nunca travar um CLI silencioso.
+export const TURN_READY_QUIET_MS = 1_200
+export const TURN_READY_TIMEOUT_MS = 12_000
 
 export interface TurnResolution {
   tier: ModelTier
@@ -138,6 +142,11 @@ export interface TurnWaiter {
 
 export type ResultWaitPromise = Promise<TurnWaiter> & { cancel: () => void }
 
+export interface TerminalReadyOptions {
+  quietMs?: number
+  timeoutMs?: number
+}
+
 export interface TurnDependencies {
   getSession: (id: string) => { provider: AgentProviderId; model: string } | undefined
   setSession: (id: string, session: { provider: AgentProviderId; model: string }) => void
@@ -151,6 +160,11 @@ export interface TurnDependencies {
   ) => Promise<{ provider?: AgentProviderId } | void>
   write: (id: string, input: string) => boolean
   waitResult: (id: string, timeouts: { idleMs: number; overallMs: number }) => Promise<TurnWaiter>
+  /**
+   * Espera a TUI do CLI ficar pronta depois de um spawn. Sem isso o primeiro
+   * prompt+CR chega durante o boot do OpenCode/Antigravity e fica sem Enter.
+   */
+  waitReady: (id: string, options?: TerminalReadyOptions) => Promise<void>
   resolveTurn: (provider: AgentProviderId, prompt: string) => Promise<TurnResolution>
   orderProviders: (preferred: AgentProviderId, ready: AgentProviderId[]) => AgentProviderId[]
   readyProviders: () => Promise<AgentProviderId[]>
@@ -166,21 +180,21 @@ function outcomeFromWait(waiter: TurnWaiter): { result?: string; blocked?: strin
   if (waiter.blocked) return { blocked: waiter.blocked }
   if (waiter.result) return { result: waiter.result }
   if (waiter.error) return { error: waiter.error }
-  if (waiter.invalidResult) return { error: `Resultado DEVORBIT_RESULT inválido ou incerto (${waiter.invalidResult}).` }
+  if (waiter.invalidResult) return { error: 'O agente devolveu um resultado inválido.' }
   // CLI imprimiu rate limit/indisponibilidade e saiu sem marcador (mesmo com
   // código 0): texto transitório na cauda também autoriza failover.
   const transient = findTransientSnippet(waiter.tail)
   if (transient) return { error: transient }
   if (waiter.timedOut || waiter.idleTimedOut) {
-    return { error: waiter.idleTimedOut ? 'Turno sem saída por tempo demais (stall).' : 'Tempo limite do turno excedido.' }
+    return { error: waiter.idleTimedOut ? 'O agente ficou tempo demais sem responder.' : 'O tempo limite da tarefa foi excedido.' }
   }
   if (typeof waiter.code === 'number' && waiter.code !== 0) {
     const lastLine = typeof waiter.tail === 'string'
       ? stripAnsiEscapes(waiter.tail).split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1)?.slice(0, 200)
       : undefined
-    return { error: `Processo terminou com código ${waiter.code}${lastLine ? `: ${lastLine}` : '.'}` }
+    return { error: `O processo foi encerrado inesperadamente${lastLine ? `: ${lastLine}` : '.'}` }
   }
-  return { error: 'Turno encerrado sem resultado.' }
+  return { error: 'O agente terminou sem informar o resultado.' }
 }
 
 export async function sendAgentTurn(
@@ -193,7 +207,7 @@ export async function sendAgentTurn(
   }
 ): Promise<TurnOutcome> {
   const prompt = input.prompt.slice(0, TURN_MAX_PROMPT_CHARS)
-  if (!prompt.trim()) throw new Error('Prompt do turno vazio.')
+  if (!prompt.trim()) throw new Error('A tarefa está vazia.')
   const idleMs = input.timeouts?.idleMs ?? TURN_DEFAULT_IDLE_TIMEOUT_MS
   const overallMs = input.timeouts?.overallMs ?? TURN_DEFAULT_OVERALL_TIMEOUT_MS
 
@@ -233,7 +247,7 @@ async function runTurn(
   const ordered = deps.orderProviders(turn.provider, ready)
   if (ordered.length === 0) {
     throw Object.assign(
-      new Error(`${turn.provider} não está pronto para o turno; nenhum outro provedor será usado.`),
+      new Error(`${turn.provider} não está disponível para esta tarefa; nenhum outro provedor será usado.`),
       { code: 'provider-not-ready', provider: turn.provider, attempts: [] }
     )
   }
@@ -242,7 +256,7 @@ async function runTurn(
   const [candidate] = ordered
   if (!candidate) {
     throw Object.assign(
-      new Error(`${turn.provider} não está pronto para o turno; nenhum outro provedor será usado.`),
+      new Error(`${turn.provider} não está disponível para esta tarefa; nenhum outro provedor será usado.`),
       { code: 'provider-not-ready', provider: turn.provider, attempts: [] }
     )
   }
@@ -250,6 +264,7 @@ async function runTurn(
   const session = deps.getSession(terminalId)
   let effective: AgentProviderId = candidate
   try {
+    let spawnedTerminal = false
     if (!deps.hasTerminal(terminalId) || !session || session.provider !== candidate || session.model !== turn.model) {
       // Mesmo id: stop + start reutiliza a sessão (sem PTYs duplicados).
       const spawnResult = await deps.spawn(terminalId, { provider: candidate, model: turn.model, tier: turn.tier })
@@ -261,9 +276,14 @@ async function runTurn(
         )
       }
       deps.setSession(terminalId, { provider: effective, model: turn.model })
+      spawnedTerminal = true
     } else {
       effective = session.provider
     }
+    // Primeiro turno: spawn → pronto → waiter → um único prompt+CR. A espera
+    // acontece antes de armar o observador para que a TUI já esteja lendo o
+    // stdin quando o prompt chegar.
+    if (spawnedTerminal) await deps.waitReady(terminalId)
     // Arme o observador antes de escrever: alguns CLIs devolvem um resultado
     // no mesmo ciclo de eventos do PTY. Se o waiter fosse criado depois do
     // write, essa resposta seria perdida e o turno ficaria em stall até o
@@ -272,7 +292,7 @@ async function runTurn(
     if (!deps.write(terminalId, prompt + '\r')) {
       const cancel = (waiterPromise as Partial<ResultWaitPromise>).cancel
       cancel?.()
-      throw new Error('O terminal recusou a tarefa (ENETUNREACH).')
+      throw new Error('O terminal recusou a tarefa.')
     }
     const waiter = await waiterPromise
     const outcome = outcomeFromWait(waiter)
@@ -297,6 +317,47 @@ async function runTurn(
       ...(code ? { code } : {}),
       // O provedor explícito do turno — nunca o efetivo de uma troca indevida.
       provider: candidate,
+    })
+  }
+}
+
+/**
+ * Espera central de prontidão da TUI. Depois do spawn, aguarda a primeira
+ * saída e uma janela de quietude — o momento em que OpenCode/Antigravity
+ * terminam de desenhar e passam a ler o stdin. Resolve também no timeout
+ * (melhor esforço: nunca pior que escrever imediatamente) e quando o terminal
+ * encerra. Um único observador por turno, removido ao resolver.
+ */
+export function createTerminalReadyWaiter(
+  subscribe: (listener: (event: TerminalEvent) => void) => () => void
+): (id: string, options?: TerminalReadyOptions) => Promise<void> {
+  return (id, options) => {
+    const quietMs = Math.max(100, options?.quietMs ?? TURN_READY_QUIET_MS)
+    const timeoutMs = Math.max(quietMs, options?.timeoutMs ?? TURN_READY_TIMEOUT_MS)
+    return new Promise<void>((resolve) => {
+      const timers: { quiet?: ReturnType<typeof setTimeout>; overall?: ReturnType<typeof setTimeout> } = {}
+      let settled = false
+      let unsubscribe: () => void = () => undefined
+      const finish = () => {
+        if (settled) return
+        settled = true
+        if (timers.quiet) clearTimeout(timers.quiet)
+        if (timers.overall) clearTimeout(timers.overall)
+        unsubscribe()
+        resolve()
+      }
+      unsubscribe = subscribe((event) => {
+        if (event.id !== id) return
+        if (event.type === 'data') {
+          // A janela só começa depois da primeira saída: uma TUI lenta não é
+          // declarada pronta só porque ainda não desenhou nada.
+          if (timers.quiet) clearTimeout(timers.quiet)
+          timers.quiet = setTimeout(finish, quietMs)
+          return
+        }
+        if (event.type === 'exit' || event.type === 'error') finish()
+      })
+      timers.overall = setTimeout(finish, timeoutMs)
     })
   }
 }

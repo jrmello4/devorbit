@@ -152,6 +152,19 @@ export interface WebPanelBounds {
   contentHeight?: number
 }
 
+export interface AutomationConfig {
+  /** Executor padrão para nós novos e nós antigos sem provider explícito. */
+  defaultExecutor?: AgentProviderId
+  /** Conta Codex padrão quando o executor padrão é o Codex. */
+  defaultCodexAccount?: 'account1' | 'account2'
+  /** Inicia o executor padrão automaticamente ao abrir o terminal primário. */
+  autoStartExecutor?: boolean
+  /** Reabre o workspace configurado na inicialização do app. */
+  restoreWorkspace?: boolean
+  /** Projeto restaurado quando restoreWorkspace está ativo. */
+  restoreProjectId?: string
+}
+
 export interface AppConfig {
   projectDirs: string[]
   managedProjects: ManagedProject[]
@@ -179,6 +192,7 @@ export interface AppConfig {
     openaiApiKey?: string
     anthropicApiKey?: string
   }
+  automation?: AutomationConfig
 }
 
 export interface SyncResult {

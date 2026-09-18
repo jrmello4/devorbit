@@ -207,4 +207,58 @@ describe('config persistence hardening', () => {
     )
     expect((await loadConfig()).modelRouting).toBeUndefined()
   })
+
+  it('round-trips automation through save/load/export/import with field-wise merge', async () => {
+    const saved = await saveConfig({
+      automation: {
+        defaultExecutor: 'opencode',
+        autoStartExecutor: true,
+        restoreWorkspace: true,
+        restoreProjectId: 'proj-1',
+      },
+    })
+    expect(saved.automation).toMatchObject({
+      defaultExecutor: 'opencode',
+      autoStartExecutor: true,
+      restoreWorkspace: true,
+      restoreProjectId: 'proj-1',
+    })
+
+    // Atualização parcial não descarta as chaves já salvas.
+    await saveConfig({ automation: { defaultCodexAccount: 'account2' } })
+    const merged = await loadConfig()
+    expect(merged.automation).toMatchObject({
+      defaultExecutor: 'opencode',
+      autoStartExecutor: true,
+      restoreWorkspace: true,
+      restoreProjectId: 'proj-1',
+      defaultCodexAccount: 'account2',
+    })
+
+    const exported = await exportConfigJson()
+    const imported = await importConfigJson(exported)
+    expect(imported.automation?.defaultExecutor).toBe('opencode')
+
+    // `undefined` explícito limpa o campo no merge (executor -> nenhum).
+    await saveConfig({ automation: { defaultExecutor: undefined, restoreProjectId: undefined } })
+    const cleared = await loadConfig()
+    expect(cleared.automation?.defaultExecutor).toBeUndefined()
+    expect(cleared.automation?.restoreProjectId).toBeUndefined()
+    expect(cleared.automation?.defaultCodexAccount).toBe('account2')
+  })
+
+  it('drops invalid automation values on load', async () => {
+    await fs.writeFile(
+      path.join(temporaryUserData, 'config.json'),
+      JSON.stringify({
+        automation: {
+          defaultExecutor: 'not-a-provider',
+          defaultCodexAccount: 'account9',
+          autoStartExecutor: 'yes',
+          restoreProjectId: 42,
+        },
+      })
+    )
+    expect((await loadConfig()).automation).toBeUndefined()
+  })
 })

@@ -461,11 +461,16 @@
   opacity: 0.4;
   cursor: not-allowed;
 }
-.workspace-canvas-toolbar output {
-  min-width: 38px;
-  text-align: center;
+.workspace-canvas-toolbar .workspace-canvas-zoom-value {
+  min-width: 44px;
+  justify-content: center;
+  padding: 0 var(--space-1);
   color: var(--ops-text-muted);
   font: 650 10px var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.workspace-canvas-toolbar .workspace-canvas-zoom-value:hover:not(:disabled) {
+  color: var(--ops-text-primary);
 }
 .workspace-canvas-toolbar-separator {
   width: 1px;

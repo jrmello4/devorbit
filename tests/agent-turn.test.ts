@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   buildAgentTurnEnv,
   createResultWaiter,
+  createTerminalReadyWaiter,
   resetTurnQueues,
   sendAgentTurn,
   spawnAgentProviderTerminal,
@@ -24,6 +25,7 @@ function createHarness(options: {
   const writes: Array<{ id: string; input: string }> = []
   const waiters = [...(options.waiters || [])]
   const failSpawn = options.failSpawn || (() => null)
+  const order: string[] = []
   const deps: TurnDependencies = {
     getSession: (id) => sessions.get(id),
     setSession: (id, session) => sessions.set(id, session),
@@ -32,14 +34,22 @@ function createHarness(options: {
     spawn: vi.fn(async (id: string, turn: { provider: AgentProviderId; model: string; tier: 'fast' | 'deep' }) => {
       const failure = failSpawn(turn.provider)
       if (failure) throw failure
+      order.push('spawn')
       live.add(id)
       spawns.push({ id, provider: turn.provider })
     }),
     write: vi.fn((id: string, input: string) => {
+      order.push('write')
       writes.push({ id, input })
       return live.has(id)
     }),
-    waitResult: vi.fn(async () => waiters.shift() || { timedOut: true }),
+    waitResult: vi.fn(async () => {
+      order.push('waiter')
+      return waiters.shift() || { timedOut: true }
+    }),
+    waitReady: vi.fn(async () => {
+      order.push('ready')
+    }),
     resolveTurn: async (provider: AgentProviderId) => ({
       tier: options.tier || 'fast',
       model: options.model || 'gpt-4o-mini',
@@ -50,7 +60,7 @@ function createHarness(options: {
     orderProviders: (preferred, ready) => (ready.includes(preferred) ? [preferred] : []),
     readyProviders: async () => ['opencode', 'codex', 'claude'] as AgentProviderId[],
   }
-  return { deps, sessions, live, spawns, writes }
+  return { deps, sessions, live, spawns, writes, order }
 }
 
 describe('buildAgentTurnEnv', () => {
@@ -192,7 +202,7 @@ describe('sendAgentTurn', () => {
       terminalId: 'turn-invalid-result',
       provider: 'opencode',
       prompt: 'faÃ§a algo',
-    })).rejects.toThrow('Resultado DEVORBIT_RESULT')
+    })).rejects.toThrow('resultado inválido')
     expect(harness.spawns).toHaveLength(1)
     resetTurnQueues()
   })
@@ -207,6 +217,32 @@ describe('sendAgentTurn', () => {
     harness.sessions.set('turn-reuse', { provider: 'opencode', model: 'gpt-4o-mini' })
     await sendAgentTurn(harness.deps, { terminalId: 'turn-reuse', provider: 'opencode', prompt: 'oi' })
     expect(harness.spawns).toHaveLength(0)
+    resetTurnQueues()
+  })
+
+  it('first turn: spawn, ready, waiter and a single prompt+CR in that order', async () => {
+    resetTurnQueues()
+    const harness = createHarness({ waiters: [{ result: 'CONCLUIDO: ok' }] })
+    const outcome = await sendAgentTurn(harness.deps, {
+      terminalId: 'turn-ready-first',
+      provider: 'opencode',
+      prompt: 'liste os arquivos',
+    })
+    expect(outcome).toMatchObject({ provider: 'opencode', result: 'CONCLUIDO: ok' })
+    expect(harness.order).toEqual(['spawn', 'ready', 'waiter', 'write'])
+    expect(harness.deps.waitReady).toHaveBeenCalledWith('turn-ready-first')
+    expect(harness.writes).toEqual([{ id: 'turn-ready-first', input: 'liste os arquivos\r' }])
+    resetTurnQueues()
+  })
+
+  it('does not wait for readiness when the terminal is already in the turn provider/model', async () => {
+    resetTurnQueues()
+    const harness = createHarness({ waiters: [{ result: 'ok' }] })
+    harness.live.add('turn-ready-reuse')
+    harness.sessions.set('turn-ready-reuse', { provider: 'opencode', model: 'gpt-4o-mini' })
+    await sendAgentTurn(harness.deps, { terminalId: 'turn-ready-reuse', provider: 'opencode', prompt: 'oi' })
+    expect(harness.deps.waitReady).not.toHaveBeenCalled()
+    expect(harness.order).toEqual(['waiter', 'write'])
     resetTurnQueues()
   })
 
@@ -308,6 +344,87 @@ describe('waiter integrado ao turno via eventos reais', () => {  function create
       prompt: 'faça algo',
     })).resolves.toMatchObject({ result: 'resposta imediata' })
     resetTurnQueues()
+  })
+})
+
+describe('createTerminalReadyWaiter', () => {
+  function createReadyBus() {
+    const listeners = new Set<(event: TerminalEvent) => void>()
+    const wait = createTerminalReadyWaiter((listener) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    })
+    return {
+      wait,
+      listeners,
+      emit: (event: TerminalEvent) => listeners.forEach((listener) => listener(event)),
+    }
+  }
+
+  it('releases only after the quiet window that follows the first output', async () => {
+    vi.useFakeTimers()
+    try {
+      const bus = createReadyBus()
+      let settled = false
+      const pending = bus.wait('ready-one', { quietMs: 1000, timeoutMs: 5000 }).then(() => { settled = true })
+      await vi.advanceTimersByTimeAsync(3000)
+      expect(settled).toBe(false)
+      bus.emit({ id: 'ready-one', type: 'data', data: 'desenhando a TUI' })
+      await vi.advanceTimersByTimeAsync(900)
+      expect(settled).toBe(false)
+      await vi.advanceTimersByTimeAsync(200)
+      await pending
+      expect(settled).toBe(true)
+      expect(bus.listeners.size).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps waiting while the TUI is still drawing frames', async () => {
+    vi.useFakeTimers()
+    try {
+      const bus = createReadyBus()
+      let settled = false
+      const pending = bus.wait('ready-two', { quietMs: 1000, timeoutMs: 10_000 }).then(() => { settled = true })
+      for (let index = 0; index < 4; index += 1) {
+        bus.emit({ id: 'ready-two', type: 'data', data: `frame ${index}` })
+        await vi.advanceTimersByTimeAsync(700)
+        expect(settled).toBe(false)
+      }
+      await vi.advanceTimersByTimeAsync(1000)
+      await pending
+      expect(settled).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('releases on timeout when the CLI never draws (best effort)', async () => {
+    vi.useFakeTimers()
+    try {
+      const bus = createReadyBus()
+      let settled = false
+      const pending = bus.wait('ready-silent', { quietMs: 1000, timeoutMs: 3000 }).then(() => { settled = true })
+      await vi.advanceTimersByTimeAsync(2999)
+      expect(settled).toBe(false)
+      await vi.advanceTimersByTimeAsync(2)
+      await pending
+      expect(settled).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('ignores other terminals and releases on exit', async () => {
+    const bus = createReadyBus()
+    let settled = false
+    const pending = bus.wait('ready-exit', { quietMs: 1000, timeoutMs: 5000 }).then(() => { settled = true })
+    bus.emit({ id: 'outro', type: 'data', data: 'ruído' })
+    bus.emit({ id: 'ready-exit', type: 'exit', code: 0 })
+    await pending
+    expect(settled).toBe(true)
+    expect(bus.listeners.size).toBe(0)
   })
 })
 

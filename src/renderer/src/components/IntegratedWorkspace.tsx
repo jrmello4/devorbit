@@ -1,10 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertCircle, ArrowLeft, ArrowRight, Check, Code2, Globe, GripVertical,
-  RefreshCw, Send, Terminal, X,
+  LayoutDashboard, RefreshCw, Send, Terminal, X,
 } from 'lucide-react'
 import type { AgentBridgeEvent } from '../../../shared/agent-bridge-event'
-import type { AgentProvider, AgentProviderId, CodexAccountStatus, Project, ToolHealth, WebPanelEvent } from '../types'
+import type { AgentProvider, AgentProviderId, AutomationConfig, CodexAccountStatus, Project, ToolHealth, WebPanelEvent } from '../types'
 import type { PendingCanvasNode, WorkspaceUiRequest } from './workspace-request-helpers'
 import { applyWorkspaceUiRequest, computePipeSync, computeStreamingPipeEdges, isPendingNodeForProject } from './workspace-request-helpers'
 import { createPipeCallQueue } from './pipe-ipc-queue'
@@ -28,6 +28,8 @@ interface IntegratedWorkspaceProps {
   onUiRequestConsumed?: (nonce: number) => void
   pendingCanvasNode?: PendingCanvasNode | null
   onPendingCanvasNodeConsumed?: (nonce: number) => void
+  automation?: AutomationConfig | null
+  onCanvasModeChange?: (projectId: string, active: boolean) => void
 }
 interface WorkspaceLayout {
   rightWidth: number
@@ -83,7 +85,8 @@ export function agentTerminalId(projectId: string, nodeId: string): string {
 
 export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
   project, onClose, onNotify, codexAccount = 'account1', codexAuthStatus = null, isWebSuppressed = false, isSuspended = false, onRequestCodexAuth, onDirtyChange, onCanvasFocusChange,
-  uiRequest = null, onUiRequestConsumed, pendingCanvasNode = null, onPendingCanvasNodeConsumed,
+  uiRequest = null, onUiRequestConsumed, pendingCanvasNode = null, onPendingCanvasNodeConsumed, automation = null,
+  onCanvasModeChange,
 }) => {
   const [webUrl, setWebUrl] = useState('https://www.google.com/')
   const [webTitle, setWebTitle] = useState('Navegador')
@@ -191,6 +194,10 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
     () => 'workspace-' + project.id.replace(/[^a-z0-9_-]/gi, '-').slice(0, 48),
     [project.id],
   )
+  // Terminal primário: o executor configurado substitui o Codex padrão apenas
+  // quando o usuário escolheu um; sem config, tudo continua como antes.
+  const primaryProvider: AgentProviderId = automation?.defaultExecutor ?? 'codex'
+  const autoStartPrimary = automation?.autoStartExecutor === true
   const queueAgentTask = useCallback((node: CanvasNode, prompt: string) => {
     const taskId = 'task-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7)
     setAgentTasks((current) => ({ ...current, [node.id]: { id: taskId, prompt } }))
@@ -312,6 +319,13 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
   useEffect(() => {
     try { window.localStorage.setItem('devorbit:workspace-mode:' + project.id, isCanvas ? 'canvas' : 'grid') } catch { /* opcional */ }
   }, [isCanvas, project.id])
+
+  // Modo dedicado: o App esconde o chrome usual enquanto o canvas do painel
+  // ATIVO está aberto. Painéis suspensos nunca reivindicam o modo focado.
+  useEffect(() => {
+    onCanvasModeChange?.(project.id, isCanvas && !isSuspended)
+    return () => onCanvasModeChange?.(project.id, false)
+  }, [isCanvas, isSuspended, onCanvasModeChange, project.id])
 
   useEffect(() => {
     if (suppressNativeWeb) return
@@ -459,7 +473,7 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
   const canvasWorkbench = (
     <div className="workspace-editor-stack">
       <WorkspaceEditor projectPath={project.path} onNotify={onNotify} onContextChange={setEditorContext} onDirtyChange={(dirty) => { setIsEditorDirty(dirty); onDirtyChange?.(dirty) }} />
-      {layout.terminalVisible && <WorkspaceTerminal projectPath={project.path} terminalId={terminalId} codexAccount={codexAccount} provider="codex" onNotify={onNotify} onRequestCodexAuth={onRequestCodexAuth} />}
+      {layout.terminalVisible && <WorkspaceTerminal projectPath={project.path} terminalId={terminalId} codexAccount={codexAccount} provider={primaryProvider} autoStart={autoStartPrimary} autoStartCodexAccount={automation?.defaultCodexAccount} onNotify={onNotify} onRequestCodexAuth={onRequestCodexAuth} />}
     </div>
   )
   const canvasBrowser = (
@@ -471,13 +485,33 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
   )
   return (
     <main
-      className={'integrated-workspace' + (dragging ? ' is-resizing is-resizing-' + dragging : '')}
+      className={'integrated-workspace' + (isCanvas ? ' is-canvas-mode' : '') + (dragging ? ' is-resizing is-resizing-' + dragging : '')}
       style={{
         '--workspace-browser-width': layout.webVisible ? layout.rightWidth + 'px' : '0px',
         '--workspace-terminal-height': layout.terminalVisible ? layout.terminalHeight + 'px' : '0px',
       } as React.CSSProperties}
       aria-label={'Ambiente integrado de ' + project.name}
     >
+      {isCanvas ? (
+        <div className="canvas-focus-controls" role="toolbar" aria-label="Controles do canvas">
+          <span className="canvas-focus-project" title={project.path}>{project.name}</span>
+          <button
+            type="button"
+            onClick={() => setLayout((current) => ({ ...current, webVisible: !current.webVisible }))}
+            aria-label="Mostrar ou ocultar navegador"
+            aria-pressed={layout.webVisible}
+            title="Mostrar ou ocultar navegador"
+          >
+            <Globe size={14} aria-hidden="true" />
+          </button>
+          <button type="button" onClick={toggleWorkspaceMode} aria-label="Voltar ao layout integrado" title="Abrir ambiente integrado">
+            <LayoutDashboard size={14} aria-hidden="true" />
+          </button>
+          <button type="button" onClick={closeWorkspace} aria-label="Fechar ambiente" title="Fechar ambiente">
+            <X size={15} aria-hidden="true" />
+          </button>
+        </div>
+      ) : (
       <header className="integrated-toolbar">
         <div className="integrated-heading">
           <span className="integrated-heading-icon"><Code2 size={16} aria-hidden="true" /></span>
@@ -485,7 +519,7 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
         </div>
         <div className="integrated-toolbar-actions">
           <button type="button" className={'workspace-tool-button' + (isCanvas ? ' active' : '')} onClick={toggleWorkspaceMode} aria-pressed={isCanvas} aria-label={isCanvas ? 'Voltar ao layout integrado' : 'Abrir canvas'} title={isCanvas ? 'Voltar ao layout integrado' : 'Abrir canvas'}>
-            <Code2 size={14} aria-hidden="true" /><span>{isCanvas ? 'Layout' : 'Canvas'}</span>
+            <Code2 size={14} aria-hidden="true" /><span>{isCanvas ? 'Ambiente' : 'Canvas'}</span>
           </button>
           <button type="button" className={'workspace-tool-button' + (layout.terminalVisible ? ' active' : '')} onClick={() => setLayout((current) => ({ ...current, terminalVisible: !current.terminalVisible }))} aria-pressed={layout.terminalVisible} title="Mostrar ou ocultar terminal">
             <Terminal size={14} aria-hidden="true" /><span>Terminal</span>
@@ -501,8 +535,9 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
           </button>
         </div>
       </header>
+      )}
 
-      {isCanvas ? <WorkspaceCanvas project={project} workbench={canvasWorkbench} browser={layout.webVisible ? canvasBrowser : undefined} codexAuthStatus={codexAuthStatus} onRequestCodexAuth={onRequestCodexAuth} agentProviders={agentProviders} onSendAgentTask={queueAgentTask} onCreateAgentWorktree={(node) => void isolateAgent(node)} onSelectionChange={onCanvasFocusChange} onConnectionsChange={syncCanvasPipes} pendingNodeRequest={pendingCanvasNode && isPendingNodeForProject(pendingCanvasNode, project.id) ? { kind: pendingCanvasNode.kind, nonce: pendingCanvasNode.nonce } : null} onPendingNodeConsumed={handlePendingCanvasNodeConsumed} renderAgent={(node: CanvasNode, onAgentResult, onAgentTaskFailure) => node.provider ? (<div className="canvas-agent-terminal"><div className="canvas-agent-review"><span>Worktree</span><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void reviewAgent(node)}>Alterações</button><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void mergeAgent(node)}>Integrar</button></div><WorkspaceTerminal projectPath={agentWorktrees[node.id]?.path || project.path} terminalId={agentTerminalId(project.id, node.id)} codexAccount={node.account} provider={node.provider} agentTask={agentTasks[node.id]} onAgentResult={onAgentResult} onAgentTaskFailure={onAgentTaskFailure} onNotify={onNotify} onRequestCodexAuth={onRequestCodexAuth} /></div>) : null} /> : <>
+      {isCanvas ? <WorkspaceCanvas project={project} workbench={canvasWorkbench} browser={layout.webVisible ? canvasBrowser : undefined} codexAuthStatus={codexAuthStatus} onRequestCodexAuth={onRequestCodexAuth} agentProviders={agentProviders} defaultExecutor={automation?.defaultExecutor ?? null} onSendAgentTask={queueAgentTask} onCreateAgentWorktree={(node) => void isolateAgent(node)} onSelectionChange={onCanvasFocusChange} onConnectionsChange={syncCanvasPipes} pendingNodeRequest={pendingCanvasNode && isPendingNodeForProject(pendingCanvasNode, project.id) ? { kind: pendingCanvasNode.kind, nonce: pendingCanvasNode.nonce } : null} onPendingNodeConsumed={handlePendingCanvasNodeConsumed} renderAgent={(node: CanvasNode, onAgentResult, onAgentTaskFailure) => node.provider ? (<div className="canvas-agent-terminal"><div className="canvas-agent-review"><span>Worktree</span><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void reviewAgent(node)}>Alterações</button><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void mergeAgent(node)}>Integrar</button></div><WorkspaceTerminal projectPath={agentWorktrees[node.id]?.path || project.path} terminalId={agentTerminalId(project.id, node.id)} codexAccount={node.account} provider={node.provider} agentTask={agentTasks[node.id]} onAgentResult={onAgentResult} onAgentTaskFailure={onAgentTaskFailure} onNotify={onNotify} onRequestCodexAuth={onRequestCodexAuth} /></div>) : null} /> : <>
       <div className="workspace-editor-stack">
         <WorkspaceEditor
           projectPath={project.path}
@@ -521,7 +556,9 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
               projectPath={project.path}
               terminalId={terminalId}
               codexAccount={codexAccount}
-              provider="codex"
+              provider={primaryProvider}
+              autoStart={autoStartPrimary}
+              autoStartCodexAccount={automation?.defaultCodexAccount}
               onNotify={onNotify}
               onRequestCodexAuth={onRequestCodexAuth}
             />

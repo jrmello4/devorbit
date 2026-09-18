@@ -499,7 +499,25 @@ const api = {
     record('getRealUsage')
     return copy(realUsage)
   },
-  getProjectAudit: async () => ({ version: 1, projectPath: projectPath, generatedAt: new Date().toISOString(), filesScanned: 0, linesScanned: 0, cyclomaticComplexity: 0, findings: [], estimatedDebtMinutes: 0 }),
+  getProjectAudit: async (projectPath) => ({
+    version: 1,
+    projectPath: String(projectPath || ''),
+    generatedAt: new Date().toISOString(),
+    filesScanned: 12,
+    linesScanned: 2400,
+    cyclomaticComplexity: 180,
+    estimatedDebtMinutes: 600,
+    findings: Array.from({ length: 24 }, (_, index) => ({
+      id: 'fixture-finding-' + index,
+      severity: index < 3 ? 'critical' : index < 8 ? 'high' : index < 16 ? 'medium' : 'low',
+      category: 'smell',
+      message: 'Problema de fixture ' + (index + 1),
+      file: 'src/main/fixture-' + (index + 1) + '.ts',
+      line: index + 1,
+      evidence: 'fixture-' + (index + 1) + '.ts:' + (index + 1),
+      estimatedMinutes: (index + 1) * 5,
+    })),
+  }),
   getHitlRequests: async () => [],
   approveHitl: async (id) => ({ id, prompt: 'fixture', state: 'approved', createdAt: 0, expiresAt: 0 }),
   rejectHitl: async (id) => ({ id, prompt: 'fixture', state: 'rejected', createdAt: 0, expiresAt: 0 }),

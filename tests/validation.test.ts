@@ -111,6 +111,42 @@ describe('IPC input validation', () => {
     )
   })
 
+  it('validates automation updates and rejects garbage', async () => {
+    expect(
+      await validateConfigUpdates({
+        automation: {
+          defaultExecutor: 'agy',
+          defaultCodexAccount: 'account2',
+          autoStartExecutor: true,
+          restoreWorkspace: false,
+          restoreProjectId: 'proj-1',
+        },
+      })
+    ).toEqual({
+      automation: {
+        defaultExecutor: 'agy',
+        defaultCodexAccount: 'account2',
+        autoStartExecutor: true,
+        restoreWorkspace: false,
+        restoreProjectId: 'proj-1',
+      },
+    })
+    // `null` limpa o campo para o merge do config.
+    expect(await validateConfigUpdates({ automation: { defaultExecutor: null } })).toEqual({
+      automation: { defaultExecutor: undefined },
+    })
+    // Payload do SettingsModal manda booleanos `undefined` quando intocados.
+    expect(
+      await validateConfigUpdates({
+        automation: { defaultExecutor: undefined, autoStartExecutor: undefined, restoreWorkspace: undefined },
+      })
+    ).toEqual({ automation: {} })
+    await expect(validateConfigUpdates({ automation: { defaultExecutor: 'nope' } })).rejects.toThrow(/Provedor/)
+    await expect(validateConfigUpdates({ automation: { defaultCodexAccount: 'account9' } })).rejects.toThrow(/Conta/)
+    await expect(validateConfigUpdates({ automation: { autoStartExecutor: 'yes' } })).rejects.toThrow(/executor/)
+    await expect(validateConfigUpdates({ automation: { restoreWorkspace: 1 } })).rejects.toThrow(/workspace/)
+  })
+
   it('canonicalizes project directories and removes duplicate paths', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'devorbit-validation-'))
     temporaryDirectories.push(root)

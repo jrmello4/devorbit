@@ -64,9 +64,12 @@
   flex-direction: column;
   gap: 24px;
   min-width: 0;
-  min-height: 100%;
+  height: 100%;
+  min-height: 0;
   padding: 24px;
   background: var(--color-bg-page);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .evolution-dashboard__header,
@@ -206,13 +209,60 @@
 
 .evolution-entry-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
   align-items: start;
   gap: 16px;
 }
 
 .evolution-entry-section {
-  overflow: hidden;
+  overflow: visible;
+}
+
+.evolution-severity-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--evolution-border);
+  background: var(--evolution-surface-muted);
+}
+
+.evolution-severity-filter button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 3px 10px;
+  border: 1px solid var(--evolution-border);
+  border-radius: 999px;
+  background: var(--evolution-surface);
+  color: var(--evolution-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.evolution-severity-filter button:hover {
+  background: var(--surface-hover);
+  color: var(--evolution-text);
+}
+
+.evolution-severity-filter button[aria-pressed='true'] {
+  border-color: var(--evolution-accent);
+  background: var(--evolution-surface-raised);
+  color: var(--evolution-accent-strong);
+}
+
+.evolution-severity-filter small {
+  color: inherit;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+
+.evolution-entry-filter-note {
+  margin: 0;
+  padding: 10px 18px 0;
+  color: var(--evolution-muted);
+  font-size: 11px;
 }
 
 .evolution-entry-section__header {
@@ -391,20 +441,21 @@
 .hitl-risk {
   display: grid;
   gap: 6px;
-  border: 1px solid var(--evolution-border);
-  border-left: 4px solid var(--evolution-warning);
+  border: 1px solid color-mix(in srgb, var(--evolution-warning) 45%, var(--evolution-border));
   border-radius: 6px;
   padding: 13px 15px;
-  background: var(--evolution-surface-muted);
+  background: color-mix(in srgb, var(--evolution-warning) 8%, var(--evolution-surface-muted));
 }
 
 .hitl-risk[data-risk='low'] {
-  border-left-color: var(--evolution-success);
+  border-color: color-mix(in srgb, var(--evolution-success) 45%, var(--evolution-border));
+  background: color-mix(in srgb, var(--evolution-success) 8%, var(--evolution-surface-muted));
 }
 
 .hitl-risk[data-risk='high'],
 .hitl-risk[data-risk='critical'] {
-  border-left-color: var(--evolution-danger);
+  border-color: color-mix(in srgb, var(--evolution-danger) 45%, var(--evolution-border));
+  background: color-mix(in srgb, var(--evolution-danger) 8%, var(--evolution-surface-muted));
 }
 
 .hitl-risk__heading {

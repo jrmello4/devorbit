@@ -5,6 +5,7 @@ import path from 'node:path'
 import fs from 'node:fs/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createResultWaiter } from './agent-turn'
+import { createTerminalReadiness } from './terminal-readiness'
 import { createBridgeService } from './bridge-service'
 import { registerProjectIpc } from './ipc/project-ipc'
 import { registerWorkspaceIpc } from './ipc/workspace-ipc'
@@ -20,7 +21,7 @@ import { AuditLedger } from './audit-ledger'
 import { Telemetry } from './telemetry'
 import { disposeProjectHybridMemory } from './project-hybrid-memory'
 import { EvolutionStore } from './evolution-store'
-import { onTerminalEvent, hasTerminal, stopAllTerminals, writeTerminal, type TerminalEvent } from './terminal-session'
+import { onTerminalEvent, onTerminalStart, hasTerminal, stopAllTerminals, writeTerminal, type TerminalEvent } from './terminal-session'
 import { installPtyPipe } from './pty-pipe'
 import { handleCompanionTerminalEvent, onCompanionEvent, unregisterAllCompanionTerminals, type CompanionSummary } from './companion'
 import { disposeWebPanel, onWebPanelEvent } from './web-panel'
@@ -150,6 +151,10 @@ installPtyPipe({
 // Sessões de turno (provedor + modelo efetivos por terminal) para sendAgentTurn.
 const turnSessions = new Map<string, { provider: AgentProviderId; model: string }>()
 const waitTurnResult = createResultWaiter(onTerminalEvent)
+// Prontidão central: cacheada por terminal, invalidada em todo restart de PTY.
+const terminalReadiness = createTerminalReadiness(onTerminalEvent)
+onTerminalStart((id) => terminalReadiness.invalidate(id))
+const waitTerminalReady = terminalReadiness.waitReady
 const hitlManager = new HITLManager({ onChange: sendHitlEvent })
 const observabilityLedger = new AuditLedger(path.join(app.getPath('userData'), 'observability.jsonl'))
 const evolutionStore = new EvolutionStore({ dataDirectory: path.join(app.getPath('userData'), 'evolution') })
@@ -170,6 +175,7 @@ const bridgeService = createBridgeService({
   hasTerminal,
   writeTerminal,
   waitTurnResult,
+  waitTerminalReady,
   onEvent: sendAgentBridgeEvent,
   onReflection: rememberBridgeReflection,
 })
@@ -492,6 +498,7 @@ function setupIpcHandlers() {
     cancelBridgeTarget: (id) => bridgeService.cancelTarget(id),
     turnSessions,
     waitTurnResult,
+    waitTerminalReady,
   })
 
   registerWebIpc(registerIpcHandler, { getWindow: () => mainWindow })

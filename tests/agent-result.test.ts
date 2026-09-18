@@ -243,6 +243,22 @@ describe('shared agent result protocol (src/shared/agent-result.ts)', () => {
       })
     })
 
+    it('delivers a complete JSON frame when the PTY omits the trailing newline', () => {
+      const scanner = createAgentResultScanner()
+
+      expect(scanner.push('DEVORBIT_RESULT: {"version":1,"outcome":"completed","summary":"sem enter"}')).toEqual([
+        {
+          kind: 'result',
+          result: {
+            format: 'json',
+            version: 1,
+            outcome: 'completed',
+            summary: 'sem enter',
+          },
+        },
+      ])
+    })
+
     it('streams chunks and detects a blocked version 1 outcome', () => {
       const scanner = createAgentResultScanner()
       const events = [

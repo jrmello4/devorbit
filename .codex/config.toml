@@ -31,3 +31,14 @@ max_concurrent_threads_per_session = 4
 # Plan defaults: Pro uses max Luna reasoning; Plus uses medium Luna reasoning.
 default_subagent_model = "gpt-5.6-luna"
 default_subagent_reasoning_effort = "max"
+
+# The DevOrbit main process injects these short-lived values into every
+# terminal it launches.  Forward them only to the local bridge MCP so a
+# Coordinator can list, delegate to, and wait for the other active terminals
+# in the same DevOrbit session.  The token itself is never stored on disk.
+[mcp_servers.devorbit]
+command = "node"
+args = ["scripts/devorbit-mcp.cjs"]
+cwd = ".."
+env_vars = ["DEVORBIT_BRIDGE_PIPE", "DEVORBIT_BRIDGE_TOKEN", "DEVORBIT_SESSION_ID"]
+startup_timeout_sec = 5

@@ -4,7 +4,7 @@ import os from 'node:os'
 import electron from 'electron'
 const { app } = electron
 import type { AppConfig, ManagedProject } from '../renderer/src/types'
-import { validateConfigUpdates } from './validation'
+import { isAgentProviderId, validateConfigUpdates } from './validation'
 
 const MAX_IMPORT_BYTES = 1_000_000
 
@@ -113,6 +113,20 @@ function normalizeModelApiKey(value: unknown): string | undefined {
   return trimmed
 }
 
+function normalizeAutomation(value: unknown): AppConfig['automation'] {
+  if (!isRecord(value)) return undefined
+  const result: NonNullable<AppConfig['automation']> = {}
+  if (isAgentProviderId(value.defaultExecutor)) result.defaultExecutor = value.defaultExecutor
+  if (value.defaultCodexAccount === 'account1' || value.defaultCodexAccount === 'account2') {
+    result.defaultCodexAccount = value.defaultCodexAccount
+  }
+  if (value.autoStartExecutor === true) result.autoStartExecutor = true
+  if (value.restoreWorkspace === true) result.restoreWorkspace = true
+  const restoreProjectId = safeText(value.restoreProjectId, '').trim()
+  if (restoreProjectId) result.restoreProjectId = restoreProjectId
+  return Object.keys(result).length > 0 ? result : undefined
+}
+
 function normalizeModelRouting(value: unknown): AppConfig['modelRouting'] {
   if (!isRecord(value)) return undefined
   const result: NonNullable<AppConfig['modelRouting']> = {}
@@ -154,6 +168,7 @@ function normalizeConfig(value: unknown): AppConfig {
   }
 
   const modelRouting = normalizeModelRouting(source.modelRouting)
+  const automation = normalizeAutomation(source.automation)
   return {
     projectDirs: hasValidProjectDirList ? projectDirs : [...defaultConfig.projectDirs],
     managedProjects: normalizeManagedProjects(source.managedProjects),
@@ -170,6 +185,7 @@ function normalizeConfig(value: unknown): AppConfig {
     ),
     customPaths,
     ...(modelRouting ? { modelRouting } : {}),
+    ...(automation ? { automation } : {}),
   }
 }
 
@@ -312,6 +328,13 @@ export async function saveConfig(updates: Partial<AppConfig>): Promise<AppConfig
         ? { modelRouting: { ...current.modelRouting, ...updates.modelRouting } }
         : current.modelRouting !== undefined
           ? { modelRouting: current.modelRouting }
+          : {}),
+      // Automação também funde por campo; `undefined` explícito limpa a chave
+      // (ex.: trocar o executor padrão para "nenhum").
+      ...(updates.automation !== undefined
+        ? { automation: { ...current.automation, ...updates.automation } }
+        : current.automation !== undefined
+          ? { automation: current.automation }
           : {}),
     })
 

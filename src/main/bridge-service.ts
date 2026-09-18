@@ -20,6 +20,8 @@ export interface BridgeServiceDependencies {
   hasTerminal: (id: string) => boolean
   writeTerminal: (id: string, input: string) => boolean
   waitTurnResult: (id: string, timeouts: { idleMs: number; overallMs: number }) => ResultWaitPromise
+  /** Prontidão cacheada do PTY atual; invalida em restart (ver terminal-readiness). */
+  waitTerminalReady: (id: string) => Promise<void>
   onEvent: (event: AgentBridgeEvent) => void
   onReflection?: (target: string, outcome: { status: string; summary: string }) => void
 }
@@ -135,6 +137,9 @@ export function createBridgeService(
         return runTargetSerial(id, async () => {
           if (cycles.hasPending(id)) throw new Error('O terminal já possui uma tarefa aguardando resultado.')
           const generation = cycles.begin(id)
+          // A sessão PTY atual precisa estar pronta antes de armar o waiter e
+          // escrever; terminais já prontos resolvem imediatamente.
+          await dependencies.waitTerminalReady(id)
           const pending = dependencies.waitTurnResult(id, { idleMs: sendIdleMs, overallMs: sendOverallMs })
           trackCycle(id, generation, pending, true, true)
           if (!dependencies.writeTerminal(id, request.prompt + '\r')) {
@@ -168,6 +173,7 @@ export function createBridgeService(
         return runTargetSerial(id, async () => {
           if (cycles.hasPending(id)) throw new Error('O terminal já possui uma tarefa aguardando resultado.')
           const generation = cycles.begin(id)
+          await dependencies.waitTerminalReady(id)
           const pending = dependencies.waitTurnResult(id, {
             idleMs: request.timeoutMs || askTimeoutMs,
             overallMs: request.timeoutMs || askTimeoutMs,

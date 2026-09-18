@@ -553,6 +553,63 @@ async function inspectDarkTheme(window, viewport) {
   recordPass(viewport.label, 'tema escuro Carbon aplicado e tema claro restaurado')
 }
 
+async function inspectAudit(window, viewport) {
+  await clickButtonByText(window, (node) => node.getAttribute('title') === 'Auditoria', `${viewport.label} audit navigation`)
+  await waitFor(window, `Boolean(document.querySelector('.view-panel:not([hidden]) .evolution-dashboard'))`, `${viewport.label} audit dashboard`)
+  const auditProbe = await evaluate(window, `(async () => {
+    let findings = -1
+    let error = ''
+    try {
+      const snapshot = await window.devorbit.getProjectAudit('fixture-probe')
+      findings = Array.isArray(snapshot.findings) ? snapshot.findings.length : -1
+    } catch (probeError) {
+      error = String((probeError && probeError.message) || probeError)
+    }
+    return {
+      entries: document.querySelectorAll('.evolution-entry').length,
+      hasMethod: typeof window.devorbit.getProjectAudit,
+      findings,
+      error,
+    }
+  })()`)
+  assert(auditProbe.entries >= 24, `${viewport.label}: auditoria não listou os itens (${JSON.stringify(auditProbe)})`)
+  const audit = await evaluate(window, `(() => {
+    const dashboard = document.querySelector('.evolution-dashboard')
+    const entries = Array.from(document.querySelectorAll('.evolution-entry'))
+    const debtSection = document.querySelector('#audit-section-debt')?.closest('.evolution-entry-section')
+    const badge = debtSection?.querySelector('.evolution-count-badge')
+    const chips = document.querySelectorAll('.evolution-severity-filter button')
+    const scrollHeight = dashboard.scrollHeight
+    const clientHeight = dashboard.clientHeight
+    dashboard.scrollTop = dashboard.scrollHeight
+    const last = entries[entries.length - 1]
+    const lastRect = last.getBoundingClientRect()
+    const box = dashboard.getBoundingClientRect()
+    return {
+      total: entries.length,
+      debtCount: Number((badge?.textContent || '0').trim()),
+      chips: chips.length,
+      internalScroll: scrollHeight > clientHeight + 1,
+      globalScroll: document.documentElement.scrollHeight > window.innerHeight + 1,
+      lastReachable: lastRect.bottom > box.top - 1 && lastRect.top < box.bottom + 1,
+      plainText: dashboard.innerText,
+    }
+  })()`)
+  assert(audit.total >= 24, `${viewport.label}: auditoria escondeu itens (${audit.total})`)
+  assert(audit.debtCount >= 24, `${viewport.label}: contador de problemas divergente (${audit.debtCount})`)
+  assert(audit.chips >= 5, `${viewport.label}: filtro por gravidade ausente (${audit.chips})`)
+  assert(audit.internalScroll, `${viewport.label}: auditoria sem rolagem interna própria`)
+  assert(!audit.globalScroll, `${viewport.label}: auditoria depende de rolagem global`)
+  assert(audit.lastReachable, `${viewport.label}: último item da auditoria inalcançável`)
+  assert(!/Spans IPC|fórmula visível|Visão explicável/.test(audit.plainText), `${viewport.label}: auditoria ainda expõe jargão técnico`)
+  await clickButtonByText(window, (node) => (node.textContent || '').startsWith('Críticos'), `${viewport.label} audit severity filter`)
+  await waitFor(window, `document.querySelectorAll('.evolution-entry').length === 3`, `${viewport.label} audit critical filter`)
+  await clickButtonByText(window, (node) => (node.textContent || '').startsWith('Todos'), `${viewport.label} audit severity reset`)
+  await waitFor(window, `document.querySelectorAll('.evolution-entry').length >= 24`, `${viewport.label} audit filter reset`)
+  await screenshot(window, `desktop-${viewport.label}-audit`)
+  recordPass(viewport.label, 'auditoria lista todos os itens com rolagem interna, filtro por gravidade e texto claro')
+}
+
 async function inspectProjectInteractions(window, viewport) {
   const selection = await evaluate(window, `(() => {
     const rows = Array.from(document.querySelectorAll('.project-list .project-row'))
@@ -563,10 +620,9 @@ async function inspectProjectInteractions(window, viewport) {
     return expected
   })()`)
   assert(selection, `${viewport.label}: segunda linha não encontrada para seleção`)
-  await waitFor(window, `(() => {
-    const selected = document.querySelector('.project-row.selected,[aria-pressed="true"]')
-    return Boolean(selected && selected.innerText.includes(${JSON.stringify(selection)}))
-  })()`, `${viewport.label} seleção de projeto`)
+  await waitFor(window, `Boolean(document.querySelector('.project-list .project-row.selected, .project-list .project-row[aria-pressed="true"]'))`, `${viewport.label} seleção de projeto`)
+  const selectedText = await evaluate(window, `document.querySelector('.project-list .project-row.selected, .project-list .project-row[aria-pressed="true"]')?.innerText || ''`)
+  assert(selectedText.includes(selection), `${viewport.label}: seleção de projeto divergente (${JSON.stringify({ selection, selectedText })})`)
   recordPass(viewport.label, 'project selection updates row and detail state')
   const workspaceControls = await evaluate(window, `(() => ({
     openAll: Boolean(document.querySelector('button.workspace-open-all')),
@@ -639,6 +695,24 @@ async function inspectProjectInteractions(window, viewport) {
   await waitFor(window, `document.querySelectorAll('.workspace-canvas [data-canvas-card]').length === 3`, `${viewport.label} canvas cards`)
   const canvasCards = await evaluate(window, `Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card]')).map((node) => node.getAttribute('data-canvas-card')).sort().join(',')`)
   assert(canvasCards === 'browser,note,workbench', `${viewport.label}: cards do canvas incompletos (${canvasCards})`)
+  const focusMode = await evaluate(window, `(() => {
+    const hidden = (selector) => { const node = document.querySelector(selector); return !node || node.offsetParent === null }
+    return {
+      titlebar: hidden('.app-titlebar'),
+      sidebar: hidden('.workspace-sidebar'),
+      tabs: hidden('.workspace-tabs'),
+      statusbar: hidden('.app-statusbar'),
+      toolbar: hidden('.integrated-toolbar'),
+      controls: Boolean(document.querySelector('.canvas-focus-controls')),
+      canvasWidth: document.querySelector('.workspace-canvas')?.getBoundingClientRect().width || 0,
+      viewportWidth: window.innerWidth,
+    }
+  })()`)
+  assert(focusMode.titlebar && focusMode.sidebar && focusMode.tabs && focusMode.statusbar, `${viewport.label}: modo canvas manteve o chrome usual (${JSON.stringify(focusMode)})`)
+  assert(focusMode.toolbar, `${viewport.label}: toolbar do ambiente ainda visível no modo canvas`)
+  assert(focusMode.controls, `${viewport.label}: controles mínimos do canvas ausentes`)
+  assert(focusMode.canvasWidth > focusMode.viewportWidth - 40, `${viewport.label}: canvas não ocupou o espaço dedicado (${focusMode.canvasWidth}/${focusMode.viewportWidth})`)
+  recordPass(viewport.label, 'modo dedicado do canvas esconde o chrome e mantém controles mínimos acessíveis')
   const canvasVisible = await evaluate(window, `(() => {
     const panel = document.querySelector('.integrated-workspace-view')
     const canvas = document.querySelector('.workspace-canvas')
@@ -785,6 +859,26 @@ async function inspectProjectInteractions(window, viewport) {
   assert(Math.abs(cursorZoomAfter.worldX - cursorZoom.worldX) < .1 && Math.abs(cursorZoomAfter.worldY - cursorZoom.worldY) < .1, `${viewport.label}: zoom não preservou o ponto sob o cursor (${JSON.stringify({ before: cursorZoom, after: cursorZoomAfter })})`)
   recordPass(viewport.label, 'fundo, roda e zoom no cursor navegam pelo canvas')
 
+  const toolbarZoom = await evaluate(window, `(() => {
+    const canvas = document.querySelector('.workspace-canvas')
+    const id = canvas?.getAttribute('data-canvas-project-id')
+    const before = id ? JSON.parse(window.localStorage.getItem('devorbit:workspace-canvas:' + id)).viewport : null
+    return before ? { id, zoom: before.zoom } : null
+  })()`)
+  assert(toolbarZoom, `${viewport.label}: estado de zoom indisponível`)
+  await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Aumentar zoom', `${viewport.label} zoom in`)
+  await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Aumentar zoom', `${viewport.label} zoom in again`)
+  await waitFor(window, `JSON.parse(window.localStorage.getItem('devorbit:workspace-canvas:${toolbarZoom.id}')).viewport.zoom > ${toolbarZoom.zoom}`, `${viewport.label} toolbar zoom in`)
+  const zoomedVisibility = await evaluate(window, `(() => {
+    const canvas = document.querySelector('.workspace-canvas').getBoundingClientRect()
+    const cards = Array.from(document.querySelectorAll('.workspace-canvas-card')).map((card) => card.getBoundingClientRect())
+    return cards.length === 3 && cards.every((card) => card.right > canvas.left && card.bottom > canvas.top && card.left < canvas.right && card.top < canvas.bottom)
+  })()`)
+  assert(zoomedVisibility, `${viewport.label}: zoom deixou quadros fora do canvas`)
+  await clickButtonByText(window, (node) => (node.getAttribute('aria-label') || '').includes('Restaurar zoom'), `${viewport.label} zoom reset`)
+  await waitFor(window, `JSON.parse(window.localStorage.getItem('devorbit:workspace-canvas:${toolbarZoom.id}')).viewport.zoom === 1`, `${viewport.label} toolbar zoom reset`)
+  recordPass(viewport.label, 'zoom por botões mantém os quadros visíveis e volta a 100%')
+
   const manualLink = await evaluate(window, `(function () {
     const source = document.querySelector('[data-canvas-card="note"] [data-canvas-port="source"]')
     const target = document.querySelector('[data-canvas-card="browser"] [data-canvas-port="target"]')
@@ -900,14 +994,50 @@ async function inspectProjectInteractions(window, viewport) {
   recordPass(viewport.label, 'conexões do canvas não espelham digitação/TUI entre agentes')
   await verifyCoordinatorOrchestration(window, viewport)
   await verifyManualAgentSend(window, viewport)
+  const stabilityBefore = await evaluate(window, `JSON.parse(window.localStorage.getItem('devorbit:workspace-canvas:' + document.querySelector('.workspace-canvas').getAttribute('data-canvas-project-id'))).viewport`)
+  await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Voltar ao layout integrado', `${viewport.label} stability grid`)
+  await waitFor(window, `!document.querySelector('.workspace-canvas')`, `${viewport.label} stability grid state`)
+  await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Abrir canvas', `${viewport.label} stability canvas`)
+  await waitFor(window, `document.querySelectorAll('.workspace-canvas [data-canvas-card]').length >= 3`, `${viewport.label} stability canvas cards`)
+  const stability = await evaluate(window, `(() => {
+    const canvas = document.querySelector('.workspace-canvas')
+    const id = canvas.getAttribute('data-canvas-project-id')
+    const viewport = JSON.parse(window.localStorage.getItem('devorbit:workspace-canvas:' + id)).viewport
+    const box = canvas.getBoundingClientRect()
+    const cards = Array.from(document.querySelectorAll('.workspace-canvas-card')).map((card) => card.getBoundingClientRect())
+    return {
+      viewport,
+      cardsVisible: cards.some((card) => card.right > box.left && card.bottom > box.top && card.left < box.right && card.top < box.bottom),
+      host: { width: box.width, height: box.height, left: box.left, top: box.top },
+      cards: cards.map((card) => ({ left: Math.round(card.left), top: Math.round(card.top), right: Math.round(card.right), bottom: Math.round(card.bottom) })),
+    }
+  })()`)
+  assert(stability.viewport.x === stabilityBefore.x && stability.viewport.y === stabilityBefore.y && stability.viewport.zoom === stabilityBefore.zoom, `${viewport.label}: alternância de layout perdeu o viewport`)
+  assert(stability.cardsVisible, `${viewport.label}: quadros sumiram após alternar ambiente/canvas (${JSON.stringify(stability)})`)
+  recordPass(viewport.label, 'alternar ambiente e canvas preserva viewport e mantém os quadros visíveis')
   await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Voltar ao layout integrado', `${viewport.label} canvas close`)
   await waitFor(window, `!document.querySelector('.workspace-canvas')`, `${viewport.label} grid layout restore`)
+  const chromeRestored = await evaluate(window, `(() => {
+    const titlebar = document.querySelector('.app-titlebar')
+    const sidebar = document.querySelector('.workspace-sidebar')
+    const tabs = document.querySelector('.workspace-tabs')
+    return Boolean(titlebar && titlebar.offsetParent !== null && sidebar && sidebar.offsetParent !== null && tabs && tabs.offsetParent !== null)
+  })()`)
+  assert(chromeRestored, `${viewport.label}: chrome usual não voltou ao sair do modo canvas`)
   await clickButtonByText(window, (node) => node.getAttribute('title') === 'Projetos', `${viewport.label} multi-project navigation`)
   await waitFor(window, `document.querySelector('.view-panel:not([hidden])')?.innerText.includes('Projetos')`, `${viewport.label} multi-project view`)
   await setInputValue(window, '#project-search', 'Fixture 03')
   await waitFor(window, `document.querySelectorAll('.project-list .project-row').length === 1`, `${viewport.label} multi-project search`)
   await clickButtonByText(window, (node) => node.classList.contains('workspace-open-all'), `${viewport.label} second workspace launch`)
   await waitFor(window, `document.querySelectorAll('.workspace-tabs .workspace-tab').length >= 2`, `${viewport.label} multiple workspace tabs`)
+  // O modo dedicado esconde as abas; para trocar de projeto é preciso sair
+  // dele pelo controle mínimo do canvas ativo.
+  const focusBeforeTabs = await evaluate(window, `document.querySelector('.app-shell')?.classList.contains('canvas-focus') === true`)
+  if (focusBeforeTabs) {
+    await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Voltar ao layout integrado', `${viewport.label} leave canvas focus for tabs`)
+    await waitFor(window, `document.querySelector('.app-shell')?.classList.contains('canvas-focus') === false`, `${viewport.label} canvas focus cleared for tabs`)
+    await waitFor(window, `document.querySelector('.workspace-tabs')?.offsetParent !== null`, `${viewport.label} workspace tabs restored`)
+  }
   await evaluate(window, `window.__devorbitVerifyFixture.resetCalls()`)
   await clickButtonByText(window, (node) => node.classList.contains('workspace-tab') && /Fixture 02/.test(node.innerText), `${viewport.label} first workspace tab`)
   await waitFor(window, `document.querySelector('.workspace-tab.active')?.innerText.includes('Fixture 02')`, `${viewport.label} first workspace tab active`)
@@ -1030,9 +1160,13 @@ async function inspectSettingsAndPalette(window, viewport) {
   await key(window, 'Escape')
   await waitFor(window, `!document.querySelector('[role="dialog"] #command-palette-search')`, `${viewport.label} palette Escape`)
   await waitFor(window, `window.__devorbitVerifyFixture.getCalls().filter((call) => call.name === 'setWebVisible').at(-1).args[0] === true`, `${viewport.label} palette native web restored`)
-  await waitFor(window, `document.activeElement?.getAttribute('title') === ${JSON.stringify(paletteOrigin)}`, `${viewport.label} palette focus restore`)
+  await waitFor(window, `(() => {
+    const title = document.activeElement?.getAttribute('title') || ''
+    const label = document.activeElement?.getAttribute('aria-label') || ''
+    return title === ${JSON.stringify(paletteOrigin)} || label === ${JSON.stringify(paletteOrigin)}
+  })()`, `${viewport.label} palette focus restore`)
   const restoredPaletteFocus = await evaluate(window, `document.activeElement?.getAttribute('title') || document.activeElement?.getAttribute('aria-label') || ''`)
-  assert(restoredPaletteFocus === paletteOrigin, `${viewport.label}: palette Escape não restaurou o controle de origem (${restoredPaletteFocus})`)
+  assert(restoredPaletteFocus === paletteOrigin, `${viewport.label}: palette Escape não restaurou o controle de origem (${JSON.stringify({ paletteOrigin, restoredPaletteFocus })})`)
   recordPass(viewport.label, 'command palette Escape closes and restores origin focus')
 }
 
@@ -1065,6 +1199,9 @@ async function runViewport(viewport) {
     await window.loadFile(rendererEntry)
     await waitFor(window, `Boolean(document.querySelector('.project-workspace') && document.querySelector('.project-row'))`, `${viewport.label} renderer bootstrap`)
     await inspectShell(window, viewport)
+    await inspectAudit(window, viewport)
+    await clickButtonByText(window, (node) => /projetos/i.test(node.innerText) && node.getAttribute('title') === 'Projetos', `${viewport.label} projects navigation after audit`)
+    await waitFor(window, `document.querySelector('.view-panel:not([hidden])')?.innerText.includes('Projetos')`, `${viewport.label} projects view after audit`)
     await inspectProjectInteractions(window, viewport)
     await inspectMemory(window, viewport)
     await inspectUsage(window, viewport)

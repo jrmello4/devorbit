@@ -36,6 +36,7 @@ import {
   agentNodeSetupMessage,
   isAgentNodeConfigured,
   requiresCodexAccount,
+  resolveAgentProvider,
   type AgentCreationSpec,
   type SquadCreationSpec,
 } from "./agent-creation-helpers";
@@ -248,6 +249,7 @@ function closestElement(target: unknown, selector: string): Element | null {
 function sanitizeNode(
   value: Partial<CanvasNode>,
   fallback: CanvasNode,
+  defaultProvider: AgentProviderId | null = null,
 ): CanvasNode {
   const width = Number.isFinite(value.width)
     ? clamp(value.width as number, 220, 1100)
@@ -255,15 +257,19 @@ function sanitizeNode(
   const height = Number.isFinite(value.height)
     ? clamp(value.height as number, 150, 850)
     : fallback.height;
+  const kind =
+    value.kind === "workbench" ||
+    value.kind === "browser" ||
+    value.kind === "note" ||
+    value.kind === "agent"
+      ? value.kind
+      : fallback.kind;
+  // Escolha explícita do nó sempre vence; o executor padrão só preenche nó de
+  // agente sem provider (nós antigos), nunca sobrescreve um provider válido.
+  const provider = resolveAgentProvider(value.provider, fallback.provider, kind, defaultProvider);
   return {
     id: typeof value.id === "string" ? value.id : fallback.id,
-    kind:
-      value.kind === "workbench" ||
-      value.kind === "browser" ||
-      value.kind === "note" ||
-      value.kind === "agent"
-        ? value.kind
-        : fallback.kind,
+    kind,
     title:
       typeof value.title === "string" && value.title.trim()
         ? value.title.slice(0, 80)
@@ -294,9 +300,7 @@ function sanitizeNode(
         : value.account === "account1"
           ? "account1"
           : fallback.account,
-    provider: isAgentProviderId(value.provider)
-      ? value.provider
-      : fallback.provider,
+    provider,
   };
 }
 function sanitizeSquads(value: unknown, nodes: readonly CanvasNode[]): CanvasSquad[] {
@@ -327,7 +331,7 @@ function sanitizeSquads(value: unknown, nodes: readonly CanvasNode[]): CanvasSqu
   }
   return result.slice(0, 100);
 }
-function read(id: string): CanvasState {
+function read(id: string, defaultProvider: AgentProviderId | null = null): CanvasState {
   const fallback = defaults();
   try {
     const raw = JSON.parse(
@@ -348,6 +352,7 @@ function read(id: string): CanvasState {
             z: index + 1,
             content: "",
           },
+          defaultProvider,
         ),
       );
       const ids = new Set(nodes.map((node) => node.id));
@@ -400,6 +405,7 @@ function read(id: string): CanvasState {
               content: node.kind === "note" ? raw.note : undefined,
             },
             node,
+            defaultProvider,
           ),
         ),
       };
@@ -513,6 +519,7 @@ export const WorkspaceCanvas: React.FC<{
   workbench: React.ReactNode;
   browser?: React.ReactNode;
   agentProviders?: AgentProvider[];
+  defaultExecutor?: AgentProviderId | null;
   renderAgent?: (
     node: CanvasNode,
     onResult: (result: AgentResult, taskId?: string) => void,
@@ -534,6 +541,7 @@ export const WorkspaceCanvas: React.FC<{
   workbench,
   browser,
   agentProviders = [],
+  defaultExecutor = null,
   renderAgent,
   onSendAgentTask,
   onCreateAgentWorktree,
@@ -544,7 +552,7 @@ export const WorkspaceCanvas: React.FC<{
   onPendingNodeConsumed,
   onConnectionsChange,
 }) => {
-  const [canvas, setCanvas] = useState<CanvasState>(() => read(project.id));
+  const [canvas, setCanvas] = useState<CanvasState>(() => read(project.id, defaultExecutor));
   const [selected, setSelected] = useState<string[]>([]);
   const [connectFrom, setConnectFrom] = useState<string | null>(null);
   const [gesture, setGesture] = useState<CanvasGesture | null>(null);
@@ -604,7 +612,7 @@ export const WorkspaceCanvas: React.FC<{
     canvasRef.current = canvas;
   }, [canvas]);
   useEffect(() => {
-    const next = read(project.id);
+    const next = read(project.id, defaultExecutor);
     canvasRef.current = next;
     setCanvas(next);
     setSelected([]);
@@ -616,7 +624,7 @@ export const WorkspaceCanvas: React.FC<{
     setOrchestration(null);
     setAgentProgress({});
     setConfigNodeId(null);
-  }, [project.id]);
+  }, [project.id, defaultExecutor]);
   useEffect(() => {
     window.addEventListener("pagehide", flush);
     return () => {
@@ -740,6 +748,7 @@ export const WorkspaceCanvas: React.FC<{
     const id = nodeId();
     const x = snap(((rect?.width || 900) / 2 - view.x) / view.zoom - 220);
     const y = snap(((rect?.height || 650) / 2 - view.y) / view.zoom - 160);
+    const provider = spec.provider ?? defaultExecutor ?? undefined;
     update(
       (current) => ({
         ...current,
@@ -751,7 +760,7 @@ export const WorkspaceCanvas: React.FC<{
             title: spec.role === "Implementação" ? "Agente de implementação" : "Agente: " + spec.role,
             role: spec.role,
             ...(spec.account ? { account: spec.account } : {}),
-            ...(spec.provider ? { provider: spec.provider } : {}),
+            ...(provider ? { provider } : {}),
             x,
             y,
             width: 500,
@@ -764,7 +773,7 @@ export const WorkspaceCanvas: React.FC<{
     );
     setSelected([id]);
     setCreationMode(null);
-  }, [update]);
+  }, [defaultExecutor, update]);
   useEffect(() => {
     const handler = (event: Event) => {
       const detail = (event as CustomEvent<{ projectId?: string; kind?: string }>).detail
@@ -794,7 +803,8 @@ export const WorkspaceCanvas: React.FC<{
     const squadId = "squad-" + nodeId().slice(5);
     const agents = spec.participants.map((participant, index) => ({
       id: nodeId(), kind: "agent" as const, title: "Agente: " + participant.role, role: participant.role as AgentRole,
-      ...(participant.account ? { account: participant.account } : {}), ...(participant.provider ? { provider: participant.provider } : {}),
+      ...(participant.account ? { account: participant.account } : {}),
+      ...((participant.provider ?? defaultExecutor) ? { provider: participant.provider ?? defaultExecutor ?? undefined } : {}),
       x: originX + 390 + (index % 2) * 430, y: originY + Math.floor(index / 2) * 300,
       width: 500, height: 340, z: index + 2,
     }));
@@ -807,7 +817,7 @@ export const WorkspaceCanvas: React.FC<{
     }), true);
     setSelected([noteId, ...agents.map((agent) => agent.id)]);
     setCreationMode(null);
-  }, [update]);
+  }, [defaultExecutor, update]);
   const deleteNodes = useCallback((ids: string[]) => {
     const removable = new Set(
       ids.filter((id) =>
@@ -949,6 +959,9 @@ export const WorkspaceCanvas: React.FC<{
     host.addEventListener("wheel", onWheel, { passive: false });
     return () => host.removeEventListener("wheel", onWheel);
   }, [update, zoomAt]);
+  const resetViewport = useCallback(() => {
+    update((current) => ({ ...current, viewport: { x: 40, y: 36, zoom: 1 } }), true);
+  }, [update]);
   const fitCanvas = useCallback(() => {
     const host = viewportRef.current?.getBoundingClientRect();
     const nodes = canvasRef.current.nodes.filter(
@@ -979,6 +992,32 @@ export const WorkspaceCanvas: React.FC<{
       true,
     );
   }, [browser, update]);
+  // Estabilidade: se o host mudar de tamanho e nenhum quadro continuar visível
+  // (janela redimensionada, chrome escondido, layout trocado), reencaixa o
+  // conteúdo em vez de deixar o canvas aparentemente vazio.
+  useEffect(() => {
+    const host = viewportRef.current;
+    if (!host || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      const rect = host.getBoundingClientRect();
+      if (rect.width < 50 || rect.height < 50) return;
+      const view = canvasRef.current.viewport;
+      const nodes = canvasRef.current.nodes.filter(
+        (node) => node.kind !== "browser" || browser,
+      );
+      if (!nodes.length) return;
+      const anyVisible = nodes.some((node) => {
+        const left = node.x * view.zoom + view.x;
+        const top = node.y * view.zoom + view.y;
+        const right = (node.x + node.width) * view.zoom + view.x;
+        const bottom = (node.y + node.height) * view.zoom + view.y;
+        return right > 0 && bottom > 0 && left < rect.width && top < rect.height;
+      });
+      if (!anyVisible) fitCanvas();
+    });
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, [browser, fitCanvas]);
   const beginGesture = useCallback(
     (
       event: React.PointerEvent<HTMLElement>,
@@ -1206,10 +1245,7 @@ export const WorkspaceCanvas: React.FC<{
       }
       if ((event.ctrlKey || event.metaKey) && event.key === "0") {
         event.preventDefault();
-        update(
-          (current) => ({ ...current, viewport: { x: 40, y: 36, zoom: 1 } }),
-          true,
-        );
+        resetViewport();
       }
       if (
         (event.ctrlKey || event.metaKey) &&
@@ -1247,7 +1283,7 @@ export const WorkspaceCanvas: React.FC<{
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("blur", onWindowBlur);
     };
-  }, [deleteSelected, duplicateSelected, update, zoom]);
+  }, [deleteSelected, duplicateSelected, resetViewport, update, zoom]);
   const nodeMap = useMemo(
     () => new Map(canvas.nodes.map((node) => [node.id, node])),
     [canvas.nodes],
@@ -1943,9 +1979,15 @@ export const WorkspaceCanvas: React.FC<{
         >
           <Minus size={15} />
         </button>
-        <output aria-label="Zoom do canvas">
+        <button
+          type="button"
+          className="workspace-canvas-zoom-value"
+          onClick={resetViewport}
+          aria-label={'Zoom em ' + Math.round(canvas.viewport.zoom * 100) + ' por cento. Restaurar zoom e posição iniciais'}
+          title="Restaurar zoom e posição iniciais"
+        >
           {Math.round(canvas.viewport.zoom * 100)}%
-        </output>
+        </button>
         <button
           type="button"
           onClick={() => zoom(0.1)}
@@ -2434,6 +2476,7 @@ export const WorkspaceCanvas: React.FC<{
           isOpen
           mode={creationMode}
           providers={agentProviders}
+          defaultProvider={defaultExecutor}
           codexAuthStatus={codexAuthStatus}
           onClose={() => setCreationMode(null)}
           onRequestCodexAuth={onRequestCodexAuth}

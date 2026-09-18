@@ -1,6 +1,7 @@
 .integrated-workspace {
   --workspace-border: var(--color-border-subtle);
   --workspace-surface: var(--surface-muted);
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) var(--workspace-browser-width);
   grid-template-rows: 58px minmax(0, 1fr);
@@ -14,6 +15,68 @@
 }
 .integrated-workspace.is-resizing,
 .integrated-workspace.is-resizing * { user-select: none; }
+
+/* Modo dedicado do canvas: sem toolbar, só o canvas e controles mínimos. */
+.integrated-workspace.is-canvas-mode {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.integrated-workspace.is-canvas-mode .workspace-canvas {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.canvas-focus-controls {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: min(60vw, 420px);
+  padding: 4px 6px 4px 10px;
+  border: 1px solid var(--ops-border-subtle, var(--color-border-subtle));
+  border-radius: var(--radius-control, 8px);
+  background: color-mix(in srgb, var(--ops-surface-3, #171a22) 92%, transparent);
+  color: var(--ops-text-secondary, var(--color-text-secondary));
+  box-shadow: 0 8px 20px var(--ops-shadow-node, rgba(0, 0, 0, 0.35));
+  -webkit-app-region: drag;
+}
+
+.canvas-focus-controls button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  -webkit-app-region: no-drag;
+}
+
+.canvas-focus-controls button:hover {
+  background: var(--ops-surface-4, var(--surface-hover));
+  color: var(--ops-text-primary, var(--text-primary));
+}
+
+.canvas-focus-controls button:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+.canvas-focus-project {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 600;
+}
 .integrated-workspace.is-resizing-browser,
 .integrated-workspace.is-resizing-browser * { cursor: col-resize; }
 .integrated-workspace.is-resizing-terminal,

@@ -8,6 +8,7 @@ import {
   isAgentNodeConfigured,
   isReadyProvider,
   requiresCodexAccount,
+  resolveAgentProvider,
   type AgentCreationSpec,
 } from '../src/renderer/src/components/agent-creation-helpers'
 
@@ -77,6 +78,18 @@ describe('inert agent nodes without explicit configuration', () => {
     expect(agentNodeSetupMessage({ provider: 'claude' }, providers)).toContain('não está pronto')
     expect(agentNodeSetupMessage({ provider: 'claude' }, claudeReady)).toBe('')
     expect(agentNodeSetupMessage({ provider: 'codex', account: 'account2' }, providers)).toBe('')
+  })
+})
+
+describe('resolveAgentProvider', () => {
+  it('keeps explicit choices and fills only agent nodes without provider', () => {
+    expect(resolveAgentProvider('claude', undefined, 'agent', 'opencode')).toBe('claude')
+    expect(resolveAgentProvider('invalid', 'gemini', 'agent', 'opencode')).toBe('gemini')
+    expect(resolveAgentProvider(undefined, undefined, 'agent', 'opencode')).toBe('opencode')
+    expect(resolveAgentProvider(null, null, 'agent', 'agy')).toBe('agy')
+    expect(resolveAgentProvider(undefined, undefined, 'note', 'opencode')).toBeUndefined()
+    expect(resolveAgentProvider(undefined, undefined, 'workbench', 'opencode')).toBeUndefined()
+    expect(resolveAgentProvider(undefined, undefined, 'agent', null)).toBeUndefined()
   })
 })
 

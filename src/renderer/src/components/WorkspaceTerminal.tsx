@@ -14,6 +14,10 @@ interface WorkspaceTerminalProps {
   onNotify: (message: string, type?: 'success' | 'error' | 'info') => void
   onRequestCodexAuth?: (account: 'account1' | 'account2') => void
   provider: AgentProviderId
+  /** Inicia o executor configurado no mount, em vez do shell genérico. */
+  autoStart?: boolean
+  /** Conta Codex padrão quando o executor automático é o Codex. */
+  autoStartCodexAccount?: 'account1' | 'account2'
   agentTask?: { id: string; prompt: string }
   onAgentResult?: (result: AgentResult, taskId?: string) => void
   onAgentTaskFailure?: (taskId: string, message: string) => void
@@ -49,6 +53,8 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
   onNotify,
   onRequestCodexAuth,
   provider,
+  autoStart = false,
+  autoStartCodexAccount,
   agentTask,
   onAgentResult,
   onAgentTaskFailure,
@@ -64,6 +70,8 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
   // session as a shell session.
   const terminalStartTokenRef = useRef(0)
   const terminalModeRef = useRef<TerminalMode>('shell')
+  const autoStartRef = useRef(autoStart)
+  const autoStartedRef = useRef(false)
   const activeProviderRef = useRef<AgentProviderId | null>(null)
   const activeCodexAccountRef = useRef<'account1' | 'account2' | null>(null)
   const fitTerminalRef = useRef<() => void>(() => undefined)
@@ -182,7 +190,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
       )
       if (startToken === terminalStartTokenRef.current) {
         terminalRef.current?.clear()
-        terminalRef.current?.writeln('\x1b[90mDevOrbit terminal PTY pronto.\x1b[0m')
+        terminalRef.current?.writeln('\x1b[90mTerminal pronto.\x1b[0m')
         setTerminalState('ready')
         scheduleFitFrame(() => fitTerminalRef.current())
       }
@@ -197,8 +205,9 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
     }
   }, [projectPath, scheduleFitFrame, terminalId])
 
-  const startCodex = useCallback(async () => {
-    if (!codexAccount) {
+  const startCodex = useCallback(async (accountOverride?: 'account1' | 'account2') => {
+    const account = accountOverride ?? codexAccount
+    if (!account) {
       onNotifyRef.current('Configure a conta Codex deste agente para iniciar o Codex.', 'error')
       return null
     }
@@ -216,7 +225,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
       const result = await window.devorbit.startCodexTerminal(
         terminalId,
         projectPath,
-        codexAccount,
+        account,
         terminalRef.current?.cols,
         terminalRef.current?.rows,
       )
@@ -229,15 +238,15 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
         setTerminalMode('shell')
         setTerminalState(result.needsAuth ? 'ready' : 'error')
         if (result.message) onNotifyRef.current(result.message, result.needsAuth ? 'info' : 'error')
-        if (result.needsAuth) onRequestCodexAuthRef.current?.(codexAccount)
+        if (result.needsAuth) onRequestCodexAuthRef.current?.(account)
         return result
       }
       await readySignal.promise
       if (startToken === terminalStartTokenRef.current) {
-        activeCodexAccountRef.current = codexAccount
+        activeCodexAccountRef.current = account
         setTerminalMode('codex')
         terminalRef.current?.clear()
-        terminalRef.current?.writeln('\x1b[90mDevOrbit iniciou o Codex nesta sessão.\x1b[0m')
+        terminalRef.current?.writeln('\x1b[90mCodex iniciado.\x1b[0m')
         setTerminalState('ready')
         // The Codex TUI switches to an alternate screen after its process has
         // started. Re-fit it after that switch so its grid uses the card's real
@@ -307,9 +316,9 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
         if (result.provider) activeProviderRef.current = result.provider
         setTerminalMode('agent')
         terminalRef.current?.clear()
-        terminalRef.current?.writeln('\x1b[90mDevOrbit iniciou o agente local nesta sessão.\x1b[0m')
+        terminalRef.current?.writeln('\x1b[90mAgente iniciado.\x1b[0m')
         if (result.tier && result.model) {
-          terminalRef.current?.writeln(`\x1b[90mRoteado para tier ${result.tier} (${result.model}).\x1b[0m`)
+          terminalRef.current?.writeln(`\x1b[90m${result.tier === 'deep' ? 'Análise profunda' : 'Resposta rápida'} · ${result.model}\x1b[0m`)
         }
         setTerminalState('ready')
       }
@@ -331,6 +340,10 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
       setIsStartingCodex(false)
     }
   }, [projectPath, provider, startCodex, terminalId, waitForTerminalData])
+
+  useEffect(() => {
+    autoStartRef.current = autoStart
+  }, [autoStart])
 
   useEffect(() => {
     const container = containerRef.current
@@ -456,7 +469,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
           if (parsed.result.outcome === 'failed') reportTaskFailure(taskId, parsed.result.summary)
           else onAgentResultRef.current?.(parsed.result, taskId)
         }
-        terminal.writeln('\r\n\x1b[90m[processo encerrado: ' + String(event.code ?? '') + ']\x1b[0m')
+        terminal.writeln('\r\n\x1b[90m[processo encerrado]\x1b[0m')
         setTerminalState('stopped')
         const taskId = activeTaskRef.current
         if (taskId) {
@@ -473,23 +486,28 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
     })
 
     let alive = true
-    const initialStartToken = ++terminalStartTokenRef.current
-    terminalModeRef.current = 'shell'
-    const initialDims = currentDimensions(terminal)
-    void window.devorbit.startTerminal(terminalId, projectPath, initialDims?.cols, initialDims?.rows)
-      .then(() => {
-        if (!alive || initialStartToken !== terminalStartTokenRef.current || terminalModeRef.current !== 'shell') return
-        terminal.writeln('\x1b[90mDevOrbit terminal PTY pronto em ' + projectPath + '\x1b[0m')
-        setTerminalState('ready')
-        scheduleFitFrame(fitTerminal)
-      })
-      .catch((error) => {
-        if (!alive || initialStartToken !== terminalStartTokenRef.current) return
-        const message = error instanceof Error ? error.message : String(error)
-        terminal.writeln('\r\n\x1b[31m[erro ao iniciar: ' + message + ']\x1b[0m')
-        setTerminalState('error')
-        onNotifyRef.current('Não foi possível iniciar o terminal interno: ' + message, 'error')
-      })
+    // Com executor automático configurado, o shell genérico não sobe: o efeito
+    // de auto-start logo abaixo inicia o executor no mesmo PTY, sem sobrescrever
+    // a sessão e sem duplicar o processo.
+    if (!autoStartRef.current) {
+      const initialStartToken = ++terminalStartTokenRef.current
+      terminalModeRef.current = 'shell'
+      const initialDims = currentDimensions(terminal)
+      void window.devorbit.startTerminal(terminalId, projectPath, initialDims?.cols, initialDims?.rows)
+        .then(() => {
+          if (!alive || initialStartToken !== terminalStartTokenRef.current || terminalModeRef.current !== 'shell') return
+          terminal.writeln('\x1b[90mTerminal pronto · ' + projectPath + '\x1b[0m')
+          setTerminalState('ready')
+          scheduleFitFrame(fitTerminal)
+        })
+        .catch((error) => {
+          if (!alive || initialStartToken !== terminalStartTokenRef.current) return
+          const message = error instanceof Error ? error.message : String(error)
+          terminal.writeln('\r\n\x1b[31m[erro ao iniciar: ' + message + ']\x1b[0m')
+          setTerminalState('error')
+          onNotifyRef.current('Não foi possível iniciar o terminal interno: ' + message, 'error')
+        })
+    }
 
     return () => {
       alive = false
@@ -513,6 +531,14 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
       void window.devorbit.stopTerminal(terminalId)
     }
   }, [projectPath, reportTaskFailure, scheduleFitFrame, scheduleFitTimeout, sendResize, terminalId])
+
+  // Executor automático: uma vez por mount, no mesmo terminalId. Um restart
+  // manual depois é escolha do usuário (startShell) e não é desfeito aqui.
+  useEffect(() => {
+    if (!autoStartRef.current || autoStartedRef.current) return
+    autoStartedRef.current = true
+    void (provider === 'codex' ? startCodex(autoStartCodexAccount ?? codexAccount) : startAgent())
+  }, [autoStartCodexAccount, codexAccount, provider, startAgent, startCodex])
 
   useEffect(() => {
     if (!agentTask || completedTaskRef.current === agentTask.id || deliveringTaskRef.current === agentTask.id) return
@@ -564,7 +590,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
             setTerminalMode('agent')
             setTerminalState('ready')
             onNotifyRef.current(
-              `Tarefa enviada ao agente${turn.model ? ` (tier ${turn.tier}, ${turn.model})` : ''}.`,
+              `Tarefa enviada${turn.model ? ` · ${turn.tier === 'deep' ? 'análise profunda' : 'resposta rápida'} (${turn.model})` : ''}.`,
               'success'
             )
           } else if (activeTaskRef.current === agentTask.id) {

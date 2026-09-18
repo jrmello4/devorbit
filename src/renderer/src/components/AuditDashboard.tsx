@@ -50,6 +50,40 @@ function isResolved(status: AuditStatus): boolean {
   return status === 'resolved' || status === 'verified'
 }
 
+const severityOrder: Record<AuditSeverity, number> = {
+  critical: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+  info: 4,
+}
+
+/** Ordena por gravidade (crítico primeiro) e depois por título. */
+export function sortAuditEntries(entries: readonly AuditEntry[]): AuditEntry[] {
+  return [...entries].sort((left, right) => {
+    const bySeverity = severityOrder[left.severity || 'info'] - severityOrder[right.severity || 'info']
+    if (bySeverity !== 0) return bySeverity
+    return left.title.localeCompare(right.title, 'pt-BR')
+  })
+}
+
+export type AuditSeverityFilter = AuditSeverity | 'all'
+
+/** Filtra por categoria e, opcionalmente, por gravidade (débitos). */
+export function filterAuditEntries(
+  entries: readonly AuditEntry[],
+  category: AuditCategory,
+  severity: AuditSeverityFilter = 'all',
+): AuditEntry[] {
+  return sortAuditEntries(entries.filter((entry) => entry.category === category && (severity === 'all' || (entry.severity || 'info') === severity)))
+}
+
+export function countBySeverity(entries: readonly AuditEntry[]): Record<AuditSeverity, number> {
+  const counts: Record<AuditSeverity, number> = { critical: 0, high: 0, medium: 0, low: 0, info: 0 }
+  for (const entry of entries) counts[entry.severity || 'info'] += 1
+  return counts
+}
+
 function getCategoryMetrics(entries: readonly AuditEntry[], category: 'audit' | 'debt'): AuditCategoryMetrics {
   const scopedEntries = entries.filter((entry) => entry.category === category)
   const resolved = scopedEntries.filter((entry) => isResolved(entry.status)).length
@@ -91,18 +125,18 @@ const categoryDetails: Record<AuditCategory, {
   Icon: typeof ClipboardCheck
 }> = {
   audit: {
-    title: 'Auditoria',
-    description: 'Achados registrados na revisão do workspace.',
+    title: 'Revisões',
+    description: 'Revisões já registradas neste projeto.',
     Icon: ClipboardCheck,
   },
   debt: {
-    title: 'Débito',
-    description: 'Itens que ainda precisam de uma decisão ou correção.',
+    title: 'Problemas encontrados',
+    description: 'Itens que ainda precisam de correção, do mais grave ao mais leve.',
     Icon: TrendingDown,
   },
   gain: {
-    title: 'Ganho',
-    description: 'Resultados registrados com unidade e evidência.',
+    title: 'Melhorias registradas',
+    description: 'Resultados alcançados depois das correções.',
     Icon: TrendingUp,
   },
 }
@@ -157,12 +191,25 @@ const MetricCard: React.FC<MetricCardProps> = ({ label, value, detail, explanati
 interface EntryListProps {
   category: AuditCategory
   entries: readonly AuditEntry[]
+  severityFilter?: AuditSeverityFilter
+  onSeverityFilterChange?: (severity: AuditSeverityFilter) => void
 }
 
-const EntryList: React.FC<EntryListProps> = ({ category, entries }) => {
+const EntryList: React.FC<EntryListProps> = ({ category, entries, severityFilter = 'all', onSeverityFilterChange }) => {
   const details = categoryDetails[category]
   const Icon = details.Icon
   const categoryEntries = entries.filter((entry) => entry.category === category)
+  const visibleEntries = filterAuditEntries(entries, category, category === 'debt' ? severityFilter : 'all')
+  const severityCounts = countBySeverity(categoryEntries)
+  const showFilter = category === 'debt' && categoryEntries.length > 8 && onSeverityFilterChange
+
+  const filterOptions: Array<{ value: AuditSeverityFilter; label: string }> = [
+    { value: 'all', label: 'Todos' },
+    { value: 'critical', label: 'Críticos' },
+    { value: 'high', label: 'Altos' },
+    { value: 'medium', label: 'Médios' },
+    { value: 'low', label: 'Baixos' },
+  ]
 
   return (
     <section className="evolution-entry-section" aria-labelledby={'audit-section-' + category}>
@@ -175,40 +222,64 @@ const EntryList: React.FC<EntryListProps> = ({ category, entries }) => {
           <h2 id={'audit-section-' + category}>{details.title}</h2>
           <p>{details.description}</p>
         </div>
-        <span className="evolution-count-badge">{categoryEntries.length}</span>
+        <span className="evolution-count-badge" aria-label={categoryEntries.length + ' itens'}>{categoryEntries.length}</span>
       </header>
-      {categoryEntries.length > 0 ? (
-        <div className="evolution-entry-list">
-          {categoryEntries.map((entry) => {
-            const severity = entry.severity || 'info'
+      {showFilter && (
+        <div className="evolution-severity-filter" role="group" aria-label="Filtrar por gravidade">
+          {filterOptions.map((option) => {
+            const count = option.value === 'all' ? categoryEntries.length : severityCounts[option.value]
             return (
-              <article className="evolution-entry" data-severity={severity} key={entry.id}>
-                <div className="evolution-entry__topline">
-                  <span className="evolution-status" data-status={entry.status}>
-                    {statusLabels[entry.status]}
-                  </span>
-                  <span className="evolution-severity" data-severity={severity}>
-                    {severityLabels[severity]}
-                  </span>
-                </div>
-                <h3>{entry.title}</h3>
-                <p>{entry.description}</p>
-                {entry.evidence && (
-                  <p className="evolution-entry__evidence">
-                    <strong>Evidência:</strong> {entry.evidence}
-                  </p>
-                )}
-                {entry.value && Number.isFinite(entry.value.amount) && entry.value.unit.trim() && (
-                  <p className="evolution-entry__value">
-                    Ganho informado: {formatNumber(entry.value.amount)} {entry.value.unit}
-                  </p>
-                )}
-              </article>
+              <button
+                key={option.value}
+                type="button"
+                aria-pressed={severityFilter === option.value}
+                onClick={() => onSeverityFilterChange(option.value)}
+              >
+                {option.label} <small>{count}</small>
+              </button>
             )
           })}
         </div>
+      )}
+      {visibleEntries.length > 0 ? (
+        <>
+          {category === 'debt' && severityFilter !== 'all' && (
+            <p className="evolution-entry-filter-note">
+              Mostrando {visibleEntries.length} de {categoryEntries.length} problemas.
+            </p>
+          )}
+          <div className="evolution-entry-list">
+            {visibleEntries.map((entry) => {
+              const severity = entry.severity || 'info'
+              return (
+                <article className="evolution-entry" data-severity={severity} key={entry.id}>
+                  <div className="evolution-entry__topline">
+                    <span className="evolution-status" data-status={entry.status}>
+                      {statusLabels[entry.status]}
+                    </span>
+                    <span className="evolution-severity" data-severity={severity}>
+                      {severityLabels[severity]}
+                    </span>
+                  </div>
+                  <h3>{entry.title}</h3>
+                  <p>{entry.description}</p>
+                  {entry.evidence && (
+                    <p className="evolution-entry__evidence">
+                      <strong>Onde:</strong> {entry.evidence}
+                    </p>
+                  )}
+                  {entry.value && Number.isFinite(entry.value.amount) && entry.value.unit.trim() && (
+                    <p className="evolution-entry__value">
+                      Tempo estimado: {formatNumber(entry.value.amount)} {entry.value.unit}
+                    </p>
+                  )}
+                </article>
+              )
+            })}
+          </div>
+        </>
       ) : (
-        <p className="evolution-empty">Nenhum registro nesta categoria.</p>
+        <p className="evolution-empty">Nenhum item nesta categoria.</p>
       )}
     </section>
   )
@@ -222,6 +293,7 @@ export interface AuditDashboardProps {
 export const AuditDashboard: React.FC<AuditDashboardProps> = ({ data, className = '' }) => {
   const metrics = useMemo(() => calculateAuditMetrics(data.entries), [data.entries])
   const headingId = useId()
+  const [debtSeverity, setDebtSeverity] = React.useState<AuditSeverityFilter>('all')
   const updatedLabel = data.updatedAt ? 'Atualizado em ' + data.updatedAt : 'Atualização não informada'
 
   return (
@@ -230,44 +302,44 @@ export const AuditDashboard: React.FC<AuditDashboardProps> = ({ data, className 
         <div>
           <span className="evolution-dialog__eyebrow">
             <FileCheck2 aria-hidden="true" />
-            Visão explicável
+            Revisão do projeto
           </span>
-          <h1 id={headingId}>Auditoria e evolução</h1>
-          <p>Contagens derivadas dos registros recebidos, com a fórmula visível em cada métrica.</p>
+          <h1 id={headingId}>Auditoria</h1>
+          <p>Problemas encontrados e melhorias registradas neste projeto.</p>
         </div>
         <time className="evolution-dashboard__updated">{updatedLabel}</time>
       </header>
 
-      <section className="evolution-metric-grid" aria-label="Métricas do workspace">
+      <section className="evolution-metric-grid" aria-label="Resumo da auditoria">
         <MetricCard
-          label="Auditoria"
+          label="Revisões"
           value={String(metrics.audit.total)}
-          detail={metrics.audit.resolved + ' resolvidos · ' + metrics.audit.open + ' em aberto'}
-          explanation="Total = registros com categoria de auditoria."
+          detail={metrics.audit.resolved + ' concluídas · ' + metrics.audit.open + ' em andamento'}
+          explanation="Revisões já feitas neste projeto."
           tone="neutral"
           Icon={ClipboardCheck}
         />
         <MetricCard
-          label="Débito aberto"
+          label="Problemas em aberto"
           value={String(metrics.debt.open)}
-          detail={metrics.debt.resolved + ' resolvidos de ' + metrics.debt.total}
-          explanation="Em aberto = total de débito − itens resolvidos."
+          detail={metrics.debt.resolved + ' corrigidos de ' + metrics.debt.total}
+          explanation="Itens que ainda precisam de correção."
           tone="warning"
           Icon={Clock3}
         />
         <MetricCard
-          label="Ganho registrado"
+          label="Melhorias registradas"
           value={String(metrics.gain.total)}
-          detail={metrics.gain.confirmed + ' confirmados · ' + metrics.gain.pending + ' pendentes'}
-          explanation={'Soma dos valores informados: ' + formatGainValues(metrics.gain.valueByUnit) + '.'}
+          detail={metrics.gain.confirmed + ' confirmadas · ' + metrics.gain.pending + ' pendentes'}
+          explanation={'Tempo economizado: ' + formatGainValues(metrics.gain.valueByUnit) + '.'}
           tone="positive"
           Icon={TrendingUp}
         />
         <MetricCard
-          label="Observabilidade"
+          label="Atividade"
           value={String(data.telemetry?.spans || 0)}
-          detail={(data.telemetry?.errors || 0) + ' erros · ' + Math.round(data.telemetry?.averageDurationMs || 0) + ' ms médios'}
-          explanation="Spans IPC persistidos com atributos sensíveis redigidos."
+          detail={(data.telemetry?.errors || 0) + ' falhas · ' + Math.round(data.telemetry?.averageDurationMs || 0) + ' ms em média'}
+          explanation="Ações recentes do aplicativo neste projeto."
           tone={data.telemetry?.errors ? 'warning' : 'neutral'}
           Icon={Activity}
         />
@@ -275,7 +347,12 @@ export const AuditDashboard: React.FC<AuditDashboardProps> = ({ data, className 
 
       <div className="evolution-entry-grid">
         <EntryList category="audit" entries={data.entries} />
-        <EntryList category="debt" entries={data.entries} />
+        <EntryList
+          category="debt"
+          entries={data.entries}
+          severityFilter={debtSeverity}
+          onSeverityFilterChange={setDebtSeverity}
+        />
         <EntryList category="gain" entries={data.entries} />
       </div>
     </main>

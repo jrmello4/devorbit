@@ -156,7 +156,25 @@ export function createAgentResultScanner(): AgentResultScanner {
     if (buffer.length > AGENT_RESULT_MAX_FRAME_CHARS * 2) buffer = buffer.slice(-AGENT_RESULT_MAX_FRAME_CHARS * 2)
     const lines = buffer.split(/\r\n|\n|\r/)
     buffer = lines.pop() || ''
-    return lines.flatMap(consumeLine)
+    const events = lines.flatMap(consumeLine)
+    if (events.length || resolved || !buffer) return events
+
+    // Alguns CLIs desenham o frame no PTY sem emitir newline. O JSON é o
+    // primeiro e autoritativo frame do contrato; quando ele já fecha, pode
+    // ser entregue imediatamente sem exigir Enter ou o encerramento do PTY.
+    const candidate = stripAnsiEscapes(buffer).trimStart()
+    const body = candidate.startsWith(AGENT_RESULT_PREFIX)
+      ? candidate.slice(AGENT_RESULT_PREFIX.length).trim()
+      : ''
+    if (body.startsWith('{') && body.endsWith('}')) {
+      const parsed = parseAgentResultLine(buffer)
+      if (parsed.kind === 'result') {
+        resolved = true
+        buffer = ''
+        return [parsed]
+      }
+    }
+    return events
   }
 
   const finish = (): AgentResultScanEvent[] => {

@@ -12,7 +12,7 @@ import {
   resolveAgentProviderWithFallback,
   resolveAgentTurn,
 } from '../agent-providers'
-import { sendAgentTurn, spawnAgentProviderTerminal, type ResultWaitPromise } from '../agent-turn'
+import { sendAgentTurn, spawnAgentProviderTerminal, type ResultWaitPromise, type TerminalReadyOptions } from '../agent-turn'
 import {
   beginCompanionTerminalStart,
   registerCompanionTerminal,
@@ -44,6 +44,7 @@ export interface TerminalIpcDependencies {
   cancelBridgeTarget: (id: string) => void
   turnSessions: Map<string, { provider: AgentProviderId; model: string }>
   waitTurnResult: (id: string, timeouts: { idleMs: number; overallMs: number }) => ResultWaitPromise
+  waitTerminalReady: (id: string, options?: TerminalReadyOptions) => Promise<void>
 }
 
 function assertTerminalId(id: unknown): asserts id is string {
@@ -117,6 +118,11 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
       rows: safeRows,
     })
     registerCompanionTerminal(id, { projectPath: safePath })
+    dependencies.registerBridgeAgent(id, {
+      provider: 'codex',
+      model: config.modelRouting?.fastModel || 'codex',
+      projectPath: safePath,
+    })
     return {
       success: true,
       ...result,
@@ -187,20 +193,24 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
       return { started: spawned.started, provider: spawned.provider, command: spawned.command }
     })
     registerCompanionTerminal(id, { projectPath: safePath })
+    const effectiveProvider = execution.result.provider ?? execution.provider
     dependencies.registerBridgeAgent(id, {
-      provider: execution.result.provider ?? execution.provider,
+      provider: effectiveProvider,
       model: turn.model,
       projectPath: safePath,
     })
+    // Registra a sessão do turno para que o primeiro sendAgentTurn com o mesmo
+    // provedor/modelo reutilize este PTY em vez de reiniciar o executor.
+    dependencies.turnSessions.set(id, { provider: effectiveProvider, model: turn.model })
     return {
       success: true,
       ...execution.result.started,
-      provider: execution.result.provider ?? execution.provider,
+      provider: effectiveProvider,
       command: execution.result.command,
       tier: turn.tier,
       model: turn.model,
       fallback: false,
-      message: (execution.result.provider ?? execution.provider) + ' iniciado no terminal interno. Se precisar, autentique pelo próprio CLI.',
+      message: effectiveProvider + ' iniciado no terminal interno. Se precisar, autentique pelo próprio CLI.',
     }
   })
 
@@ -301,6 +311,7 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
         },
         write: writeTerminal,
         waitResult: dependencies.waitTurnResult,
+        waitReady: dependencies.waitTerminalReady,
         resolveTurn: async (candidate, taskPrompt) => {
           const turnConfig = await loadConfig()
           return resolveAgentTurn(turnConfig, candidate, taskPrompt)

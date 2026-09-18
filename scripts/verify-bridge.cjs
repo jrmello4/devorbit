@@ -121,6 +121,8 @@ async function main() {
       waiters.set(id, waiter)
       return waiter.promise
     },
+    // Fixture sempre pronta: o E2E valida o fluxo send/wait/ask, não a TUI.
+    waitTerminalReady: async () => undefined,
     onEvent: (event) => {
       events.push(event)
     },

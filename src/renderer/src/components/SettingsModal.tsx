@@ -11,8 +11,10 @@ import {
   Sparkles,
   Terminal,
   Code2,
+  Rocket,
+  LayoutDashboard,
 } from 'lucide-react'
-import type { AppConfig, CodexAccountStatus } from '../types'
+import type { AgentProviderId, AppConfig, AutomationConfig, CodexAccountStatus } from '../types'
 import { AccessibleDialog } from './AccessibleDialog'
 
 interface SettingsModalProps {
@@ -24,6 +26,7 @@ interface SettingsModalProps {
   onNotify: (message: string, type?: 'success' | 'error' | 'info') => void
   authStatus?: CodexAccountStatus | null
   onOpenAuthModal?: (account: 'account1' | 'account2') => void
+  projects?: Array<{ id: string; name: string }>
 }
 
 const AGENT_PATH_FIELDS: Array<{ key: 'opencode' | 'claude' | 'gemini' | 'aider' | 'customAgent'; label: string; hint: string }> = [
@@ -32,6 +35,16 @@ const AGENT_PATH_FIELDS: Array<{ key: 'opencode' | 'claude' | 'gemini' | 'aider'
   { key: 'gemini', label: 'Gemini CLI', hint: 'gemini.cmd / gemini.exe' },
   { key: 'aider', label: 'Aider', hint: 'aider.cmd / aider.exe' },
   { key: 'customAgent', label: 'Outro CLI', hint: 'Comando ou caminho do agente' },
+]
+
+const EXECUTOR_OPTIONS: Array<{ value: AgentProviderId; label: string }> = [
+  { value: 'codex', label: 'Codex' },
+  { value: 'opencode', label: 'OpenCode' },
+  { value: 'claude', label: 'Claude Code' },
+  { value: 'gemini', label: 'Gemini CLI' },
+  { value: 'aider', label: 'Aider' },
+  { value: 'agy', label: 'Antigravity' },
+  { value: 'custom', label: 'Agente local' },
 ]
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -43,11 +56,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onNotify,
   authStatus,
   onOpenAuthModal,
+  projects = [],
 }) => {
   const [projectDirs, setProjectDirs] = useState<string[]>([])
   const [account1Name, setAccount1Name] = useState('')
   const [account2Name, setAccount2Name] = useState('')
   const [customPaths, setCustomPaths] = useState<AppConfig['customPaths']>({})
+  const [automation, setAutomation] = useState<AutomationConfig>({})
   const [isSaving, setIsSaving] = useState(false)
   const [testingTool, setTestingTool] = useState<string | null>(null)
   const [isDirty, setIsDirty] = useState(false)
@@ -56,6 +71,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   React.useEffect(() => {
     if (!isOpen) {
       initializedConfigRef.current = null
+      setAutomation({})
       return
     }
 
@@ -64,6 +80,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setAccount1Name(config.chatGptAccount1Name)
       setAccount2Name(config.chatGptAccount2Name)
       setCustomPaths(config.customPaths)
+      setAutomation(config.automation ?? {})
       setIsDirty(false)
       initializedConfigRef.current = config
     }
@@ -98,6 +115,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const updateCustomPath = (key: keyof AppConfig['customPaths'], value: string) => {
     setCustomPaths((current) => ({ ...current, [key]: value }))
+    setIsDirty(true)
+  }
+
+  const updateAutomation = (patch: Partial<AutomationConfig>) => {
+    setAutomation((current) => ({ ...current, ...patch }))
     setIsDirty(true)
   }
 
@@ -157,6 +179,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         chatGptAccount1Name: account1Name,
         chatGptAccount2Name: account2Name,
         customPaths,
+        automation: {
+          defaultExecutor: automation.defaultExecutor || undefined,
+          defaultCodexAccount:
+            automation.defaultExecutor === 'codex'
+              ? automation.defaultCodexAccount || undefined
+              : undefined,
+          autoStartExecutor: automation.autoStartExecutor,
+          restoreWorkspace: automation.restoreWorkspace,
+          restoreProjectId: automation.restoreWorkspace
+            ? automation.restoreProjectId || undefined
+            : undefined,
+        },
       })
       setIsDirty(false)
       onNotify('Configurações salvas com sucesso!', 'success')
@@ -454,6 +488,115 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   {renderToolTestButton('wt')}
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* Automação */}
+          <div className="pt-4 border-t border-[var(--color-border-subtle)]">
+            <h3 className="font-semibold text-[var(--text-primary)] flex items-center gap-2 mb-1">
+              <Rocket className="w-4 h-4 text-[var(--color-accent-strong)]" />
+              Automação
+            </h3>
+            <p className="text-xs text-[var(--color-text-secondary)] mb-3">
+              Defina o executor padrão do canvas e o que restaurar ao abrir o DevOrbit.
+            </p>
+
+            <div className="space-y-3 text-xs">
+              <div className="rounded-lg bg-[var(--surface-muted)] border border-[var(--color-border-subtle)] p-3">
+                <label htmlFor="automation-default-executor" className="text-[var(--color-text-secondary)] font-medium block mb-1">
+                  Executor padrão:
+                </label>
+                <select
+                  id="automation-default-executor"
+                  name="automation-default-executor"
+                  value={automation.defaultExecutor || ''}
+                  onChange={(event) => {
+                    const value = event.target.value
+                    updateAutomation({ defaultExecutor: value ? (value as AgentProviderId) : undefined })
+                  }}
+                  className="w-full rounded-[5px] border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-2.5 py-1.5 text-xs text-[var(--text-primary)] focus:border-[var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)]/30"
+                >
+                  <option value="">Nenhum</option>
+                  {EXECUTOR_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {automation.defaultExecutor === 'codex' && (
+                <div className="rounded-lg bg-[var(--surface-muted)] border border-[var(--color-border-subtle)] p-3">
+                  <label htmlFor="automation-default-codex-account" className="text-[var(--color-text-secondary)] font-medium block mb-1">
+                    Conta Codex padrão:
+                  </label>
+                  <select
+                    id="automation-default-codex-account"
+                    name="automation-default-codex-account"
+                    value={automation.defaultCodexAccount || ''}
+                    onChange={(event) => {
+                      const value = event.target.value
+                      updateAutomation({ defaultCodexAccount: value ? (value as 'account1' | 'account2') : undefined })
+                    }}
+                    className="w-full rounded-[5px] border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-2.5 py-1.5 text-xs text-[var(--text-primary)] focus:border-[var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)]/30"
+                  >
+                    <option value="">Nenhuma</option>
+                    <option value="account1">{account1Name || 'Conta 1'}</option>
+                    <option value="account2">{account2Name || 'Conta 2'}</option>
+                  </select>
+                </div>
+              )}
+
+              <div className="rounded-lg bg-[var(--surface-muted)] border border-[var(--color-border-subtle)] p-3 space-y-2">
+                <label htmlFor="automation-auto-start-executor" className="flex items-center gap-2 text-[var(--color-text-secondary)] font-medium cursor-pointer">
+                  <input
+                    id="automation-auto-start-executor"
+                    name="automation-auto-start-executor"
+                    type="checkbox"
+                    checked={Boolean(automation.autoStartExecutor)}
+                    onChange={(event) => updateAutomation({ autoStartExecutor: event.target.checked })}
+                    className="h-3.5 w-3.5 accent-[var(--color-accent-strong)]"
+                  />
+                  Iniciar executor automaticamente ao abrir o terminal
+                </label>
+                <label htmlFor="automation-restore-workspace" className="flex items-center gap-2 text-[var(--color-text-secondary)] font-medium cursor-pointer">
+                  <input
+                    id="automation-restore-workspace"
+                    name="automation-restore-workspace"
+                    type="checkbox"
+                    checked={Boolean(automation.restoreWorkspace)}
+                    onChange={(event) => updateAutomation({ restoreWorkspace: event.target.checked })}
+                    className="h-3.5 w-3.5 accent-[var(--color-accent-strong)]"
+                  />
+                  Restaurar workspace ao abrir o app
+                </label>
+              </div>
+
+              {automation.restoreWorkspace && (
+                <div className="rounded-lg bg-[var(--surface-muted)] border border-[var(--color-border-subtle)] p-3">
+                  <label htmlFor="automation-restore-project" className="flex items-center gap-2 text-[var(--color-text-secondary)] font-medium mb-1">
+                    <LayoutDashboard className="w-3.5 h-3.5 text-[var(--color-accent-strong)]" />
+                    Projeto a restaurar:
+                  </label>
+                  <select
+                    id="automation-restore-project"
+                    name="automation-restore-project"
+                    value={automation.restoreProjectId || ''}
+                    onChange={(event) => {
+                      const value = event.target.value
+                      updateAutomation({ restoreProjectId: value || undefined })
+                    }}
+                    className="w-full rounded-[5px] border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-2.5 py-1.5 text-xs text-[var(--text-primary)] focus:border-[var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)]/30"
+                  >
+                    <option value="">Nenhum</option>
+                    {projects.map((project) => (
+                      <option key={project.id} value={project.id}>
+                        {project.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
           </div>
         </div>

@@ -14,6 +14,28 @@ export interface SquadCreationSpec {
   participants: AgentCreationSpec[]
 }
 
+const AGENT_PROVIDER_IDS: readonly AgentProviderId[] = ['codex', 'opencode', 'claude', 'gemini', 'aider', 'agy', 'custom']
+
+function isAgentProvider(value: unknown): value is AgentProviderId {
+  return typeof value === 'string' && (AGENT_PROVIDER_IDS as readonly string[]).includes(value)
+}
+
+/**
+ * Provider efetivo de um nó: escolha explícita vence, fallback do nó hidratado
+ * vem depois, e o executor padrão só preenche nó de agente sem provider —
+ * nunca sobrescreve uma escolha existente.
+ */
+export function resolveAgentProvider(
+  explicit: unknown,
+  fallback: unknown,
+  kind: string,
+  defaultProvider: AgentProviderId | null,
+): AgentProviderId | undefined {
+  if (isAgentProvider(explicit)) return explicit
+  if (isAgentProvider(fallback)) return fallback
+  return kind === 'agent' && defaultProvider ? defaultProvider : undefined
+}
+
 export function isReadyProvider(
   providers: readonly AgentProvider[],
   provider: AgentProviderId | null,

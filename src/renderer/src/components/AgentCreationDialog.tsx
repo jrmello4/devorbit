@@ -15,6 +15,7 @@ interface AgentCreationDialogProps {
   isOpen: boolean
   mode: 'agent' | 'squad'
   providers: AgentProvider[]
+  defaultProvider?: AgentProviderId | null
   codexAuthStatus?: CodexAccountStatus | null
   onClose: () => void
   onRequestCodexAuth?: (account: AgentAccountId) => void
@@ -24,14 +25,15 @@ interface AgentCreationDialogProps {
 
 const roles: AgentCreationRole[] = ['Coordenador', 'Implementação', 'Revisão', 'Testes']
 
-function emptySpec(role: AgentCreationRole): AgentCreationSpec {
-  return { role, provider: null, account: null }
+function emptySpec(role: AgentCreationRole, defaultProvider?: AgentProviderId | null): AgentCreationSpec {
+  return { role, provider: defaultProvider ?? null, account: null }
 }
 
 export const AgentCreationDialog: React.FC<AgentCreationDialogProps> = ({
   isOpen,
   mode,
   providers,
+  defaultProvider = null,
   codexAuthStatus = null,
   onClose,
   onRequestCodexAuth,
@@ -39,17 +41,17 @@ export const AgentCreationDialog: React.FC<AgentCreationDialogProps> = ({
   onCreateSquad,
 }) => {
   const [title, setTitle] = useState('')
-  const [agentSpec, setAgentSpec] = useState<AgentCreationSpec>(() => emptySpec('Implementação'))
+  const [agentSpec, setAgentSpec] = useState<AgentCreationSpec>(() => emptySpec('Implementação', defaultProvider))
   const [selectedRoles, setSelectedRoles] = useState<AgentCreationRole[]>(['Coordenador'])
-  const [squadSpecs, setSquadSpecs] = useState<AgentCreationSpec[]>([emptySpec('Coordenador')])
+  const [squadSpecs, setSquadSpecs] = useState<AgentCreationSpec[]>([emptySpec('Coordenador', defaultProvider)])
 
   useEffect(() => {
     if (!isOpen) return
     setTitle(mode === 'squad' ? 'Novo squad' : 'Novo agente')
-    setAgentSpec(emptySpec('Implementação'))
+    setAgentSpec(emptySpec('Implementação', defaultProvider))
     setSelectedRoles(['Coordenador'])
-    setSquadSpecs([emptySpec('Coordenador')])
-  }, [isOpen, mode])
+    setSquadSpecs([emptySpec('Coordenador', defaultProvider)])
+  }, [isOpen, mode, defaultProvider])
 
   const readyProviders = useMemo(
     () => providers.filter((provider) => provider.state === 'ready'),
@@ -71,7 +73,7 @@ export const AgentCreationDialog: React.FC<AgentCreationDialogProps> = ({
     setSquadSpecs((current) => {
       if (!enabled) return current.filter((item) => item.role !== role)
       if (current.some((item) => item.role === role)) return current
-      return [...current, emptySpec(role)]
+      return [...current, emptySpec(role, defaultProvider)]
     })
   }
 
