@@ -133,6 +133,14 @@ const EXPECTED_METHODS = [
   'completeLlm',
   'getEvolutionHistory',
   'searchProjectText',
+  'getOrchestrationState',
+  'setOrchestrationContinuity',
+  'upsertOrchestrationSeat',
+  'removeOrchestrationSeat',
+  'assignOrchestrationRole',
+  'reportOrchestrationTurn',
+  'reportOrchestrationQuota',
+  'onOrchestrationEvent',
 ]
 
 const checks = []

@@ -529,6 +529,14 @@ const api = {
   completeLlm: async () => ({ ok: false, attempts: [], context: { inputTokens: 0, requestedOutputTokens: 0, totalRequestedTokens: 0, contextWindow: 0, remainingTokens: 0, withinLimit: false }, cost: { inputTokens: 0, outputTokens: 0, inputCost: 0, outputCost: 0, totalCost: 0, currency: 'USD' } }),
   getEvolutionHistory: async () => [],
   searchProjectText: async () => ({ root: projectPath, query: '', status: 'ok', matches: [], truncated: false, exitCode: 1 }),
+  getOrchestrationState: async () => null,
+  setOrchestrationContinuity: async () => null,
+  upsertOrchestrationSeat: async () => null,
+  removeOrchestrationSeat: async () => null,
+  assignOrchestrationRole: async () => null,
+  reportOrchestrationTurn: async () => null,
+  reportOrchestrationQuota: async () => null,
+  onOrchestrationEvent: () => () => {},
 }
 
 contextBridge.exposeInMainWorld('devorbit', api)

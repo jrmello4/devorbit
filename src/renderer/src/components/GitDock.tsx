@@ -469,13 +469,36 @@ export const GitDock: React.FC<GitDockProps> = ({
       {!collapsed && (
         <>
           <div role="tablist" aria-label="Operações Git" className="flex gap-1 border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-3 py-2">
-            {tabs.map((tab) => (
+            {tabs.map((tab, index) => (
               <button
                 key={tab.id}
+                id={`gitdock-tab-${tab.id}`}
                 type="button"
                 role="tab"
+                tabIndex={activeTab === tab.id ? 0 : -1}
                 aria-selected={activeTab === tab.id}
+                aria-controls={`gitdock-panel-${tab.id}`}
                 onClick={() => setActiveTab(tab.id)}
+                onKeyDown={(event) => {
+                  let nextTab: GitDockTab | null = null
+                  if (event.key === 'ArrowRight') {
+                    event.preventDefault()
+                    nextTab = tabs[(index + 1) % tabs.length].id
+                  } else if (event.key === 'ArrowLeft') {
+                    event.preventDefault()
+                    nextTab = tabs[(index - 1 + tabs.length) % tabs.length].id
+                  } else if (event.key === 'Home') {
+                    event.preventDefault()
+                    nextTab = tabs[0].id
+                  } else if (event.key === 'End') {
+                    event.preventDefault()
+                    nextTab = tabs[tabs.length - 1].id
+                  }
+                  if (nextTab) {
+                    setActiveTab(nextTab)
+                    document.getElementById(`gitdock-tab-${nextTab}`)?.focus()
+                  }
+                }}
                 className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors ${activeTab === tab.id ? 'bg-[var(--color-accent-strong)] text-[var(--color-accent-contrast)]' : 'text-[var(--color-text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]'}`}
               >
                 {tab.label}
@@ -485,7 +508,7 @@ export const GitDock: React.FC<GitDockProps> = ({
 
           <div className="max-h-[calc(100vh-220px)] min-h-0 flex-1 overflow-y-auto p-4 text-sm text-[var(--text-primary)]">
             {activeTab === 'push' && (
-              <div className="space-y-4" role="tabpanel" aria-label="Enviar alterações">
+              <div id="gitdock-panel-push" className="space-y-4" role="tabpanel" tabIndex={0} aria-labelledby="gitdock-tab-push" aria-label="Enviar alterações">
                 {!project ? (
                   <p className="text-xs text-[var(--color-text-muted)]">Selecione um projeto para enviar alterações. O painel permanece aberto sem bloquear o editor.</p>
                 ) : (
@@ -638,7 +661,7 @@ export const GitDock: React.FC<GitDockProps> = ({
             )}
 
             {activeTab === 'branches' && (
-              <div className="space-y-4" role="tabpanel" aria-label="Branches">
+              <div id="gitdock-panel-branches" className="space-y-4" role="tabpanel" tabIndex={0} aria-labelledby="gitdock-tab-branches" aria-label="Branches">
                 {!project ? (
                   <p className="text-xs text-[var(--color-text-muted)]">Selecione um projeto para trocar de branch.</p>
                 ) : (
@@ -720,7 +743,7 @@ export const GitDock: React.FC<GitDockProps> = ({
             )}
 
             {activeTab === 'init' && (
-              <form onSubmit={(event) => void handleInit(event)} className="space-y-3" role="tabpanel" aria-label="Inicializar repositório">
+              <form id="gitdock-panel-init" onSubmit={(event) => void handleInit(event)} className="space-y-3" role="tabpanel" tabIndex={0} aria-labelledby="gitdock-tab-init" aria-label="Inicializar repositório">
                 {!project ? (
                   <p className="text-xs text-[var(--color-text-muted)]">Selecione uma pasta sem Git para inicializar.</p>
                 ) : (
@@ -779,7 +802,7 @@ export const GitDock: React.FC<GitDockProps> = ({
             )}
 
             {activeTab === 'clone' && (
-              <form onSubmit={(event) => void handleClone(event)} className="space-y-3" role="tabpanel" aria-label="Clonar repositório">
+              <form id="gitdock-panel-clone" onSubmit={(event) => void handleClone(event)} className="space-y-3" role="tabpanel" tabIndex={0} aria-labelledby="gitdock-tab-clone" aria-label="Clonar repositório">
                 <div>
                   <label htmlFor="gitdock-clone-parent" className="mb-1 block text-xs font-semibold text-[var(--text-primary)]">Pasta monitorada</label>
                   <select id="gitdock-clone-parent" value={cloneParent} onChange={(event) => setCloneParent(event.target.value)} disabled={isCloning} className="w-full rounded-lg border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-3 py-2 text-sm">

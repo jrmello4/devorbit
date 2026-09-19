@@ -22,6 +22,7 @@ import type { HybridMemoryKind, HybridMemoryView, HybridMemoryWrite } from '../s
 import type { LlmCompletionRequestView, LlmRouteView } from '../shared/llm-contract'
 import type { EvolutionRecord } from '../shared/evolution-history'
 import type { TextSearchRequest, TextSearchResult } from '../shared/text-search-contract'
+import type { ContinuityEvent, OrchestrationState } from '../shared/orchestration-continuity'
 
 const invoke = <T>(channel: IpcInvokeChannel, ...args: unknown[]): Promise<T> =>
   ipcRenderer.invoke(channel, ...args) as Promise<T>
@@ -186,6 +187,20 @@ const api: DevOrbitAPI = {
   getEvolutionHistory: (limit?: number): Promise<EvolutionRecord[]> =>
     limit === undefined ? invoke('devorbit:getEvolutionHistory') : invoke('devorbit:getEvolutionHistory', limit),
   searchProjectText: (request: TextSearchRequest): Promise<TextSearchResult> => invoke('devorbit:searchProjectText', request),
+  getOrchestrationState: (projectPath: string): Promise<OrchestrationState | null> => invoke('devorbit:getOrchestrationState', projectPath),
+  setOrchestrationContinuity: (projectPath: string, enabled: boolean): Promise<OrchestrationState | null> => invoke('devorbit:setOrchestrationContinuity', projectPath, enabled),
+  upsertOrchestrationSeat: (projectPath: string, input): Promise<OrchestrationState | null> => invoke('devorbit:upsertOrchestrationSeat', projectPath, input),
+  removeOrchestrationSeat: (projectPath: string, seatId: string): Promise<OrchestrationState | null> => invoke('devorbit:removeOrchestrationSeat', projectPath, seatId),
+  assignOrchestrationRole: (projectPath: string, role, seatId?): Promise<OrchestrationState | null> => seatId === undefined
+    ? invoke('devorbit:assignOrchestrationRole', projectPath, role)
+    : invoke('devorbit:assignOrchestrationRole', projectPath, role, seatId),
+  reportOrchestrationTurn: (projectPath: string, input): Promise<OrchestrationState | null> => invoke('devorbit:reportOrchestrationTurn', projectPath, input),
+  reportOrchestrationQuota: (projectPath: string, seatId: string, percent?: number): Promise<OrchestrationState | null> => percent === undefined
+    ? invoke('devorbit:reportOrchestrationQuota', projectPath, seatId)
+    : invoke('devorbit:reportOrchestrationQuota', projectPath, seatId, percent),
+  onOrchestrationEvent: (callback: (event: ContinuityEvent) => void): (() => void) => {
+    return subscribe<ContinuityEvent>('devorbit:orchestrationEvent', callback)
+  },
 }
 
 contextBridge.exposeInMainWorld('devorbit', api)

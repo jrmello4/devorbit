@@ -639,3 +639,25 @@
     animation: none;
   }
 }
+
+.workspace-canvas-continuity-status {
+  position: absolute;
+  z-index: 101;
+  left: var(--space-3);
+  bottom: 148px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: min(460px, calc(100% - var(--space-6)));
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--ops-border-strong);
+  border-radius: var(--radius-control);
+  color: var(--ops-text-secondary);
+  background: var(--ops-overlay);
+  box-shadow: 0 8px 20px var(--ops-shadow-node);
+  font-size: 10px;
+  pointer-events: auto;
+}
+.workspace-canvas-continuity-status strong { font-weight: 650; }
+.workspace-canvas-continuity-status small { color: var(--ops-text-muted); font-size: 9px; }
+.workspace-canvas-continuity-status > label > span { display: flex; flex-direction: column; gap: 2px; }

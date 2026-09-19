@@ -7,7 +7,9 @@ import {
 import {
   transitionAgentBridgeEvent,
   type AgentBridgeEvent,
+  type AgentBridgeEventResult,
   type AgentBridgeEventStatus,
+  type AgentBridgeTerminalStatus,
 } from '../shared/agent-bridge-event'
 
 export interface AgentBridgeRuntimeOptions {
@@ -84,27 +86,74 @@ export function createAgentBridgeRuntime(options: AgentBridgeRuntimeOptions): Ag
     return 'completed'
   }
 
+  const eventDestinationFor = (result: unknown, request: { target?: string }): string => {
+    if (result && typeof result === 'object' && !Array.isArray(result)) {
+      const destination = (result as { destination?: unknown }).destination
+      if (typeof destination === 'string' && destination.trim()) {
+        const normalized = normalizeEventId(destination, 'bridge-target')
+        return normalized === 'devorbit' ? 'bridge-target' : normalized
+      }
+    }
+    return eventTargetFor(request)
+  }
+
+  const eventArtifactsFor = (result: unknown): string[] | undefined => {
+    if (!result || typeof result !== 'object' || Array.isArray(result)) return undefined
+    const raw = (result as { artifacts?: unknown }).artifacts
+    if (!Array.isArray(raw)) return undefined
+    const artifacts = raw
+      .filter((item): item is string => typeof item === 'string')
+      .map((item) => sanitizeEventText(item).slice(0, 240))
+      .filter(Boolean)
+      .slice(0, 16)
+    return artifacts.length > 0 ? artifacts : undefined
+  }
+
+  const eventResultFor = (result: unknown, status: AgentBridgeEventStatus): AgentBridgeEventResult | undefined => {
+    if (status === 'pending') return undefined
+    const summary = eventSummaryFor(result)
+    const artifacts = eventArtifactsFor(result)
+    return {
+      outcome: status as AgentBridgeTerminalStatus,
+      ...(summary !== undefined ? { summary } : {}),
+      ...(artifacts !== undefined ? { artifacts } : {}),
+    }
+  }
+
   const handlers: AgentBridgeHandlers = { ...options.handlers }
-  for (const type of ['send', 'wait', 'ask'] as const) {
+  for (const type of ['send', 'wait', 'ask', 'run'] as const) {
     const handler = options.handlers[type]
     if (!handler) continue
     handlers[type] = async (request, context) => {
       const requestId = requestIdFor(request)
-      const target = eventTargetFor(request)
+      const destination = eventTargetFor(request)
+      const requestedOrigin = normalizeEventId(request.origin, 'devorbit')
+      // O contrato de evento proíbe origem == destino; um self-delegate cai
+      // para um rótulo neutro em vez de invalidar o evento.
+      const source = requestedOrigin === destination ? 'bridge-origin' : requestedOrigin
+      const depth = typeof request.depth === 'number' ? request.depth : 0
       const createdAt = Date.now()
       const pending: AgentBridgeEvent = {
         requestId,
-        source: 'devorbit',
-        target,
+        source,
+        target: destination,
+        origin: source,
+        destination,
+        depth,
         status: 'pending',
         createdAt,
       }
       emitEvent(pending)
       try {
         const result = await handler(request as never, context)
+        const status = eventStatusFor(result)
+        const resolvedDestination = eventDestinationFor(result, request)
+        const eventResult = eventResultFor(result, status)
         emitEvent(transitionAgentBridgeEvent(pending, {
-          status: eventStatusFor(result),
+          status,
           summary: eventSummaryFor(result),
+          destination: resolvedDestination,
+          ...(eventResult !== undefined ? { result: eventResult } : {}),
           updatedAt: Date.now(),
         }))
         return result
@@ -115,6 +164,8 @@ export function createAgentBridgeRuntime(options: AgentBridgeRuntimeOptions): Ag
         emitEvent(transitionAgentBridgeEvent(pending, {
           status: 'failed',
           summary,
+          destination,
+          result: { outcome: 'failed', summary },
           updatedAt: Date.now(),
         }))
         throw error

@@ -1,4 +1,5 @@
 import type { AgentBridgeEvent } from '../../shared/agent-bridge-event'
+import type { ContinuityEvent, OrchestrationRole, OrchestrationState } from '../../shared/orchestration-continuity'
 import type { AuditSnapshot } from '../../shared/audit-contract'
 import type { DiagnosticProcessRequest, DiagnosticProcessResult } from '../../shared/diagnostic-process'
 import type { TelemetrySpanView } from '../../shared/telemetry-contract'
@@ -165,6 +166,76 @@ export interface AutomationConfig {
   restoreProjectId?: string
 }
 
+/**
+ * Nomes das chaves BYOK. A lista é a fonte única para config (armazenamento
+ * seguro), validação e UI. Os valores NUNCA devem ser enviados ao renderer.
+ */
+export const MODEL_ROUTING_SECRET_KEYS = [
+  'openaiApiKey',
+  'anthropicApiKey',
+  'geminiApiKey',
+  'deepseekApiKey',
+  'glmApiKey',
+  'kimiApiKey',
+  'minimaxApiKey',
+  'vllmApiKey',
+] as const
+
+export type ModelRoutingSecretKey = (typeof MODEL_ROUTING_SECRET_KEYS)[number]
+
+/** URLs base opcionais por provedor (não são segredos e podem ir ao renderer). */
+export const MODEL_ROUTING_BASE_URL_KEYS = [
+  'openaiBaseUrl',
+  'anthropicBaseUrl',
+  'geminiBaseUrl',
+  'deepseekBaseUrl',
+  'glmBaseUrl',
+  'kimiBaseUrl',
+  'minimaxBaseUrl',
+  'ollamaBaseUrl',
+  'vllmBaseUrl',
+] as const
+
+export type ModelRoutingBaseUrlKey = (typeof MODEL_ROUTING_BASE_URL_KEYS)[number]
+
+/**
+ * Credenciais BYOK. Preenchidas apenas no processo main (decifradas do
+ * armazenamento seguro) e nunca devolvidas ao renderer.
+ */
+export interface ModelRoutingSecrets {
+  openaiApiKey?: string
+  anthropicApiKey?: string
+  geminiApiKey?: string
+  deepseekApiKey?: string
+  glmApiKey?: string
+  kimiApiKey?: string
+  minimaxApiKey?: string
+  vllmApiKey?: string
+}
+
+export interface ModelRoutingConfig extends ModelRoutingSecrets {
+  fastModel?: string
+  deepModel?: string
+  openaiBaseUrl?: string
+  anthropicBaseUrl?: string
+  geminiBaseUrl?: string
+  deepseekBaseUrl?: string
+  glmBaseUrl?: string
+  kimiBaseUrl?: string
+  minimaxBaseUrl?: string
+  ollamaBaseUrl?: string
+  vllmBaseUrl?: string
+  /** Visão segura: indica que há chave configurada sem revelar o valor. */
+  hasOpenaiKey?: boolean
+  hasAnthropicKey?: boolean
+  hasGeminiKey?: boolean
+  hasDeepseekKey?: boolean
+  hasGlmKey?: boolean
+  hasKimiKey?: boolean
+  hasMinimaxKey?: boolean
+  hasVllmKey?: boolean
+}
+
 export interface AppConfig {
   projectDirs: string[]
   managedProjects: ManagedProject[]
@@ -186,12 +257,7 @@ export interface AppConfig {
     vscode?: string
     wt?: string
   }
-  modelRouting?: {
-    fastModel?: string
-    deepModel?: string
-    openaiApiKey?: string
-    anthropicApiKey?: string
-  }
+  modelRouting?: ModelRoutingConfig
   automation?: AutomationConfig
 }
 
@@ -278,11 +344,18 @@ export type IpcInvokeChannel =
   | 'devorbit:completeLlm'
   | 'devorbit:getEvolutionHistory'
   | 'devorbit:searchProjectText'
+  | 'devorbit:getOrchestrationState'
+  | 'devorbit:setOrchestrationContinuity'
+  | 'devorbit:upsertOrchestrationSeat'
+  | 'devorbit:removeOrchestrationSeat'
+  | 'devorbit:assignOrchestrationRole'
+  | 'devorbit:reportOrchestrationTurn'
+  | 'devorbit:reportOrchestrationQuota'
 
 export type IpcEventChannel =
   | 'devorbit:syncProgress' | 'devorbit:terminalEvent' | 'devorbit:webEvent'
   | 'devorbit:updateStatus' | 'devorbit:codexAuthProgress' | 'devorbit:companionEvent'
-  | 'devorbit:agentBridgeEvent' | 'devorbit:hitlEvent'
+  | 'devorbit:agentBridgeEvent' | 'devorbit:hitlEvent' | 'devorbit:orchestrationEvent'
 
 export type IpcSendChannel = 'devorbit:windowControl'
 
@@ -579,6 +652,29 @@ export interface DevOrbitAPI {
   completeLlm: (request: LlmCompletionRequestView) => Promise<LlmRouteView>
   getEvolutionHistory: (limit?: number) => Promise<EvolutionRecord[]>
   searchProjectText: (request: TextSearchRequest) => Promise<TextSearchResult>
+  getOrchestrationState: (projectPath: string) => Promise<OrchestrationState | null>
+  setOrchestrationContinuity: (projectPath: string, enabled: boolean) => Promise<OrchestrationState | null>
+  upsertOrchestrationSeat: (projectPath: string, input: {
+    id: string
+    provider: AgentProviderId
+    role: OrchestrationRole
+    account?: 'account1' | 'account2'
+    model?: string
+    tier?: 'fast' | 'deep'
+  }) => Promise<OrchestrationState | null>
+  removeOrchestrationSeat: (projectPath: string, seatId: string) => Promise<OrchestrationState | null>
+  assignOrchestrationRole: (projectPath: string, role: OrchestrationRole, seatId?: string) => Promise<OrchestrationState | null>
+  reportOrchestrationTurn: (projectPath: string, input: {
+    seatId: string
+    role?: OrchestrationRole
+    outcome: 'completed' | 'blocked' | 'failed'
+    summary?: string
+    transient?: boolean
+    branch?: string
+    commit?: string
+  }) => Promise<OrchestrationState | null>
+  reportOrchestrationQuota: (projectPath: string, seatId: string, percent?: number) => Promise<OrchestrationState | null>
+  onOrchestrationEvent: (callback: (event: ContinuityEvent) => void) => () => void
 }
 
 declare global {

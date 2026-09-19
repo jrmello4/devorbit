@@ -1,7 +1,7 @@
 # Orquestração entre agentes no DevOrbit (Agent Bridge)
 
-**Data:** 2026-09-17
-**Status:** Proposta
+**Data:** 2026-09-17 · **Atualizado:** 2026-09-19
+**Status:** Núcleo da bridge implementado (delegação estruturada + headless agy)
 **Contexto:** problema identificado ao tentar orquestrar o Antigravity (`agy`) de dentro de um terminal do DevOrbit.
 
 ---
@@ -58,6 +58,32 @@ Todo agente rodando no DevOrbit deve poder **delegar uma tarefa a outro agente e
 - Token escopado por sessão; socket restrito ao usuário; allow-list por agente.
 - Limite de profundidade/ciclos de delegação (anti-loop A→B→A) e auditoria em log.
 - Permissão explícita do usuário para delegações de risco (ex: modo accept-edits) configurável no app.
+
+### 3.5. Implementação atual (2026-09-19)
+
+- **Protocolo** (`src/main/agent-bridge.ts`): nova operação `run`, campo opcional
+  `origin` e guardrail avaliável/auditável (`evaluateDelegationGuard`,
+  `isTargetAllowListed`, `buildDelegationAudit`). O timeout por duração e a
+  cadeia `depth`/`visited` continuam iguais.
+- **Runtime de eventos** (`src/main/agent-bridge-runtime.ts`): cada delegação
+  emite `pending` e o estado terminal com `origin`, `destination`, `depth` e
+  `result` (`{ outcome, summary, artifacts? }`). Eventos antigos sem esses
+  campos continuam válidos (`src/shared/agent-bridge-event.ts`).
+- **Serviço** (`src/main/bridge-service.ts`): respostas estruturadas com
+  `status`, `summary`, `origin`, `destination` e `result`; allow-list por id de
+  terminal via `BridgeServiceOptions.allowedTargets`; a operação `run` usa o
+  runner headless injetado (`runHeadlessTurn`).
+- **agy não interativo** (`src/main/bridge-headless.ts`): monta
+  `agy --print --output-format json [--model|--mode|--effort|--agent]` e entrega
+  o prompt por **stdin** (o texto do usuário nunca entra no argv). Em Windows,
+  wrappers `.cmd` passam por `cmd /d /s /c` com apenas o comando e flags
+  validados na linha. A saída é interpretada como `DEVORBIT_RESULT:`, JSON ou
+  texto, sempre normalizada para `{ status, summary, artifacts? }`.
+- **CLI/MCP** (`scripts/devorbit-bridge.cjs`, `scripts/devorbit-mcp.cjs`):
+  novo comando `devorbit agent run <target> <prompt> [...]` e a ferramenta MCP
+  `agent.run`.
+- **Auditoria**: bloqueios de allow-list chamam `onGuard`, persistido no
+  `observability.jsonl` como `type: "delegation.guard"`.
 
 ## 4. Critérios de aceite
 

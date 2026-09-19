@@ -730,9 +730,31 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                   'agy',
                   Sparkles,
                   'Antigravity',
-                  'Gemini · CLI',
-                  'Abrir no Antigravity CLI (Gemini) no Windows Terminal'
+                  'CLI · agy',
+                  'Abrir no Antigravity CLI no Windows Terminal'
                 )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (onOpenWorkspace) {
+                      onOpenWorkspace(project)
+                      onNotify('Ambiente aberto para uso com Gemini CLI.', 'info')
+                    } else {
+                      handleLaunch('terminal')
+                    }
+                  }}
+                  disabled={isArchived || isOpeningWorkspace}
+                  className="work-tool"
+                  title="Abrir ambiente de trabalho para uso com Gemini CLI"
+                >
+                  <span className="work-tool-icon" aria-hidden="true">
+                    <Bot />
+                  </span>
+                  <span className="work-tool-copy">
+                    <span className="work-tool-title">Gemini CLI</span>
+                    <span className="work-tool-detail">CLI · Google</span>
+                  </span>
+                </button>
                 {renderToolButton(
                   'mimo',
                   Bot,

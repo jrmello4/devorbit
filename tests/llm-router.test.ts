@@ -143,7 +143,27 @@ describe('llm router', () => {
 
   it('uses the configured default endpoints when a base URL is omitted', () => {
     expect(DEFAULT_LLM_ENDPOINTS.anthropic).toContain('anthropic')
+    expect(DEFAULT_LLM_ENDPOINTS.gemini).toContain('generativelanguage.googleapis.com')
     expect(DEFAULT_LLM_ENDPOINTS.ollama).toContain('11434')
     expect(DEFAULT_LLM_ENDPOINTS.vllm).toContain('8000')
+  })
+
+  it('routes to gemini using OpenAI compatible protocol', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    const router = createLlmRouter({
+      providers: [{ id: 'gemini', apiKey: () => 'gemini-key' }],
+    }, {
+      fetch: async (input, init) => {
+        calls.push({ url: String(input), init })
+        return jsonResponse(openAiBody('gemini-answer', 'gemini-1.5-flash'))
+      },
+    })
+
+    const result = await router.complete({ provider: 'gemini', messages: [{ role: 'user', content: 'hello gemini' }] })
+    expect(result.ok).toBe(true)
+    expect(result.provider).toBe('gemini')
+    expect(result.completion?.content).toBe('gemini-answer')
+    expect(calls[0]?.url).toContain('googleapis.com')
+    expect(calls[0]?.init?.headers).toMatchObject({ Authorization: 'Bearer gemini-key' })
   })
 })

@@ -2,18 +2,41 @@ export const AGENT_BRIDGE_EVENT_STATUSES = ['pending', 'completed', 'blocked', '
 
 export type AgentBridgeEventStatus = (typeof AGENT_BRIDGE_EVENT_STATUSES)[number]
 
+export const AGENT_BRIDGE_TERMINAL_STATUSES = ['completed', 'blocked', 'failed'] as const
+
+export type AgentBridgeTerminalStatus = (typeof AGENT_BRIDGE_TERMINAL_STATUSES)[number]
+
 export const AGENT_BRIDGE_ID_MAX_CHARS = 80
 export const AGENT_BRIDGE_SUMMARY_MAX_CHARS = 500
 export const AGENT_BRIDGE_TIMESTAMP_MAX = 8_640_000_000_000_000
+export const AGENT_BRIDGE_DEPTH_MAX = 64
+export const AGENT_BRIDGE_RESULT_MAX_ARTIFACTS = 16
+export const AGENT_BRIDGE_ARTIFACT_MAX_CHARS = 240
+
+/** Resultado estruturado de uma delegação, anexado ao evento terminal. */
+export interface AgentBridgeEventResult {
+  outcome: AgentBridgeTerminalStatus
+  summary?: string
+  artifacts?: string[]
+}
 
 export interface AgentBridgeEvent {
   requestId: string
+  /** Quem originou a delegação (terminal/agente) — `devorbit` quando o app. */
   source: string
+  /** Destino resolvido que executou o turno. */
   target: string
   status: AgentBridgeEventStatus
+  /** Alias explícito de `source` no vocabulário de delegação (origem). */
+  origin?: string
+  /** Alias explícito de `target` no vocabulário de delegação (destino). */
+  destination?: string
+  /** Profundidade da cadeia de delegação (0 = chamada direta). */
+  depth?: number
   createdAt?: number
   updatedAt?: number
   summary?: string
+  result?: AgentBridgeEventResult
 }
 
 export type AgentBridgeEventInvalidReason =
@@ -25,8 +48,12 @@ export type AgentBridgeEventInvalidReason =
   | 'invalid-target'
   | 'self-target'
   | 'invalid-status'
+  | 'invalid-origin'
+  | 'invalid-destination'
+  | 'invalid-depth'
   | 'invalid-timestamp'
   | 'invalid-summary'
+  | 'invalid-result'
 
 export type AgentBridgeEventParse =
   | { kind: 'event'; event: AgentBridgeEvent }
@@ -36,19 +63,29 @@ export interface AgentBridgeEventTransition {
   status: AgentBridgeEventStatus
   summary?: string
   updatedAt?: number
+  /** Destino resolvido (id do terminal) quando difere do alvo pedido. */
+  destination?: string
+  /** Resultado estruturado anexado à transição terminal. */
+  result?: AgentBridgeEventResult
 }
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 const STATUS_SET: ReadonlySet<string> = new Set(AGENT_BRIDGE_EVENT_STATUSES)
+const TERMINAL_STATUS_SET: ReadonlySet<string> = new Set(AGENT_BRIDGE_TERMINAL_STATUSES)
 const EVENT_KEYS: ReadonlySet<string> = new Set([
   'requestId',
   'source',
   'target',
   'status',
+  'origin',
+  'destination',
+  'depth',
   'createdAt',
   'updatedAt',
   'summary',
+  'result',
 ])
+const RESULT_KEYS: ReadonlySet<string> = new Set(['outcome', 'summary', 'artifacts'])
 
 const TRANSITIONS: Record<AgentBridgeEventStatus, readonly AgentBridgeEventStatus[]> = {
   pending: ['completed', 'blocked', 'failed'],
@@ -98,6 +135,48 @@ function parseSummary(value: unknown): { ok: true; value?: string } | { ok: fals
   return { ok: true, value: trimmed }
 }
 
+function parseDepth(value: unknown): { ok: true; value?: number } | { ok: false } {
+  if (value === undefined) return { ok: true }
+  if (!Number.isInteger(value) || (value as number) < 0 || (value as number) > AGENT_BRIDGE_DEPTH_MAX) {
+    return { ok: false }
+  }
+  return { ok: true, value: value as number }
+}
+
+function parseArtifacts(value: unknown): { ok: true; value?: string[] } | { ok: false } {
+  if (value === undefined) return { ok: true }
+  if (!Array.isArray(value) || value.length > AGENT_BRIDGE_RESULT_MAX_ARTIFACTS) return { ok: false }
+  const artifacts: string[] = []
+  for (const entry of value) {
+    if (typeof entry !== 'string') return { ok: false }
+    const trimmed = entry.trim()
+    if (!trimmed || trimmed.length > AGENT_BRIDGE_ARTIFACT_MAX_CHARS || hasControlCharacters(trimmed)) {
+      return { ok: false }
+    }
+    artifacts.push(trimmed)
+  }
+  return { ok: true, value: artifacts.length > 0 ? artifacts : undefined }
+}
+
+function parseResult(value: unknown): { ok: true; value?: AgentBridgeEventResult } | { ok: false } {
+  if (value === undefined) return { ok: true }
+  if (!isRecord(value)) return { ok: false }
+  if (Object.keys(value).some((key) => !RESULT_KEYS.has(key))) return { ok: false }
+  if (typeof value.outcome !== 'string' || !TERMINAL_STATUS_SET.has(value.outcome)) return { ok: false }
+  const summary = parseSummary(value.summary)
+  if (!summary.ok) return { ok: false }
+  const artifacts = parseArtifacts(value.artifacts)
+  if (!artifacts.ok) return { ok: false }
+  return {
+    ok: true,
+    value: {
+      outcome: value.outcome as AgentBridgeTerminalStatus,
+      ...(summary.value !== undefined ? { summary: summary.value } : {}),
+      ...(artifacts.value !== undefined ? { artifacts: artifacts.value } : {}),
+    },
+  }
+}
+
 export function parseAgentBridgeEvent(value: unknown): AgentBridgeEventParse {
   if (!isRecord(value)) return { kind: 'invalid', reason: 'not-object' }
   if (Object.keys(value).some((key) => !EVENT_KEYS.has(key))) {
@@ -113,6 +192,23 @@ export function parseAgentBridgeEvent(value: unknown): AgentBridgeEventParse {
   const target = parseId(value.target)
   if (!target) return { kind: 'invalid', reason: 'invalid-target' }
   if (source === target) return { kind: 'invalid', reason: 'self-target' }
+
+  let origin: string | undefined
+  if (value.origin !== undefined) {
+    const parsedOrigin = parseId(value.origin)
+    if (!parsedOrigin) return { kind: 'invalid', reason: 'invalid-origin' }
+    origin = parsedOrigin
+  }
+  let destination: string | undefined
+  if (value.destination !== undefined) {
+    const parsedDestination = parseId(value.destination)
+    if (!parsedDestination) return { kind: 'invalid', reason: 'invalid-destination' }
+    destination = parsedDestination
+  }
+  const depth = parseDepth(value.depth)
+  if (!depth.ok) return { kind: 'invalid', reason: 'invalid-depth' }
+  const result = parseResult(value.result)
+  if (!result.ok) return { kind: 'invalid', reason: 'invalid-result' }
 
   if (typeof value.status !== 'string' || !STATUS_SET.has(value.status)) {
     return { kind: 'invalid', reason: 'invalid-status' }
@@ -140,9 +236,13 @@ export function parseAgentBridgeEvent(value: unknown): AgentBridgeEventParse {
       source,
       target,
       status: value.status as AgentBridgeEventStatus,
+      ...(origin !== undefined ? { origin } : {}),
+      ...(destination !== undefined ? { destination } : {}),
+      ...(depth.value !== undefined ? { depth: depth.value } : {}),
       ...(createdAt.value !== undefined ? { createdAt: createdAt.value } : {}),
       ...(updatedAt.value !== undefined ? { updatedAt: updatedAt.value } : {}),
       ...(summary.value !== undefined ? { summary: summary.value } : {}),
+      ...(result.value !== undefined ? { result: result.value } : {}),
     },
   }
 }
@@ -195,5 +295,7 @@ export function transitionAgentBridgeEvent(
     status: next.status,
     ...(next.summary !== undefined ? { summary: next.summary } : {}),
     ...(next.updatedAt !== undefined ? { updatedAt: next.updatedAt } : {}),
+    ...(next.destination !== undefined ? { destination: next.destination } : {}),
+    ...(next.result !== undefined ? { result: next.result } : {}),
   })
 }

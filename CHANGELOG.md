@@ -2,6 +2,32 @@
 
 All notable changes to DevOrbit are documented here.
 
+## [1.0.32] - 2026-09-19
+
+### Added
+
+- Multi-provider orchestration continuity with persisted checkpoints, deterministic role handoff, quota-aware Codex fallback, circuit breakers and an accessible canvas kill switch.
+- Authenticated private GitHub updater diagnostics and portable release manifest generation.
+- Agent bridge hardening, richer IPC coverage and production smoke checks for NSIS, portable and MCP assets.
+
+### Fixed
+
+- GitHub updater credentials no longer enter `process.env` or child PTYs.
+- Provider handoffs resume the next action from the saved checkpoint without duplicating turns or stopping active agents.
+- Portable releases now publish `latest-portable.yml` alongside the NSIS update manifest.
+
+## [1.0.31] - 2026-09-19
+
+### Added
+
+- Secure BYOK configuration storage: provider API keys are encrypted at rest with the OS keychain (`safeStorage`) when available and are never returned to the renderer, which now receives only `has*Key` presence flags. Legacy plaintext keys in `config.json` are migrated automatically.
+- Provider routing now exposes the fields required by the LLM providers (DeepSeek, GLM, Kimi, MiniMax, vLLM, Ollama and optional per-provider base URLs) in Settings.
+
+### Changed
+
+- `devorbit:getConfig`/`devorbit:saveConfig` return a secret-free projection; `exportConfigJson` no longer writes credentials.
+- CI quality job now runs `audit:tokens`, `audit:repository` and `release:check`.
+
 ## [1.0.30] - 2026-09-18
 
 ### Added

@@ -7,6 +7,11 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createResultWaiter } from './agent-turn'
 import { createTerminalReadiness } from './terminal-readiness'
 import { createBridgeService } from './bridge-service'
+import { createHeadlessTurnRunner } from './bridge-headless'
+import { getAgentProviderHealth, resolveAgentProviderWithFallback } from './agent-providers'
+import { loadConfig } from './config'
+import { createOrchestrationService } from './orchestration-service'
+import { registerOrchestrationIpc } from './ipc/orchestration-ipc'
 import { registerProjectIpc } from './ipc/project-ipc'
 import { registerWorkspaceIpc } from './ipc/workspace-ipc'
 import { registerTerminalIpc } from './ipc/terminal-ipc'
@@ -28,7 +33,7 @@ import { disposeWebPanel, onWebPanelEvent } from './web-panel'
 import { cancelAllMemoryCompactions } from './memory'
 import { initializeUpdater } from './updater'
 import { startShadowRoutingMetrics, stopShadowRoutingMetrics } from './shadow-routing-metrics'
-import type { AgentProviderId, IpcInvokeChannel, IpcSendChannel } from '../renderer/src/types'
+import type { AgentProviderId, AppConfig, IpcInvokeChannel, IpcSendChannel } from '../renderer/src/types'
 import {
   assertTrustedIpcSender,
   isPathWithinRoot,
@@ -170,16 +175,90 @@ function rememberBridgeReflection(target: string, outcome: { status: string; sum
   void evolutionStore.recordAgentReflection({ target, status: outcome.status, summary: outcome.summary }, { metadata: { source: 'agent-bridge' } }).catch(() => undefined)
 }
 
+const headlessTurn = createHeadlessTurnRunner({
+  resolveCommand: async (provider) => {
+    const resolved = await resolveAgentProviderWithFallback(await loadConfig(), provider)
+    return resolved.path
+  },
+})
+
+/**
+ * Credenciais BYOK configuradas no app (inclui Gemini, usado pelo `agy`).
+ * Só injeta o que existe para nunca apagar autenticação/perfis herdados de
+ * `process.env`.
+ */
+function headlessProviderEnv(config: AppConfig): NodeJS.ProcessEnv {
+  const routing = config.modelRouting
+  const env: NodeJS.ProcessEnv = {}
+  if (routing?.geminiApiKey) env.GEMINI_API_KEY = routing.geminiApiKey
+  if (routing?.openaiApiKey) env.OPENAI_API_KEY = routing.openaiApiKey
+  if (routing?.anthropicApiKey) env.ANTHROPIC_API_KEY = routing.anthropicApiKey
+  return env
+}
+
+let bridgeEnv: () => NodeJS.ProcessEnv = () => ({})
+
 const bridgeService = createBridgeService({
-  cliDirectory: app.isPackaged ? process.resourcesPath : (process.env.APP_ROOT || __dirname),
+  cliDirectory: app.isPackaged ? process.resourcesPath : (process.env.APP_ROOT || path.resolve(__dirname, '../..')),
   hasTerminal,
   writeTerminal,
   waitTurnResult,
   waitTerminalReady,
   onEvent: sendAgentBridgeEvent,
   onReflection: rememberBridgeReflection,
+  onGuard: (audit) => {
+    void observabilityLedger.append({ type: 'delegation.guard', ...audit }).catch(() => undefined)
+  },
+  runHeadlessTurn: async (target, agent, input) => {
+    const config = await loadConfig()
+    return headlessTurn({
+      provider: agent.provider,
+      prompt: input.prompt,
+      cwd: agent.projectPath,
+      model: input.model ?? agent.model,
+      ...(input.mode !== undefined ? { mode: input.mode } : {}),
+      ...(input.effort !== undefined ? { effort: input.effort } : {}),
+      ...(input.agent !== undefined ? { agent: input.agent } : {}),
+      ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
+      signal: input.signal,
+      env: {
+        ...headlessProviderEnv(config),
+        ...bridgeEnv(),
+        DEVORBIT_BRIDGE_ORIGIN: input.origin,
+        DEVORBIT_BRIDGE_DEPTH: String(input.depth),
+        DEVORBIT_BRIDGE_VISITED: JSON.stringify(input.visited),
+      },
+    })
+  },
 })
 const agentBridgeRuntime = bridgeService.runtime
+bridgeEnv = () => agentBridgeRuntime.env()
+
+// Continuidade multi-provedor: estado/eleição no main; o renderer despacha.
+const providerReadiness = new Map<AgentProviderId, boolean>()
+let providerReadinessTimer: NodeJS.Timeout | null = null
+
+function refreshProviderReadiness(): void {
+  void loadConfig()
+    .then((config) => getAgentProviderHealth(config))
+    .then((health) => {
+      for (const item of health) providerReadiness.set(item.id, item.state === 'ready')
+    })
+    .catch(() => undefined)
+}
+
+const orchestrationService = createOrchestrationService({
+  onEvent: (event) => {
+    const window = mainWindow
+    if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return
+    window.webContents.send('devorbit:orchestrationEvent', event)
+  },
+  isProviderReady: (provider) => providerReadiness.get(provider) ?? true,
+})
+
+refreshProviderReadiness()
+providerReadinessTimer = setInterval(refreshProviderReadiness, 60_000)
+if (typeof providerReadinessTimer.unref === 'function') providerReadinessTimer.unref()
 
 onWebPanelEvent((event) => {
   const window = mainWindow
@@ -431,6 +510,11 @@ if (isSmokeRun) {
 
 app.on('before-quit', () => {
   void stopShadowRoutingMetrics()
+  orchestrationService.stop()
+  if (providerReadinessTimer) {
+    clearInterval(providerReadinessTimer)
+    providerReadinessTimer = null
+  }
   agentBridgeRuntime.stop()
   invalidateTerminalLifecycle()
   disposeWebPanel()
@@ -508,6 +592,9 @@ function setupIpcHandlers() {
     sendCodexAuthProgress: (progress) => {
       mainWindow?.webContents.send('devorbit:codexAuthProgress', progress)
     },
+    onRealUsage: (usage) => {
+      void orchestrationService.reportCodexUsage(usage).catch(() => undefined)
+    },
   })
 
   registerObservabilityIpc(registerIpcHandler, {
@@ -516,6 +603,8 @@ function setupIpcHandlers() {
     hitl: hitlManager,
     sanitizeHitlRequest,
   })
+
+  registerOrchestrationIpc(registerIpcHandler, { service: orchestrationService })
 
   registerWindowIpc(registerIpcListener, { getWindow: () => mainWindow })
 }

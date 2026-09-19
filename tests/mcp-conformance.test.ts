@@ -210,11 +210,14 @@ describe('devorbit-mcp conformance', () => {
       'agent.send',
       'agent.wait',
       'agent.ask',
+      'agent.run',
     ])
     const send = response.result?.tools?.find((tool) => tool.name === 'agent.send')
     const ask = response.result?.tools?.find((tool) => tool.name === 'agent.ask')
+    const run = response.result?.tools?.find((tool) => tool.name === 'agent.run')
     expect(send?.inputSchema?.required).toEqual(['target', 'prompt'])
     expect(ask?.inputSchema?.required).toEqual(['target', 'prompt'])
+    expect(run?.inputSchema?.required).toEqual(['target', 'prompt'])
   })
 
   it('treats tools/list without an id as a notification and stays responsive', async () => {
@@ -289,6 +292,54 @@ describe('devorbit-mcp conformance', () => {
     expect(response.result?.isError).toBeUndefined()
     expect(response.result?.content).toEqual([{ type: 'text', text: JSON.stringify('texto simples') }])
     expect(response.result?.structuredContent).toBeUndefined()
+  })
+
+  it('maps agent.run options to the bridge run request and returns structured content', async () => {
+    const calls: AgentBridgeRequest[] = []
+    const bridge = await startBridge({
+      run: async (request) => {
+        calls.push(request)
+        return {
+          status: 'completed',
+          summary: 'headless ok',
+          origin: 'devorbit',
+          destination: 'agy',
+          result: { outcome: 'completed', summary: 'headless ok' },
+        }
+      },
+    })
+    const mcp = startMcp(bridgeEnv(bridge))
+
+    const response = await mcp.request({
+      jsonrpc: '2.0',
+      id: 20,
+      method: 'tools/call',
+      params: {
+        name: 'agent.run',
+        arguments: {
+          target: 'agy',
+          prompt: 'refatore o módulo',
+          model: 'gemini-2.0-flash',
+          mode: 'accept-edits',
+          effort: 'high',
+          agent: 'reviewer',
+        },
+      },
+    })
+
+    expect(response.result?.isError).toBeUndefined()
+    expect(response.result?.structuredContent).toMatchObject({ status: 'completed', summary: 'headless ok' })
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toMatchObject({
+      type: 'run',
+      target: 'agy',
+      prompt: 'refatore o módulo',
+      model: 'gemini-2.0-flash',
+      mode: 'accept-edits',
+      effort: 'high',
+      agent: 'reviewer',
+      timeoutMs: 5 * 60 * 1000,
+    })
   })
 
   it('surfaces bridge authentication failures as isError content', async () => {

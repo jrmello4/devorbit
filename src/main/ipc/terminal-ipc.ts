@@ -12,7 +12,7 @@ import {
   resolveAgentProviderWithFallback,
   resolveAgentTurn,
 } from '../agent-providers'
-import { sendAgentTurn, spawnAgentProviderTerminal, type ResultWaitPromise, type TerminalReadyOptions } from '../agent-turn'
+import { sendAgentTurn, spawnAgentProviderTerminal, TURN_MAX_PROMPT_CHARS, type ResultWaitPromise, type TerminalReadyOptions } from '../agent-turn'
 import {
   beginCompanionTerminalStart,
   registerCompanionTerminal,
@@ -49,6 +49,16 @@ export interface TerminalIpcDependencies {
 
 function assertTerminalId(id: unknown): asserts id is string {
   if (typeof id !== 'string' || !/^[a-z0-9_-]{1,64}$/i.test(id)) throw new Error('Identificador de terminal inválido.')
+}
+
+/**
+ * O canvas monta o prompt a partir das notas conectadas e pode exceder o teto
+ * do turno. A fronteira IPC trunca no mesmo limite que `agent-turn` aplica,
+ * em vez de rejeitar a tarefa inteira.
+ */
+export function normalizeAgentTurnPrompt(value: unknown): string {
+  if (typeof value !== 'string' || !value.trim()) throw new Error('Prompt do turno inválido.')
+  return value.slice(0, TURN_MAX_PROMPT_CHARS)
 }
 
 export function registerTerminalIpc(register: IpcRegistrar, dependencies: TerminalIpcDependencies): void {
@@ -151,7 +161,7 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
         message: 'O Codex usa o fluxo de conta do DevOrbit; selecione uma conta Codex ou outro provedor.',
       }
     }
-    const safeTask = task === undefined || task === null ? undefined : String(task).slice(0, 8000)
+    const safeTask = task === undefined || task === null ? undefined : String(task).slice(0, TURN_MAX_PROMPT_CHARS)
     if (task !== undefined && task !== null && typeof task !== 'string') throw new Error('Tarefa do turno inválida.')
     const safePath = await validateProjectPath(projectPath)
     const config = await loadConfig()
@@ -262,7 +272,7 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
       throw new Error('O Codex usa o fluxo de conta do DevOrbit; use startCodexTerminal.')
     }
     const safePath = await validateProjectPath(projectPath)
-    if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 8000) throw new Error('Prompt do turno inválido.')
+    const safePrompt = normalizeAgentTurnPrompt(prompt)
     let idleMs: number | undefined
     let overallMs: number | undefined
     if (timeouts !== undefined && timeouts !== null) {
@@ -324,7 +334,7 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
       {
         terminalId,
         provider: safeProvider,
-        prompt,
+        prompt: safePrompt,
         ...(idleMs !== undefined || overallMs !== undefined
           ? { timeouts: { ...(idleMs !== undefined ? { idleMs } : {}), ...(overallMs !== undefined ? { overallMs } : {}) } }
           : {}),

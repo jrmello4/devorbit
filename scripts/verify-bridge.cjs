@@ -90,6 +90,8 @@ async function main() {
   const written = []
   const events = []
   const reflections = []
+  const headless = []
+  const guards = []
   let started = 0
 
   const createWaiter = () => {
@@ -103,7 +105,7 @@ async function main() {
 
   const service = createBridgeService({
     cliDirectory: projectRoot,
-    hasTerminal: (id) => id === 't1',
+    hasTerminal: (id) => id === 't1' || id === 't2',
     writeTerminal: (id, input) => {
       const prompt = input.replace(/\r$/u, '')
       written.push({ id, prompt })
@@ -129,9 +131,19 @@ async function main() {
     onReflection: (target, outcome) => {
       reflections.push({ target, ...outcome })
     },
-  })
+    runHeadlessTurn: async (target, agent, input) => {
+      headless.push({ target, provider: agent.provider, prompt: input.prompt, model: input.model, mode: input.mode })
+      if (input.prompt.startsWith('fail:')) return { status: 'failed', summary: 'headless falhou' }
+      return { status: 'completed', summary: `headless:${input.prompt}`, artifacts: ['artefato.md'] }
+    },
+    onGuard: (audit) => {
+      guards.push(audit)
+    },
+  }, { allowedTargets: ['t1'] })
 
   service.registerAgent('t1', { provider: 'opencode', model: 'fixture-model', projectPath: projectRoot })
+  // Alvo registrado mas FORA da allow-list: valida o guardrail auditável.
+  service.registerAgent('t2', { provider: 'opencode', model: 'fixture-model', projectPath: projectRoot })
   const server = service.runtime.start()
   if (!server.listening) await new Promise((resolve) => server.once('listening', resolve))
   started += 1
@@ -183,6 +195,33 @@ async function main() {
   assert(new Set(events.map((event) => event.requestId)).size >= 4, 'requestIds nao sao distintos por ciclo')
   assert(reflections.length >= 3 && reflections.every((item) => item.target === 't1'), `reflexoes inesperadas: ${JSON.stringify(reflections)}`)
   pass('eventos e reflexoes ficaram correlacionados por requestId/revisao')
+
+  const headlessRun = await runBridgeCli(
+    ['agent', 'run', 't1', 'tarefa H', '--model', 'gemini-2.0-flash', '--mode', 'accept-edits', '--json'],
+    bridgeEnv,
+  )
+  assert(headlessRun.code === 0, `run falhou: ${headlessRun.stderr.trim()}`)
+  const headlessOutcome = JSON.parse(headlessRun.stdout.trim())
+  assert(headlessOutcome.status === 'completed' && headlessOutcome.summary === 'headless:tarefa H', `run inesperado: ${headlessRun.stdout.trim()}`)
+  assert(headlessOutcome.origin === 'devorbit' && headlessOutcome.destination === 't1', `run sem origem/destino: ${headlessRun.stdout.trim()}`)
+  assert(headlessOutcome.result && headlessOutcome.result.outcome === 'completed', `run sem resultado estruturado: ${headlessRun.stdout.trim()}`)
+  assert(headless.length === 1 && headless[0].model === 'gemini-2.0-flash' && headless[0].mode === 'accept-edits', `runner headless nao recebeu as opcoes: ${JSON.stringify(headless)}`)
+  pass('agent run executou turno nao-interativo com resultado estruturado')
+
+  const blockedByAllowList = await runBridgeCli(['agent', 'send', 't2', 'tarefa X'], bridgeEnv)
+  assert(blockedByAllowList.code !== 0, 'allow-list deveria bloquear o alvo t2')
+  assert(
+    guards.some((item) => item.kind === 'delegation.guard' && item.code === 'TARGET_NOT_ALLOWED' && item.target === 't2'),
+    `auditoria de guardrail ausente: ${JSON.stringify(guards)}`,
+  )
+  pass('allow-list bloqueou a delegacao e registrou auditoria')
+
+  const runEvent = [...events].reverse().find((event) => event.status === 'completed' && event.result && event.result.summary === 'headless:tarefa H')
+  assert(
+    runEvent && runEvent.origin === 'devorbit' && runEvent.destination === 't1' && runEvent.result.outcome === 'completed' && Array.isArray(runEvent.result.artifacts),
+    `evento de run sem origem/destino/resultado: ${JSON.stringify(events.at(-1))}`,
+  )
+  pass('evento de delegacao carregou origem, destino, status e resultado')
 
   service.runtime.stop()
   assert(started === 1, 'runtime nao iniciou exatamente uma vez')

@@ -126,12 +126,16 @@ describe('BYOK model routing without leaking keys', () => {
   afterEach(() => {
     delete process.env.OPENAI_API_KEY
     delete process.env.ANTHROPIC_API_KEY
+    delete process.env.GEMINI_API_KEY
   })
 
   it('validates routing config and rejects garbage', () => {
     expect(validateModelRoutingConfig(undefined)).toBeUndefined()
     expect(() => validateModelRoutingConfig('nope')).toThrow('Configuração de modelos inválida')
-    expect(validateModelRoutingConfig({ fastModel: ' ministral-3b ' })).toEqual({ fastModel: 'ministral-3b' })
+    expect(validateModelRoutingConfig({ fastModel: ' ministral-3b ', geminiApiKey: ' gemini-secret ' })).toEqual({
+      fastModel: 'ministral-3b',
+      geminiApiKey: 'gemini-secret',
+    })
     expect(validateModelRoutingConfig({})).toBeUndefined()
   })
 
@@ -140,6 +144,20 @@ describe('BYOK model routing without leaking keys', () => {
     const resolved = resolveModelForTier('fast', { fastModel: 'ministral-3b' }, process.env)
     expect(resolved).toEqual({ model: 'ministral-3b', authConfigured: true })
     expect(JSON.stringify(resolved)).not.toContain('sk-test')
+  })
+
+  it('recognizes geminiApiKey in routing config as configured auth', () => {
+    const resolved = resolveModelForTier('fast', { geminiApiKey: 'gem-12345678' }, {})
+    expect(resolved.authConfigured).toBe(true)
+    expect(JSON.stringify(resolved)).not.toContain('gem-12345678')
+  })
+
+  it('injects GEMINI_API_KEY into buildAgentTurnEnv for gemini and agy', () => {
+    const geminiEnv = buildAgentTurnEnv('gemini', 'gemini-2.0-flash', 'fast', { geminiApiKey: 'gem-key-xyz' }, {})
+    expect(geminiEnv.GEMINI_API_KEY).toBe('gem-key-xyz')
+
+    const agyEnv = buildAgentTurnEnv('agy', 'gemini-2.0-flash', 'fast', { geminiApiKey: 'gem-key-xyz' }, {})
+    expect(agyEnv.GEMINI_API_KEY).toBe('gem-key-xyz')
   })
 
   it('falls back to default models without auth', () => {
@@ -222,9 +240,15 @@ describe('resolveProviderInvocation', () => {
     expect(invocation.env.DEVORBIT_MODEL).toBe('gpt-4o-mini')
   })
 
-  it('keeps script wrapping env-only without a documented flag', () => {
+  it('forwards --model flag to agy script wrapping', () => {
     const invocation = resolveProviderInvocation('agy', 'C:\\cli\\agy.cmd', 'x-model', 'fast', undefined, {})
-    expect(invocation.args).toEqual(['/d', '/q', '/k', 'call "C:\\cli\\agy.cmd"'])
+    expect(invocation.args).toEqual(['/d', '/q', '/k', 'call "C:\\cli\\agy.cmd" --model x-model'])
+    expect(invocation.env.DEVORBIT_MODEL).toBe('x-model')
+  })
+
+  it('keeps script wrapping env-only without a documented flag for custom CLIs', () => {
+    const invocation = resolveProviderInvocation('custom', 'C:\\cli\\custom.cmd', 'x-model', 'fast', undefined, {})
+    expect(invocation.args).toEqual(['/d', '/q', '/k', 'call "C:\\cli\\custom.cmd"'])
     expect(invocation.env.DEVORBIT_MODEL).toBe('x-model')
   })
 

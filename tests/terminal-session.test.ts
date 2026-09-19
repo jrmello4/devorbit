@@ -135,6 +135,30 @@ describe('terminal-session', () => {
     expect(pipes.listPipes()).toEqual([])
   })
 
+  it('não herda GH_TOKEN/GITHUB_TOKEN no ambiente do PTY', async () => {
+    const terminal = createFakeTerminal(901)
+    spawnMock.mockReturnValue(terminal)
+    const previousGh = process.env.GH_TOKEN
+    const previousGithub = process.env.GITHUB_TOKEN
+    process.env.GH_TOKEN = 'ghp_secret_value'
+    process.env.GITHUB_TOKEN = 'github_pat_secret_value'
+    try {
+      const { startTerminal } = await import('../src/main/terminal-session')
+      // Mesmo que um overlay tente reinjetar, o PTY nunca recebe o token.
+      await startTerminal('agent-scrub', 'C:\\workspace', { env: { GH_TOKEN: 'explicit', OTHER: 'ok' } })
+
+      const options = spawnMock.mock.calls.at(-1)?.[2] as { env: NodeJS.ProcessEnv }
+      expect(options.env.GH_TOKEN).toBeUndefined()
+      expect(options.env.GITHUB_TOKEN).toBeUndefined()
+      expect(options.env.OTHER).toBe('ok')
+    } finally {
+      if (previousGh === undefined) delete process.env.GH_TOKEN
+      else process.env.GH_TOKEN = previousGh
+      if (previousGithub === undefined) delete process.env.GITHUB_TOKEN
+      else process.env.GITHUB_TOKEN = previousGithub
+    }
+  })
+
   it('parar tudo zera o grafo', async () => {
     const terminal = createFakeTerminal(801)
     spawnMock.mockReturnValue(terminal)

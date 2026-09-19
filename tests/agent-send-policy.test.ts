@@ -18,6 +18,7 @@ describe('agent send policy', () => {
     expect(agentSendPolicy({ ...base, configured: false, configuredMessage: 'Configure provider e conta.' })).toEqual({
       disabled: true,
       reason: 'Configure provider e conta.',
+      blocker: 'configured',
     })
   })
 
@@ -41,6 +42,14 @@ describe('agent send policy', () => {
     const policy = agentSendPolicy({ ...base, noteCount: 0 })
     expect(policy.disabled).toBe(true)
     expect(policy.reason).toContain('nota')
+  })
+
+  it('exposes o bloqueio para a UI decidir entre desativar e avisar', () => {
+    expect(agentSendPolicy({ ...base, configured: false }).blocker).toBe('configured')
+    expect(agentSendPolicy({ ...base, orchestrationActive: true }).blocker).toBe('orchestration')
+    expect(agentSendPolicy({ ...base, progressState: 'running' }).blocker).toBe('progress')
+    expect(agentSendPolicy({ ...base, noteCount: 0 }).blocker).toBe('note')
+    expect(agentSendPolicy(base).blocker).toBeUndefined()
   })
 
   it('prioritizes configuration over the other blockers', () => {

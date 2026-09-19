@@ -1,4 +1,5 @@
 import { execFile, spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { promisify } from 'node:util'
 import electron from 'electron'
 const { clipboard, shell } = electron
@@ -591,5 +592,60 @@ export async function copyProjectContext(
       success: false,
       context: `Erro ao capturar contexto: ${error.message}`,
     }
+  }
+}
+
+export interface PortableManifestValidation {
+  valid: boolean
+  version?: string
+  path?: string
+  sha512?: string
+  detail: string
+}
+
+export async function validateLatestPortableManifest(
+  manifestPath: string,
+  expectedVersion?: string,
+  expectedExecutablePath?: string
+): Promise<PortableManifestValidation> {
+  try {
+    const content = await fs.readFile(manifestPath, 'utf8')
+    const normalized = content.replace(/^\uFEFF/, '')
+    const versionMatch = normalized.match(/^version:\s*(.+)$/m)
+    const pathMatch = normalized.match(/^path:\s*(.+)$/m)
+    const shaMatch = normalized.match(/^sha512:\s*(.+)$/m)
+
+    if (!versionMatch || !pathMatch || !shaMatch) {
+      return { valid: false, detail: 'latest-portable.yml com estrutura ou campos ausentes' }
+    }
+
+    const version = versionMatch[1].trim().replace(/^['"]|['"]$/g, '')
+    const filePath = pathMatch[1].trim().replace(/^['"]|['"]$/g, '')
+    const sha512 = shaMatch[1].trim().replace(/^['"]|['"]$/g, '').toLowerCase()
+
+    if (filePath.includes('/') || filePath.includes('\\') || !/^[A-Za-z0-9._-]+\.exe$/i.test(filePath)) {
+      return { valid: false, detail: 'latest-portable.yml contém caminho de executável inválido' }
+    }
+
+    if (expectedVersion && version !== expectedVersion) {
+      return { valid: false, version, detail: `Versão ${version} diverge da esperada ${expectedVersion}` }
+    }
+
+    if (expectedExecutablePath) {
+      const stats = await fs.stat(expectedExecutablePath).catch(() => null)
+      if (!stats || !stats.isFile()) {
+        return { valid: false, version, path: filePath, detail: `Executável referenciado ausente: ${expectedExecutablePath}` }
+      }
+      const buffer = await fs.readFile(expectedExecutablePath)
+      const hexSha512 = createHash('sha512').update(buffer).digest('hex').toLowerCase()
+      const base64Sha512 = createHash('sha512').update(buffer).digest('base64').toLowerCase()
+      if (sha512 !== hexSha512 && sha512 !== base64Sha512) {
+        return { valid: false, version, path: filePath, detail: 'Hash sha512 não corresponde ao executável' }
+      }
+    }
+
+    return { valid: true, version, path: filePath, sha512, detail: `Manifesto portable válido para versão ${version}` }
+  } catch (error: any) {
+    return { valid: false, detail: error?.message || String(error) }
   }
 }

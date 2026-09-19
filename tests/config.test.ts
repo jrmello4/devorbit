@@ -155,6 +155,34 @@ describe('config persistence hardening', () => {
     expect(imported.projectDirs).toEqual([])
   })
 
+  it('exports a clean profile without missing default project directories', async () => {
+    const defaultProjectDirs = [
+      path.join(os.homedir(), 'projects'),
+      path.join(os.homedir(), 'Documents'),
+    ]
+    const originalStat = fs.stat
+    const statSpy = vi.spyOn(fs, 'stat').mockImplementation(async (target, ...args) => {
+      if (defaultProjectDirs.includes(String(target))) {
+        const error = Object.assign(new Error('missing default directory'), { code: 'ENOENT' })
+        throw error
+      }
+      return originalStat.call(fs, target, ...args)
+    })
+
+    try {
+      const exported = await exportConfigJson()
+      expect(JSON.parse(exported).projectDirs).toEqual([])
+
+      const imported = await importConfigJson(exported)
+      expect(imported.projectDirs).toEqual([])
+      await expect(
+        importConfigJson(JSON.stringify({ projectDirs: [path.join(temporaryUserData, 'arbitrary-missing')] })),
+      ).rejects.toThrow()
+    } finally {
+      statSpy.mockRestore()
+    }
+  })
+
   it('backs up the previous file before importing', async () => {
     await saveConfig({ chatGptAccount1Name: 'Antiga' })
     await importConfigJson(JSON.stringify({ chatGptAccount1Name: 'Nova', projectDirs: [] }))
@@ -179,6 +207,11 @@ describe('config persistence hardening', () => {
     const loaded = await loadConfig()
     expect(loaded.modelRouting?.fastModel).toBe('ministral-3b')
     expect(loaded.modelRouting?.openaiApiKey).toBe(secret)
+
+    // Mesmo sem safeStorage no ambiente de teste, o arquivo público não pode
+    // conter o segredo em texto claro.
+    const persisted = await fs.readFile(path.join(temporaryUserData, 'config.json'), 'utf-8')
+    expect(persisted).not.toContain(secret)
 
     // Atualização parcial não descarta chaves já salvas.
     await saveConfig({ modelRouting: { deepModel: 'claude-sonnet' } })

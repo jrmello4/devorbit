@@ -1,6 +1,7 @@
 export const LLM_PROVIDER_IDS = [
   'anthropic',
   'openai',
+  'gemini',
   'glm',
   'kimi',
   'minimax',
@@ -195,6 +196,7 @@ export const DEFAULT_LLM_CIRCUIT_BREAKER_POLICY: LlmCircuitBreakerPolicy = {
 export const DEFAULT_LLM_ENDPOINTS: Readonly<Record<LlmProviderId, string>> = {
   anthropic: 'https://api.anthropic.com/v1',
   openai: 'https://api.openai.com/v1',
+  gemini: 'https://generativelanguage.googleapis.com/v1beta/openai',
   glm: 'https://open.bigmodel.cn/api/paas/v4',
   kimi: 'https://api.moonshot.cn/v1',
   minimax: 'https://api.minimax.chat/v1',
@@ -206,6 +208,7 @@ export const DEFAULT_LLM_ENDPOINTS: Readonly<Record<LlmProviderId, string>> = {
 export const DEFAULT_LLM_MODELS: Readonly<Record<LlmProviderId, string>> = {
   anthropic: 'claude-3-5-haiku-latest',
   openai: 'gpt-4o-mini',
+  gemini: 'gemini-1.5-flash',
   glm: 'glm-4-flash',
   kimi: 'moonshot-v1-8k',
   minimax: 'MiniMax-Text-01',
@@ -217,6 +220,7 @@ export const DEFAULT_LLM_MODELS: Readonly<Record<LlmProviderId, string>> = {
 export const DEFAULT_LLM_CONTEXT_WINDOWS: Readonly<Record<LlmProviderId, number>> = {
   anthropic: 200_000,
   openai: 128_000,
+  gemini: 1_000_000,
   glm: 128_000,
   kimi: 128_000,
   minimax: 128_000,
@@ -228,6 +232,7 @@ export const DEFAULT_LLM_CONTEXT_WINDOWS: Readonly<Record<LlmProviderId, number>
 export const DEFAULT_LLM_PROVIDER_CONFIGS: Readonly<Record<LlmProviderId, Omit<LlmProviderConfig, 'id' | 'apiKey' | 'apiKeyResolver'>>> = {
   anthropic: { baseUrl: DEFAULT_LLM_ENDPOINTS.anthropic, model: DEFAULT_LLM_MODELS.anthropic, contextWindow: DEFAULT_LLM_CONTEXT_WINDOWS.anthropic },
   openai: { baseUrl: DEFAULT_LLM_ENDPOINTS.openai, model: DEFAULT_LLM_MODELS.openai, contextWindow: DEFAULT_LLM_CONTEXT_WINDOWS.openai },
+  gemini: { baseUrl: DEFAULT_LLM_ENDPOINTS.gemini, model: DEFAULT_LLM_MODELS.gemini, contextWindow: DEFAULT_LLM_CONTEXT_WINDOWS.gemini },
   glm: { baseUrl: DEFAULT_LLM_ENDPOINTS.glm, model: DEFAULT_LLM_MODELS.glm, contextWindow: DEFAULT_LLM_CONTEXT_WINDOWS.glm },
   kimi: { baseUrl: DEFAULT_LLM_ENDPOINTS.kimi, model: DEFAULT_LLM_MODELS.kimi, contextWindow: DEFAULT_LLM_CONTEXT_WINDOWS.kimi },
   minimax: { baseUrl: DEFAULT_LLM_ENDPOINTS.minimax, model: DEFAULT_LLM_MODELS.minimax, contextWindow: DEFAULT_LLM_CONTEXT_WINDOWS.minimax },
@@ -236,7 +241,7 @@ export const DEFAULT_LLM_PROVIDER_CONFIGS: Readonly<Record<LlmProviderId, Omit<L
   vllm: { baseUrl: DEFAULT_LLM_ENDPOINTS.vllm, model: DEFAULT_LLM_MODELS.vllm, contextWindow: DEFAULT_LLM_CONTEXT_WINDOWS.vllm },
 }
 
-const OPENAI_COMPATIBLE_IDS = new Set<LlmProviderId>(['openai', 'glm', 'kimi', 'minimax', 'deepseek', 'vllm'])
+const OPENAI_COMPATIBLE_IDS = new Set<LlmProviderId>(['openai', 'gemini', 'glm', 'kimi', 'minimax', 'deepseek', 'vllm'])
 const RETRYABLE_STATUSES = new Set([408, 409, 425, 429, 500, 502, 503, 504, 507, 529])
 const TOKEN_CHARS = 4
 
@@ -261,6 +266,7 @@ function isProviderId(value: unknown): value is LlmProviderId {
 
 function normalizeProviderId(value: unknown): LlmProviderId | undefined {
   if (isProviderId(value)) return value
+  if (value === 'google' || value === 'gemini') return 'gemini'
   if (value === 'mini-max' || value === 'minimax') return 'minimax'
   if (value === 'v-llm') return 'vllm'
   return undefined

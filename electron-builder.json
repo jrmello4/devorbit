@@ -12,12 +12,14 @@
     "provider": "github",
     "owner": "jrmello4",
     "repo": "devorbit",
-    "releaseType": "release"
+    "releaseType": "release",
+    "private": true
   },
   "directories": {
     "output": "release",
     "buildResources": "build"
   },
+  "afterAllArtifactBuild": "scripts/generate-portable-manifest.cjs",
   "files": [
     "dist/**/*",
     "dist-electron/**/*",

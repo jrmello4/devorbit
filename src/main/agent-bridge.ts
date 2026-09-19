@@ -7,16 +7,20 @@ export const MAX_AGENT_BRIDGE_TARGET_CHARS = 128
 export const MAX_AGENT_BRIDGE_CREDENTIAL_CHARS = 256
 export const MAX_AGENT_BRIDGE_DEPTH = 8
 export const MAX_AGENT_BRIDGE_VISITED = 32
+export const MAX_AGENT_BRIDGE_ALLOWLIST = 64
+export const MAX_AGENT_BRIDGE_RUN_OPTION_CHARS = 200
 export const DEFAULT_AGENT_BRIDGE_TIMEOUT_MS = 5 * 60 * 1000
 export const MAX_AGENT_BRIDGE_TIMEOUT_MS = 60 * 60 * 1000
 
-type AgentBridgeRequestType = 'list' | 'send' | 'wait' | 'ask'
+type AgentBridgeRequestType = 'list' | 'send' | 'wait' | 'ask' | 'run'
 
 export interface AgentBridgeRequestBase {
   type: AgentBridgeRequestType
   token: string
   sessionId: string
   id?: string
+  /** Agente/terminal que originou a delegação (default: `devorbit`). */
+  origin?: string
   depth?: number
   visited?: string[]
 }
@@ -44,11 +48,28 @@ export interface AgentBridgeAskRequest extends AgentBridgeRequestBase {
   timeoutMs?: number
 }
 
+/**
+ * Executa um turno NÃO-interativo (print mode) no alvo, sem depender da TUI.
+ * Usado pela orquestração para delegar a agentes como o `agy` que suportam
+ * `--print`/`--output-format json`. A execução real é injetada pelo app.
+ */
+export interface AgentBridgeRunRequest extends AgentBridgeRequestBase {
+  type: 'run'
+  target: string
+  prompt: string
+  timeoutMs?: number
+  model?: string
+  mode?: string
+  effort?: string
+  agent?: string
+}
+
 export type AgentBridgeRequest =
   | AgentBridgeListRequest
   | AgentBridgeSendRequest
   | AgentBridgeWaitRequest
   | AgentBridgeAskRequest
+  | AgentBridgeRunRequest
 
 export interface AgentBridgeSuccessResponse {
   ok: true
@@ -91,6 +112,7 @@ export interface AgentBridgeHandlers {
   send?: AgentBridgeHandler<AgentBridgeSendRequest>
   wait?: AgentBridgeHandler<AgentBridgeWaitRequest>
   ask?: AgentBridgeHandler<AgentBridgeAskRequest>
+  run?: AgentBridgeHandler<AgentBridgeRunRequest>
 }
 
 export interface AgentBridgeServerOptions {
@@ -150,6 +172,76 @@ export function validatePrompt(value: unknown): string {
   return value
 }
 
+function validateRunOption(value: unknown, field: string): string {
+  if (typeof value !== 'string') return protocolError('INVALID_REQUEST', `Invalid ${field}.`)
+  const trimmed = value.trim()
+  if (
+    trimmed.length === 0 ||
+    trimmed.length > MAX_AGENT_BRIDGE_RUN_OPTION_CHARS ||
+    !/^[\w][\w.:+-]*$/u.test(trimmed)
+  ) {
+    return protocolError('INVALID_REQUEST', `Invalid ${field}.`)
+  }
+  return trimmed
+}
+
+export interface DelegationGuardDecision {
+  allowed: boolean
+  code?: 'CYCLE_BLOCKED' | 'TARGET_NOT_ALLOWED'
+  reason?: string
+  target: string
+  depth: number
+  visited: string[]
+  allowedTargets?: string[]
+}
+
+/** Allow-list vazia/ausente = todos os alvos permitidos (compatibilidade). */
+export function isTargetAllowListed(target: string, allowedTargets?: readonly string[]): boolean {
+  if (!allowedTargets || allowedTargets.length === 0) return true
+  return allowedTargets.includes(target)
+}
+
+/**
+ * Avalia profundidade, ciclo e allow-list de uma delegação e devolve uma
+ * decisão serializável (auditável) em vez de lançar.
+ */
+export function evaluateDelegationGuard(
+  target: unknown,
+  options: { depth?: unknown; visited?: unknown; allowedTargets?: readonly string[] } = {}
+): DelegationGuardDecision {
+  const normalizedTarget = validateTarget(target)
+  const depth = validateDepth(options.depth)
+  const visited = validateVisited(options.visited)
+  const allowed = options.allowedTargets ? [...options.allowedTargets].slice(0, MAX_AGENT_BRIDGE_ALLOWLIST) : undefined
+  if (isDelegationCycleBlocked(normalizedTarget, { depth, visited })) {
+    return { allowed: false, code: 'CYCLE_BLOCKED', reason: 'Delegation cycle or depth limit reached.', target: normalizedTarget, depth, visited, ...(allowed ? { allowedTargets: allowed } : {}) }
+  }
+  if (!isTargetAllowListed(normalizedTarget, allowed)) {
+    return { allowed: false, code: 'TARGET_NOT_ALLOWED', reason: `Target ${normalizedTarget} is not in the delegation allow-list.`, target: normalizedTarget, depth, visited, allowedTargets: allowed }
+  }
+  return { allowed: true, target: normalizedTarget, depth, visited, ...(allowed ? { allowedTargets: allowed } : {}) }
+}
+
+/** Registro de auditoria imutável de uma decisão de guardrail. */
+export function buildDelegationAudit(
+  decision: DelegationGuardDecision,
+  context: { requestId?: string; origin?: string; at?: number } = {}
+): Record<string, string | number | boolean | string[]> {
+  return {
+    kind: 'delegation.guard',
+    allowed: decision.allowed,
+    target: decision.target,
+    depth: decision.depth,
+    visited: decision.visited,
+    ...(decision.code ? { code: decision.code } : {}),
+    ...(decision.reason ? { reason: decision.reason } : {}),
+    ...(decision.allowedTargets ? { allowedTargets: decision.allowedTargets } : {}),
+    ...(context.requestId ? { requestId: context.requestId } : {}),
+    ...(context.origin ? { origin: context.origin } : {}),
+    at: context.at ?? Date.now(),
+  }
+}
+
 export function parseAgentBridgeTimeout(value: unknown): number {
   if (typeof value === 'number') {
     if (Number.isInteger(value) && value > 0 && value <= MAX_AGENT_BRIDGE_TIMEOUT_MS) return value
@@ -171,12 +263,12 @@ export function parseAgentBridgeTimeout(value: unknown): number {
 export const parseTimeout = parseAgentBridgeTimeout
 
 function validateDepth(value: unknown): number {
+  // Apenas a forma é validada aqui; o limite de profundidade é decidido pelo
+  // guardrail (validateDelegationGuard/evaluateDelegationGuard) para que a
+  // decisão seja auditável em vez de um erro opaco.
   if (value === undefined) return 0
   if (!Number.isInteger(value) || (value as number) < 0) {
     return protocolError('INVALID_GUARD', 'Depth must be a non-negative integer.')
-  }
-  if ((value as number) >= MAX_AGENT_BRIDGE_DEPTH) {
-    return protocolError('CYCLE_BLOCKED', 'Delegation depth limit reached.')
   }
   return value as number
 }
@@ -220,17 +312,19 @@ export function validateAgentBridgeRequest(value: unknown): AgentBridgeRequest {
   if (!isRecord(value)) return protocolError('INVALID_REQUEST', 'Request must be a JSON object.')
 
   const type = value.type
-  if (type !== 'list' && type !== 'send' && type !== 'wait' && type !== 'ask') {
+  if (type !== 'list' && type !== 'send' && type !== 'wait' && type !== 'ask' && type !== 'run') {
     return protocolError('INVALID_REQUEST', 'Unknown request type.')
   }
 
   const token = validateCredential(value.token, 'token')
   const sessionId = validateCredential(value.sessionId, 'sessionId')
   const id = value.id === undefined ? undefined : validateCredential(value.id, 'id')
+  const origin = value.origin === undefined ? undefined : validateTarget(value.origin)
   const depth = validateDepth(value.depth)
   const visited = validateVisited(value.visited)
+  const originField = origin === undefined ? {} : { origin }
 
-  if (type === 'list') return { type, token, sessionId, id, depth, visited }
+  if (type === 'list') return { type, token, sessionId, id, depth, visited, ...originField }
 
   const guard = validateDelegationGuard(value.target, depth, visited)
   if (type === 'wait') {
@@ -243,6 +337,7 @@ export function validateAgentBridgeRequest(value: unknown): AgentBridgeRequest {
       visited: guard.visited,
       target: guard.target,
       timeoutMs: parseAgentBridgeTimeout(value.timeoutMs),
+      ...originField,
     }
   }
 
@@ -254,9 +349,21 @@ export function validateAgentBridgeRequest(value: unknown): AgentBridgeRequest {
     visited: guard.visited,
     target: guard.target,
     prompt: validatePrompt(value.prompt),
+    ...originField,
   }
   if (type === 'ask' && value.timeoutMs !== undefined) {
     return { ...request, type: 'ask' as const, timeoutMs: parseAgentBridgeTimeout(value.timeoutMs) }
+  }
+  if (type === 'run') {
+    return {
+      ...request,
+      type: 'run' as const,
+      ...(value.timeoutMs === undefined ? {} : { timeoutMs: parseAgentBridgeTimeout(value.timeoutMs) }),
+      ...(value.model === undefined ? {} : { model: validateRunOption(value.model, 'model') }),
+      ...(value.mode === undefined ? {} : { mode: validateRunOption(value.mode, 'mode') }),
+      ...(value.effort === undefined ? {} : { effort: validateRunOption(value.effort, 'effort') }),
+      ...(value.agent === undefined ? {} : { agent: validateRunOption(value.agent, 'agent') }),
+    }
   }
   return { ...request, type }
 }

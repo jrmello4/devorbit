@@ -50,10 +50,22 @@ export const AccessibleDialog: React.FC<AccessibleDialogProps> = ({
       })
     }
 
+function isVisible(element: HTMLElement): boolean {
+  if (element.hidden || element.getAttribute('aria-hidden') === 'true') return false
+  if (element.closest('[aria-hidden="true"], [hidden]')) return false
+  if (typeof window !== 'undefined' && typeof window.getComputedStyle === 'function') {
+    const style = window.getComputedStyle(element)
+    if (style.display === 'none' || style.visibility === 'hidden') return false
+  }
+  return true
+}
+
     const focusInitialElement = () => {
       const preferred = panel.querySelector<HTMLElement>('[autofocus]')
-      const firstFocusable = panel.querySelector<HTMLElement>(FOCUSABLE_SELECTOR)
-      ;(preferred || firstFocusable || panel).focus()
+      const validPreferred = preferred && isVisible(preferred) ? preferred : null
+      const focusable = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(isVisible)
+      const firstFocusable = focusable[0] || null
+      ;(validPreferred || firstFocusable || panel).focus()
     }
 
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -64,7 +76,7 @@ export const AccessibleDialog: React.FC<AccessibleDialogProps> = ({
       }
 
       if (event.key !== 'Tab') return
-      const focusable = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
+      const focusable = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(isVisible)
       if (focusable.length === 0) {
         event.preventDefault()
         panel.focus()

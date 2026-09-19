@@ -14,7 +14,16 @@ import {
   Rocket,
   LayoutDashboard,
 } from 'lucide-react'
-import type { AgentProviderId, AppConfig, AutomationConfig, CodexAccountStatus } from '../types'
+import type {
+  AgentProviderId,
+  AppConfig,
+  AutomationConfig,
+  CodexAccountStatus,
+  ModelRoutingBaseUrlKey,
+  ModelRoutingConfig,
+  ModelRoutingSecretKey,
+} from '../types'
+import { MODEL_ROUTING_SECRET_KEYS } from '../types'
 import { AccessibleDialog } from './AccessibleDialog'
 
 interface SettingsModalProps {
@@ -47,6 +56,33 @@ const EXECUTOR_OPTIONS: Array<{ value: AgentProviderId; label: string }> = [
   { value: 'custom', label: 'Agente local' },
 ]
 
+const ROUTING_SECRET_FIELDS: ReadonlyArray<{ key: ModelRoutingSecretKey; label: string; hasKey: keyof ModelRoutingConfig }> = [
+  { key: 'openaiApiKey', label: 'OpenAI', hasKey: 'hasOpenaiKey' },
+  { key: 'anthropicApiKey', label: 'Anthropic', hasKey: 'hasAnthropicKey' },
+  { key: 'geminiApiKey', label: 'Gemini', hasKey: 'hasGeminiKey' },
+  { key: 'deepseekApiKey', label: 'DeepSeek', hasKey: 'hasDeepseekKey' },
+  { key: 'glmApiKey', label: 'GLM', hasKey: 'hasGlmKey' },
+  { key: 'kimiApiKey', label: 'Kimi', hasKey: 'hasKimiKey' },
+  { key: 'minimaxApiKey', label: 'MiniMax', hasKey: 'hasMinimaxKey' },
+  { key: 'vllmApiKey', label: 'vLLM', hasKey: 'hasVllmKey' },
+]
+
+const ROUTING_BASE_URL_FIELDS: ReadonlyArray<{ key: ModelRoutingBaseUrlKey; label: string }> = [
+  { key: 'openaiBaseUrl', label: 'OpenAI' },
+  { key: 'anthropicBaseUrl', label: 'Anthropic' },
+  { key: 'geminiBaseUrl', label: 'Gemini' },
+  { key: 'deepseekBaseUrl', label: 'DeepSeek' },
+  { key: 'glmBaseUrl', label: 'GLM' },
+  { key: 'kimiBaseUrl', label: 'Kimi' },
+  { key: 'minimaxBaseUrl', label: 'MiniMax' },
+  { key: 'ollamaBaseUrl', label: 'Ollama (local)' },
+  { key: 'vllmBaseUrl', label: 'vLLM (local)' },
+]
+
+function blankApiKeyInputs(): Record<ModelRoutingSecretKey, string> {
+  return Object.fromEntries(MODEL_ROUTING_SECRET_KEYS.map((key) => [key, ''])) as Record<ModelRoutingSecretKey, string>
+}
+
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
   suspended = false,
@@ -63,6 +99,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [account2Name, setAccount2Name] = useState('')
   const [customPaths, setCustomPaths] = useState<AppConfig['customPaths']>({})
   const [automation, setAutomation] = useState<AutomationConfig>({})
+  const [modelRouting, setModelRouting] = useState<ModelRoutingConfig>({})
+  const [apiKeyInputs, setApiKeyInputs] = useState<Record<ModelRoutingSecretKey, string>>(blankApiKeyInputs)
+  const [clearedApiKeys, setClearedApiKeys] = useState<ModelRoutingSecretKey[]>([])
   const [isSaving, setIsSaving] = useState(false)
   const [testingTool, setTestingTool] = useState<string | null>(null)
   const [isDirty, setIsDirty] = useState(false)
@@ -72,6 +111,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     if (!isOpen) {
       initializedConfigRef.current = null
       setAutomation({})
+      setModelRouting({})
+      setApiKeyInputs(blankApiKeyInputs())
+      setClearedApiKeys([])
       return
     }
 
@@ -81,6 +123,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setAccount2Name(config.chatGptAccount2Name)
       setCustomPaths(config.customPaths)
       setAutomation(config.automation ?? {})
+      setModelRouting(config.modelRouting ?? {})
+      setApiKeyInputs(blankApiKeyInputs())
+      setClearedApiKeys([])
       setIsDirty(false)
       initializedConfigRef.current = config
     }
@@ -121,6 +166,42 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const updateAutomation = (patch: Partial<AutomationConfig>) => {
     setAutomation((current) => ({ ...current, ...patch }))
     setIsDirty(true)
+  }
+
+  const updateRoutingField = (patch: Partial<ModelRoutingConfig>) => {
+    setModelRouting((current) => ({ ...current, ...patch }))
+    setIsDirty(true)
+  }
+
+  const updateApiKeyInput = (key: ModelRoutingSecretKey, value: string) => {
+    setApiKeyInputs((current) => ({ ...current, [key]: value }))
+    setClearedApiKeys((current) => current.filter((entry) => entry !== key))
+    setIsDirty(true)
+  }
+
+  const clearApiKey = (key: ModelRoutingSecretKey) => {
+    setApiKeyInputs((current) => ({ ...current, [key]: '' }))
+    setClearedApiKeys((current) => (current.includes(key) ? current : [...current, key]))
+    setIsDirty(true)
+  }
+
+  const buildRoutingUpdates = (): ModelRoutingConfig => {
+    const updates: ModelRoutingConfig = {}
+    const fastModel = modelRouting.fastModel?.trim()
+    const deepModel = modelRouting.deepModel?.trim()
+    if (fastModel) updates.fastModel = fastModel
+    if (deepModel) updates.deepModel = deepModel
+    for (const field of ROUTING_BASE_URL_FIELDS) {
+      const value = modelRouting[field.key]?.trim() ?? ''
+      if (value) updates[field.key] = value
+      else if (config?.modelRouting?.[field.key]) updates[field.key] = ''
+    }
+    for (const field of ROUTING_SECRET_FIELDS) {
+      const value = apiKeyInputs[field.key]?.trim()
+      if (value) updates[field.key] = value
+      else if (clearedApiKeys.includes(field.key)) updates[field.key] = ''
+    }
+    return updates
   }
 
   const handleTestTool = async (key: keyof AppConfig['customPaths']) => {
@@ -179,6 +260,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         chatGptAccount1Name: account1Name,
         chatGptAccount2Name: account2Name,
         customPaths,
+        modelRouting: buildRoutingUpdates(),
         automation: {
           defaultExecutor: automation.defaultExecutor || undefined,
           defaultCodexAccount:
@@ -486,6 +568,119 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div className="flex items-start gap-2">
                   <input id="tool-path-wt" value={customPaths.wt || ''} onChange={(event) => updateCustomPath('wt', event.target.value)} className="mt-1.5 w-full rounded-[5px] border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-2.5 py-1.5 font-mono text-xs text-[var(--text-primary)] focus:border-[var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)]/30" />
                   {renderToolTestButton('wt')}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Roteamento de modelos (BYOK) */}
+          <div className="pt-4 border-t border-[var(--color-border-subtle)]">
+            <h3 className="font-semibold text-[var(--text-primary)] flex items-center gap-2 mb-1">
+              <Sparkles className="w-4 h-4 text-[var(--color-accent-strong)]" />
+              Roteamento de modelos (BYOK)
+            </h3>
+            <p className="text-xs text-[var(--color-text-secondary)] mb-3">
+              As chaves são criptografadas no armazenamento do sistema e nunca são devolvidas à interface.
+              Preencha um campo apenas para cadastrar ou substituir a credencial.
+            </p>
+
+            <div className="space-y-3 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label htmlFor="routing-fast-model" className="text-xs text-[var(--color-text-secondary)] block mb-1">
+                    Modelo rápido (fast):
+                  </label>
+                  <input
+                    id="routing-fast-model"
+                    name="routing-fast-model"
+                    value={modelRouting.fastModel || ''}
+                    placeholder="ex.: gpt-4o-mini"
+                    onChange={(event) => updateRoutingField({ fastModel: event.target.value })}
+                    className="w-full bg-[var(--color-bg-panel)] border border-[var(--color-border-subtle)] rounded-lg px-3 py-1.5 text-xs text-[var(--text-primary)] focus:border-[var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)]/30"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="routing-deep-model" className="text-xs text-[var(--color-text-secondary)] block mb-1">
+                    Modelo profundo (deep):
+                  </label>
+                  <input
+                    id="routing-deep-model"
+                    name="routing-deep-model"
+                    value={modelRouting.deepModel || ''}
+                    placeholder="ex.: claude-sonnet"
+                    onChange={(event) => updateRoutingField({ deepModel: event.target.value })}
+                    className="w-full bg-[var(--color-bg-panel)] border border-[var(--color-border-subtle)] rounded-lg px-3 py-1.5 text-xs text-[var(--text-primary)] focus:border-[var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)]/30"
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-lg bg-[var(--surface-muted)] border border-[var(--color-border-subtle)] p-3">
+                <div className="flex items-center gap-2 text-[var(--color-text-secondary)] font-medium">
+                  <Sparkles className="w-3.5 h-3.5 text-[var(--color-accent-strong)]" /> Credenciais por provedor
+                </div>
+                <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+                  Uma chave já salva aparece como “configurada”. Deixe o campo vazio para mantê-la.
+                </p>
+                <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                  {ROUTING_SECRET_FIELDS.map((field) => {
+                    const configured = Boolean(config.modelRouting?.[field.hasKey])
+                    const markedForRemoval = clearedApiKeys.includes(field.key)
+                    return (
+                      <div key={field.key}>
+                        <label htmlFor={'routing-key-' + field.key} className="text-[11px] font-semibold text-[var(--color-text-secondary)]">
+                          {field.label}
+                          {configured && !markedForRemoval && !apiKeyInputs[field.key] ? ' · configurada' : ''}
+                        </label>
+                        <div className="flex items-start gap-2">
+                          <input
+                            id={'routing-key-' + field.key}
+                            name={'routing-key-' + field.key}
+                            type="password"
+                            autoComplete="off"
+                            value={apiKeyInputs[field.key]}
+                            placeholder={configured && !markedForRemoval ? 'Preencha para substituir' : 'Não configurada'}
+                            onChange={(event) => updateApiKeyInput(field.key, event.target.value)}
+                            className="mt-1.5 w-full rounded-[5px] border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-2.5 py-1.5 font-mono text-xs text-[var(--text-primary)] focus:border-[var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)]/30"
+                          />
+                          {configured && !markedForRemoval && (
+                            <button
+                              type="button"
+                              onClick={() => clearApiKey(field.key)}
+                              className="mt-1.5 shrink-0 rounded-[5px] border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-2.5 py-1.5 text-xs font-semibold text-[var(--color-text-secondary)] hover:border-[var(--color-border-strong)] hover:text-[var(--color-danger)]"
+                            >
+                              Remover
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+
+              <div className="rounded-lg bg-[var(--surface-muted)] border border-[var(--color-border-subtle)] p-3">
+                <div className="flex items-center gap-2 text-[var(--color-text-secondary)] font-medium">
+                  <Globe className="w-3.5 h-3.5 text-[var(--color-accent-strong)]" /> URLs base opcionais
+                </div>
+                <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+                  Informe apenas para gateways próprios; HTTPS é exigido fora de localhost.
+                </p>
+                <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                  {ROUTING_BASE_URL_FIELDS.map((field) => (
+                    <div key={field.key}>
+                      <label htmlFor={'routing-url-' + field.key} className="text-[11px] font-semibold text-[var(--color-text-secondary)]">
+                        {field.label}
+                      </label>
+                      <input
+                        id={'routing-url-' + field.key}
+                        name={'routing-url-' + field.key}
+                        value={modelRouting[field.key] || ''}
+                        placeholder="URL padrão do provedor"
+                        onChange={(event) => updateRoutingField({ [field.key]: event.target.value } as Partial<ModelRoutingConfig>)}
+                        className="mt-1.5 w-full rounded-[5px] border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-2.5 py-1.5 font-mono text-xs text-[var(--text-primary)] focus:border-[var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)]/30"
+                      />
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>

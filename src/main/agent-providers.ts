@@ -1134,6 +1134,7 @@ export interface ModelRoutingConfig {
   deepModel?: string
   openaiApiKey?: string
   anthropicApiKey?: string
+  geminiApiKey?: string
 }
 
 const MAX_MODEL_NAME_LENGTH = 200
@@ -1162,10 +1163,12 @@ export function validateModelRoutingConfig(value: unknown): ModelRoutingConfig |
   const deepModel = cleanModelName(source.deepModel)
   const openaiApiKey = cleanApiKey(source.openaiApiKey)
   const anthropicApiKey = cleanApiKey(source.anthropicApiKey)
+  const geminiApiKey = cleanApiKey(source.geminiApiKey)
   if (fastModel) result.fastModel = fastModel
   if (deepModel) result.deepModel = deepModel
   if (openaiApiKey) result.openaiApiKey = openaiApiKey
   if (anthropicApiKey) result.anthropicApiKey = anthropicApiKey
+  if (geminiApiKey) result.geminiApiKey = geminiApiKey
   return Object.keys(result).length > 0 ? result : undefined
 }
 
@@ -1184,6 +1187,7 @@ export function resolveModelForTier(
   const model = cleanModelName(configured) || fallback
   const key = cleanApiKey(routing?.openaiApiKey) || cleanApiKey(env.OPENAI_API_KEY)
     || cleanApiKey(routing?.anthropicApiKey) || cleanApiKey(env.ANTHROPIC_API_KEY)
+    || cleanApiKey(routing?.geminiApiKey) || cleanApiKey(env.GEMINI_API_KEY)
   return { model, authConfigured: Boolean(key) }
 }
 
@@ -1438,7 +1442,7 @@ export function buildAgentTurnEnv(
   }
   const openai = pick(routing?.openaiApiKey, 'OPENAI_API_KEY')
   const anthropic = pick(routing?.anthropicApiKey, 'ANTHROPIC_API_KEY')
-  const gemini = pick(undefined, 'GEMINI_API_KEY')
+  const gemini = pick(routing?.geminiApiKey, 'GEMINI_API_KEY')
   const assign = (name: string, value: string | undefined) => {
     if (value) env[name] = value
   }
@@ -1451,13 +1455,13 @@ export function buildAgentTurnEnv(
       assign('OPENAI_API_KEY', openai)
       break
     case 'gemini':
+    case 'agy':
       assign('GEMINI_API_KEY', gemini)
       break
     case 'aider':
       assign('OPENAI_API_KEY', openai)
       assign('ANTHROPIC_API_KEY', anthropic)
       break
-    case 'agy':
     case 'custom':
       break
   }
@@ -1477,7 +1481,7 @@ const PROVIDER_MODEL_FLAGS: Record<AgentProviderId, string | null> = {
   claude: '--model',
   gemini: '--model',
   aider: '--model',
-  agy: null,
+  agy: '--model',
   custom: null,
 }
 
@@ -1492,7 +1496,7 @@ export interface ProviderInvocation {
  * turno. No Windows os CLIs resolvem para wrappers .cmd — a flag do modelo é
  * encaminhada através do `call` (shims .cmd repassam `%*` ao executável real)
  * para a seleção valer também no caminho padrão; o env é sempre enviado como
- * redundância. Sem flag documentada (codex/agy/custom), vale o contrato
+ * redundância. Sem flag documentada (codex/custom), vale o contrato
  * env-only: o CLI lê `DEVORBIT_MODEL` / `DEVORBIT_MODEL_TIER` (+ BYOK da
  * família). Chaves nunca vão em argv.
  */

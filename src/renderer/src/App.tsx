@@ -110,7 +110,8 @@ export const App: React.FC = () => {
       }
       notificationActionRef.current = options?.onAction || null
       setNotification({ message, type, ...(options?.actions ? { actions: options.actions } : {}) })
-      if (type !== 'error') {
+      const hasActions = Boolean(options?.actions && options.actions.length > 0)
+      if (type !== 'error' && !hasActions) {
         notificationTimerRef.current = window.setTimeout(() => {
           setNotification((current) => current?.message === message && current.type === type ? null : current)
           notificationTimerRef.current = null
@@ -1132,6 +1133,38 @@ export const App: React.FC = () => {
           }`}
           role="group"
           aria-label="Notificação"
+          onMouseEnter={() => {
+            if (notificationTimerRef.current) {
+              window.clearTimeout(notificationTimerRef.current)
+              notificationTimerRef.current = null
+            }
+          }}
+          onMouseLeave={() => {
+            if (notification && notification.type !== 'error' && (!notification.actions || notification.actions.length === 0)) {
+              if (notificationTimerRef.current) window.clearTimeout(notificationTimerRef.current)
+              notificationTimerRef.current = window.setTimeout(() => {
+                setNotification(null)
+                notificationTimerRef.current = null
+              }, 4000)
+            }
+          }}
+          onFocusCapture={() => {
+            if (notificationTimerRef.current) {
+              window.clearTimeout(notificationTimerRef.current)
+              notificationTimerRef.current = null
+            }
+          }}
+          onBlurCapture={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+              if (notification && notification.type !== 'error' && (!notification.actions || notification.actions.length === 0)) {
+                if (notificationTimerRef.current) window.clearTimeout(notificationTimerRef.current)
+                notificationTimerRef.current = window.setTimeout(() => {
+                  setNotification(null)
+                  notificationTimerRef.current = null
+                }, 4000)
+              }
+            }
+          }}
         >
           {notification.type === 'success' && (
             <CheckCircle2 aria-hidden="true" className="w-4 h-4 text-[var(--color-success)] shrink-0" />
@@ -1146,7 +1179,10 @@ export const App: React.FC = () => {
           {notification.actions?.map((action) => (
             <button
               key={action.id}
-              onClick={() => notificationActionRef.current?.(action.id)}
+              onClick={() => {
+                notificationActionRef.current?.(action.id)
+                setNotification(null)
+              }}
               className="ms-1 inline-flex min-h-8 items-center justify-center rounded-lg bg-[var(--color-accent-strong)] px-3 text-xs font-semibold text-[var(--color-accent-contrast)] transition-[background-color] hover:bg-[var(--color-accent-hover)]"
             >
               {action.label}

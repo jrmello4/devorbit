@@ -210,3 +210,36 @@ describe('agent bridge event transitions', () => {
     )
   })
 })
+
+describe('agent bridge event — metadados de delegação', () => {
+  it('aceita origem, destino, profundidade e resultado estruturado', () => {
+    const event = {
+      ...minimal(),
+      status: 'completed' as const,
+      origin: 'agent-coordenador',
+      destination: 'agy',
+      depth: 2,
+      result: { outcome: 'completed' as const, summary: 'ok', artifacts: ['a.md'] },
+    }
+    expect(parseAgentBridgeEvent(event)).toEqual({ kind: 'event', event })
+    expect(JSON.parse(serializeAgentBridgeEvent(event))).toEqual(event)
+  })
+
+  it('rejeita metadados de delegação malformados', () => {
+    expect(invalidReason({ ...minimal(), origin: 'bad/origin' })).toBe('invalid-origin')
+    expect(invalidReason({ ...minimal(), destination: 42 })).toBe('invalid-destination')
+    expect(invalidReason({ ...minimal(), depth: -1 })).toBe('invalid-depth')
+    expect(invalidReason({ ...minimal(), depth: 1.5 })).toBe('invalid-depth')
+    expect(invalidReason({ ...minimal(), result: { outcome: 'pending' } })).toBe('invalid-result')
+    expect(invalidReason({ ...minimal(), result: { outcome: 'completed', extra: true } })).toBe('invalid-result')
+  })
+
+  it('transições carregam destino e resultado', () => {
+    const next = transitionAgentBridgeEvent(minimal(), {
+      status: 'completed',
+      destination: 'agy',
+      result: { outcome: 'completed', summary: 'ok' },
+    })
+    expect(next).toMatchObject({ destination: 'agy', result: { outcome: 'completed', summary: 'ok' } })
+  })
+})

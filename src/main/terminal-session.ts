@@ -31,6 +31,22 @@ const DEFAULT_COLS = 120
 const DEFAULT_ROWS = 32
 const MAX_WRITE_LENGTH = 64_000
 
+/**
+ * Segredos que nunca podem ser herdados por um PTY/agente. O updater e o
+ * main autenticam por headers; o token do GitHub não deve vazar para CLIs.
+ */
+export const PTY_SCRUBBED_ENV_VARIABLES = ['GH_TOKEN', 'GITHUB_TOKEN'] as const
+
+function buildTerminalEnv(optionsEnv: NodeJS.ProcessEnv | undefined): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...optionsEnv,
+    TERM: process.env.TERM || 'xterm-256color',
+  }
+  for (const name of PTY_SCRUBBED_ENV_VARIABLES) delete env[name]
+  return env
+}
+
 interface TerminalRecord {
   terminal: IPty
   cols: number
@@ -118,7 +134,7 @@ export async function startTerminal(
   try {
     terminal = spawnPty(command, args, {
       cwd,
-      env: { ...process.env, ...options.env, TERM: process.env.TERM || 'xterm-256color' },
+      env: buildTerminalEnv(options.env),
       name: 'xterm-256color',
       cols,
       rows,

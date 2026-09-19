@@ -155,6 +155,50 @@ function validateLatestYml(version) {
   }
 }
 
+function validateLatestPortableYml(version) {
+  const label = 'latest-portable.yml'
+  const ymlPath = path.join(releaseDir, 'latest-portable.yml')
+  const portableName = `DevOrbit-${version}-portable.exe`
+  const portablePath = path.join(releaseDir, portableName)
+
+  if (!fs.existsSync(ymlPath)) return { label, ok: false, detail: 'latest-portable.yml não encontrado' }
+  if (!fs.existsSync(portablePath)) {
+    return { label, ok: false, detail: `executável portable referenciado ausente: ${portableName}` }
+  }
+
+  const content = fs.readFileSync(ymlPath, 'utf8')
+  const versionMatch = content.match(/^version:\s*(.+)$/m)
+  const pathMatch = content.match(/^path:\s*(.+)$/m)
+  const shaMatch = content.match(/^sha512:\s*(.+)$/m)
+
+  if (!versionMatch || !pathMatch || !shaMatch) {
+    return { label, ok: false, detail: 'latest-portable.yml com estrutura ou campos ausentes' }
+  }
+
+  const parsedVersion = parseScalar(versionMatch[1])
+  const parsedPath = parseScalar(pathMatch[1])
+  const parsedSha512 = parseScalar(shaMatch[1]).toLowerCase()
+
+  if (parsedVersion !== version) {
+    return { label, ok: false, detail: `latest-portable.yml version=${parsedVersion} != ${version}` }
+  }
+  if (parsedPath !== portableName) {
+    return { label, ok: false, detail: `latest-portable.yml path=${parsedPath} != ${portableName}` }
+  }
+
+  const hexSha512 = crypto.createHash('sha512').update(fs.readFileSync(portablePath)).digest('hex').toLowerCase()
+  const base64Sha512 = crypto.createHash('sha512').update(fs.readFileSync(portablePath)).digest('base64').toLowerCase()
+  if (parsedSha512 !== hexSha512 && parsedSha512 !== base64Sha512) {
+    return { label, ok: false, detail: 'latest-portable.yml sha512 não corresponde ao executável portable' }
+  }
+
+  return {
+    label,
+    ok: true,
+    detail: `latest-portable.yml OK path=${portableName} sha512=${hexSha512.slice(0, 12)}`,
+  }
+}
+
 function sleepSync(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
 }
@@ -454,7 +498,11 @@ async function silentInstallSmoke(label, installerPath, version) {
 async function main() {
   const version = readVersion()
   const targets = parseTargets(process.argv)
-  const results = [validateLatestYml(version), await verifyBridgeResources()]
+  const results = [
+    validateLatestYml(version),
+    validateLatestPortableYml(version),
+    await verifyBridgeResources(),
+  ]
 
   if (targets.includes('unpacked')) {
     results.push(

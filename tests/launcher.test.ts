@@ -21,7 +21,7 @@ vi.mock('node:child_process', () => ({
   spawn: spawnMock,
 }))
 
-import { copyProjectContext, launchTool } from '../src/main/launcher'
+import { copyProjectContext, launchTool, validateLatestPortableManifest } from '../src/main/launcher'
 
 let projectPath = ''
 let temporaryUserData = ''
@@ -276,6 +276,69 @@ describe('launchTool', () => {
     } finally {
       if (previousProgramFiles === undefined) delete process.env.ProgramFiles
       else process.env.ProgramFiles = previousProgramFiles
+    }
+  })
+})
+
+describe('validateLatestPortableManifest', () => {
+  it('validates a correct portable manifest file', async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'devorbit-manifest-test-'))
+    try {
+      const manifestFile = path.join(tempDir, 'latest-portable.yml')
+      const hash = 'a'.repeat(128)
+      await fs.writeFile(manifestFile, `version: 1.0.32\npath: DevOrbit-1.0.32-portable.exe\nsha512: ${hash}\n`)
+
+      const result = await validateLatestPortableManifest(manifestFile, '1.0.32')
+      expect(result).toMatchObject({
+        valid: true,
+        version: '1.0.32',
+        path: 'DevOrbit-1.0.32-portable.exe',
+      })
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined)
+    }
+  })
+
+  it('rejects manifests with missing fields or traversal paths', async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'devorbit-manifest-test-'))
+    try {
+      const manifestMissing = path.join(tempDir, 'missing-fields.yml')
+      await fs.writeFile(manifestMissing, 'version: 1.0.0\n')
+      expect(await validateLatestPortableManifest(manifestMissing)).toMatchObject({
+        valid: false,
+      })
+
+      const manifestTraversal = path.join(tempDir, 'traversal.yml')
+      await fs.writeFile(manifestTraversal, 'version: 1.0.0\npath: ../evil.exe\nsha512: abc\n')
+      expect(await validateLatestPortableManifest(manifestTraversal)).toMatchObject({
+        valid: false,
+      })
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined)
+    }
+  })
+
+  it('verifies SHA512 against executable file when provided', async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'devorbit-manifest-test-'))
+    try {
+      const exeFile = path.join(tempDir, 'DevOrbit-1.0.32-portable.exe')
+      await fs.writeFile(exeFile, 'fake binary content')
+      const { createHash } = await import('node:crypto')
+      const realHash = createHash('sha512').update('fake binary content').digest('hex')
+
+      const manifestFile = path.join(tempDir, 'latest-portable.yml')
+      await fs.writeFile(manifestFile, `version: 1.0.32\npath: DevOrbit-1.0.32-portable.exe\nsha512: ${realHash}\n`)
+
+      const pass = await validateLatestPortableManifest(manifestFile, '1.0.32', exeFile)
+      expect(pass.valid).toBe(true)
+
+      const badManifest = path.join(tempDir, 'bad-manifest.yml')
+      await fs.writeFile(badManifest, `version: 1.0.32\npath: DevOrbit-1.0.32-portable.exe\nsha512: ${'0'.repeat(128)}\n`)
+      const fail = await validateLatestPortableManifest(badManifest, '1.0.32', exeFile)
+      expect(fail.valid).toBe(false)
+      expect(fail.detail).toMatch(/Hash sha512/i)
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined)
     }
   })
 })

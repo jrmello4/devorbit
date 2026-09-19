@@ -102,6 +102,14 @@ const expectedApiKeys = [
   'completeLlm',
   'getEvolutionHistory',
   'searchProjectText',
+  'getOrchestrationState',
+  'setOrchestrationContinuity',
+  'upsertOrchestrationSeat',
+  'removeOrchestrationSeat',
+  'assignOrchestrationRole',
+  'reportOrchestrationTurn',
+  'reportOrchestrationQuota',
+  'onOrchestrationEvent',
 ]
 
 let exposedApiObject: Record<string, (...args: any[]) => unknown>
@@ -198,6 +206,13 @@ describe('preload IPC contract', () => {
       ['devorbit:completeLlm', { messages: [{ role: 'user', content: 'hello' }] }],
       ['devorbit:getEvolutionHistory'],
       ['devorbit:searchProjectText', { projectPath: 'project', query: 'needle' }],
+      ['devorbit:getOrchestrationState', 'project'],
+      ['devorbit:setOrchestrationContinuity', 'project', true],
+      ['devorbit:upsertOrchestrationSeat', 'project', { id: 'agent-1', provider: 'codex', role: 'coordinator' }],
+      ['devorbit:removeOrchestrationSeat', 'project', 'agent-1'],
+      ['devorbit:assignOrchestrationRole', 'project', 'coordinator', 'agent-1'],
+      ['devorbit:reportOrchestrationTurn', 'project', { seatId: 'agent-1', outcome: 'completed' }],
+      ['devorbit:reportOrchestrationQuota', 'project', 'agent-1', 90],
     ]
 
     const methodNames = [
@@ -213,6 +228,7 @@ describe('preload IPC contract', () => {
       'importConfig', 'selectDirectory', 'testToolPath', 'getToolHealth', 'getCodexAuthStatus',
       'startCodexLogin', 'cancelCodexLogin', 'getProjectMemory', 'saveProjectMemory',
       'generateMemoryFromGit', 'getRealUsage', 'getProjectAudit', 'getHitlRequests', 'approveHitl', 'rejectHitl', 'runDiagnostic', 'getTelemetrySpans', 'getHybridMemory', 'rememberHybridMemory', 'searchHybridMemory', 'completeLlm', 'getEvolutionHistory', 'searchProjectText',
+      'getOrchestrationState', 'setOrchestrationContinuity', 'upsertOrchestrationSeat', 'removeOrchestrationSeat', 'assignOrchestrationRole', 'reportOrchestrationTurn', 'reportOrchestrationQuota',
     ]
 
     for (const [index, methodName] of methodNames.entries()) await api[methodName](...calls[index].slice(1))
@@ -272,6 +288,7 @@ describe('preload IPC contract', () => {
     ['onWebEvent', 'devorbit:webEvent', { type: 'loaded', url: 'https://example.com/' }],
     ['onUpdateStatus', 'devorbit:updateStatus', { status: 'idle' }],
     ['onCodexAuthProgress', 'devorbit:codexAuthProgress', { account: 'account1' }],
+    ['onOrchestrationEvent', 'devorbit:orchestrationEvent', { id: 'evt-1', at: '2026-01-01T00:00:00.000Z', type: 'role.handoff', reason: 'handoff' }],
   ])('registers and unsubscribes %s', (methodName, channel, payload) => {
     const callback = vi.fn()
     const unsubscribe = exposedApi()[methodName](callback) as () => void

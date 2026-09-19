@@ -29,6 +29,11 @@ import {
 } from "lucide-react";
 import type { AgentProvider, AgentProviderId, Project } from "../types";
 import type { AgentResult } from "../../../shared/agent-result";
+import type {
+  ContinuityEvent,
+  OrchestrationRole,
+  OrchestrationState,
+} from "../../../shared/orchestration-continuity";
 import { createsAgentCycle, computeSquadRegions, sanitizeAgentCycles } from "./workspace-request-helpers";
 import { AgentCreationDialog } from "./AgentCreationDialog";
 import {
@@ -59,7 +64,7 @@ export interface CanvasNode {
   account?: "account1" | "account2";
   provider?: AgentProviderId;
 }
-interface CanvasConnection {
+export interface CanvasConnection {
   id: string;
   from: string;
   to: string;
@@ -103,12 +108,12 @@ interface AgentProgress {
   state: AgentProgressState;
   label: string;
 }
-interface OrchestrationNote {
+export interface OrchestrationNote {
   id: string;
   title: string;
   content: string;
 }
-interface OrchestrationAgent {
+export interface OrchestrationAgent {
   id: string;
   title: string;
   role: AgentRole;
@@ -217,6 +222,18 @@ const legacyOrchestrationResultInstruction =
   "Esta etapa faz parte de uma orquestração automática. Ao concluir, imprima uma única linha iniciada por DEVORBIT_RESULT: e seguida de um resumo objetivo. Use DEVORBIT_RESULT: CONCLUIDO: para uma etapa concluída; se não puder continuar, use DEVORBIT_RESULT: BLOQUEADO: e explique o motivo. Não aguarde outro clique para encaminhar a próxima etapa.";
 export const orchestrationResultInstruction = legacyOrchestrationResultInstruction &&
   'Emita primeiro uma única linha com JSON compacto: DEVORBIT_RESULT: {"version":1,"outcome":"completed","summary":"resumo objetivo"}. Use outcome completed, blocked ou failed e summary objetivo, sem quebras de linha e com no máximo 1000 caracteres. Emita imediatamente depois o espelho legado DEVORBIT_RESULT: CONCLUIDO: <resumo>, DEVORBIT_RESULT: BLOQUEADO: <motivo> ou DEVORBIT_RESULT: FALHA: <motivo>. O JSON vem primeiro e não aguarde outro clique para encaminhar a próxima etapa.';
+
+/**
+ * A instrução de resultado SEMPRE vem primeiro no prompt do agente. Assim
+ * qualquer truncamento de prefixo (limite do turno/IPC) preserva o contrato
+ * DEVORBIT_RESULT intacto e corta apenas o corpo de notas/resultados.
+ */
+export function composeAgentPrompt(lines: string[]): string {
+  return [
+    orchestrationResultInstruction,
+    ...lines.filter((line) => line !== orchestrationResultInstruction),
+  ].join("\n");
+}
 const orchestrationRunId = () =>
   "orchestration-" +
   Date.now().toString(36) +
@@ -416,7 +433,10 @@ function read(id: string, defaultProvider: AgentProviderId | null = null): Canva
   return fallback;
 }
 
-function connectedNotes(state: CanvasState, nodeIdValue: string): OrchestrationNote[] {
+function connectedNotes(
+  state: Pick<CanvasState, "nodes" | "connections">,
+  nodeIdValue: string,
+): OrchestrationNote[] {
   const noteIds = new Set(
     state.connections
       .filter(
@@ -447,47 +467,152 @@ function orchestrationAgentRole(node: CanvasNode): AgentRole {
     : "Implementação";
 }
 
-function discoverSpecialists(
-  state: CanvasState,
-  coordinator: CanvasNode,
-  notes: OrchestrationNote[],
+function continuityRoleFor(role: AgentRole | undefined): OrchestrationRole {
+  if (role === "Coordenador") return "coordinator";
+  if (role === "Revisão") return "reviewer";
+  if (role === "Testes") return "tester";
+  return "implementer";
+}
+
+const CONTINUITY_TRANSIENT_PATTERN = /limite|rate.?limit|quota|esgot|indispon|overload|429|503/i;
+
+function continuityEventMessage(event: ContinuityEvent): string {
+  const from = event.fromSeatId ? ` de ${event.fromSeatId}` : "";
+  switch (event.type) {
+    case "role.handoff":
+      return `Continuidade: papel ${event.role ?? ""} assumido por ${event.toSeatId ?? "substituto"}${from}. ${event.reason}`.trim();
+    case "handoff.blocked":
+      return `Continuidade: handoff bloqueado (${event.reason}).`;
+    case "seat.circuit.open":
+      return `Continuidade: assento ${event.fromSeatId ?? ""} em circuit breaker.`;
+    default:
+      return event.reason;
+  }
+}
+
+export function orderSpecialistsByGraph(
+  specialists: OrchestrationAgent[],
+  connections: readonly CanvasConnection[],
 ): OrchestrationAgent[] {
-  const noteIds = new Set(notes.map((note) => note.id));
-  const directlyConnected = new Set(
-    state.connections
-      .filter(
-        (connection) =>
-          connection.from === coordinator.id || connection.to === coordinator.id,
-      )
-      .map((connection) =>
-        connection.from === coordinator.id ? connection.to : connection.from,
-      ),
+  if (specialists.length <= 1) return specialists;
+
+  const ids = new Set(specialists.map((s) => s.id));
+  const specialistMap = new Map(specialists.map((s) => [s.id, s]));
+
+  const relevantConnections = connections.filter(
+    (c) => ids.has(c.from) && ids.has(c.to) && c.from !== c.to,
   );
-  const noteConnectedAgentIds = new Set(
-    state.connections.flatMap((connection) => {
-      if (!noteIds.has(connection.from) && !noteIds.has(connection.to)) return [];
-      return [connection.from, connection.to];
-    }),
-  );
-  return state.nodes
-    .filter(
-      (node) =>
-        node.kind === "agent" &&
-        node.id !== coordinator.id &&
-        node.role !== "Coordenador" &&
-        (directlyConnected.has(node.id) || noteConnectedAgentIds.has(node.id)),
-    )
+
+  const safeConnections = sanitizeAgentCycles(relevantConnections, ids);
+
+  const inDegree = new Map<string, number>();
+  const outgoing = new Map<string, string[]>();
+  for (const id of ids) {
+    inDegree.set(id, 0);
+    outgoing.set(id, []);
+  }
+
+  for (const conn of safeConnections) {
+    outgoing.get(conn.from)!.push(conn.to);
+    inDegree.set(conn.to, (inDegree.get(conn.to) || 0) + 1);
+  }
+
+  const rolePriority = (role: AgentRole): number => {
+    const idx = orchestrationRoleOrder.indexOf(role);
+    return idx >= 0 ? idx : 999;
+  };
+
+  const tieBreak = (aId: string, bId: string): number => {
+    const a = specialistMap.get(aId)!;
+    const b = specialistMap.get(bId)!;
+    const rOrder = rolePriority(a.role) - rolePriority(b.role);
+    if (rOrder !== 0) return rOrder;
+    return a.title.localeCompare(b.title);
+  };
+
+  const ready: string[] = [];
+  for (const [id, deg] of inDegree.entries()) {
+    if (deg === 0) ready.push(id);
+  }
+  ready.sort(tieBreak);
+
+  const result: OrchestrationAgent[] = [];
+  while (ready.length > 0) {
+    const currentId = ready.shift()!;
+    result.push(specialistMap.get(currentId)!);
+
+    for (const nextId of outgoing.get(currentId) || []) {
+      const nextDeg = (inDegree.get(nextId) || 1) - 1;
+      inDegree.set(nextId, nextDeg);
+      if (nextDeg === 0) {
+        ready.push(nextId);
+        ready.sort(tieBreak);
+      }
+    }
+  }
+
+  if (result.length < specialists.length) {
+    const visited = new Set(result.map((s) => s.id));
+    const remaining = specialists.filter((s) => !visited.has(s.id));
+    remaining.sort((a, b) => tieBreak(a.id, b.id));
+    result.push(...remaining);
+  }
+
+  return result;
+}
+
+export function discoverSpecialists(
+  state: Pick<CanvasState, "nodes" | "connections">,
+  coordinator: CanvasNode,
+  notes: OrchestrationNote[] = connectedNotes(state, coordinator.id),
+): OrchestrationAgent[] {
+  const nodeMap = new Map(state.nodes.map((node) => [node.id, node]));
+
+  const adjacency = new Map<string, string[]>();
+  for (const conn of state.connections) {
+    const list = adjacency.get(conn.from);
+    if (list) {
+      list.push(conn.to);
+    } else {
+      adjacency.set(conn.from, [conn.to]);
+    }
+  }
+
+  const seedIds = [coordinator.id, ...notes.map((n) => n.id)];
+  const visited = new Set<string>(seedIds);
+  const queue: string[] = [...seedIds];
+  const reachableAgentIds = new Set<string>();
+
+  while (queue.length > 0) {
+    const currentId = queue.shift()!;
+    const neighbors = adjacency.get(currentId) || [];
+    for (const neighborId of neighbors) {
+      if (!visited.has(neighborId)) {
+        visited.add(neighborId);
+        queue.push(neighborId);
+        const node = nodeMap.get(neighborId);
+        if (
+          node &&
+          node.kind === "agent" &&
+          node.id !== coordinator.id &&
+          node.role !== "Coordenador"
+        ) {
+          reachableAgentIds.add(neighborId);
+        }
+      }
+    }
+  }
+
+  const rawSpecialists = state.nodes
+    .filter((node) => reachableAgentIds.has(node.id))
     .map((node) => ({
       id: node.id,
       title: node.title,
       role: orchestrationAgentRole(node),
       notes: connectedNotes(state, node.id),
-    }))
-    .sort((left, right) => {
-      const leftOrder = orchestrationRoleOrder.indexOf(left.role);
-      const rightOrder = orchestrationRoleOrder.indexOf(right.role);
-      return leftOrder - rightOrder;
-    });
+    }));
+
+  return orderSpecialistsByGraph(rawSpecialists, state.connections);
 }
 
 function mergeOrchestrationNotes(
@@ -536,6 +661,7 @@ export const WorkspaceCanvas: React.FC<{
     connections: Array<{ id: string; from: string; to: string }>,
     nodes: Array<{ id: string; kind: string }>,
   ) => void;
+  onNotify?: (message: string, type?: 'success' | 'error' | 'info') => void;
 }> = ({
   project,
   workbench,
@@ -551,6 +677,7 @@ export const WorkspaceCanvas: React.FC<{
   pendingNodeRequest = null,
   onPendingNodeConsumed,
   onConnectionsChange,
+  onNotify,
 }) => {
   const [canvas, setCanvas] = useState<CanvasState>(() => read(project.id, defaultExecutor));
   const [selected, setSelected] = useState<string[]>([]);
@@ -565,7 +692,11 @@ export const WorkspaceCanvas: React.FC<{
     Record<string, AgentProgress>
   >({});
   const [configNodeId, setConfigNodeId] = useState<string | null>(null);
+  const [continuity, setContinuity] = useState<OrchestrationState | null>(null);
   const manualTasksRef = useRef<Set<string>>(new Set());
+  const continuityRef = useRef<OrchestrationState | null>(null);
+  const continuityLoadedRef = useRef(false);
+  const continuityHandledRef = useRef<Set<string>>(new Set());
   const canvasRef = useRef(canvas);
   const orchestrationRef = useRef<OrchestrationRun | null>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -1324,6 +1455,12 @@ export const WorkspaceCanvas: React.FC<{
       noteCount: connectedNotes(canvas, node.id).length,
       progressState: agentProgress[node.id]?.state ?? null,
     });
+  // Nota ausente é o único bloqueio que mantém o botão clicável: o clique
+  // precisa acontecer para avisar o usuário. Os demais bloqueios desativam.
+  const sendDisabledFor = (node: CanvasNode) => {
+    const policy = sendPolicyFor(node);
+    return policy.disabled && policy.blocker !== "note";
+  };
   const removeLinks = () => {
     const ids = new Set(selected);
     update(
@@ -1404,6 +1541,14 @@ export const WorkspaceCanvas: React.FC<{
   );
   const reportAgentTaskFailure = useCallback(
     (agentId: string, taskId: string, message: string) => {
+      void window.devorbit
+        .reportOrchestrationTurn(project.path, {
+          seatId: agentId,
+          outcome: "failed",
+          summary: message,
+          transient: CONTINUITY_TRANSIENT_PATTERN.test(message),
+        })
+        .catch(() => undefined);
       if (manualTasksRef.current.delete(agentId)) {
         setAgentProgress((current) => ({
           ...current,
@@ -1425,7 +1570,7 @@ export const WorkspaceCanvas: React.FC<{
         agentId,
       );
     },
-    [markOrchestrationBlocked, project.id],
+    [markOrchestrationBlocked, project.id, project.path],
   );
   const startCoordinatorOrchestration = useCallback(
     (coordinator: CanvasNode) => {
@@ -1443,7 +1588,13 @@ export const WorkspaceCanvas: React.FC<{
       );
       if (!currentCoordinator) return;
       const notes = connectedNotes(current, currentCoordinator.id);
-      if (!notes.length) return;
+      if (!notes.length) {
+        onNotify?.(
+          "Conecte uma nota com conteúdo ao coordenador para iniciar a orquestração.",
+          "info",
+        );
+        return;
+      }
       const specialists = discoverSpecialists(
         current,
         currentCoordinator,
@@ -1478,7 +1629,7 @@ export const WorkspaceCanvas: React.FC<{
       const specialistRoles = specialists.length
         ? specialists.map((specialist) => specialist.role).join(" → ")
         : "nenhuma etapa especialista; o coordenador concluirá sozinho";
-      const prompt = [
+      const prompt = composeAgentPrompt([
         `Você atua como Coordenador neste projeto (${currentCoordinator.title}).`,
         "Esta é a primeira etapa automática de uma execução em sequência.",
         "Analise a tarefa conectada, transforme-a em um plano executável e defina critérios claros para implementação, revisão e testes.",
@@ -1486,8 +1637,7 @@ export const WorkspaceCanvas: React.FC<{
         "Não aguarde outro clique para encaminhar o trabalho: o aplicativo fará isso quando você devolver o plano.",
         "## Tarefa e contexto conectado",
         formatOrchestrationNotes(notes),
-        orchestrationResultInstruction,
-      ].join("\n");
+      ]);
       dispatchOrchestrationTask(run, currentCoordinator, prompt, {
         state: "running",
         label: "Planejando tarefa",
@@ -1497,6 +1647,7 @@ export const WorkspaceCanvas: React.FC<{
       commitOrchestration,
       dispatchOrchestrationTask,
       markOrchestrationBlocked,
+      onNotify,
       onSendAgentTask,
       project.id,
     ],
@@ -1526,14 +1677,19 @@ export const WorkspaceCanvas: React.FC<{
       )
         return;
       const linkedNotes = connectedNotes(current, currentAgent.id);
-      if (!linkedNotes.length) return;
+      if (!linkedNotes.length) {
+        onNotify?.(
+          "Conecte uma nota com conteúdo a este agente antes de enviar a tarefa.",
+          "info",
+        );
+        return;
+      }
       manualTasksRef.current.add(currentAgent.id);
-      const prompt = [
+      const prompt = composeAgentPrompt([
         `Você atua como ${currentAgent.role || "Implementação"} neste projeto.`,
         "Execute a tarefa usando o contexto conectado abaixo.",
         formatOrchestrationNotes(linkedNotes),
-        orchestrationResultInstruction,
-      ].join("\n");
+      ]);
       const taskId = dispatchAgentTask(currentAgent, prompt, {
         state: "running",
         label: "Aguardando resultado",
@@ -1543,6 +1699,7 @@ export const WorkspaceCanvas: React.FC<{
     [
       agentProgress,
       dispatchAgentTask,
+      onNotify,
       onSendAgentTask,
       startCoordinatorOrchestration,
     ],
@@ -1550,6 +1707,13 @@ export const WorkspaceCanvas: React.FC<{
   const reportAgentResult = useCallback(
     (agentId: string, result: AgentResult, taskId?: string) => {
       const normalizedResult = result.summary.trim().slice(0, 1000);
+      void window.devorbit
+        .reportOrchestrationTurn(project.path, {
+          seatId: agentId,
+          outcome: result.outcome,
+          summary: normalizedResult,
+        })
+        .catch(() => undefined);
       update(
         (current) => ({
           ...current,
@@ -1616,7 +1780,7 @@ export const WorkspaceCanvas: React.FC<{
           const coordinatorNode = canvasRef.current.nodes.find(
             (node) => node.id === run.coordinatorId && node.kind === "agent",
           );
-          const finalPrompt = [
+          const finalPrompt = composeAgentPrompt([
             `Você atua como Coordenador neste projeto (${run.coordinatorTitle}).`,
             "Não há especialistas conectados. Execute agora todo o plano que você preparou e entregue o resultado final.",
             "Faça as alterações, validações e correções necessárias sem aguardar outro clique.",
@@ -1624,8 +1788,7 @@ export const WorkspaceCanvas: React.FC<{
             formatOrchestrationNotes(run.notes),
             "## Plano preparado",
             normalizedResult,
-            orchestrationResultInstruction,
-          ].join("\n");
+          ]);
           if (
             !coordinatorNode ||
             !dispatchOrchestrationTask(finalRun, coordinatorNode, finalPrompt, {
@@ -1656,7 +1819,7 @@ export const WorkspaceCanvas: React.FC<{
           run.notes,
           firstSpecialist.notes,
         );
-        const specialistPrompt = [
+        const specialistPrompt = composeAgentPrompt([
           `Você atua como ${firstSpecialist.role} neste projeto (${firstSpecialist.title}).`,
           "Esta é a próxima etapa automática; execute sua parte sem aguardar novos cliques.",
           "Use o plano do coordenador e o contexto da tarefa para produzir uma entrega concreta.",
@@ -1666,8 +1829,7 @@ export const WorkspaceCanvas: React.FC<{
           nextRun.plan,
           "## Resultados anteriores",
           formatOrchestrationResults(nextRun.results),
-          orchestrationResultInstruction,
-        ].join("\n");
+        ]);
         const firstSpecialistNode = canvasRef.current.nodes.find(
           (node) => node.id === firstSpecialist.id && node.kind === "agent",
         );
@@ -1728,7 +1890,7 @@ export const WorkspaceCanvas: React.FC<{
             run.notes,
             nextSpecialist.notes,
           );
-          const specialistPrompt = [
+          const specialistPrompt = composeAgentPrompt([
             `Você atua como ${nextSpecialist.role} neste projeto (${nextSpecialist.title}).`,
             "Esta é a próxima etapa automática; execute sua parte sem aguardar novos cliques.",
             "Considere o plano do coordenador e todos os resultados anteriores antes de trabalhar.",
@@ -1738,8 +1900,7 @@ export const WorkspaceCanvas: React.FC<{
             nextRun.plan,
             "## Resultados anteriores",
             formatOrchestrationResults(nextRun.results),
-            orchestrationResultInstruction,
-          ].join("\n");
+          ]);
           const nextSpecialistNode = canvasRef.current.nodes.find(
             (node) => node.id === nextSpecialist.id && node.kind === "agent",
           );
@@ -1772,7 +1933,7 @@ export const WorkspaceCanvas: React.FC<{
             label: "Consolidando resultados",
           },
         }));
-        const finalPrompt = [
+        const finalPrompt = composeAgentPrompt([
           `Você é o Coordenador na etapa final deste projeto (${run.coordinatorTitle}).`,
           "Esta etapa automática encerra a execução. Consolide o plano e os resultados dos especialistas, valide o que foi entregue e registre pendências ou bloqueios restantes.",
           "## Tarefa e contexto conectado",
@@ -1781,8 +1942,7 @@ export const WorkspaceCanvas: React.FC<{
           run.plan,
           "## Resultados dos especialistas",
           formatOrchestrationResults(nextResults),
-          orchestrationResultInstruction,
-        ].join("\n");
+        ]);
         const coordinator = canvasRef.current.nodes.find(
           (node) => node.id === run.coordinatorId && node.kind === "agent",
         );
@@ -1891,6 +2051,130 @@ export const WorkspaceCanvas: React.FC<{
     },
     [],
   );
+
+  // Assinatura estável dos assentos elegíveis do canvas; evita loop de sync.
+  const continuitySeatSignature = canvas.nodes
+    .filter((node) => node.kind === "agent" && node.provider)
+    .map(
+      (node) =>
+        `${node.id}:${node.provider}:${continuityRoleFor(node.role)}:${node.account || ""}`,
+    )
+    .sort()
+    .join("|");
+
+  useEffect(() => {
+    continuityRef.current = continuity;
+  }, [continuity]);
+
+  // Estado de continuidade do projeto + reação auditável a handoffs.
+  useEffect(() => {
+    let alive = true;
+    const apply = (next: OrchestrationState | null) => {
+      continuityRef.current = next;
+      continuityLoadedRef.current = continuityLoadedRef.current || next !== null;
+      if (alive) setContinuity(next);
+    };
+    const refresh = async () => {
+      try {
+        apply(await window.devorbit.getOrchestrationState(project.path));
+      } catch {
+        /* continuidade é opcional */
+      }
+    };
+    void refresh();
+    const unsubscribe = window.devorbit.onOrchestrationEvent((event) => {
+      if (!alive) return;
+      if (
+        event.type === "role.handoff" ||
+        event.type === "handoff.blocked" ||
+        event.type === "seat.circuit.open"
+      ) {
+        onNotify?.(
+          continuityEventMessage(event),
+          event.type === "role.handoff" ? "success" : "info",
+        );
+      }
+      if (event.type === "role.handoff" && event.toSeatId) {
+        const prompt = event.nextAction?.prompt;
+        const target = canvasRef.current.nodes.find(
+          (node) => node.id === event.toSeatId && node.kind === "agent",
+        );
+        if (
+          !target ||
+          !prompt ||
+          continuityHandledRef.current.has(event.id)
+        ) {
+          return;
+        }
+        continuityHandledRef.current.add(event.id);
+        dispatchAgentTask(target, prompt, {
+          state: "running",
+          label: "Retomando após handoff",
+        });
+      }
+      void refresh();
+    });
+    return () => {
+      alive = false;
+      unsubscribe();
+    };
+  }, [dispatchAgentTask, onNotify, project.path]);
+
+  // Registra/atualiza assentos dos agentes configurados (id = nó do canvas).
+  useEffect(() => {
+    if (!continuityLoadedRef.current) return;
+    const nodes = canvasRef.current.nodes.filter(
+      (node) => node.kind === "agent" && node.provider,
+    );
+    const activeIds = new Set(nodes.map((node) => node.id));
+    for (const node of nodes) {
+      void window.devorbit
+        .upsertOrchestrationSeat(project.path, {
+          id: node.id,
+          provider: node.provider as AgentProviderId,
+          role: continuityRoleFor(node.role),
+          ...(node.account ? { account: node.account } : {}),
+        })
+        .catch(() => undefined);
+    }
+    const knownSeats = continuityRef.current?.seats ?? {};
+    for (const seatId of Object.keys(knownSeats)) {
+      const stillExists = canvasRef.current.nodes.some(
+        (node) => node.id === seatId,
+      );
+      if (!activeIds.has(seatId) && !stillExists) {
+        void window.devorbit
+          .removeOrchestrationSeat(project.path, seatId)
+          .catch(() => undefined);
+      }
+    }
+  }, [continuitySeatSignature, project.path]);
+
+  const toggleContinuity = useCallback(
+    (enabled: boolean) => {
+      void window.devorbit
+        .setOrchestrationContinuity(project.path, enabled)
+        .then((next) => {
+          continuityRef.current = next;
+          setContinuity(next);
+          onNotify?.(
+            enabled
+              ? "Continuidade multi-provedor ativada."
+              : "Continuidade multi-provedor desativada.",
+            "info",
+          );
+        })
+        .catch((error) =>
+          onNotify?.(
+            "Não foi possível alterar a continuidade: " +
+              (error instanceof Error ? error.message : String(error)),
+            "error",
+          ),
+        );
+    },
+    [onNotify, project.path],
+  );
+
   return (
     <div
       ref={viewportRef}
@@ -2080,6 +2364,9 @@ export const WorkspaceCanvas: React.FC<{
           .map((node) => (
             <section
               key={node.id}
+              tabIndex={0}
+              role="region"
+              aria-label={`${node.title} (${node.kind === "agent" ? node.role : node.kind})`}
               className={
                 "workspace-canvas-card canvas-" +
                 node.kind +
@@ -2090,9 +2377,9 @@ export const WorkspaceCanvas: React.FC<{
                   : "")
               }
               data-canvas-card={node.kind}
-                data-canvas-node-id={node.id}
-                style={{
-                  left: node.x,
+              data-canvas-node-id={node.id}
+              style={{
+                left: node.x,
                 top: node.y,
                 width: node.width,
                 height: node.height,
@@ -2105,6 +2392,16 @@ export const WorkspaceCanvas: React.FC<{
                 }
                 event.stopPropagation();
                 selectNode(node.id, event.ctrlKey || event.metaKey);
+              }}
+              onKeyDown={(event) => {
+                if (event.target === event.currentTarget) {
+                  if (event.key === "Enter" || event.key === " ") {
+                    selectNode(node.id, event.ctrlKey || event.metaKey);
+                  } else if (event.key.toLowerCase() === "c") {
+                    event.preventDefault();
+                    chooseConnectionSource(node.id);
+                  }
+                }
               }}
             >
               <button
@@ -2119,6 +2416,12 @@ export const WorkspaceCanvas: React.FC<{
                 aria-pressed={connectFrom === node.id}
                 onPointerDown={(event) => startConnection(event, node)}
                 onClick={() => chooseConnectionSource(node.id)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    chooseConnectionSource(node.id);
+                  }
+                }}
               >
                 <span aria-hidden="true" />
               </button>
@@ -2137,6 +2440,14 @@ export const WorkspaceCanvas: React.FC<{
                   event.stopPropagation();
                 }}
                 onClick={() => connectNodes(connectFrom, node.id)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    if (connectFrom && connectFrom !== node.id) {
+                      connectNodes(connectFrom, node.id);
+                    }
+                  }
+                }}
               >
                 <span aria-hidden="true" />
               </button>
@@ -2232,7 +2543,7 @@ export const WorkspaceCanvas: React.FC<{
                           ? "Iniciar orquestração com as notas conectadas"
                           : "Enviar as notas conectadas ao agente"
                     }
-                    disabled={sendPolicyFor(node).disabled}
+                    disabled={sendDisabledFor(node)}
                     onPointerDown={(event) => event.stopPropagation()}
                     onClick={() => sendAgentTask(node)}
                   ><Send size={13} /></button>
@@ -2424,9 +2735,96 @@ export const WorkspaceCanvas: React.FC<{
         </svg>
       </div>
       {connectFrom && (
-        <div className="workspace-canvas-connection-status" role="status" aria-live="polite">
-          <Link2 size={13} />
+        <div
+          className="workspace-canvas-connection-status"
+          role="status"
+          aria-live="polite"
+          style={{ pointerEvents: 'auto' }}
+        >
+          <Link2 size={13} aria-hidden="true" />
           <span>Conexão iniciada. Arraste até uma porta ou escolha o destino. Esc cancela.</span>
+          <select
+            aria-label="Selecionar nó de destino para conexão"
+            defaultValue=""
+            onChange={(event) => {
+              const targetId = event.target.value;
+              if (targetId) {
+                connectNodes(connectFrom, targetId);
+              }
+            }}
+            style={{
+              pointerEvents: 'auto',
+              fontSize: '11px',
+              padding: '2px 6px',
+              borderRadius: '4px',
+              border: '1px solid var(--ops-border-strong, #555)',
+              background: 'var(--ops-bg-panel, #222)',
+              color: 'var(--text-primary, #fff)',
+              cursor: 'pointer',
+            }}
+          >
+            <option value="" disabled>
+              Destino por teclado...
+            </option>
+            {canvas.nodes
+              .filter((targetNode) => targetNode.id !== connectFrom)
+              .map((targetNode) => (
+                <option key={targetNode.id} value={targetNode.id}>
+                  {targetNode.title} ({targetNode.kind === 'agent' ? targetNode.role : targetNode.kind})
+                </option>
+              ))}
+          </select>
+          <button
+            type="button"
+            onClick={() => {
+              setConnectFrom(null);
+              setConnectionDraft(null);
+            }}
+            style={{
+              pointerEvents: 'auto',
+              fontSize: '11px',
+              padding: '2px 8px',
+              borderRadius: '4px',
+              border: '1px solid var(--ops-border-strong, #555)',
+              background: 'transparent',
+              color: 'var(--text-primary, #fff)',
+              cursor: 'pointer',
+            }}
+            aria-label="Cancelar conexão"
+          >
+            Cancelar
+          </button>
+        </div>
+      )}
+      {continuity && (
+        <div
+          className="workspace-canvas-continuity-status"
+          data-orchestration-continuity={continuity.policy.enabled ? "on" : "off"}
+          role="status"
+          aria-live="polite"
+        >
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              cursor: "pointer",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={continuity.policy.enabled}
+              onChange={(event) => toggleContinuity(event.target.checked)}
+              aria-label="Ativar continuidade multi-provedor"
+            />
+            <span>
+              <strong>Continuidade multi-provedor</strong>
+              <small>
+                {Object.keys(continuity.seats).length} assento(s) ·{" "}
+                {continuity.policy.enabled ? "ativa" : "opt-in desligado"}
+              </small>
+            </span>
+          </label>
         </div>
       )}
       {orchestration && (

@@ -1,6 +1,13 @@
 import fs from 'node:fs/promises'
 import { dialog, type BrowserWindow } from 'electron'
-import { exportConfigJson, importConfigJson, loadConfig, saveConfig } from '../config'
+import {
+  exportConfigJson,
+  importConfigJson,
+  loadConfig,
+  saveConfig,
+  toSafeConfig,
+  validateConfigUpdatesForSave,
+} from '../config'
 import { cancelCodexLogin, checkCodexAuthStatus, startCodexDeviceLogin, type CodexAuthProgress } from '../codex-auth'
 import { copyProjectContext, getToolHealth } from '../launcher'
 import { generateMemoryFromGit, getProjectMemory, saveProjectMemory } from '../memory'
@@ -8,13 +15,14 @@ import { validateProjectPath } from '../project-paths'
 import { downloadUpdate, getUpdateState, installUpdate } from '../updater'
 import { getRealUsage } from '../usage-real'
 import { testToolPath, validateCodexAccount } from '../validation'
-import { validateConfigUpdates } from '../validation'
 import type { IpcRegistrar } from './registrar'
-import type { AppConfig } from '../../renderer/src/types'
+import type { AppConfig, RealUsageState } from '../../renderer/src/types'
 
 export interface ConfigIpcDependencies {
   getWindow: () => BrowserWindow | null
   sendCodexAuthProgress: (progress: CodexAuthProgress) => void
+  /** Alimenta a continuidade com a quota OAuth real do Codex (por conta). */
+  onRealUsage?: (usage: RealUsageState) => void
 }
 
 export function registerConfigIpc(register: IpcRegistrar, dependencies: ConfigIpcDependencies): void {
@@ -23,7 +31,7 @@ export function registerConfigIpc(register: IpcRegistrar, dependencies: ConfigIp
   })
 
   register('devorbit:getConfig', async () => {
-    return await loadConfig()
+    return toSafeConfig(await loadConfig())
   })
 
   register('devorbit:getUpdateState', () => getUpdateState())
@@ -33,7 +41,7 @@ export function registerConfigIpc(register: IpcRegistrar, dependencies: ConfigIp
   })
 
   register('devorbit:saveConfig', async (_event, updates: Partial<AppConfig>) => {
-    return await saveConfig(await validateConfigUpdates(updates))
+    return toSafeConfig(await saveConfig(await validateConfigUpdatesForSave(updates)))
   })
 
   register('devorbit:exportConfig', async () => {
@@ -124,6 +132,12 @@ export function registerConfigIpc(register: IpcRegistrar, dependencies: ConfigIp
     if (force !== undefined && typeof force !== 'boolean') {
       throw new Error('Opção de atualização de uso inválida.')
     }
-    return await getRealUsage(force === true)
+    const usage = await getRealUsage(force === true)
+    try {
+      dependencies.onRealUsage?.(usage)
+    } catch {
+      // A telemetria de continuidade nunca quebra a leitura de uso.
+    }
+    return usage
   })
 }

@@ -35,6 +35,25 @@ function requirePrompt(value) {
   return value
 }
 
+function bridgeContextFromEnv(env) {
+  const context = {}
+  if (typeof env.DEVORBIT_BRIDGE_ORIGIN === 'string' && env.DEVORBIT_BRIDGE_ORIGIN) {
+    context.origin = env.DEVORBIT_BRIDGE_ORIGIN
+  }
+  if (typeof env.DEVORBIT_BRIDGE_DEPTH === 'string' && /^\d+$/.test(env.DEVORBIT_BRIDGE_DEPTH)) {
+    context.depth = Number(env.DEVORBIT_BRIDGE_DEPTH)
+  }
+  if (typeof env.DEVORBIT_BRIDGE_VISITED === 'string') {
+    try {
+      const visited = JSON.parse(env.DEVORBIT_BRIDGE_VISITED)
+      if (Array.isArray(visited)) context.visited = visited
+    } catch {
+      // Contexto inválido é descartado; o bridge valida todo valor repassado.
+    }
+  }
+  return context
+}
+
 function parseAgentBridgeCliArgs(argv) {
   if (argv[0] !== 'agent') throw usageError('Usage: devorbit agent <list|send|wait|ask> ...')
   const command = argv[1]
@@ -63,7 +82,34 @@ function parseAgentBridgeCliArgs(argv) {
     if (argv[4] && argv[4] !== '--json') throw usageError('Usage: devorbit agent ask <target> <prompt> [--json]')
     return { command: 'ask', target, prompt, json: argv[4] === '--json' }
   }
-  throw usageError('Usage: devorbit agent <list|send|wait|ask> ...')
+  if (command === 'run') {
+    if (argv.length < 4) {
+      throw usageError('Usage: devorbit agent run <target> <prompt> [--model m] [--mode x] [--effort e] [--agent a] [--timeout 5m] [--json]')
+    }
+    const target = requireTarget(argv[2])
+    const prompt = requirePrompt(argv[3])
+    const options = { command: 'run', target, prompt }
+    let index = 4
+    while (index < argv.length) {
+      const flag = argv[index]
+      if (flag === '--json') {
+        options.json = true
+        index += 1
+        continue
+      }
+      const value = argv[index + 1]
+      if (value === undefined || value.startsWith('--')) throw usageError('Valor ausente para ' + flag)
+      if (flag === '--model') options.model = value
+      else if (flag === '--mode') options.mode = value
+      else if (flag === '--effort') options.effort = value
+      else if (flag === '--agent') options.agent = value
+      else if (flag === '--timeout') options.timeoutMs = parseTimeout(value)
+      else throw usageError('Opção desconhecida em run: ' + flag)
+      index += 2
+    }
+    return options
+  }
+  throw usageError('Usage: devorbit agent <list|send|wait|ask|run> ...')
 }
 
 function serializeRequest(request) {
@@ -133,10 +179,15 @@ async function main(argv = process.argv.slice(2), env = process.env) {
   const sessionId = env.DEVORBIT_SESSION_ID
   if (!pipeName || !token || !sessionId) throw new Error('DevOrbit bridge environment is not configured.')
 
-  const request = { type: command.command }
+  const request = { type: command.command, ...bridgeContextFromEnv(env) }
   if (command.target) request.target = command.target
   if (command.prompt) request.prompt = command.prompt
-    if (command.timeoutMs || command.command === 'ask') request.timeoutMs = command.timeoutMs || DEFAULT_TIMEOUT_MS
+  for (const key of ['model', 'mode', 'effort', 'agent']) {
+    if (command[key] !== undefined) request[key] = command[key]
+  }
+  if (command.timeoutMs || command.command === 'ask' || command.command === 'run') {
+    request.timeoutMs = command.timeoutMs || DEFAULT_TIMEOUT_MS
+  }
   const response = await callBridge(pipeName, token, sessionId, request)
   printResponse(response, command.json === true)
 }
@@ -148,4 +199,4 @@ if (require.main === module) {
   })
 }
 
-module.exports = { DEFAULT_TIMEOUT_MS, parseAgentBridgeCliArgs, parseTimeout, callBridge, main }
+module.exports = { DEFAULT_TIMEOUT_MS, bridgeContextFromEnv, parseAgentBridgeCliArgs, parseTimeout, callBridge, main }
