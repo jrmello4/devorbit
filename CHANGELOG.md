@@ -2,6 +2,20 @@
 
 All notable changes to DevOrbit are documented here.
 
+## [1.0.33] - 2026-09-21
+
+### Added
+
+- Smart Terminals: canvas terminal nodes with Quick Deploy presets (Shell, Codex, Claude Code, OpenCode, Antigravity, custom), persistent startup command, smart restart with configurable behavior (relaunch, resume, plain shell), per-node workspace/custom cwd, autoStart, activity monitor states and "save as preset" — presets are data, resolved through the existing provider start paths.
+- User-defined terminal presets persisted in `config.json` (`terminalPresets`) with strict sanitization; `devorbit:startTerminal` gained optional `{command, args, cwd}` options with cmd-safe validation and Windows script wrapping (`terminal-launch.ts`).
+- Per-model usage tracking: usage event store (`userData/usage`), agent turn/session recording, llm-router token capture, incremental local token adapters for Claude transcripts, Codex rollouts (interactive `token_count` included) and OpenCode SQLite storage, plus Claude OAuth quota polling with aggressive throttling; Usage panel share view with day/week/all windows and quota chips.
+- Command palette `C` then `D` opens the new-terminal Quick Deploy flow.
+
+### Fixed
+
+- Custom presets can be cleared via `devorbit:saveConfig` with an empty list (explicit clear instead of a no-op).
+- Canvas state migration to v4 preserves every existing node field; only the terminal config is normalized.
+
 ## [1.0.32] - 2026-09-19
 
 ### Added
