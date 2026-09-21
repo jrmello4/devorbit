@@ -3,6 +3,7 @@ import { promisify } from 'node:util'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import type { AgentProviderId, AppConfig, ManagedProject } from '../renderer/src/types'
+import { sanitizeCustomTerminalPresets } from '../shared/terminal-presets'
 import { validateModelRoutingConfig } from './agent-providers'
 
 const execFileAsync = promisify(execFile)
@@ -181,6 +182,61 @@ export function validateLaunchOptions(value: unknown): LaunchToolOptions | undef
     options.url = validateHttpsUrl(value.url)
   }
   return options
+}
+
+export interface TerminalStartCommandOptions {
+  command?: string
+  args?: string[]
+  cwd?: string
+}
+
+const TERMINAL_START_COMMAND_MAX_LENGTH = 512
+const TERMINAL_START_ARG_MAX_LENGTH = 256
+const TERMINAL_START_MAX_ARGS = 16
+
+// Rejeitar caracteres de controle exige casá-los na regex (padrão do agent-providers).
+/* eslint-disable no-control-regex */
+const TERMINAL_START_UNSAFE_PATTERN = /[%!\0\u0000-\u001f]/
+/* eslint-enable no-control-regex */
+
+function validateTerminalStartText(value: unknown, label: string, maxLength: number): string {
+  if (typeof value !== 'string') throw new Error(`${label} inválido.`)
+  const trimmed = value.trim()
+  // % e ! são rejeitados em simetria com a guarda do cmd.exe do startCodex;
+  // NUL e caracteres de controle nunca podem chegar ao PTY.
+  if (!trimmed || trimmed.length > maxLength || TERMINAL_START_UNSAFE_PATTERN.test(trimmed)) {
+    throw new Error(`${label} inválido.`)
+  }
+  return trimmed
+}
+
+/**
+ * Valida as opções opcionais do devorbit:startTerminal (comando, args, cwd).
+ *
+ * O renderer é a fronteira de confiança deste canal: ele já poderia pedir
+ * `cmd.exe /c ...` diretamente. As rejeições aqui — e as aspas/metacaracteres
+ * extras aplicadas só no wrap do cmd.exe (resolveWindowsScriptLaunch em
+ * terminal-launch) — são defesa em profundidade contra injeção acidental,
+ * não uma sandbox.
+ */
+export async function validateTerminalStartOptions(value: unknown): Promise<TerminalStartCommandOptions | undefined> {
+  if (value === undefined || value === null) return undefined
+  if (!isRecord(value)) throw new Error('Opções de início do terminal inválidas.')
+
+  const options: TerminalStartCommandOptions = {}
+  if ('command' in value && value.command !== undefined) {
+    options.command = validateTerminalStartText(value.command, 'Comando do terminal', TERMINAL_START_COMMAND_MAX_LENGTH)
+  }
+  if ('args' in value && value.args !== undefined) {
+    if (!Array.isArray(value.args) || value.args.length > TERMINAL_START_MAX_ARGS) {
+      throw new Error('Argumentos do terminal inválidos.')
+    }
+    options.args = value.args.map((arg) => validateTerminalStartText(arg, 'Argumento do terminal', TERMINAL_START_ARG_MAX_LENGTH))
+  }
+  if ('cwd' in value && value.cwd !== undefined) {
+    options.cwd = await canonicalizeExistingDirectory(value.cwd, 'Diretório do terminal')
+  }
+  return Object.keys(options).length > 0 ? options : undefined
 }
 
 export function validateFolderName(value: unknown): string {
@@ -492,6 +548,12 @@ export async function validateConfigUpdates(value: unknown): Promise<Partial<App
   }
   if ('automation' in value && value.automation !== undefined) {
     updates.automation = validateAutomationConfig(value.automation)
+  }
+  if ('terminalPresets' in value && value.terminalPresets !== undefined) {
+    if (!Array.isArray(value.terminalPresets)) throw new Error('Presets de terminal inválidos.')
+    // Lista vazia é limpeza explícita: sem isso, apagar o último preset via
+    // IPC seria um no-op porque o sanitizer devolve undefined para [].
+    updates.terminalPresets = sanitizeCustomTerminalPresets(value.terminalPresets) ?? []
   }
   return updates
 }

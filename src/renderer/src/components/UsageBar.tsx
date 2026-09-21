@@ -12,6 +12,7 @@ import type {
   RealUsageMetric,
   RealUsageState,
 } from '../types'
+import { UsageSharePanel } from './UsageSharePanel'
 import './UsagePanel.css'
 
 interface UsageBarProps {
@@ -248,6 +249,8 @@ export const UsageBar: React.FC<UsageBarProps> = ({
               </div>
             )}
           </section>
+
+          <UsageSharePanel />
         </div>
       </div>
     </section>

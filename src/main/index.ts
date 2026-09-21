@@ -2,10 +2,13 @@ import electron, { type BrowserWindow as BrowserWindowType } from 'electron'
 const { app, BrowserWindow, ipcMain } = electron
 if (process.argv.includes('--disable-gpu')) app.disableHardwareAcceleration()
 import path from 'node:path'
+import os from 'node:os'
 import fs from 'node:fs/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createResultWaiter } from './agent-turn'
 import { createTerminalReadiness } from './terminal-readiness'
+import { scanUsageAdapters, resolveUsageSourceDirs } from './usage-adapters'
+import { createClaudeQuotaPoller, defaultClaudeCredentialsPath } from './claude-usage-quota'
 import { createBridgeService } from './bridge-service'
 import { createHeadlessTurnRunner } from './bridge-headless'
 import { getAgentProviderHealth, resolveAgentProviderWithFallback } from './agent-providers'
@@ -26,6 +29,7 @@ import { AuditLedger } from './audit-ledger'
 import { Telemetry } from './telemetry'
 import { disposeProjectHybridMemory } from './project-hybrid-memory'
 import { EvolutionStore } from './evolution-store'
+import { createUsageStore } from './usage-store'
 import { onTerminalEvent, onTerminalStart, hasTerminal, stopAllTerminals, writeTerminal, type TerminalEvent } from './terminal-session'
 import { installPtyPipe } from './pty-pipe'
 import { handleCompanionTerminalEvent, onCompanionEvent, unregisterAllCompanionTerminals, type CompanionSummary } from './companion'
@@ -89,6 +93,8 @@ let terminalLifecycleGeneration = 0
 
 function invalidateTerminalLifecycle(): void {
   terminalLifecycleGeneration += 1
+  // Teardown derruba os PTYs sem evento de exit: fecha as sessões de uso aqui.
+  endAllUsageSessions()
   stopAllTerminals()
   unregisterAllCompanionTerminals()
 }
@@ -163,6 +169,60 @@ const waitTerminalReady = terminalReadiness.waitReady
 const hitlManager = new HITLManager({ onChange: sendHitlEvent })
 const observabilityLedger = new AuditLedger(path.join(app.getPath('userData'), 'observability.jsonl'))
 const evolutionStore = new EvolutionStore({ dataDirectory: path.join(app.getPath('userData'), 'evolution') })
+const usageStore = createUsageStore({ directory: path.join(app.getPath('userData'), 'usage') })
+
+// Scanner dos adaptadores locais (Camada B — tokens reais de cada CLI) e o
+// poller de quota do Claude. O poller é autolimitado (30 min mín. entre
+// chamadas; 6h de cooldown após 429), então pode rodar junto do scan barato.
+const claudeQuotaPoller = createClaudeQuotaPoller({
+  credentialsPath: defaultClaudeCredentialsPath(os.homedir(), process.env),
+})
+usageStore.setUsageScanner(async (previous) => {
+  const result = await scanUsageAdapters(resolveUsageSourceDirs(os.homedir(), process.env), previous)
+  const claudeQuota = await claudeQuotaPoller.check()
+  return claudeQuota ? { ...result, quota: [claudeQuota] } : result
+})
+// Varredura periódica barata (incremental e limitada); falhas são silenciosas.
+const usageScanTimer = setInterval(() => {
+  void usageStore.refreshNow().catch(() => undefined)
+}, 60_000)
+
+// Sessões de uso: terminais com provider (start → exit) para a duração.
+const usageSessions = new Map<string, { provider: string; startedAt: number }>()
+
+function beginUsageSession(terminalId: string, provider: string): void {
+  const existing = usageSessions.get(terminalId)
+  if (existing) {
+    // Turno novo no mesmo terminal NÃO reinicia o relógio da sessão; só
+    // corrige o provider se o nó mudou de executor no meio da sessão.
+    existing.provider = provider
+    return
+  }
+  usageSessions.set(terminalId, { provider, startedAt: Date.now() })
+}
+
+function endUsageSession(terminalId: string): void {
+  const session = usageSessions.get(terminalId)
+  if (!session) return
+  usageSessions.delete(terminalId)
+  void usageStore.recordUsageEvents([{
+    kind: 'session',
+    at: new Date().toISOString(),
+    terminalId,
+    provider: session.provider,
+    durationMs: Math.max(0, Date.now() - session.startedAt),
+  }]).catch(() => undefined)
+}
+
+/** Fecha todas as sessões pendentes (teardown mata os PTYs sem evento de exit). */
+function endAllUsageSessions(): void {
+  for (const terminalId of Array.from(usageSessions.keys())) endUsageSession(terminalId)
+}
+
+onTerminalEvent((event) => {
+  if (event.type === 'exit') endUsageSession(event.id)
+})
+
 const otlpExporter = createOtlpExporter(readOtlpOptionsFromEnv())
 const telemetry = new Telemetry({
   onSpanEnd: (span) => {
@@ -509,6 +569,7 @@ if (isSmokeRun) {
 }
 
 app.on('before-quit', () => {
+  clearInterval(usageScanTimer)
   void stopShadowRoutingMetrics()
   orchestrationService.stop()
   if (providerReadinessTimer) {
@@ -521,6 +582,7 @@ app.on('before-quit', () => {
   cancelAllMemoryCompactions()
   void disposeProjectHybridMemory()
   void evolutionStore.disposeAsync()
+  void usageStore.close()
 })
 
 app.on('window-all-closed', () => {
@@ -583,6 +645,11 @@ function setupIpcHandlers() {
     turnSessions,
     waitTurnResult,
     waitTerminalReady,
+    usage: {
+      recordUsageEvents: (events) => usageStore.recordUsageEvents(events),
+      beginUsageSession,
+      endUsageSession,
+    },
   })
 
   registerWebIpc(registerIpcHandler, { getWindow: () => mainWindow })
@@ -595,6 +662,9 @@ function setupIpcHandlers() {
     onRealUsage: (usage) => {
       void orchestrationService.reportCodexUsage(usage).catch(() => undefined)
     },
+    usage: {
+      recordUsageEvents: (events) => usageStore.recordUsageEvents(events),
+    },
   })
 
   registerObservabilityIpc(registerIpcHandler, {
@@ -602,6 +672,7 @@ function setupIpcHandlers() {
     telemetry,
     hitl: hitlManager,
     sanitizeHitlRequest,
+    usageStore,
   })
 
   registerOrchestrationIpc(registerIpcHandler, { service: orchestrationService })

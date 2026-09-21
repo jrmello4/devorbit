@@ -20,6 +20,8 @@ import type { EvolutionRecord } from '../../shared/evolution-history'
 import type { HybridMemoryKind, HybridMemoryWrite } from '../../shared/hybrid-memory-contract'
 import type { LlmCompletionRequestView } from '../../shared/llm-contract'
 import type { TextSearchRequest, TextSearchResult } from '../../shared/text-search-contract'
+import type { UsageEvent } from '../../shared/usage-contract'
+import type { UsageStore } from '../usage-store'
 import type { IpcRegistrar } from './registrar'
 
 export interface ObservabilityIpcDependencies {
@@ -27,6 +29,7 @@ export interface ObservabilityIpcDependencies {
   telemetry: Telemetry
   hitl: HITLManager
   sanitizeHitlRequest: (request: HitlRequest) => HitlRequest
+  usageStore: UsageStore
 }
 
 const DIAGNOSTIC_COMMANDS = new Set(['git', 'git.exe', 'npm', 'npm.cmd', 'node', 'node.exe', 'rg', 'rg.exe'])
@@ -52,8 +55,46 @@ export function validateDiagnosticRequest(input: unknown): DiagnosticProcessRequ
   }
 }
 
+/** Sequência em-processo: duas completions idênticas no mesmo milissegundo
+ * não podem colidir no dedupeKey (a segunda seria descartada como duplicata). */
+let llmUsageSequence = 0
+
+/**
+ * Registro de tokens do roteador LLM interno — sempre best-effort: a resposta
+ * da completion segue intacta mesmo se o store de uso falhar.
+ */
+function recordLlmRouterUsage(usageStore: UsageStore, result: {
+  ok: boolean
+  provider?: string
+  completion?: { model: string; usage: { inputTokens: number; outputTokens: number } }
+  attempts: readonly { provider: string; status: string }[]
+}): void {
+  try {
+    if (!result.ok || !result.completion) return
+    const usage = result.completion.usage
+    if (!usage || typeof usage.inputTokens !== 'number' || typeof usage.outputTokens !== 'number') return
+    const provider = result.provider
+      ?? [...result.attempts].reverse().find((attempt) => attempt.status === 'success')?.provider
+    if (!provider) return
+    const at = new Date().toISOString()
+    const event: UsageEvent = {
+      kind: 'tokens',
+      at,
+      source: 'llm-router',
+      provider,
+      model: result.completion.model,
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      dedupeKey: `llm:${llmUsageSequence++}:${provider}:${result.completion.model}`,
+    }
+    void usageStore.recordUsageEvents([event]).catch(() => undefined)
+  } catch {
+    // Uso é telemetria: nunca propaga erro para o chamador da completion.
+  }
+}
+
 export function registerObservabilityIpc(register: IpcRegistrar, dependencies: ObservabilityIpcDependencies): void {
-  const { evolutionStore, telemetry, hitl } = dependencies
+  const { evolutionStore, telemetry, hitl, usageStore } = dependencies
 
   register('devorbit:getProjectAudit', async (_event, projectPath: string) => {
     const snapshot = await auditProject(await validateProjectPath(projectPath))
@@ -136,7 +177,9 @@ export function registerObservabilityIpc(register: IpcRegistrar, dependencies: O
     }
     if (value.maxOutputTokens !== undefined && (typeof value.maxOutputTokens !== 'number' || !Number.isInteger(value.maxOutputTokens) || value.maxOutputTokens < 1 || value.maxOutputTokens > 32_000)) throw new Error('Limite de saída LLM inválido.')
     const request = value as unknown as LlmCompletionRequestView
-    return await completeLlm(await loadConfig(), request)
+    const result = await completeLlm(await loadConfig(), request)
+    recordLlmRouterUsage(usageStore, result)
+    return result
   })
 
   register('devorbit:searchProjectText', async (_event, input: unknown): Promise<TextSearchResult> => {
@@ -168,4 +211,9 @@ export function registerObservabilityIpc(register: IpcRegistrar, dependencies: O
     if (reason !== undefined && typeof reason !== 'string') throw new Error('Motivo de rejeição inválido.')
     return dependencies.sanitizeHitlRequest(hitl.reject(id, reason === undefined ? {} : { reason }))
   })
+
+  // Uso por modelo: leitura da agregação e refresh explícito (scanner incluso).
+  register('devorbit:getUsageShare', async () => usageStore.getUsageShare())
+
+  register('devorbit:refreshUsage', async () => usageStore.refreshNow())
 }

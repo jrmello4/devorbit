@@ -15,17 +15,88 @@ import { validateProjectPath } from '../project-paths'
 import { downloadUpdate, getUpdateState, installUpdate } from '../updater'
 import { getRealUsage } from '../usage-real'
 import { testToolPath, validateCodexAccount } from '../validation'
+import { validateConfigUpdates } from '../validation'
+import type { UsageEvent } from '../../shared/usage-contract'
 import type { IpcRegistrar } from './registrar'
 import type { AppConfig, RealUsageState } from '../../renderer/src/types'
+
+/** Ponto de injeção do registro de uso (quota Codex) — opcional e best-effort. */
+export interface UsageQuotaRecorder {
+  recordUsageEvents: (events: UsageEvent[]) => Promise<void>
+}
 
 export interface ConfigIpcDependencies {
   getWindow: () => BrowserWindow | null
   sendCodexAuthProgress: (progress: CodexAuthProgress) => void
   /** Alimenta a continuidade com a quota OAuth real do Codex (por conta). */
   onRealUsage?: (usage: RealUsageState) => void
+  usage?: UsageQuotaRecorder
+}
+
+/**
+ * Converte as métricas de uma conta Codex em um evento de quota do store de
+ * uso. Só contas 'ready' com janelas geram snapshot — um evento vazio de conta
+ * com erro apagaria o último snapshot válido (agregação é latest-wins).
+ */
+function quotaEventsFromRealUsage(state: RealUsageState): UsageEvent[] {
+  const events: UsageEvent[] = []
+  for (const accountKey of ['account1', 'account2'] as const) {
+    const account = state.accounts[accountKey]
+    if (!account || account.status !== 'ready' || !Array.isArray(account.metrics) || account.metrics.length === 0) continue
+    const windows = account.metrics
+      .filter((metric) => typeof metric.id === 'string' && metric.id.trim() && typeof metric.label === 'string')
+      .map((metric) => ({
+        id: metric.id,
+        label: metric.label,
+        // Clamp em 0..100: percentual fora da faixa derrubaria o evento
+        // INTEIRO na validação do store (e com ele a outra conta).
+        ...(typeof metric.percent === 'number' && Number.isFinite(metric.percent)
+          ? { percent: Math.max(0, Math.min(100, Math.round(metric.percent * 10) / 10)) }
+          : {}),
+        ...(typeof metric.resetAt === 'number' && Number.isFinite(metric.resetAt) ? { resetAt: new Date(metric.resetAt).toISOString() } : {}),
+      }))
+      .filter((window) => window.percent !== undefined || window.resetAt !== undefined)
+    // Conta sem janelas válidas não gera evento: latest-wins apagaria o
+    // último snapshot bom dessa conta.
+    if (windows.length === 0) continue
+    events.push({
+      kind: 'quota',
+      at: state.fetchedAt,
+      provider: 'codex',
+      accountId: accountKey,
+      windows,
+    })
+  }
+  return events
+}
+
+/**
+ * Grava os snapshots de quota — apenas em fetch fresco. O cache de 30s do
+ * getRealUsage devolve o MESMO fetchedAt; dedupe por fetchedAt cobre tanto o
+ * cache quanto o join da requisição em voo. Best-effort, sem lançar.
+ */
+function recordCodexQuotaUsage(
+  usage: UsageQuotaRecorder | undefined,
+  lastRecordedFetchedAt: { value?: string },
+  state: RealUsageState,
+): void {
+  if (!usage) return
+  try {
+    if (typeof state?.fetchedAt !== 'string' || state.fetchedAt.length === 0) return
+    if (state.fetchedAt === lastRecordedFetchedAt.value) return
+    const events = quotaEventsFromRealUsage(state)
+    if (events.length === 0) return
+    lastRecordedFetchedAt.value = state.fetchedAt
+    void usage.recordUsageEvents(events).catch(() => undefined)
+  } catch {
+    // Uso é telemetria: nunca propaga erro para o chamador do getRealUsage.
+  }
 }
 
 export function registerConfigIpc(register: IpcRegistrar, dependencies: ConfigIpcDependencies): void {
+  // fetchedAt muda só em fetch fresco: cache hit devolve o mesmo valor.
+  const lastRecordedQuotaFetchedAt: { value?: string } = {}
+
   register('devorbit:copyProjectContext', async (_event, projectPath: string) => {
     return await copyProjectContext(await validateProjectPath(projectPath))
   })
@@ -138,6 +209,7 @@ export function registerConfigIpc(register: IpcRegistrar, dependencies: ConfigIp
     } catch {
       // A telemetria de continuidade nunca quebra a leitura de uso.
     }
+    recordCodexQuotaUsage(dependencies.usage, lastRecordedQuotaFetchedAt, usage)
     return usage
   })
 }

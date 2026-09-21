@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import type { AgentBridgeEvent } from '../../../shared/agent-bridge-event'
 import type { AgentProvider, AgentProviderId, AutomationConfig, CodexAccountStatus, Project, ToolHealth, WebPanelEvent } from '../types'
+import type { CustomTerminalPreset } from '../../../shared/terminal-presets'
 import type { PendingCanvasNode, WorkspaceUiRequest } from './workspace-request-helpers'
 import { applyWorkspaceUiRequest, computePipeSync, computeStreamingPipeEdges, isPendingNodeForProject } from './workspace-request-helpers'
 import { createPipeCallQueue } from './pipe-ipc-queue'
@@ -30,6 +31,8 @@ interface IntegratedWorkspaceProps {
   onPendingCanvasNodeConsumed?: (nonce: number) => void
   automation?: AutomationConfig | null
   onCanvasModeChange?: (projectId: string, active: boolean) => void
+  /** Presets de terminal personalizados vindos do config.json (Smart Terminals). */
+  terminalPresets?: readonly CustomTerminalPreset[]
 }
 interface WorkspaceLayout {
   rightWidth: number
@@ -86,7 +89,7 @@ export function agentTerminalId(projectId: string, nodeId: string): string {
 export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
   project, onClose, onNotify, codexAccount = 'account1', codexAuthStatus = null, isWebSuppressed = false, isSuspended = false, onRequestCodexAuth, onDirtyChange, onCanvasFocusChange,
   uiRequest = null, onUiRequestConsumed, pendingCanvasNode = null, onPendingCanvasNodeConsumed, automation = null,
-  onCanvasModeChange,
+  onCanvasModeChange, terminalPresets,
 }) => {
   const [webUrl, setWebUrl] = useState('https://www.google.com/')
   const [webTitle, setWebTitle] = useState('Navegador')
@@ -130,6 +133,12 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
   }, [onNotify, onPendingCanvasNodeConsumed, pendingCanvasNode, project.id])
   const [agentProviders, setAgentProviders] = useState<AgentProvider[]>([])
   const [agentWorktrees, setAgentWorktrees] = useState<Record<string, { path: string; branch: string }>>({})
+  // Presets personalizados: espelho local do config para que "Salvar como
+  // preset" apareça nos chips imediatamente, sem esperar o App recarregar.
+  const [customPresets, setCustomPresets] = useState<readonly CustomTerminalPreset[]>(terminalPresets ?? [])
+  useEffect(() => {
+    setCustomPresets(terminalPresets ?? [])
+  }, [terminalPresets])
   const appliedPipesRef = useRef<Map<string, Set<string>>>(new Map())
   // Fila seriada por origem: clear -> add sempre nessa ordem observável,
   // mesmo sob mudanças rápidas de fanout.
@@ -537,7 +546,7 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
       </header>
       )}
 
-      {isCanvas ? <WorkspaceCanvas project={project} workbench={canvasWorkbench} browser={layout.webVisible ? canvasBrowser : undefined} codexAuthStatus={codexAuthStatus} onRequestCodexAuth={onRequestCodexAuth} agentProviders={agentProviders} defaultExecutor={automation?.defaultExecutor ?? null} onSendAgentTask={queueAgentTask} onCreateAgentWorktree={(node) => void isolateAgent(node)} onSelectionChange={onCanvasFocusChange} onConnectionsChange={syncCanvasPipes} pendingNodeRequest={pendingCanvasNode && isPendingNodeForProject(pendingCanvasNode, project.id) ? { kind: pendingCanvasNode.kind, nonce: pendingCanvasNode.nonce } : null} onPendingNodeConsumed={handlePendingCanvasNodeConsumed} onNotify={onNotify} renderAgent={(node: CanvasNode, onAgentResult, onAgentTaskFailure) => node.provider ? (<div className="canvas-agent-terminal"><div className="canvas-agent-review"><span>Worktree</span><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void reviewAgent(node)}>Alterações</button><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void mergeAgent(node)}>Integrar</button></div><WorkspaceTerminal projectPath={agentWorktrees[node.id]?.path || project.path} terminalId={agentTerminalId(project.id, node.id)} codexAccount={node.account} provider={node.provider} agentTask={agentTasks[node.id]} onAgentResult={onAgentResult} onAgentTaskFailure={onAgentTaskFailure} onNotify={onNotify} onRequestCodexAuth={onRequestCodexAuth} /></div>) : null} /> : <>
+      {isCanvas ? <WorkspaceCanvas project={project} workbench={canvasWorkbench} browser={layout.webVisible ? canvasBrowser : undefined} codexAuthStatus={codexAuthStatus} onRequestCodexAuth={onRequestCodexAuth} agentProviders={agentProviders} defaultExecutor={automation?.defaultExecutor ?? null} onSendAgentTask={queueAgentTask} onCreateAgentWorktree={(node) => void isolateAgent(node)} onSelectionChange={onCanvasFocusChange} onConnectionsChange={syncCanvasPipes} pendingNodeRequest={pendingCanvasNode && isPendingNodeForProject(pendingCanvasNode, project.id) ? { kind: pendingCanvasNode.kind, nonce: pendingCanvasNode.nonce } : null} onPendingNodeConsumed={handlePendingCanvasNodeConsumed} onNotify={onNotify} renderAgent={(node: CanvasNode, onAgentResult, onAgentTaskFailure) => node.provider ? (<div className="canvas-agent-terminal"><div className="canvas-agent-review"><span>Worktree</span><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void reviewAgent(node)}>Alterações</button><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void mergeAgent(node)}>Integrar</button></div><WorkspaceTerminal projectPath={agentWorktrees[node.id]?.path || project.path} terminalId={agentTerminalId(project.id, node.id)} codexAccount={node.account} provider={node.provider} agentTask={agentTasks[node.id]} onAgentResult={onAgentResult} onAgentTaskFailure={onAgentTaskFailure} onNotify={onNotify} onRequestCodexAuth={onRequestCodexAuth} /></div>) : null} terminalPresets={customPresets} onTerminalPresetsSaved={setCustomPresets} renderTerminal={(node: CanvasNode) => (<div className="canvas-agent-terminal"><WorkspaceTerminal projectPath={project.path} terminalId={agentTerminalId(project.id, node.id)} codexAccount={codexAccount} provider={primaryProvider} runtimeConfig={node.terminal} customPresets={customPresets} onNotify={onNotify} onRequestCodexAuth={onRequestCodexAuth} /></div>)} /> : <>
       <div className="workspace-editor-stack">
         <WorkspaceEditor
           projectPath={project.path}

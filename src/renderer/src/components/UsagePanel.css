@@ -948,6 +948,203 @@
   }
 }
 
+/* Uso por modelo (usage share por modelo/janela) */
+.usage-share-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.usage-share-segmented {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 6px;
+  background: var(--color-bg-panel);
+}
+
+.usage-share-segmented button {
+  min-height: 26px;
+  padding: 3px 10px;
+  border: 0;
+  border-right: 1px solid var(--color-border-subtle);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.usage-share-segmented button:last-child {
+  border-right: 0;
+}
+
+.usage-share-segmented button:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.usage-share-segmented button[aria-pressed='true'] {
+  background: var(--surface-selected);
+  color: var(--color-accent-strong);
+}
+
+.usage-share-segmented button:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+.usage-share-note {
+  margin: 0;
+  padding: 14px 16px;
+  border: 1px dashed var(--color-border-subtle);
+  border-radius: 7px;
+  background: var(--surface-muted);
+  color: var(--color-text-muted);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.usage-share-rows {
+  display: grid;
+  gap: 10px;
+}
+
+.usage-share-row {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 7px;
+  background: var(--color-bg-panel);
+}
+
+.usage-share-row-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.usage-share-model {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 12.5px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-share-provider {
+  flex-shrink: 0;
+  padding: 1px 5px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 4px;
+  background: var(--surface-selected);
+  color: var(--color-accent-strong);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.usage-share-tokens {
+  flex: 1;
+  text-align: right;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.usage-share-percent {
+  flex-shrink: 0;
+  color: var(--color-accent-strong);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.usage-share-bar {
+  height: 5px;
+  margin-top: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--surface-muted);
+}
+
+.usage-share-bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-accent);
+}
+
+.usage-share-row-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 4px;
+  color: var(--color-text-muted);
+  font-size: 10.5px;
+}
+
+.usage-share-quota {
+  margin-top: 14px;
+}
+
+.usage-share-quota h3 {
+  margin: 0 0 8px;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.usage-share-chips {
+  display: grid;
+  gap: 6px;
+}
+
+.usage-share-chip {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 6px;
+  background: var(--color-bg-panel);
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.usage-share-chip-account {
+  color: var(--text-primary);
+  font-weight: 650;
+}
+
+.usage-share-chip-windows {
+  min-width: 0;
+}
+
+.usage-share-chip-reset {
+  margin-left: auto;
+  color: var(--color-text-secondary);
+}
+
+.usage-share-footer {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 12px;
+  color: var(--color-text-muted);
+  font-size: 10.5px;
+}
+
 /* Responsive Rules for 1366x768 and 1920x1080 */
 @media (max-width: 850px) {
   .usage-shell {
@@ -988,6 +1185,15 @@
   .usage-header-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .usage-share-toolbar {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .usage-share-chip-reset {
+    margin-left: 0;
   }
 
   .usage-button--primary {

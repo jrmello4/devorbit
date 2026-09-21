@@ -345,6 +345,23 @@
 .terminal-status i { width: 6px; height: 6px; border-radius: 50%; background: var(--color-text-muted); }
 .terminal-status.ready i { background: var(--color-success); }
 .terminal-status.error i { background: var(--color-danger); }
+.terminal-status.missing { color: var(--color-danger); }
+.terminal-status.missing i { background: var(--color-danger); }
+/* Smart Terminals: chip de atividade (texto carrega o estado — DESIGN.md). */
+.terminal-activity { display: inline-flex; align-items: center; gap: 5px; color: var(--color-text-muted); font-size: 10px; white-space: nowrap; }
+.terminal-activity i { width: 6px; height: 6px; border-radius: 50%; background: var(--color-text-muted); flex: 0 0 auto; }
+.terminal-activity.activity-running { color: var(--color-success); }
+.terminal-activity.activity-running i { background: var(--color-success); }
+.terminal-activity.activity-waiting { color: var(--color-warning); }
+.terminal-activity.activity-waiting i { background: var(--color-warning); }
+.terminal-activity.activity-attention { color: var(--color-danger); }
+.terminal-activity.activity-attention i { background: var(--color-danger); }
+.terminal-activity.activity-exited { color: var(--color-accent-strong); }
+.terminal-activity.activity-exited i { background: var(--color-accent-strong); }
+.terminal-activity.activity-failed { color: var(--color-danger); }
+.terminal-activity.activity-failed i { background: var(--color-danger); }
+.terminal-activity.activity-idle { color: var(--color-text-muted); }
+.terminal-activity.activity-idle i { background: var(--color-text-muted); }
 .workspace-terminal-form {
   display: flex;
   align-items: center;

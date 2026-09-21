@@ -20,6 +20,7 @@ import {
   loadConfig,
   saveConfig,
 } from '../src/main/config'
+import type { CustomTerminalPreset } from '../src/shared/terminal-presets'
 
 let temporaryUserData = ''
 
@@ -293,5 +294,67 @@ describe('config persistence hardening', () => {
       })
     )
     expect((await loadConfig()).automation).toBeUndefined()
+  })
+
+  it('round-trips terminalPresets through save/load/export/import', async () => {
+    const presets: CustomTerminalPreset[] = [
+      {
+        id: 'custom:dev-server',
+        name: 'Servidor de dev',
+        command: 'npm',
+        args: ['run', 'dev'],
+        resumeCommand: 'npm',
+        resumeArgs: ['run', 'dev'],
+        defaultAutoStart: true,
+        defaultMonitorActivity: true,
+        defaultRestartBehavior: 'resume',
+      },
+      { id: 'custom:lint', name: 'Lint', command: 'npm', args: ['run', 'lint'] },
+    ]
+    const saved = await saveConfig({ projectDirs: [], terminalPresets: presets })
+    expect(saved.terminalPresets).toEqual(presets)
+
+    const loaded = await loadConfig()
+    expect(loaded.terminalPresets).toEqual(presets)
+
+    // A lista é trocada por inteiro: salvar de novo substitui os presets.
+    const replaced = await saveConfig({ terminalPresets: [presets[1]] })
+    expect(replaced.terminalPresets).toEqual([presets[1]])
+
+    const imported = await importConfigJson(await exportConfigJson())
+    expect(imported.terminalPresets).toEqual([presets[1]])
+  })
+
+  it('drops malformed terminalPresets entries on load', async () => {
+    await fs.writeFile(
+      path.join(temporaryUserData, 'config.json'),
+      JSON.stringify({
+        terminalPresets: [
+          { id: 'sem-prefixo', name: 'Sem prefixo', command: 'x' },
+          { id: 'custom:ok', name: 'Ok', command: 'ok.exe' },
+          { id: 'custom:ok', name: 'Duplicado', command: 'dup.exe' },
+          { id: 'custom:sempreset', name: 'Sem comando' },
+          { id: 'custom:comando', name: 'Comando ruim', command: 'npm%injection' },
+          'preset',
+        ],
+      })
+    )
+    expect((await loadConfig()).terminalPresets).toEqual([
+      { id: 'custom:ok', name: 'Ok', command: 'ok.exe' },
+    ])
+  })
+
+  it('preserves terminalPresets when saving unrelated keys and clears on empty list', async () => {
+    const preset = { id: 'custom:dev-server', name: 'Servidor de dev', command: 'npm' }
+    await saveConfig({ terminalPresets: [preset] })
+    await saveConfig({ chatGptAccount1Name: 'Minha Conta' })
+    expect((await loadConfig()).terminalPresets).toEqual([preset])
+    expect((await loadConfig()).chatGptAccount1Name).toBe('Minha Conta')
+
+    // Lista vazia explícita limpa os presets (chave some do arquivo).
+    const cleared = await saveConfig({ terminalPresets: [] })
+    expect(cleared.terminalPresets).toBeUndefined()
+    expect((await loadConfig()).terminalPresets).toBeUndefined()
+    expect(JSON.parse(await fs.readFile(path.join(temporaryUserData, 'config.json'), 'utf-8')).terminalPresets).toBeUndefined()
   })
 })

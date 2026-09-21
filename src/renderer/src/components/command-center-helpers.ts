@@ -8,6 +8,7 @@ export type NavigateActionId =
 
 export type CreateActionId =
   | 'create-agent-terminal'
+  | 'create-terminal'
   | 'create-note'
   | 'create-branch'
   | 'create-project'
@@ -34,6 +35,7 @@ export const NAVIGATE_BINDINGS: TwoStrokeBinding[] = [
 
 export const CREATE_BINDINGS: TwoStrokeBinding[] = [
   { prefix: 'c', key: 't', action: 'create-agent-terminal', label: 'Novo terminal de agente', hint: 'C then T' },
+  { prefix: 'c', key: 'd', action: 'create-terminal', label: 'Novo terminal com preset', hint: 'C then D' },
   { prefix: 'c', key: 's', action: 'create-squad', label: 'Novo squad de agentes', hint: 'C then S' },
   { prefix: 'c', key: 'n', action: 'create-note', label: 'Nova nota Markdown', hint: 'C then N' },
   { prefix: 'c', key: 'b', action: 'create-branch', label: 'Nova branch Git', hint: 'C then B' },

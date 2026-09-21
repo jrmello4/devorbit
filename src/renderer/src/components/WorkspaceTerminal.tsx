@@ -1,9 +1,11 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal as XTerm } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
-import { Code2, Globe, RefreshCw, Terminal as TerminalIcon } from 'lucide-react'
+import { Code2, Eraser, Globe, RefreshCw, Terminal as TerminalIcon } from 'lucide-react'
 import type { AgentProviderId, TerminalEvent } from '../types'
+import type { CustomTerminalPreset, ResolvedTerminalLaunch, TerminalNodeRuntimeConfig } from '../../../shared/terminal-presets'
+import { resolveTerminalLaunch } from '../../../shared/terminal-presets'
 import { createAgentResultScanner, createLegacyAgentResult, type AgentResult } from '../../../shared/agent-result'
 import { canReuseCodexSession } from '../../../shared/codex-session'
 import {
@@ -16,6 +18,8 @@ import {
   takeAgentTaskResult,
   type AgentTaskDeliveryClaim,
 } from './agent-task-delivery'
+import { TERMINAL_ACTIVITY_LABELS, createTerminalActivityMonitor, type TerminalActivityEvent, type TerminalActivityState } from './terminal-activity'
+import { selectTerminalCommand } from './terminal-node-helpers'
 
 interface WorkspaceTerminalProps {
   projectPath: string
@@ -28,6 +32,10 @@ interface WorkspaceTerminalProps {
   autoStart?: boolean
   /** Conta Codex padrão quando o executor automático é o Codex. */
   autoStartCodexAccount?: 'account1' | 'account2'
+  /** Config de Smart Terminal do nó do canvas; ausente = comportamento legado. */
+  runtimeConfig?: TerminalNodeRuntimeConfig
+  /** Presets personalizados do usuário, para resolver presets custom apagáveis. */
+  customPresets?: readonly CustomTerminalPreset[]
   agentTask?: { id: string; prompt: string }
   onAgentResult?: (result: AgentResult, taskId?: string) => void
   onAgentTaskFailure?: (taskId: string, message: string) => void
@@ -65,6 +73,8 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
   provider,
   autoStart = false,
   autoStartCodexAccount,
+  runtimeConfig,
+  customPresets,
   agentTask,
   onAgentResult,
   onAgentTaskFailure,
@@ -108,8 +118,43 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
   const [terminalMode, setTerminalMode] = useState<TerminalMode>('shell')
   const [isStartingCodex, setIsStartingCodex] = useState(false)
   const [lastDetectedUrl, setLastDetectedUrl] = useState('')
+  const [missingPreset, setMissingPreset] = useState(false)
+  const [activityState, setActivityState] = useState<TerminalActivityState>('starting')
   const terminalStateRef = useRef<TerminalState>(terminalState)
   terminalStateRef.current = terminalState
+
+  // Smart Terminals: plano de start resolvido da config do nó. Ausente = todos
+  // os caminhos legado (shell/agente) permanecem exatamente como antes.
+  const launch = useMemo(
+    () => (runtimeConfig ? resolveTerminalLaunch(runtimeConfig, customPresets ?? []) : null),
+    [runtimeConfig, customPresets],
+  )
+  const launchRef = useRef<ResolvedTerminalLaunch | null>(launch)
+  launchRef.current = launch
+  const runtimeConfigRef = useRef<TerminalNodeRuntimeConfig | undefined>(runtimeConfig)
+  runtimeConfigRef.current = runtimeConfig
+  const monitorActivity = Boolean(runtimeConfig?.monitorActivity)
+  const monitorActivityRef = useRef(monitorActivity)
+  monitorActivityRef.current = monitorActivity
+  const activityMonitorRef = useRef(createTerminalActivityMonitor())
+  const pushActivity = useCallback((event: TerminalActivityEvent) => {
+    if (!monitorActivityRef.current) return
+    activityMonitorRef.current.push(event)
+    setActivityState(activityMonitorRef.current.snapshot())
+  }, [])
+  const resetActivity = useCallback(() => {
+    activityMonitorRef.current.reset()
+    setActivityState('starting')
+  }, [])
+  // Transições temporais (running → waiting → idle) sem novo evento: snapshot
+  // periódico do monitor; o custo é irrisório e só existe com chip visível.
+  useEffect(() => {
+    if (!monitorActivity) return
+    const timer = window.setInterval(() => {
+      setActivityState(activityMonitorRef.current.snapshot())
+    }, 4000)
+    return () => window.clearInterval(timer)
+  }, [monitorActivity])
 
   const reportTaskFailure = useCallback((taskId: string, message: string) => {
     if (reportedTaskFailuresRef.current.has(taskId)) return
@@ -186,15 +231,23 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
     resultScannerRef.current.reset()
     invalidResultRef.current = null
     lastSentDimsRef.current = null
+    setMissingPreset(false)
+    resetActivity()
     setTerminalMode('shell')
     setTerminalState('starting')
     try {
       const dims = currentDimensions(terminalRef.current)
+      // Smart Terminal shell: respeita "Diretório próprio". Sem runtimeConfig
+      // (workbench/legado) nenhuma option é enviada — chamada idêntica à antiga.
+      const runtime = runtimeConfigRef.current
+      const shellCwd = runtime?.cwdMode === 'custom' && runtime.cwd ? runtime.cwd : undefined
+      const shellOptions = shellCwd ? { cwd: shellCwd } : undefined
       const result = await window.devorbit.startTerminal(
         terminalId,
         projectPath,
         dims?.cols,
         dims?.rows,
+        ...(shellOptions ? [shellOptions] : []),
       )
       if (startToken === terminalStartTokenRef.current) {
         terminalRef.current?.clear()
@@ -211,7 +264,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
       onNotifyRef.current('Não foi possível iniciar o terminal interno: ' + message, 'error')
       return null
     }
-  }, [projectPath, scheduleFitFrame, terminalId])
+  }, [projectPath, resetActivity, scheduleFitFrame, terminalId])
 
   const startCodex = useCallback(async (accountOverride?: 'account1' | 'account2') => {
     const account = accountOverride ?? codexAccount
@@ -226,6 +279,8 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
     resultScannerRef.current.reset()
     invalidResultRef.current = null
     lastSentDimsRef.current = null
+    setMissingPreset(false)
+    resetActivity()
     setIsStartingCodex(true)
     setTerminalState('starting')
     const readySignal = waitForTerminalData()
@@ -284,18 +339,21 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
       readySignal.cancel()
       setIsStartingCodex(false)
     }
-  }, [codexAccount, projectPath, scheduleFitFrame, scheduleFitTimeout, terminalId, waitForTerminalData])
+  }, [codexAccount, projectPath, resetActivity, scheduleFitFrame, scheduleFitTimeout, terminalId, waitForTerminalData])
 
-  const startAgent = useCallback(async (task?: string) => {
-    if (provider === 'codex') return startCodex()
+  const startAgent = useCallback(async (task?: string, providerOverride?: AgentProviderId) => {
+    const effectiveProvider = providerOverride ?? provider
+    if (effectiveProvider === 'codex') return startCodex()
     const startToken = ++terminalStartTokenRef.current
     terminalModeRef.current = 'agent'
-    activeProviderRef.current = provider
+    activeProviderRef.current = effectiveProvider
     activeCodexAccountRef.current = null
     outputSnapshotRef.current = ''
     resultScannerRef.current.reset()
     invalidResultRef.current = null
     lastSentDimsRef.current = null
+    setMissingPreset(false)
+    resetActivity()
     setIsStartingCodex(true)
     setTerminalState('starting')
     const readySignal = waitForTerminalData()
@@ -303,7 +361,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
       const result = await window.devorbit.startAgentTerminal(
         terminalId,
         projectPath,
-        provider,
+        effectiveProvider,
         terminalRef.current?.cols,
         terminalRef.current?.rows,
         task,
@@ -347,7 +405,74 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
       readySignal.cancel()
       setIsStartingCodex(false)
     }
-  }, [projectPath, provider, startCodex, terminalId, waitForTerminalData])
+  }, [projectPath, provider, resetActivity, startCodex, terminalId, waitForTerminalData])
+
+  // Smart Terminal do tipo comando: inicia o processo com o comando/argumentos
+  // primários do preset. O comando de retomada (resume) só entra quando
+  // `allowResume` — Reinício explícito com restartBehavior 'resume' — nunca no
+  // primeiro start (mount/auto-start). O cwd próprio só é enviado quando a
+  // config do nó pede (cwdMode === 'custom').
+  const startCommand = useCallback(async (resolved: ResolvedTerminalLaunch, allowResume = false) => {
+    const selection = selectTerminalCommand(resolved, allowResume)
+    const command = selection.command
+    if (!command) return null
+    const args = selection.args
+    const runtime = runtimeConfigRef.current
+    const options: { command?: string; args?: string[]; cwd?: string } = {
+      command,
+      ...(args?.length ? { args } : {}),
+      ...(runtime?.cwdMode === 'custom' && runtime.cwd ? { cwd: runtime.cwd } : {}),
+    }
+    const startToken = ++terminalStartTokenRef.current
+    terminalModeRef.current = 'shell'
+    activeProviderRef.current = null
+    activeCodexAccountRef.current = null
+    outputSnapshotRef.current = ''
+    resultScannerRef.current.reset()
+    invalidResultRef.current = null
+    lastSentDimsRef.current = null
+    setMissingPreset(false)
+    resetActivity()
+    setTerminalMode('shell')
+    setTerminalState('starting')
+    try {
+      const dims = currentDimensions(terminalRef.current)
+      const result = await window.devorbit.startTerminal(terminalId, projectPath, dims?.cols, dims?.rows, options)
+      if (startToken === terminalStartTokenRef.current) {
+        terminalRef.current?.clear()
+        terminalRef.current?.writeln('\x1b[90m' + resolved.label + ' iniciado.\x1b[0m')
+        setTerminalState('ready')
+        scheduleFitFrame(() => fitTerminalRef.current())
+      }
+      return result
+    } catch (error) {
+      if (startToken !== terminalStartTokenRef.current) return null
+      setTerminalState('error')
+      const message = error instanceof Error ? error.message : String(error)
+      terminalRef.current?.writeln('\r\n\x1b[31m[erro ao iniciar: ' + message + ']\x1b[0m')
+      onNotifyRef.current('Não foi possível iniciar o terminal: ' + message, 'error')
+      return null
+    }
+  }, [projectPath, resetActivity, scheduleFitFrame, terminalId])
+
+  // Executa o plano resolvido do Smart Terminal: shell, provider (Codex usa a
+  // conta conectada; demais provedores o caminho comum de agente) ou comando
+  // direto. Preset ausente/comando vazio não inicia: o chip de status avisa e
+  // o Reiniciar continua habilitado para tentar de novo após o ajuste.
+  const startResolved = useCallback(async (resolved: ResolvedTerminalLaunch, allowResume = false) => {
+    if (resolved.kind === 'shell') return startShell()
+    if (resolved.missing || (resolved.kind === 'command' && !resolved.command)) {
+      setMissingPreset(true)
+      setTerminalState('stopped')
+      terminalRef.current?.writeln('\r\n\x1b[31mPreset não encontrado. Ajuste a configuração do terminal e use Reiniciar.\x1b[0m')
+      return null
+    }
+    if (resolved.kind === 'provider') {
+      if (resolved.providerId === 'codex') return startCodex()
+      return startAgent(undefined, resolved.providerId)
+    }
+    return startCommand(resolved, allowResume)
+  }, [startAgent, startCodex, startCommand, startShell])
 
   useEffect(() => {
     autoStartRef.current = autoStart
@@ -433,6 +558,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
     const unsubscribe = window.devorbit.onTerminalEvent((event: TerminalEvent) => {
       if (event.id !== terminalId) return
       if (event.type === 'data' && event.data) {
+        pushActivity({ type: 'data' })
         // Streaming sem perda: cada chunk do PTY nativo é anexado ao snapshot
         // e escrito no xterm na mesma ordem de chegada.
         for (const waiter of Array.from(terminalDataWaitersRef.current)) waiter()
@@ -462,6 +588,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
       } else if (event.type === 'resize' && event.cols && event.rows) {
         lastSentDimsRef.current = { cols: event.cols, rows: event.rows }
       } else if (event.type === 'exit') {
+        pushActivity({ type: 'exit', code: event.code ?? null })
         for (const parsed of resultScannerRef.current.finish()) {
           if (parsed.kind === 'invalid') {
             invalidResultRef.current = invalidResultRef.current || parsed.reason
@@ -484,6 +611,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
             : 'O processo do agente foi encerrado antes de devolver um resultado.')
         }
       } else if (event.type === 'error') {
+        pushActivity({ type: 'error' })
         terminal.writeln('\r\n\x1b[31m[erro: ' + (event.data || 'falha desconhecida') + ']\x1b[0m')
         setTerminalState('error')
         const taskId = peekAgentTaskResult(terminalId)
@@ -494,12 +622,23 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
     let alive = true
     // Com executor automático configurado, o shell genérico não sobe: o efeito
     // de auto-start logo abaixo inicia o executor no mesmo PTY, sem sobrescrever
-    // a sessão e sem duplicar o processo.
-    if (!autoStartRef.current) {
+    // a sessão e sem duplicar o processo. Smart Terminals: kind shell mantém o
+    // start de hoje no mount; provider/command não sobem shell — o one-shot de
+    // auto-start cuida do lançamento (ou o cartão fica "Parado").
+    const resolvedLaunch = launchRef.current
+    const skipInitialShell = !resolvedLaunch
+      ? autoStartRef.current
+      : resolvedLaunch.kind !== 'shell'
+    if (!skipInitialShell) {
       const initialStartToken = ++terminalStartTokenRef.current
       terminalModeRef.current = 'shell'
       const initialDims = currentDimensions(terminal)
-      void window.devorbit.startTerminal(terminalId, projectPath, initialDims?.cols, initialDims?.rows)
+      // Smart Terminal shell com "Diretório próprio" também vale no mount;
+      // sem runtimeConfig (legado) nenhuma option é enviada.
+      const mountRuntime = resolvedLaunch ? runtimeConfigRef.current : undefined
+      const mountCwd = mountRuntime?.cwdMode === 'custom' && mountRuntime.cwd ? mountRuntime.cwd : undefined
+      const mountOptions = mountCwd ? { cwd: mountCwd } : undefined
+      void window.devorbit.startTerminal(terminalId, projectPath, initialDims?.cols, initialDims?.rows, ...(mountOptions ? [mountOptions] : []))
         .then(() => {
           if (!alive || initialStartToken !== terminalStartTokenRef.current || terminalModeRef.current !== 'shell') return
           terminal.writeln('\x1b[90mTerminal pronto · ' + projectPath + '\x1b[0m')
@@ -513,6 +652,15 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
           setTerminalState('error')
           onNotifyRef.current('Não foi possível iniciar o terminal interno: ' + message, 'error')
         })
+    } else if (resolvedLaunch) {
+      if (resolvedLaunch.missing || (resolvedLaunch.kind === 'command' && !resolvedLaunch.command)) {
+        setMissingPreset(true)
+        setTerminalState('stopped')
+        terminal.writeln('\x1b[31mPreset não encontrado. Ajuste a configuração do terminal e use Reiniciar.\x1b[0m')
+      } else if (!resolvedLaunch.autoStart) {
+        setTerminalState('stopped')
+        terminal.writeln('\x1b[90m' + resolvedLaunch.label + ' parado. Use Reiniciar para iniciar.\x1b[0m')
+      }
     }
 
     return () => {
@@ -536,15 +684,23 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
       lastSentDimsRef.current = null
       void window.devorbit.stopTerminal(terminalId)
     }
-  }, [projectPath, reportTaskFailure, scheduleFitFrame, scheduleFitTimeout, sendResize, terminalId])
+  }, [projectPath, pushActivity, reportTaskFailure, scheduleFitFrame, scheduleFitTimeout, sendResize, terminalId])
 
-  // Executor automático: uma vez por mount, no mesmo terminalId. Um restart
-  // manual depois é escolha do usuário (startShell) e não é desfeito aqui.
+  // Smart Terminal com auto-start: o lançamento resolvido acontece uma vez por
+  // mount (restauração do canvas conta como um mount novo). Sem auto-start, o
+  // cartão fica parado até o Reiniciar explícito.
   useEffect(() => {
+    const resolved = launchRef.current
+    if (resolved) {
+      if (!resolved.autoStart || autoStartedRef.current || resolved.kind === 'shell') return
+      autoStartedRef.current = true
+      void startResolved(resolved)
+      return
+    }
     if (!autoStartRef.current || autoStartedRef.current) return
     autoStartedRef.current = true
     void (provider === 'codex' ? startCodex(autoStartCodexAccount ?? codexAccount) : startAgent())
-  }, [autoStartCodexAccount, codexAccount, provider, startAgent, startCodex])
+  }, [autoStartCodexAccount, codexAccount, provider, startAgent, startCodex, startResolved])
 
   useEffect(() => {
     if (!agentTask) return
@@ -698,20 +854,48 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
 
   const restartTerminal = async () => {
     outputSnapshotRef.current = ''
-    await startShell()
+    const resolved = launchRef.current
+    // Reinício inteligente: sem Smart Terminal, shell puro como sempre. Com
+    // config, 'shell' continua shell puro; 'restart' relança o comando
+    // primário; só 'resume' com resumeCommand definido retoma a sessão
+    // anterior. Preset ausente mostra o aviso e mantém o botão habilitado para
+    // nova tentativa.
+    if (!resolved || resolved.restartBehavior === 'shell') {
+      await startShell()
+      return
+    }
+    await startResolved(resolved, resolved.restartBehavior === 'resume')
   }
+
+  const clearTerminal = () => {
+    outputSnapshotRef.current = ''
+    terminalRef.current?.clear()
+  }
+
+  const headingLabel = launch ? launch.label : 'Terminal interno'
+  const restartLabel = launch && launch.kind !== 'shell' ? 'Reiniciar ' + launch.label : 'Reiniciar terminal'
 
   return (
     <section className="workspace-terminal-panel" aria-label="Terminal interno">
       <div className="workspace-panel-heading terminal-heading">
         <div>
-          <strong><TerminalIcon size={14} aria-hidden="true" /> Terminal interno</strong>
-          <span className={'terminal-status ' + terminalState}>
+          <strong><TerminalIcon size={14} aria-hidden="true" /> {headingLabel}</strong>
+          <span className={'terminal-status ' + (missingPreset ? 'missing' : terminalState)}>
             <i />
-            {terminalState === 'ready' ? (terminalMode === 'codex' ? 'Codex ativo' : terminalMode === 'agent' ? providerLabels[provider] + ' ativo' : 'Pronto')
+            {missingPreset ? 'Preset não encontrado'
+              : terminalState === 'ready' ? (terminalMode === 'codex' ? 'Codex ativo' : terminalMode === 'agent' ? providerLabels[provider] + ' ativo' : 'Pronto')
               : terminalState === 'starting' ? 'Iniciando'
               : terminalState === 'error' ? 'Erro' : 'Encerrado'}
           </span>
+          {/* Chip de atividade: oculto enquanto não há processo (parado sem
+              ter iniciado); após exit mostra Concluído/Falhou. O texto carrega
+              o estado — cor é só reforço (DESIGN.md). */}
+          {monitorActivity && (terminalState !== 'stopped' || activityState !== 'starting') && (
+            <span className={'terminal-activity activity-' + activityState} role="status" aria-label="Atividade do terminal">
+              <i aria-hidden="true" />
+              {TERMINAL_ACTIVITY_LABELS[activityState]}
+            </span>
+          )}
         </div>
         <div className="terminal-actions">
           {lastDetectedUrl && (
@@ -724,21 +908,32 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
               <Globe size={13} aria-hidden="true" /><span>Abrir Web</span>
             </button>
           )}
+          {(!launch || launch.kind !== 'command') && (
+            <button
+              type="button"
+              className="workspace-tool-button terminal-codex-button"
+              onClick={() => void startCodex()}
+              disabled={!codexAccount || isStartingCodex || terminalState === 'starting'}
+              title={codexAccount ? 'Iniciar Codex com a conta ' + (codexAccount === 'account2' ? '2' : '1') : 'Configure a conta Codex deste agente para iniciar'}
+            >
+              <Code2 size={13} aria-hidden="true" /><span>{isStartingCodex ? 'Conectando…' : 'Codex'}</span>
+            </button>
+          )}
           <button
             type="button"
-            className="workspace-tool-button terminal-codex-button"
-            onClick={() => void startCodex()}
-            disabled={!codexAccount || isStartingCodex || terminalState === 'starting'}
-            title={codexAccount ? 'Iniciar Codex com a conta ' + (codexAccount === 'account2' ? '2' : '1') : 'Configure a conta Codex deste agente para iniciar'}
+            className="workspace-icon-button"
+            onClick={clearTerminal}
+            aria-label="Limpar terminal"
+            title="Limpar o conteúdo do terminal sem encerrar o processo"
           >
-            <Code2 size={13} aria-hidden="true" /><span>{isStartingCodex ? 'Conectando…' : 'Codex'}</span>
+            <Eraser size={14} aria-hidden="true" />
           </button>
           <button
             type="button"
             className="workspace-icon-button"
             onClick={() => void restartTerminal()}
-            aria-label="Reiniciar terminal"
-            title="Reiniciar terminal"
+            aria-label={restartLabel}
+            title={restartLabel}
           >
             <RefreshCw size={14} aria-hidden="true" />
           </button>

@@ -5,6 +5,7 @@ import electron from 'electron'
 const { app } = electron
 import type { AppConfig, ManagedProject, ModelRoutingConfig, ModelRoutingSecretKey } from '../renderer/src/types'
 import { MODEL_ROUTING_BASE_URL_KEYS, MODEL_ROUTING_SECRET_KEYS } from '../renderer/src/types'
+import { sanitizeCustomTerminalPresets } from '../shared/terminal-presets'
 import { isAgentProviderId, validateConfigUpdates } from './validation'
 
 const MAX_IMPORT_BYTES = 1_000_000
@@ -252,6 +253,7 @@ function normalizeConfig(value: unknown): AppConfig {
 
   const modelRouting = normalizeModelRouting(source.modelRouting)
   const automation = normalizeAutomation(source.automation)
+  const terminalPresets = sanitizeCustomTerminalPresets(source.terminalPresets)
   return {
     projectDirs: hasValidProjectDirList ? projectDirs : [...defaultConfig.projectDirs],
     managedProjects: normalizeManagedProjects(source.managedProjects),
@@ -269,6 +271,7 @@ function normalizeConfig(value: unknown): AppConfig {
     customPaths,
     ...(modelRouting ? { modelRouting } : {}),
     ...(automation ? { automation } : {}),
+    ...(terminalPresets ? { terminalPresets } : {}),
   }
 }
 
@@ -670,6 +673,13 @@ export async function saveConfig(updates: Partial<AppConfig>): Promise<AppConfig
         ? { automation: { ...current.automation, ...updates.automation } }
         : current.automation !== undefined
           ? { automation: current.automation }
+          : {}),
+      // terminalPresets troca a lista inteira (não funde por item): editar um
+      // preset é reescrever o array; `undefined` preserva o que já está salvo.
+      ...(updates.terminalPresets !== undefined
+        ? { terminalPresets: updates.terminalPresets }
+        : current.terminalPresets !== undefined
+          ? { terminalPresets: current.terminalPresets }
           : {}),
     })
 

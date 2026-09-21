@@ -713,7 +713,7 @@ export const App: React.FC = () => {
   // despachar evento síncrono seria perdido com notificação falsa.
   const handlePaletteCreate = useCallback((action: CreateActionId) => {
     const fallbackProject = activeWorkspaceProject || projects[0] || null
-    if (action === 'create-agent-terminal' || action === 'create-squad' || action === 'create-note') {
+    if (action === 'create-agent-terminal' || action === 'create-squad' || action === 'create-note' || action === 'create-terminal') {
       if (!fallbackProject) {
         notify('Abra um projeto antes de criar nós no canvas.', 'info')
         return
@@ -724,7 +724,13 @@ export const App: React.FC = () => {
       setWorkspaceUiRequest(buildWorkspaceUiRequest(fallbackProject.id, { forceCanvas: true, showTerminal: false }))
        setPendingCanvasNode(buildPendingCanvasNode(
          fallbackProject.id,
-         action === 'create-note' ? 'note' : action === 'create-squad' ? 'squad' : 'agent',
+         action === 'create-note'
+           ? 'note'
+           : action === 'create-squad'
+             ? 'squad'
+             : action === 'create-terminal'
+               ? 'terminal'
+               : 'agent',
        ))
        notify(action === 'create-note' ? 'Pedido registrado — a nota será criada ao abrir o canvas.' : 'Pedido registrado — escolha os participantes no canvas.', 'info')
     } else if (action === 'create-branch') openGitDock('branches', fallbackProject)
@@ -957,6 +963,7 @@ export const App: React.FC = () => {
                 pendingCanvasNode={pendingCanvasNode && pendingCanvasNode.projectId === workspaceProject.id ? pendingCanvasNode : null}
                 onPendingCanvasNodeConsumed={handleConsumePendingCanvasNode}
                 automation={config?.automation}
+                terminalPresets={config?.terminalPresets}
                 onCanvasModeChange={handleCanvasModeChange}
               />
               </Suspense>

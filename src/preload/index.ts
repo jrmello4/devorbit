@@ -18,6 +18,7 @@ import type {
 import type { AgentBridgeEvent } from '../shared/agent-bridge-event'
 import type { DiagnosticProcessRequest, DiagnosticProcessResult } from '../shared/diagnostic-process'
 import type { TelemetrySpanView } from '../shared/telemetry-contract'
+import type { UsageShareState } from '../shared/usage-contract'
 import type { HybridMemoryKind, HybridMemoryView, HybridMemoryWrite } from '../shared/hybrid-memory-contract'
 import type { LlmCompletionRequestView, LlmRouteView } from '../shared/llm-contract'
 import type { EvolutionRecord } from '../shared/evolution-history'
@@ -84,10 +85,12 @@ const api: DevOrbitAPI = {
     invoke('devorbit:createAgentWorktree', projectPath, agentId),
   integrateAgentWorktree: (projectPath: string, branch: string, worktreePath: string) =>
     invoke('devorbit:integrateAgentWorktree', projectPath, branch, worktreePath),
-  startTerminal: (id: string, projectPath: string, cols?: number, rows?: number) =>
-    cols === undefined && rows === undefined
-      ? invoke('devorbit:startTerminal', id, projectPath)
-      : invoke('devorbit:startTerminal', id, projectPath, cols, rows),
+  startTerminal: (id: string, projectPath: string, cols?: number, rows?: number, options?: { command?: string; args?: string[]; cwd?: string }) =>
+    options !== undefined
+      ? invoke('devorbit:startTerminal', id, projectPath, cols, rows, options)
+      : cols === undefined && rows === undefined
+        ? invoke('devorbit:startTerminal', id, projectPath)
+        : invoke('devorbit:startTerminal', id, projectPath, cols, rows),
   startCodexTerminal: (id, projectPath, account, cols, rows) =>
     invoke('devorbit:startCodexTerminal', id, projectPath, account, cols, rows),
   startAgentTerminal: (id, projectPath, provider, cols, rows, task) =>
@@ -201,6 +204,8 @@ const api: DevOrbitAPI = {
   onOrchestrationEvent: (callback: (event: ContinuityEvent) => void): (() => void) => {
     return subscribe<ContinuityEvent>('devorbit:orchestrationEvent', callback)
   },
+  getUsageShare: (): Promise<UsageShareState> => invoke('devorbit:getUsageShare'),
+  refreshUsage: (): Promise<UsageShareState> => invoke('devorbit:refreshUsage'),
 }
 
 contextBridge.exposeInMainWorld('devorbit', api)

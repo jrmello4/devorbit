@@ -7,6 +7,8 @@ import type { HybridMemoryKind, HybridMemoryView, HybridMemoryWrite } from '../.
 import type { LlmCompletionRequestView, LlmRouteView } from '../../shared/llm-contract'
 import type { EvolutionRecord } from '../../shared/evolution-history'
 import type { TextSearchRequest, TextSearchResult } from '../../shared/text-search-contract'
+import type { CustomTerminalPreset } from '../../shared/terminal-presets'
+import type { UsageShareState } from '../../shared/usage-contract'
 
 export interface TechStack {
   id: string
@@ -118,7 +120,7 @@ export interface AgentTurnResult {
   message?: string
 }
 
-export type PendingCreationKind = 'agent' | 'squad'
+export type PendingCreationKind = 'agent' | 'squad' | 'terminal'
 
 export interface PendingCreationPayload {
   projectId: string
@@ -259,6 +261,8 @@ export interface AppConfig {
   }
   modelRouting?: ModelRoutingConfig
   automation?: AutomationConfig
+  /** Presets de terminal personalizados criados pelo usuário (Smart Terminals). */
+  terminalPresets?: CustomTerminalPreset[]
 }
 
 export interface SyncResult {
@@ -351,6 +355,7 @@ export type IpcInvokeChannel =
   | 'devorbit:assignOrchestrationRole'
   | 'devorbit:reportOrchestrationTurn'
   | 'devorbit:reportOrchestrationQuota'
+  | 'devorbit:getUsageShare' | 'devorbit:refreshUsage'
 
 export type IpcEventChannel =
   | 'devorbit:syncProgress' | 'devorbit:terminalEvent' | 'devorbit:webEvent'
@@ -562,7 +567,13 @@ export interface DevOrbitAPI {
   finalizeManagedProject: (projectPath: string, options?: { allowRecreatableIgnored?: boolean }) => Promise<SyncResult>
   createAgentWorktree: (projectPath: string, agentId: string) => Promise<{ path: string; branch: string }>
   integrateAgentWorktree: (projectPath: string, branch: string, worktreePath: string) => Promise<SyncResult>
-  startTerminal: (id: string, projectPath: string, cols?: number, rows?: number) => Promise<{ id: string; pid: number | undefined }>
+  startTerminal: (
+    id: string,
+    projectPath: string,
+    cols?: number,
+    rows?: number,
+    options?: { command?: string; args?: string[]; cwd?: string },
+  ) => Promise<{ id: string; pid: number | undefined }>
   startCodexTerminal: (
     id: string,
     projectPath: string,
@@ -675,6 +686,10 @@ export interface DevOrbitAPI {
   }) => Promise<OrchestrationState | null>
   reportOrchestrationQuota: (projectPath: string, seatId: string, percent?: number) => Promise<OrchestrationState | null>
   onOrchestrationEvent: (callback: (event: ContinuityEvent) => void) => () => void
+  /** Uso agregado por modelo (participação, tokens reais e quota). */
+  getUsageShare: () => Promise<UsageShareState>
+  /** Força uma varredura dos adaptadores locais antes de responder. */
+  refreshUsage: () => Promise<UsageShareState>
 }
 
 declare global {

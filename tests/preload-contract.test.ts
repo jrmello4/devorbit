@@ -110,6 +110,8 @@ const expectedApiKeys = [
   'reportOrchestrationTurn',
   'reportOrchestrationQuota',
   'onOrchestrationEvent',
+  'getUsageShare',
+  'refreshUsage',
 ]
 
 let exposedApiObject: Record<string, (...args: any[]) => unknown>
@@ -213,6 +215,8 @@ describe('preload IPC contract', () => {
       ['devorbit:assignOrchestrationRole', 'project', 'coordinator', 'agent-1'],
       ['devorbit:reportOrchestrationTurn', 'project', { seatId: 'agent-1', outcome: 'completed' }],
       ['devorbit:reportOrchestrationQuota', 'project', 'agent-1', 90],
+      ['devorbit:getUsageShare'],
+      ['devorbit:refreshUsage'],
     ]
 
     const methodNames = [
@@ -229,6 +233,7 @@ describe('preload IPC contract', () => {
       'startCodexLogin', 'cancelCodexLogin', 'getProjectMemory', 'saveProjectMemory',
       'generateMemoryFromGit', 'getRealUsage', 'getProjectAudit', 'getHitlRequests', 'approveHitl', 'rejectHitl', 'runDiagnostic', 'getTelemetrySpans', 'getHybridMemory', 'rememberHybridMemory', 'searchHybridMemory', 'completeLlm', 'getEvolutionHistory', 'searchProjectText',
       'getOrchestrationState', 'setOrchestrationContinuity', 'upsertOrchestrationSeat', 'removeOrchestrationSeat', 'assignOrchestrationRole', 'reportOrchestrationTurn', 'reportOrchestrationQuota',
+      'getUsageShare', 'refreshUsage',
     ]
 
     for (const [index, methodName] of methodNames.entries()) await api[methodName](...calls[index].slice(1))
@@ -265,6 +270,21 @@ describe('preload IPC contract', () => {
       40,
       'revise a arquitetura',
     )
+  })
+
+  it('forwards smart terminal start options as the fifth argument only when provided', async () => {
+    await exposedApi().startTerminal('terminal-1', 'project', 120, 40, { command: 'npm', args: ['run', 'dev'], cwd: 'C:/project' })
+    expect(ipcInvoke).toHaveBeenCalledWith(
+      'devorbit:startTerminal',
+      'terminal-1',
+      'project',
+      120,
+      40,
+      { command: 'npm', args: ['run', 'dev'], cwd: 'C:/project' },
+    )
+
+    await exposedApi().startTerminal('terminal-1', 'project', 120, 40)
+    expect(ipcInvoke).toHaveBeenLastCalledWith('devorbit:startTerminal', 'terminal-1', 'project', 120, 40)
   })
 
   it('forwards turn timeouts only when provided', async () => {

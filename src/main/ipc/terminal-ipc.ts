@@ -32,9 +32,18 @@ import {
   stopTerminal,
   writeTerminal,
 } from '../terminal-session'
-import { validateAgentProvider, validateCodexAccount, validateFiniteNumber } from '../validation'
+import { validateAgentProvider, validateCodexAccount, validateFiniteNumber, validateTerminalStartOptions } from '../validation'
+import { resolveWindowsScriptLaunch } from '../terminal-launch'
+import type { UsageEvent } from '../../shared/usage-contract'
 import type { IpcRegistrar } from './registrar'
 import type { AgentProviderId } from '../../renderer/src/types'
+
+/** Ponto de injeção do registro de uso (turnos e sessões) — opcional e best-effort. */
+export interface UsageRecorder {
+  recordUsageEvents: (events: UsageEvent[]) => Promise<void>
+  beginUsageSession: (terminalId: string, provider: string) => void
+  endUsageSession: (terminalId: string) => void
+}
 
 export interface TerminalIpcDependencies {
   getTerminalLifecycleGeneration: () => number
@@ -45,6 +54,7 @@ export interface TerminalIpcDependencies {
   turnSessions: Map<string, { provider: AgentProviderId; model: string }>
   waitTurnResult: (id: string, timeouts: { idleMs: number; overallMs: number }) => ResultWaitPromise
   waitTerminalReady: (id: string, options?: TerminalReadyOptions) => Promise<void>
+  usage?: UsageRecorder
 }
 
 function assertTerminalId(id: unknown): asserts id is string {
@@ -61,16 +71,66 @@ export function normalizeAgentTurnPrompt(value: unknown): string {
   return value.slice(0, TURN_MAX_PROMPT_CHARS)
 }
 
+/**
+ * Registro do turno no store de uso — sempre best-effort: falha alguma aqui
+ * pode quebrar o caminho do turno (o resultado segue intacto para a UI).
+ */
+function recordTurnUsage(
+  usage: UsageRecorder | undefined,
+  terminalId: string,
+  outcome: { provider: string; model: string; tier?: unknown; result?: string; blocked?: string },
+  durationMs: number,
+  forcedOutcome?: 'failed',
+): void {
+  if (!usage) return
+  try {
+    const event: UsageEvent = {
+      kind: 'turn',
+      at: new Date().toISOString(),
+      terminalId,
+      provider: outcome.provider,
+      model: outcome.model,
+      ...(typeof outcome.tier === 'string' && outcome.tier ? { tier: outcome.tier } : {}),
+      outcome: forcedOutcome ?? (outcome.result ? 'completed' : outcome.blocked ? 'blocked' : 'failed'),
+      durationMs: Math.max(0, durationMs),
+    }
+    void usage.recordUsageEvents([event]).catch(() => undefined)
+  } catch {
+    // Uso é telemetria: nunca propaga erro para o chamador do turno.
+  }
+}
+
 export function registerTerminalIpc(register: IpcRegistrar, dependencies: TerminalIpcDependencies): void {
-  register('devorbit:startTerminal', async (_event, id: unknown, projectPath: string, cols?: unknown, rows?: unknown) => {
+  register('devorbit:startTerminal', async (
+    _event,
+    id: unknown,
+    projectPath: string,
+    cols?: unknown,
+    rows?: unknown,
+    options?: unknown,
+  ) => {
     assertTerminalId(id)
     const generation = dependencies.getTerminalLifecycleGeneration()
     const safePath = await validateProjectPath(projectPath)
+    const startOptions = await validateTerminalStartOptions(options)
     dependencies.assertTerminalLifecycle(generation)
     const safeCols = cols === undefined ? undefined : validateFiniteNumber(cols, 'Colunas do terminal', { minimum: TERMINAL_MIN_COLS, maximum: TERMINAL_MAX_COLS, integer: true })
     const safeRows = rows === undefined ? undefined : validateFiniteNumber(rows, 'Linhas do terminal', { minimum: TERMINAL_MIN_ROWS, maximum: TERMINAL_MAX_ROWS, integer: true })
+    // O comando do Smart Terminal roda no diretório próprio quando definido;
+    // sem comando/cwd o comportamento é exatamente o do shell antigo.
+    const effectiveCwd = startOptions?.cwd ?? safePath
+    if (startOptions?.cwd !== undefined) {
+      console.log(`[DevOrbit terminal] ${id} iniciado fora da pasta do projeto em ${effectiveCwd}.`)
+    }
+    // .cmd/.bat não executa direto pelo node-pty: passa pelo cmd.exe; o helper
+    // rejeita metacaracteres do cmd no caminho embrulhado (defesa extra —
+    // %/! e controles já caíram no validador).
+    const launch = startOptions?.command !== undefined
+      ? resolveWindowsScriptLaunch(startOptions.command, startOptions.args ?? [])
+      : undefined
     beginCompanionTerminalStart(id)
-    const started = await startTerminal(id, safePath, {
+    const started = await startTerminal(id, effectiveCwd, {
+      ...(launch ? { command: launch.command, args: launch.args } : {}),
       env: dependencies.bridgeEnv(),
       ...(safeCols !== undefined ? { cols: safeCols } : {}),
       ...(safeRows !== undefined ? { rows: safeRows } : {}),
@@ -133,6 +193,8 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
       model: config.modelRouting?.fastModel || 'codex',
       projectPath: safePath,
     })
+    // Sessão com provider: a duração é fechada no exit do PTY (ou no stop).
+    dependencies.usage?.beginUsageSession(id, 'codex')
     return {
       success: true,
       ...result,
@@ -212,6 +274,8 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
     // Registra a sessão do turno para que o primeiro sendAgentTurn com o mesmo
     // provedor/modelo reutilize este PTY em vez de reiniciar o executor.
     dependencies.turnSessions.set(id, { provider: effectiveProvider, model: turn.model })
+    // Sessão com provider: a duração é fechada no exit do PTY (ou no stop).
+    dependencies.usage?.beginUsageSession(id, effectiveProvider)
     return {
       success: true,
       ...execution.result.started,
@@ -239,6 +303,9 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
 
   register('devorbit:stopTerminal', (_event, id: unknown) => {
     assertTerminalId(id)
+    // O stop mata o PTY antes do onExit registrar (sessions.delete precede o
+    // kill), então fechamos a sessão de uso aqui para não perder a duração.
+    dependencies.usage?.endUsageSession(id)
     stopTerminal(id)
     clearPipesFor(id)
     dependencies.turnSessions.delete(id)
@@ -282,7 +349,10 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
       if (raw.overallMs !== undefined) overallMs = validateFiniteNumber(raw.overallMs, 'Timeout total', { minimum: 5000, maximum: 1800_000, integer: true })
     }
     const generation = dependencies.getTerminalLifecycleGeneration()
-    const outcome = await sendAgentTurn(
+    const turnStartedAt = Date.now()
+    let outcome: Awaited<ReturnType<typeof sendAgentTurn>>
+    try {
+      outcome = await sendAgentTurn(
       {
         getSession: (id) => dependencies.turnSessions.get(id),
         setSession: (id, session) => dependencies.turnSessions.set(id, session),
@@ -340,6 +410,16 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
           : {}),
       }
     )
-    return { success: true, ...outcome }
+      recordTurnUsage(dependencies.usage, terminalId, outcome, Date.now() - turnStartedAt)
+      return { success: true, ...outcome }
+    } catch (error) {
+      // Turno que lança (timeout, spawn falho, resultado inválido) também é
+      // uso: registra 'failed' com o provider pedido, sem mudar o erro.
+      recordTurnUsage(dependencies.usage, terminalId, {
+        provider: safeProvider,
+        model: 'unknown',
+      }, Date.now() - turnStartedAt, 'failed')
+      throw error
+    }
   })
 }

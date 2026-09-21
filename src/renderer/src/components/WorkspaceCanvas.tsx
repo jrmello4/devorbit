@@ -26,6 +26,7 @@ import {
   Trash2,
   Unlink,
   Users,
+  X,
 } from "lucide-react";
 import type { AgentProvider, AgentProviderId, Project } from "../types";
 import type { AgentResult } from "../../../shared/agent-result";
@@ -34,6 +35,19 @@ import type {
   OrchestrationRole,
   OrchestrationState,
 } from "../../../shared/orchestration-continuity";
+import type {
+  CustomTerminalPreset,
+  TerminalNodeRuntimeConfig,
+  TerminalPresetDefinition,
+} from "../../../shared/terminal-presets";
+import {
+  CUSTOM_TERMINAL_PRESET_LIMIT,
+  createTerminalNodeConfig,
+  getTerminalPreset,
+  resolveTerminalLaunch,
+  sanitizeCustomTerminalPreset,
+  sanitizeTerminalNodeConfig,
+} from "../../../shared/terminal-presets";
 import { createsAgentCycle, computeSquadRegions, sanitizeAgentCycles } from "./workspace-request-helpers";
 import { AgentCreationDialog } from "./AgentCreationDialog";
 import {
@@ -46,9 +60,21 @@ import {
   type SquadCreationSpec,
 } from "./agent-creation-helpers";
 import { agentSendPolicy } from "./agent-send-policy";
+import {
+  CANVAS_STATE_VERSION,
+  READABLE_CANVAS_VERSIONS,
+  TERMINAL_COMMAND_INVALID_HINT,
+  buildQuickDeployChips,
+  formatArgsInput,
+  isTerminalCommandTextRejected,
+  migrateCanvasNodesForTerminals,
+  parseArgsInput,
+  slugifyCustomPresetId,
+  terminalNodeTitle,
+} from "./terminal-node-helpers";
 import "./WorkspaceCanvas.css";
 
-type NodeKind = "workbench" | "browser" | "note" | "agent";
+type NodeKind = "workbench" | "browser" | "note" | "agent" | "terminal";
 export type AgentRole = "Coordenador" | "Implementação" | "Revisão" | "Testes";
 export interface CanvasNode {
   id: string;
@@ -63,6 +89,7 @@ export interface CanvasNode {
   role?: AgentRole;
   account?: "account1" | "account2";
   provider?: AgentProviderId;
+  terminal?: TerminalNodeRuntimeConfig;
 }
 export interface CanvasConnection {
   id: string;
@@ -76,7 +103,7 @@ export interface CanvasSquad {
   memberNodeIds: string[];
 }
 interface CanvasState {
-  version: 3;
+  version: typeof CANVAS_STATE_VERSION;
   nodes: CanvasNode[];
   connections: CanvasConnection[];
   squads: CanvasSquad[];
@@ -152,6 +179,17 @@ interface LegacyCanvas {
   note?: string;
   squads?: unknown;
 }
+/**
+ * Rascunho dos campos de texto do painel do terminal (comando, argumentos,
+ * diretório). A digitação NÃO passa pelo sanitize — o commit acontece em
+ * blur/Enter, para não apagar o texto sob o cursor com %, ! ou comandos longos.
+ */
+interface TerminalFieldDraft {
+  nodeId: string;
+  command: string;
+  args: string;
+  cwd: string;
+}
 
 const WORLD_WIDTH = 5200;
 const WORLD_HEIGHT = 3400;
@@ -164,9 +202,10 @@ const nodeMeta: Record<NodeKind, { label: string; meta: string; icon: React.Reac
   browser: { label: "Navegador do projeto", meta: "BROWSER", icon: <Globe2 size={13} /> },
   note: { label: "Nota", meta: "INTEL", icon: <NotebookPen size={13} /> },
   agent: { label: "Agente", meta: "AGENTE", icon: <Bot size={13} /> },
+  terminal: { label: "Terminal", meta: "TERMINAL", icon: <Terminal size={13} /> },
 };
 const defaults = (): CanvasState => ({
-  version: 3,
+  version: CANVAS_STATE_VERSION,
   viewport: { x: 40, y: 36, zoom: 1 },
   connections: [],
   squads: [],
@@ -278,12 +317,17 @@ function sanitizeNode(
     value.kind === "workbench" ||
     value.kind === "browser" ||
     value.kind === "note" ||
-    value.kind === "agent"
+    value.kind === "agent" ||
+    value.kind === "terminal"
       ? value.kind
       : fallback.kind;
   // Escolha explícita do nó sempre vence; o executor padrão só preenche nó de
   // agente sem provider (nós antigos), nunca sobrescreve um provider válido.
   const provider = resolveAgentProvider(value.provider, fallback.provider, kind, defaultProvider);
+  // Config de Smart Terminal: só existe em nó terminal e sempre sai saneada
+  // (lixo de versões antigas vira undefined).
+  const terminal =
+    kind === "terminal" ? sanitizeTerminalNodeConfig(value.terminal) : undefined;
   return {
     id: typeof value.id === "string" ? value.id : fallback.id,
     kind,
@@ -318,6 +362,7 @@ function sanitizeNode(
           ? "account1"
           : fallback.account,
     provider,
+    terminal,
   };
 }
 function sanitizeSquads(value: unknown, nodes: readonly CanvasNode[]): CanvasSquad[] {
@@ -354,10 +399,20 @@ function read(id: string, defaultProvider: AgentProviderId | null = null): Canva
     const raw = JSON.parse(
       window.localStorage.getItem(key(id)) || "",
     ) as { version?: number; nodes?: unknown; connections?: unknown; viewport?: CanvasState["viewport"] } & LegacyCanvas;
-    if ((raw.version === 2 || raw.version === 3) && Array.isArray(raw.nodes)) {
-      const nodes = raw.nodes.map((node, index) =>
+    if (
+      (READABLE_CANVAS_VERSIONS as readonly number[]).includes(raw.version ?? -1) &&
+      Array.isArray(raw.nodes)
+    ) {
+      // Migração v3 → v4: nós sem terminal passam intactos; nós terminal
+      // recebem a config saneada (inválida sai sem terminal).
+      const migratedNodes = migrateCanvasNodesForTerminals(
+        raw.nodes as readonly { kind?: unknown; terminal?: unknown }[],
+      );
+      const nodes = migratedNodes.map((node, index) =>
         sanitizeNode(
-          node,
+          // O sanitize revalida kind/terminal; o escopo de types aqui é só o
+          // transporte da migração v3 → v4.
+          node as Partial<CanvasNode>,
           fallback.nodes[index] || {
             id: nodeId(),
             kind: "note",
@@ -389,14 +444,14 @@ function read(id: string, defaultProvider: AgentProviderId | null = null): Canva
           )
         : [];
       return {
-        version: 3,
+        version: CANVAS_STATE_VERSION,
         nodes,
         // Saneia ciclos agente-agente persistidos: nenhum ciclo visual pode
         // ficar sem aresta de piping correspondente no main.
         connections: sanitizeAgentCycles(validConnections, agentIds),
         // Canvas v2 nunca teve squads explícitos. Não inferimos participação
         // por conexões: ela só passa a existir após confirmação do usuário.
-        squads: raw.version === 3 ? sanitizeSquads(raw.squads, nodes) : [],
+        squads: raw.version !== 2 ? sanitizeSquads(raw.squads, nodes) : [],
         viewport: {
           x: Number.isFinite(raw.viewport?.x)
             ? raw.viewport!.x
@@ -655,13 +710,16 @@ export const WorkspaceCanvas: React.FC<{
   codexAuthStatus?: import("../types").CodexAccountStatus | null;
   onRequestCodexAuth?: (account: "account1" | "account2") => void;
   onSelectionChange?: (node: { id: string; title: string; kind: string } | null) => void;
-  pendingNodeRequest?: { kind: 'note' | 'agent' | 'squad'; nonce: number } | null;
+  pendingNodeRequest?: { kind: 'note' | 'agent' | 'squad' | 'terminal'; nonce: number } | null;
   onPendingNodeConsumed?: (nonce: number) => void;
   onConnectionsChange?: (
     connections: Array<{ id: string; from: string; to: string }>,
     nodes: Array<{ id: string; kind: string }>,
   ) => void;
   onNotify?: (message: string, type?: 'success' | 'error' | 'info') => void;
+  terminalPresets?: readonly CustomTerminalPreset[];
+  renderTerminal?: (node: CanvasNode) => React.ReactNode;
+  onTerminalPresetsSaved?: (presets: readonly CustomTerminalPreset[]) => void;
 }> = ({
   project,
   workbench,
@@ -678,6 +736,9 @@ export const WorkspaceCanvas: React.FC<{
   onPendingNodeConsumed,
   onConnectionsChange,
   onNotify,
+  terminalPresets = [],
+  renderTerminal,
+  onTerminalPresetsSaved,
 }) => {
   const [canvas, setCanvas] = useState<CanvasState>(() => read(project.id, defaultExecutor));
   const [selected, setSelected] = useState<string[]>([]);
@@ -685,6 +746,11 @@ export const WorkspaceCanvas: React.FC<{
   const [gesture, setGesture] = useState<CanvasGesture | null>(null);
   const [connectionDraft, setConnectionDraft] = useState<ConnectionDraft | null>(null);
   const [creationMode, setCreationMode] = useState<"agent" | "squad" | null>(null);
+  const [quickDeployOpen, setQuickDeployOpen] = useState(false);
+  const [presetDraftName, setPresetDraftName] = useState("");
+  const [presetSaveStatus, setPresetSaveStatus] = useState("");
+  const [terminalDraft, setTerminalDraft] = useState<TerminalFieldDraft | null>(null);
+  const [terminalCommandHint, setTerminalCommandHint] = useState("");
   const [orchestration, setOrchestration] = useState<OrchestrationRun | null>(
     null,
   );
@@ -742,6 +808,27 @@ export const WorkspaceCanvas: React.FC<{
   useEffect(() => {
     canvasRef.current = canvas;
   }, [canvas]);
+  // Painel de configuração trocou de nó: limpa os rascunhos ("Salvar como
+  // preset" e campos de texto) e semeia o rascunho com os valores atuais do
+  // nó, para não vazar texto/status entre cartões.
+  useEffect(() => {
+    setPresetDraftName("");
+    setPresetSaveStatus("");
+    setTerminalCommandHint("");
+    const node = configNodeId
+      ? canvasRef.current.nodes.find((item) => item.id === configNodeId)
+      : undefined;
+    setTerminalDraft(
+      node && node.kind === "terminal" && node.terminal
+        ? {
+            nodeId: node.id,
+            command: node.terminal.command ?? "",
+            args: formatArgsInput(node.terminal.args),
+            cwd: node.terminal.cwd ?? "",
+          }
+        : null,
+    );
+  }, [configNodeId]);
   useEffect(() => {
     const next = read(project.id, defaultExecutor);
     canvasRef.current = next;
@@ -905,6 +992,53 @@ export const WorkspaceCanvas: React.FC<{
     setSelected([id]);
     setCreationMode(null);
   }, [defaultExecutor, update]);
+  const openTerminalQuickDeploy = useCallback(() => {
+    setQuickDeployOpen(true);
+  }, []);
+  // Quick Deploy: cria o nó terminal imediatamente com os defaults do preset
+  // (comando, auto-start, reinício); o ajuste fino fica no painel Configurar.
+  const addTerminalNode = useCallback(
+    (
+      preset: TerminalPresetDefinition | CustomTerminalPreset,
+      position?: { x: number; y: number },
+    ) => {
+      const rect = viewportRef.current?.getBoundingClientRect();
+      const view = canvasRef.current.viewport;
+      const id = nodeId();
+      const x = snap(
+        position?.x ?? ((rect?.width || 900) / 2 - view.x) / view.zoom - 260,
+      );
+      const y = snap(
+        position?.y ?? ((rect?.height || 650) / 2 - view.y) / view.zoom - 160,
+      );
+      const title = terminalNodeTitle(
+        preset,
+        canvasRef.current.nodes.map((node) => node.title),
+      );
+      update(
+        (current) => ({
+          ...current,
+          nodes: [
+            ...current.nodes,
+            {
+              id,
+              kind: "terminal" as const,
+              title,
+              x,
+              y,
+              width: 520,
+              height: 340,
+              z: Math.max(0, ...current.nodes.map((node) => node.z)) + 1,
+              terminal: createTerminalNodeConfig(preset),
+            },
+          ],
+        }),
+        true,
+      );
+      setSelected([id]);
+    },
+    [update],
+  );
   useEffect(() => {
     const handler = (event: Event) => {
       const detail = (event as CustomEvent<{ projectId?: string; kind?: string }>).detail
@@ -912,19 +1046,21 @@ export const WorkspaceCanvas: React.FC<{
       if (detail?.kind === 'note') addNote()
       else if (detail?.kind === 'agent') openAgentCreation()
       else if (detail?.kind === 'squad') openSquadCreation()
+      else if (detail?.kind === 'terminal') openTerminalQuickDeploy()
     }
     window.addEventListener('devorbit:create-canvas-node', handler as EventListener)
     return () => window.removeEventListener('devorbit:create-canvas-node', handler as EventListener)
-  }, [addNote, openAgentCreation, openSquadCreation, project.id]);
+  }, [addNote, openAgentCreation, openSquadCreation, openTerminalQuickDeploy, project.id]);
   useEffect(() => {
     if (!pendingNodeRequest) return
     if (consumedPendingRef.current.has(pendingNodeRequest.nonce)) return
     consumedPendingRef.current.add(pendingNodeRequest.nonce)
     if (pendingNodeRequest.kind === 'note') addNote()
     else if (pendingNodeRequest.kind === 'agent') openAgentCreation()
+    else if (pendingNodeRequest.kind === 'terminal') openTerminalQuickDeploy()
     else openSquadCreation()
     onPendingNodeConsumed?.(pendingNodeRequest.nonce)
-  }, [addNote, onPendingNodeConsumed, openAgentCreation, openSquadCreation, pendingNodeRequest]);
+  }, [addNote, onPendingNodeConsumed, openAgentCreation, openSquadCreation, openTerminalQuickDeploy, pendingNodeRequest]);
   const createSquad = useCallback((spec: SquadCreationSpec) => {
     const rect = viewportRef.current?.getBoundingClientRect();
     const view = canvasRef.current.viewport;
@@ -1395,6 +1531,7 @@ export const WorkspaceCanvas: React.FC<{
         connectionDraftRef.current = null;
         setConnectionDraft(null);
         setGesture(null);
+        setQuickDeployOpen(false);
       }
     };
     const onKeyUp = (event: KeyboardEvent) => {
@@ -1418,6 +1555,151 @@ export const WorkspaceCanvas: React.FC<{
   const nodeMap = useMemo(
     () => new Map(canvas.nodes.map((node) => [node.id, node])),
     [canvas.nodes],
+  );
+  const quickDeployChips = useMemo(
+    () => buildQuickDeployChips(terminalPresets),
+    [terminalPresets],
+  );
+  // Rótulo do cabeçalho do cartão terminal: preset resolvido (ou aviso de
+  // preset apagado), nunca cor isolada — o texto carrega o estado.
+  const terminalMetaLabel = useCallback(
+    (node: CanvasNode) => {
+      if (!node.terminal) return nodeMeta.terminal.meta;
+      const resolved = resolveTerminalLaunch(node.terminal, terminalPresets);
+      return resolved.missing ? "Preset ausente" : resolved.label;
+    },
+    [terminalPresets],
+  );
+  // Patch de config do terminal do nó: toda mudança passa pelo sanitize
+  // compartilhado antes de persistir.
+  const updateTerminalNode = useCallback(
+    (id: string, patch: (current: TerminalNodeRuntimeConfig) => Partial<TerminalNodeRuntimeConfig>) => {
+      update(
+        (current) => ({
+          ...current,
+          nodes: current.nodes.map((item) => {
+            if (item.id !== id || item.kind !== "terminal" || !item.terminal) return item;
+            const next = sanitizeTerminalNodeConfig({
+              ...item.terminal,
+              ...patch(item.terminal),
+            });
+            return next ? { ...item, terminal: next } : item;
+          }),
+        }),
+        true,
+      );
+    },
+    [update],
+  );
+  const renameTerminalNode = useCallback(
+    (id: string, title: string) => {
+      update(
+        (current) => ({
+          ...current,
+          nodes: current.nodes.map((item) =>
+            item.id === id ? { ...item, title: title.slice(0, 80) } : item,
+          ),
+        }),
+        true,
+      );
+    },
+    [update],
+  );
+  // Digitação nos campos de texto: só o rascunho local muda (ver comentário de
+  // TerminalFieldDraft). O commit com sanitize acontece em blur/Enter.
+  const setTerminalDraftField = useCallback(
+    (nodeId: string, field: "command" | "args" | "cwd", value: string) => {
+      setTerminalDraft((current) => {
+        if (current && current.nodeId === nodeId) {
+          const next = { ...current };
+          next[field] = value;
+          return next;
+        }
+        const node = canvasRef.current.nodes.find((item) => item.id === nodeId);
+        const terminal = node && node.kind === "terminal" ? node.terminal : undefined;
+        const seeded: TerminalFieldDraft = {
+          nodeId,
+          command: terminal?.command ?? "",
+          args: formatArgsInput(terminal?.args),
+          cwd: terminal?.cwd ?? "",
+        };
+        seeded[field] = value;
+        return seeded;
+      });
+    },
+    [],
+  );
+  // Commit do rascunho do painel: valida o comando (aviso pt-BR em vez de
+  // descartar), envia comando/argumentos e — quando o modo é "Diretório
+  // próprio" — o cwd, tudo pelo sanitize compartilhado.
+  const commitTerminalFields = useCallback(
+    (node: CanvasNode) => {
+      const config = node.terminal;
+      const draft = terminalDraft && terminalDraft.nodeId === node.id ? terminalDraft : null;
+      if (!config || !draft) return;
+      const command = draft.command.trim();
+      if (isTerminalCommandTextRejected(command)) {
+        setTerminalCommandHint(TERMINAL_COMMAND_INVALID_HINT);
+        return;
+      }
+      const cwd = draft.cwd.trim();
+      setTerminalCommandHint("");
+      updateTerminalNode(node.id, () => ({
+        command: command || undefined,
+        args: parseArgsInput(draft.args),
+        ...(config.cwdMode === "custom" ? { cwd: cwd || undefined } : {}),
+      }));
+      setTerminalDraft(null);
+    },
+    [terminalDraft, updateTerminalNode],
+  );
+  const saveTerminalPreset = useCallback(
+    async (node: CanvasNode) => {
+      const config = node.terminal;
+      if (!config?.command) {
+        setPresetSaveStatus("Defina um comando antes de salvar o preset.");
+        return;
+      }
+      const name = presetDraftName.trim();
+      if (!name) {
+        setPresetSaveStatus("Informe um nome para o preset.");
+        return;
+      }
+      if (terminalPresets.length >= CUSTOM_TERMINAL_PRESET_LIMIT) {
+        setPresetSaveStatus(`Limite de ${CUSTOM_TERMINAL_PRESET_LIMIT} presets personalizados atingido.`);
+        return;
+      }
+      const id = slugifyCustomPresetId(
+        name,
+        terminalPresets.map((preset) => preset.id),
+      );
+      const preset = sanitizeCustomTerminalPreset({
+        id,
+        name,
+        command: config.command,
+        args: config.args,
+        resumeCommand: config.resumeCommand,
+        resumeArgs: config.resumeArgs,
+        defaultAutoStart: config.autoStart,
+        defaultMonitorActivity: config.monitorActivity,
+        defaultRestartBehavior: config.restartBehavior,
+      });
+      if (!id || !preset) {
+        setPresetSaveStatus("Nome inválido para o preset.");
+        return;
+      }
+      try {
+        const saved = await window.devorbit.saveConfig({
+          terminalPresets: [...terminalPresets, preset],
+        });
+        onTerminalPresetsSaved?.(saved.terminalPresets ?? [...terminalPresets, preset]);
+        setPresetDraftName("");
+        setPresetSaveStatus(`Preset "${preset.name}" salvo.`);
+      } catch (error) {
+        setPresetSaveStatus("Não foi possível salvar o preset: " + (error instanceof Error ? error.message : String(error)));
+      }
+    },
+    [onTerminalPresetsSaved, presetDraftName, terminalPresets],
   );
   const squadRegions = useMemo(
     () => computeSquadRegions(canvas.squads, canvas.nodes),
@@ -2228,6 +2510,9 @@ export const WorkspaceCanvas: React.FC<{
         <button type="button" onClick={openSquadCreation} title="Criar squad de agentes conectado a uma tarefa" aria-label="Criar squad de agentes">
           <Users size={14} /> Squad
         </button>
+        <button type="button" onClick={openTerminalQuickDeploy} title="Criar terminal com preset (Quick Deploy)" aria-label="Criar terminal">
+          <Terminal size={14} /> Terminal
+        </button>
         <button
           type="button"
           onClick={() => {
@@ -2471,7 +2756,9 @@ export const WorkspaceCanvas: React.FC<{
                 <span className="canvas-node-meta">
                   {node.kind === "agent"
                     ? node.role || "Implementação"
-                    : nodeMeta[node.kind].meta}
+                    : node.kind === "terminal"
+                      ? terminalMetaLabel(node)
+                      : nodeMeta[node.kind].meta}
                 </span>
                 {node.kind === "agent" && node.role === "Coordenador" && (
                   <span
@@ -2511,13 +2798,13 @@ export const WorkspaceCanvas: React.FC<{
                     <GitBranch size={13} />
                   </button>
                 )}
-                {node.kind === "agent" && (
+                {(node.kind === "agent" || node.kind === "terminal") && (
                   <button
                     type="button"
                     className="canvas-agent-config-toggle"
                     aria-label={"Configurar " + node.title}
                     aria-expanded={configNodeId === node.id}
-                    aria-controls={"agent-config-" + node.id}
+                    aria-controls={(node.kind === "agent" ? "agent-config-" : "terminal-config-") + node.id}
                     title="Configuração do agente"
                     onPointerDown={(event) => event.stopPropagation()}
                     onClick={(event) => {
@@ -2553,7 +2840,7 @@ export const WorkspaceCanvas: React.FC<{
                     type="button"
                     className="canvas-delete-node"
                     aria-label={"Excluir " + node.title}
-                    title={node.kind === "agent" ? "Excluir terminal do agente" : "Excluir nota"}
+                    title={node.kind === "agent" ? "Excluir terminal do agente" : node.kind === "terminal" ? "Excluir terminal" : "Excluir nota"}
                     onPointerDown={(event) => event.stopPropagation()}
                     onClick={() => deleteNodes([node.id])}
                   ><Trash2 size={13} /></button>
@@ -2670,6 +2957,195 @@ export const WorkspaceCanvas: React.FC<{
                   </label>
                 </div>
               )}
+              {node.kind === "terminal" && node.terminal && (
+                <div
+                  className="canvas-agent-config canvas-terminal-config"
+                  id={"terminal-config-" + node.id}
+                  role="group"
+                  aria-label={"Configuração de " + node.title}
+                  hidden={configNodeId !== node.id}
+                  onPointerDown={(event) => event.stopPropagation()}
+                >
+                  <label className="canvas-agent-config-field">
+                    <span>Nome</span>
+                    <input
+                      value={node.title}
+                      aria-label="Nome do terminal"
+                      onChange={(event) => renameTerminalNode(node.id, event.target.value)}
+                    />
+                  </label>
+                  <label className="canvas-agent-config-field">
+                    <span>Preset</span>
+                    <select
+                      aria-label="Preset do terminal"
+                      value={node.terminal.presetId}
+                      onChange={(event) => {
+                        const chip = quickDeployChips.find((item) => item.id === event.target.value);
+                        if (!chip) return;
+                        // Trocar o preset volta aos defaults dele (comando,
+                        // auto-start, reinício) e preserva o diretório escolhido.
+                        // O rascunho de texto morre aqui: os defaults do novo
+                        // preset devem aparecer nos campos.
+                        setTerminalDraft(null);
+                        setTerminalCommandHint("");
+                        updateTerminalNode(node.id, () => {
+                          const next = createTerminalNodeConfig(chip.preset);
+                          return {
+                            ...next,
+                            cwdMode: node.terminal!.cwdMode,
+                            ...(node.terminal!.cwdMode === "custom" && node.terminal!.cwd
+                              ? { cwd: node.terminal!.cwd }
+                              : {}),
+                          };
+                        });
+                      }}
+                    >
+                      {quickDeployChips.map((chip) => (
+                        <option key={chip.id} value={chip.id}>{chip.label}</option>
+                      ))}
+                      {!quickDeployChips.some((chip) => chip.id === node.terminal!.presetId) && (
+                        <option value={node.terminal.presetId}>{node.terminal.presetId} (ausente)</option>
+                      )}
+                    </select>
+                  </label>
+                  <label className="canvas-agent-config-field">
+                    <span>Comando</span>
+                    <input
+                      value={terminalDraft?.nodeId === node.id ? terminalDraft.command : node.terminal.command ?? ""}
+                      aria-label="Comando do terminal"
+                      placeholder="ex.: npm run dev"
+                      spellCheck={false}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        setTerminalDraftField(node.id, "command", value);
+                        setTerminalCommandHint(isTerminalCommandTextRejected(value.trim()) ? TERMINAL_COMMAND_INVALID_HINT : "");
+                      }}
+                      onBlur={() => commitTerminalFields(node)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          commitTerminalFields(node);
+                        }
+                      }}
+                    />
+                    {terminalDraft?.nodeId === node.id && terminalCommandHint && (
+                      <span className="canvas-terminal-save-status" role="status">{terminalCommandHint}</span>
+                    )}
+                  </label>
+                  <label className="canvas-agent-config-field">
+                    <span>Argumentos (separados por espaço)</span>
+                    <input
+                      value={terminalDraft?.nodeId === node.id ? terminalDraft.args : formatArgsInput(node.terminal.args)}
+                      aria-label="Argumentos do comando"
+                      placeholder="ex.: --port 3000"
+                      spellCheck={false}
+                      onChange={(event) => setTerminalDraftField(node.id, "args", event.target.value)}
+                      onBlur={() => commitTerminalFields(node)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          commitTerminalFields(node);
+                        }
+                      }}
+                    />
+                  </label>
+                  <div className="canvas-agent-config-field" role="radiogroup" aria-label="Executar em">
+                    <span>Executar em</span>
+                    <label className="canvas-terminal-option">
+                      <input
+                        type="radio"
+                        name={"terminal-cwd-" + node.id}
+                        checked={node.terminal.cwdMode === "workspace"}
+                        onChange={() => updateTerminalNode(node.id, () => ({ cwdMode: "workspace", cwd: undefined }))}
+                      />
+                      Workspace
+                    </label>
+                    <label className="canvas-terminal-option">
+                      <input
+                        type="radio"
+                        name={"terminal-cwd-" + node.id}
+                        checked={node.terminal.cwdMode === "custom"}
+                        onChange={() => updateTerminalNode(node.id, () => ({ cwdMode: "custom" }))}
+                      />
+                      Diretório próprio
+                    </label>
+                    {node.terminal.cwdMode === "custom" && (
+                      <input
+                        className="canvas-terminal-path"
+                        value={terminalDraft?.nodeId === node.id ? terminalDraft.cwd : node.terminal.cwd ?? ""}
+                        aria-label="Diretório próprio de execução"
+                        placeholder="C:\caminho\do\diretório"
+                        spellCheck={false}
+                        onChange={(event) => setTerminalDraftField(node.id, "cwd", event.target.value)}
+                        onBlur={() => commitTerminalFields(node)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            commitTerminalFields(node);
+                          }
+                        }}
+                      />
+                    )}
+                  </div>
+                  <label className="canvas-terminal-option">
+                    <input
+                      type="checkbox"
+                      checked={node.terminal.autoStart}
+                      onChange={(event) => updateTerminalNode(node.id, () => ({ autoStart: event.target.checked }))}
+                    />
+                    Ao iniciar
+                  </label>
+                  <label className="canvas-agent-config-field">
+                    <span>Ao reiniciar</span>
+                    <select
+                      aria-label="Comportamento ao reiniciar"
+                      value={node.terminal.restartBehavior}
+                      onChange={(event) =>
+                        updateTerminalNode(node.id, () => ({
+                          restartBehavior: event.target.value as TerminalNodeRuntimeConfig["restartBehavior"],
+                        }))
+                      }
+                    >
+                      <option value="restart">Relançar agente</option>
+                      <option value="resume">Retomar sessão</option>
+                      <option value="shell">Shell puro</option>
+                    </select>
+                  </label>
+                  <label className="canvas-terminal-option">
+                    <input
+                      type="checkbox"
+                      checked={node.terminal.monitorActivity}
+                      onChange={(event) => updateTerminalNode(node.id, () => ({ monitorActivity: event.target.checked }))}
+                    />
+                    Monitorar atividade
+                  </label>
+                  <div className="canvas-terminal-preset-save">
+                    <label className="canvas-agent-config-field">
+                      <span>Salvar como preset</span>
+                      <input
+                        value={presetDraftName}
+                        aria-label="Nome do novo preset personalizado"
+                        placeholder="Nome do preset"
+                        onChange={(event) => {
+                          setPresetDraftName(event.target.value);
+                          setPresetSaveStatus("");
+                        }}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      className="canvas-terminal-save-button"
+                      disabled={!presetDraftName.trim()}
+                      onClick={() => void saveTerminalPreset(node)}
+                    >
+                      Salvar preset
+                    </button>
+                    {presetSaveStatus && (
+                      <span className="canvas-terminal-save-status" role="status">{presetSaveStatus}</span>
+                    )}
+                  </div>
+                </div>
+              )}
               <div className="workspace-canvas-card-content">
                 {node.kind === "workbench" ? (
                   workbench
@@ -2681,6 +3157,14 @@ export const WorkspaceCanvas: React.FC<{
                   ) : (
                     <div className="canvas-agent-empty" role="status">
                       <p>{agentNodeSetupMessage(node, agentProviders)}</p>
+                    </div>
+                  )
+                ) : node.kind === "terminal" ? (
+                  renderTerminal ? (
+                    renderTerminal(node)
+                  ) : (
+                    <div className="canvas-agent-empty" role="status">
+                      <p>Terminal do nó indisponível.</p>
                     </div>
                   )
                 ) : (
@@ -2868,6 +3352,52 @@ export const WorkspaceCanvas: React.FC<{
           <Trash2 size={14} /> Excluir{" "}
           {deletableSelection.length > 1 ? "selecionados" : nodeMap.get(deletableSelection[0])?.kind === "agent" ? "terminal" : "nota"}
         </button>
+      )}
+      {quickDeployOpen && (
+        <div
+          className="canvas-quick-deploy"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Novo terminal"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setQuickDeployOpen(false);
+          }}
+        >
+          <div className="canvas-quick-deploy-panel">
+            <header>
+              <strong><Terminal size={14} aria-hidden="true" /> Novo Terminal</strong>
+              <button
+                type="button"
+                aria-label="Fechar"
+                title="Fechar"
+                onClick={() => setQuickDeployOpen(false)}
+              >
+                <X size={14} aria-hidden="true" />
+              </button>
+            </header>
+            <p>Escolha um preset para criar o terminal. Depois ajuste comando, diretório e reinício em Configurar.</p>
+            <div className="canvas-quick-deploy-chips">
+              {quickDeployChips.map((chip) => (
+                <button
+                  key={chip.id}
+                  type="button"
+                  className="canvas-quick-deploy-chip"
+                  title={chip.description}
+                  onClick={() => {
+                    addTerminalNode(chip.preset);
+                    setQuickDeployOpen(false);
+                  }}
+                >
+                  <span className="canvas-quick-deploy-chip-icon" aria-hidden="true">
+                    {chip.icon ?? <Terminal size={13} />}
+                  </span>
+                  <span className="canvas-quick-deploy-chip-label">{chip.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
       )}
       {creationMode && (
         <AgentCreationDialog
