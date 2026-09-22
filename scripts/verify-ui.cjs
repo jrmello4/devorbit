@@ -1293,7 +1293,9 @@ async function runViewport(viewport) {
       width: viewport.width,
       height: viewport.height,
       show: false,
+      frame: false,
       useContentSize: true,
+      enableLargerThanScreen: true,
       backgroundColor: '#0d0f14',
       webPreferences: {
         preload: fixturePreload,

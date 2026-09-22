@@ -106,11 +106,21 @@ jobs:
             npm run smoke:ipc
           fi
 
+      - name: Configurar resolucao de tela (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          try {
+            Set-DisplayResolution -Width 1920 -Height 1080 -Force
+          } catch {
+            Write-Host "Set-DisplayResolution indisponivel: $_"
+          }
+
       - name: UI verification (Electron; xvfb no Ubuntu)
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
-            xvfb-run -a npm run verify:ui
+            xvfb-run -a -s "-screen 0 1920x1080x24" npm run verify:ui
           else
             npm run verify:ui
           fi

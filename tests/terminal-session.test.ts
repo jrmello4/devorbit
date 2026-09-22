@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 type ErrorListener = (error: Error) => void
 
@@ -58,11 +58,18 @@ function createFakeTerminal(pid: number): FakeTerminal {
 }
 
 describe('terminal-session', () => {
+  const originalPlatform = process.platform
+
   beforeEach(() => {
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
     vi.resetModules()
     spawnMock.mockReset()
     childSpawnMock.mockReset()
     childSpawnMock.mockImplementation(() => createFakeChildProcess())
+  })
+
+  afterAll(() => {
+    Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
   })
 
   it('inicia PTY, encaminha saída, escrita e redimensionamento', async () => {
