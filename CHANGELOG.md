@@ -2,6 +2,19 @@
 
 All notable changes to DevOrbit are documented here.
 
+## [1.0.36] - 2026-09-22
+
+### Added
+
+- Responsive Projects library with grid as the default, an optional list, compact filters, contextual actions, and independent project tabs.
+- Canvas radial menu for quick access to creation actions.
+- Compact navigation rail and permanently dark DevOrbit theme.
+
+### Fixed
+
+- Project action menus remain available in the mobile list and grouped views; the filter popover stays inside narrow windows.
+- Finalizing a project retains the full removal warning and prevents duplicate execution while busy.
+
 ## [1.0.35] - 2026-09-22
 
 ### Changed

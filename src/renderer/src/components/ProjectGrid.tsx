@@ -44,7 +44,7 @@ export const ProjectGrid: React.FC<ProjectGridProps> = (props) => {
   const { projects, otherDirs, search, isLoading, onOpenSettings, onOpenClone, onOpenGitInit, onNotify, onOpenProject, onOpenWorkspace, onRestoreProject, onFinalizeProject } = props
   const [lifecycleFilter, setLifecycleFilter] = useState<LifecycleFilter>('all'); const [gitFilter, setGitFilter] = useState<GitFilter>('all'); const [tech, setTech] = useState(''); const [branch, setBranch] = useState(''); const [location, setLocation] = useState(''); const [sort, setSort] = useState<'name' | 'recent'>('name')
   const [view, setView] = useState<'grid' | 'list'>('grid'); const [showFilters, setShowFilters] = useState(false); const [grouped, setGrouped] = useState(false)
-  const [openMenu, setOpenMenu] = useState<string | null>(null); const [selectedId, setSelectedId] = useState<string | null>(null); const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
+  const [openMenu, setOpenMenu] = useState<string | null>(null); const [selectedId, setSelectedId] = useState<string | null>(null); const [finalizingId, setFinalizingId] = useState<string | null>(null); const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
   useEffect(() => {
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
@@ -75,6 +75,14 @@ export const ProjectGrid: React.FC<ProjectGridProps> = (props) => {
   const launchTerminal = async (p: Project) => { const res = await window.devorbit?.launchTool('terminal', p.path); if (!res?.success) onNotify(res?.message || 'Não foi possível abrir o terminal.', 'error') }
 
   const safeLaunchTerminal = async (p: Project) => { try { await launchTerminal(p) } catch (e) { onNotify(`Erro ao abrir terminal: ${e instanceof Error ? e.message : String(e)}`, 'error') } }
+  const finalizeProject = async (p: Project) => {
+    if (!onFinalizeProject || finalizingId) return
+    const confirmed = window.confirm('O DevOrbit só libera a pasta depois de confirmar que ela está limpa e sincronizada com o GitHub. A cópia local e dependências recriáveis como node_modules serão removidas; arquivos ignorados importantes bloqueiam a operação. O cadastro do projeto permanecerá. Continuar?')
+    if (!confirmed) return
+    setOpenMenu(null)
+    setFinalizingId(p.id)
+    try { await onFinalizeProject(p) } finally { setFinalizingId(null) }
+  }
   const renderProject = (p: Project) => {
     const status = getStatus(p)
     const archived = p.lifecycle === 'archived'
@@ -106,7 +114,7 @@ export const ProjectGrid: React.FC<ProjectGridProps> = (props) => {
               <button type="button" onClick={() => { setOpenMenu(null); void openFolder(p.path) }}><FolderOpen aria-hidden="true" />Abrir no Explorer</button>
               {!archived && !p.git.isRepo && <button type="button" onClick={() => { setOpenMenu(null); onOpenGitInit(p) }}><GitBranch aria-hidden="true" />Adicionar Git</button>}
               {archived && onRestoreProject && <button type="button" onClick={() => { setOpenMenu(null); void onRestoreProject(p) }}><ArchiveRestore aria-hidden="true" />Baixar projeto</button>}
-              {!archived && onFinalizeProject && <button type="button" onClick={() => { if (window.confirm('Liberar a pasta local deste projeto?')) { setOpenMenu(null); void onFinalizeProject(p) } }}><Archive aria-hidden="true" />Finalizar projeto</button>}
+              {!archived && onFinalizeProject && <button type="button" disabled={finalizingId === p.id} aria-busy={finalizingId === p.id} onClick={() => void finalizeProject(p)}><Archive aria-hidden="true" />{finalizingId === p.id ? 'Finalizando…' : 'Finalizar projeto'}</button>}
             </div>
           )}
         </div>

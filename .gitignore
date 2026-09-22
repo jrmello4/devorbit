@@ -11,3 +11,9 @@ artifacts/ui/
 
 # Local Electron profiles used by manual UI audits
 .audit-*/
+
+# Keep per-machine agent/editor state and generated QA artifacts out of releases
+/.devorbit/orchestration.json
+/.zcodeignore
+/artifacts/
+/.impeccable/review/
