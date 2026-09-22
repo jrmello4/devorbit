@@ -1,8 +1,9 @@
-import React, { useState } from 'react'
+import React, { useId, useState } from 'react'
 import {
   AlertCircle,
   Bot,
   Check,
+  ChevronDown,
   ChevronRight,
   Code2,
   Copy,
@@ -58,7 +59,43 @@ function formatProjectDate(value: number): string {
   return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(date)
 }
 
+export const LAUNCHER_IDENTITIES = {
+  agy: { label: 'Antigravity', subtitle: 'CLI · agy', tool: 'agy' },
+  gemini: { label: 'Gemini CLI', subtitle: 'CLI · Google', tool: 'gemini' },
+} as const
+
 type NextActionState = 'setup' | 'pull' | 'push' | 'clean'
+
+interface DetailGroupProps {
+  title: string
+  meta?: string
+  defaultOpen?: boolean
+  children: React.ReactNode
+}
+
+const DetailGroup: React.FC<DetailGroupProps> = ({ title, meta, defaultOpen = false, children }) => {
+  const panelId = useId()
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <section className={`detail-group${open ? ' is-open' : ''}`}>
+      <button
+        type="button"
+        className="detail-group-toggle"
+        aria-expanded={open}
+        aria-controls={panelId}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <ChevronDown className="detail-group-chevron" aria-hidden="true" />
+        <span className="detail-group-title">{title}</span>
+        {meta ? <span className="work-section-meta">{meta}</span> : null}
+      </button>
+      <div id={panelId} className="detail-group-body" hidden={!open}>
+        {children}
+      </div>
+    </section>
+  )
+}
+
 export const ProjectCard: React.FC<ProjectCardProps> = ({
   project,
   config,
@@ -439,59 +476,87 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
             </div>
           </div>
 
-          <div className="detail-next-action">
-            {nextActionState === 'setup' && (
+          <div className="detail-primary-cta">
+            {isArchived ? (
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!onRestoreProject || isLifecycleBusy) return
+                  setIsLifecycleBusy(true)
+                  try { await onRestoreProject(project) } finally { setIsLifecycleBusy(false) }
+                }}
+                disabled={!onRestoreProject || isLifecycleBusy}
+                aria-busy={isLifecycleBusy}
+                className="detail-next-button"
+                title="Baixar a versão atual do projeto para esta pasta"
+              >
+                <Download aria-hidden="true" />
+                <span>{isLifecycleBusy ? 'Baixando...' : 'Baixar projeto'}</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void handleOpenWorkspace()}
+                disabled={isOpeningWorkspace}
+                aria-busy={isOpeningWorkspace}
+                className="detail-next-button workspace-open-all"
+                title="Abrir o editor, terminal e pesquisa web dentro do DevOrbit"
+              >
+                <Rocket aria-hidden="true" />
+                <span>
+                  {isOpeningWorkspace
+                    ? 'Abrindo ambiente...'
+                    : nextActionState === 'setup'
+                      ? 'Configurar Git'
+                      : nextActionState === 'pull'
+                        ? 'Puxar e abrir'
+                        : nextActionState === 'push'
+                          ? 'Revisar e abrir'
+                          : 'Abrir ambiente'}
+                </span>
+              </button>
+            )}
+            {!isArchived && nextActionState !== 'clean' && nextActionState !== 'setup' && (
+              <button
+                type="button"
+                onClick={nextActionState === 'pull' ? handleSync : () => onOpenPushModal(project)}
+                disabled={isSyncing}
+                aria-busy={isSyncing}
+                className="detail-next-button detail-next-button-secondary"
+                title={
+                  nextActionState === 'pull'
+                    ? 'Executar git pull para trazer a versão mais recente'
+                    : 'Subir alterações locais para o GitHub'
+                }
+              >
+                {nextActionState === 'pull' ? (
+                  <RefreshCw
+                    className={isSyncing ? 'work-icon-spinning' : ''}
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <UploadCloud aria-hidden="true" />
+                )}
+                <span>
+                  {nextActionState === 'pull'
+                    ? isSyncing
+                      ? 'Puxando...'
+                      : 'Puxar mudanças'
+                    : git.hasChanges
+                      ? 'Enviar alterações'
+                      : 'Enviar commits'}
+                </span>
+              </button>
+            )}
+            {!isArchived && nextActionState === 'setup' && (
               <button
                 type="button"
                 onClick={() => onOpenGitInit(project)}
-                className="detail-next-button"
+                className="detail-next-button detail-next-button-secondary"
                 title="Criar um repositório Git nesta pasta"
               >
                 <GitBranch aria-hidden="true" />
                 <span>Adicionar Git</span>
-              </button>
-            )}
-            {nextActionState === 'pull' && (
-              <button
-                type="button"
-                onClick={handleSync}
-                disabled={isSyncing}
-                aria-busy={isSyncing}
-                className="detail-next-button"
-                title="Executar git pull para trazer a versão mais recente"
-              >
-                <RefreshCw
-                  className={isSyncing ? 'work-icon-spinning' : ''}
-                  aria-hidden="true"
-                />
-                <span>{isSyncing ? 'Puxando...' : 'Puxar mudanças'}</span>
-              </button>
-            )}
-            {nextActionState === 'push' && (
-              <button
-                type="button"
-                onClick={() => onOpenPushModal(project)}
-                className="detail-next-button"
-                title="Subir alterações locais para o GitHub"
-              >
-                <UploadCloud aria-hidden="true" />
-                <span>{git.hasChanges ? 'Enviar alterações' : 'Enviar commits'}</span>
-              </button>
-            )}
-            {nextActionState === 'clean' && (
-              <button
-                type="button"
-                onClick={handleSync}
-                disabled={isSyncing}
-                aria-busy={isSyncing}
-                className="detail-next-button"
-                title="Executar git pull para confirmar a versão mais recente"
-              >
-                <RefreshCw
-                  className={isSyncing ? 'work-icon-spinning' : ''}
-                  aria-hidden="true"
-                />
-                <span>{isSyncing ? 'Atualizando...' : 'Atualizar'}</span>
               </button>
             )}
           </div>
@@ -508,97 +573,60 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
           )}
         </section>
 
-        <div className="detail-columns">
-          <section
-            className="work-section detail-domain detail-domain--workspace"
-            aria-labelledby={'workspace-actions-' + project.id}
+        <div className="detail-groups">
+          <DetailGroup
+            title="Workspace"
+            meta={isArchived ? 'Projeto arquivado' : 'Editor e terminal'}
+            defaultOpen={!isArchived}
           >
-            <div className="work-section-heading">
-              <h3 id={'workspace-actions-' + project.id}>Workspace</h3>
-              <span className="work-section-meta">Atalhos principais</span>
-            </div>
             <div className="work-primary-actions">
               {isArchived ? (
-                <button
-                  type="button"
-                  onClick={async () => {
-                    if (!onRestoreProject || isLifecycleBusy) return
-                    setIsLifecycleBusy(true)
-                    try { await onRestoreProject(project) } finally { setIsLifecycleBusy(false) }
-                  }}
-                  disabled={!onRestoreProject || isLifecycleBusy}
-                  aria-busy={isLifecycleBusy}
-                  className="work-primary-action work-primary-action-accent"
-                  title="Baixar a versão atual do projeto para esta pasta"
-                >
-                  <Download aria-hidden="true" />
-                  <span className="work-action-copy">
-                    <strong>{isLifecycleBusy ? 'Baixando...' : 'Baixar projeto'}</strong>
-                    <small>Trazer a versão do GitHub</small>
-                  </span>
-                  <ChevronRight aria-hidden="true" />
-                </button>
-              ) : <>
-              <button
-                type="button"
-                onClick={() => void handleOpenWorkspace()}
-                disabled={isOpeningWorkspace}
-                aria-busy={isOpeningWorkspace}
-                className="work-primary-action work-primary-action-accent workspace-open-all"
-                title="Abrir o editor, terminal e pesquisa web dentro do DevOrbit"
-              >
-                <Rocket aria-hidden="true" />
-                <span className="work-action-copy">
-                  <strong>{isOpeningWorkspace ? 'Abrindo ambiente...' : 'Abrir ambiente'}</strong>
-                  <small>Editor, terminal e web no DevOrbit</small>
-                </span>
-                <ChevronRight aria-hidden="true" />
-              </button>
-              <button
-                type="button"
-                onClick={() => handleLaunch('vscode')}
-                disabled={launchingTool === 'vscode' || isOpeningWorkspace}
-                aria-busy={launchingTool === 'vscode'}
-                className="work-primary-action work-primary-action-accent"
-                title="Abrir no VS Code"
-              >
-                <Code2 aria-hidden="true" />
-                <span className="work-action-copy">
-                  <strong>{launchingTool === 'vscode' ? 'Abrindo...' : 'VS Code'}</strong>
-                  <small>Editor do projeto</small>
-                </span>
-                <ChevronRight aria-hidden="true" />
-              </button>
-              <button
-                type="button"
-                onClick={() => handleLaunch('terminal')}
-                disabled={launchingTool === 'terminal' || isOpeningWorkspace}
-                aria-busy={launchingTool === 'terminal'}
-                className="work-primary-action"
-                title="Abrir terminal na pasta do projeto"
-              >
-                <Terminal aria-hidden="true" />
-                <span className="work-action-copy">
-                  <strong>{launchingTool === 'terminal' ? 'Abrindo...' : 'Terminal'}</strong>
-                  <small>Executar comandos aqui</small>
-                </span>
-                <ChevronRight aria-hidden="true" />
-              </button>
-              </>}
+                <p className="work-section-note">
+                  Baixe o projeto para abrir as ferramentas de edição.
+                </p>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => handleLaunch('vscode')}
+                    disabled={launchingTool === 'vscode' || isOpeningWorkspace}
+                    aria-busy={launchingTool === 'vscode'}
+                    className="work-primary-action"
+                    title="Abrir no VS Code"
+                  >
+                    <Code2 aria-hidden="true" />
+                    <span className="work-action-copy">
+                      <strong>{launchingTool === 'vscode' ? 'Abrindo...' : 'VS Code'}</strong>
+                      <small>Editor do projeto</small>
+                    </span>
+                    <ChevronRight aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleLaunch('terminal')}
+                    disabled={launchingTool === 'terminal' || isOpeningWorkspace}
+                    aria-busy={launchingTool === 'terminal'}
+                    className="work-primary-action"
+                    title="Abrir terminal na pasta do projeto"
+                  >
+                    <Terminal aria-hidden="true" />
+                    <span className="work-action-copy">
+                      <strong>{launchingTool === 'terminal' ? 'Abrindo...' : 'Terminal'}</strong>
+                      <small>Executar comandos aqui</small>
+                    </span>
+                    <ChevronRight aria-hidden="true" />
+                  </button>
+                </>
+              )}
             </div>
-          </section>
+          </DetailGroup>
 
-          <section
-            className="work-section detail-domain detail-domain--delivery"
-            aria-labelledby={'git-actions-' + project.id}
-          >
-            <div className="work-section-heading">
-              <h3 id={'git-actions-' + project.id}>Entrega e contexto</h3>
-              <span className="work-section-meta">{deliveryMeta}</span>
-            </div>
-
+          <DetailGroup title="Entrega e contexto" meta={deliveryMeta}>
             {isArchived ? (
-              <p className="work-section-note">O conteúdo foi liberado do computador. O cadastro e o link do GitHub continuam disponíveis para restaurar quando quiser.</p>
+              <p className="work-section-note">
+                O conteúdo foi liberado do computador. O cadastro e o link do GitHub continuam
+                disponíveis para restaurar quando quiser.
+              </p>
             ) : git.isRepo ? (
               <div className="work-inline-actions">
                 {nextActionState !== 'pull' && nextActionState !== 'clean' && (
@@ -640,7 +668,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                     <span>{isStashing ? 'Sincronizando...' : 'Stash + puxar'}</span>
                   </button>
                 )}
-                {!isArchived && onFinalizeProject && (
+                {onFinalizeProject && (
                   <button
                     type="button"
                     onClick={async () => {
@@ -689,105 +717,107 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                 <span>Memória</span>
               </button>
             </div>
-          </section>
+          </DetailGroup>
 
-          <div className="detail-tools-group detail-domain detail-domain--assistants">
-            <section className="work-section" aria-labelledby={'ai-tools-' + project.id}>
-              <div className="work-section-heading">
-                <h3 id={'ai-tools-' + project.id}>Assistentes IA</h3>
-                <label className="work-account-control">
-                  <span>Conta</span>
-                  <select
-                    value={projectAccount}
-                    onChange={(event) => {
-                      const nextAccount = event.target.value === 'account2' ? 'account2' : 'account1'
-                      void onProjectAccountChange?.(project, nextAccount)
+          <DetailGroup title="Assistentes IA" meta="Ferramentas de Codex e CLI">
+            <div className="detail-tools-group detail-domain detail-domain--assistants">
+              <section className="work-section" aria-labelledby={'ai-tools-' + project.id}>
+                <div className="work-section-heading">
+                  <h3 id={'ai-tools-' + project.id}>Conta e launchers</h3>
+                  <label className="work-account-control">
+                    <span>Conta</span>
+                    <select
+                      value={projectAccount}
+                      onChange={(event) => {
+                        const nextAccount = event.target.value === 'account2' ? 'account2' : 'account1'
+                        void onProjectAccountChange?.(project, nextAccount)
+                      }}
+                      disabled={!onProjectAccountChange || isOpeningWorkspace}
+                      aria-label={`Conta do Codex para ${project.name}`}
+                    >
+                      <option value="account1">{config?.chatGptAccount1Name || 'Conta 1'}</option>
+                      <option value="account2">{config?.chatGptAccount2Name || 'Conta 2'}</option>
+                    </select>
+                  </label>
+                </div>
+                <div className="work-tool-grid">
+                  {renderToolButton(
+                    'codex-desktop',
+                    Bot,
+                    'Codex App',
+                    'Aplicativo',
+                    'Abrir no aplicativo oficial OpenAI Codex Desktop'
+                  )}
+                  {renderToolButton(
+                    'codex-cli',
+                    Terminal,
+                    'Codex ' + (projectAccount === 'account2' ? '#2' : '#1'),
+                    'CLI · ' + activeAccountLabel,
+                    'Abrir Codex CLI no terminal conectado com ' + activeAccountLabel
+                  )}
+                  {renderToolButton(
+                    'agy',
+                    Sparkles,
+                    LAUNCHER_IDENTITIES.agy.label,
+                    LAUNCHER_IDENTITIES.agy.subtitle,
+                    'Abrir no Antigravity CLI no Windows Terminal'
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (onOpenWorkspace) {
+                        onOpenWorkspace(project)
+                        onNotify('Ambiente aberto para uso com Gemini CLI.', 'info')
+                      } else {
+                        handleLaunch('terminal')
+                      }
                     }}
-                    disabled={!onProjectAccountChange || isOpeningWorkspace}
-                    aria-label={`Conta do Codex para ${project.name}`}
+                    disabled={isArchived || isOpeningWorkspace}
+                    className="work-tool"
+                    title="Abrir ambiente de trabalho para uso com Gemini CLI"
                   >
-                    <option value="account1">{config?.chatGptAccount1Name || 'Conta 1'}</option>
-                    <option value="account2">{config?.chatGptAccount2Name || 'Conta 2'}</option>
-                  </select>
-                </label>
-              </div>
-              <div className="work-tool-grid">
-                {renderToolButton(
-                  'codex-desktop',
-                  Bot,
-                  'Codex App',
-                  'Aplicativo',
-                  'Abrir no aplicativo oficial OpenAI Codex Desktop'
-                )}
-                {renderToolButton(
-                  'codex-cli',
-                  Terminal,
-                  'Codex ' + (projectAccount === 'account2' ? '#2' : '#1'),
-                  'CLI · ' + activeAccountLabel,
-                  'Abrir Codex CLI no terminal conectado com ' + activeAccountLabel
-                )}
-                {renderToolButton(
-                  'agy',
-                  Sparkles,
-                  'Antigravity',
-                  'CLI · agy',
-                  'Abrir no Antigravity CLI no Windows Terminal'
-                )}
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (onOpenWorkspace) {
-                      onOpenWorkspace(project)
-                      onNotify('Ambiente aberto para uso com Gemini CLI.', 'info')
-                    } else {
-                      handleLaunch('terminal')
-                    }
-                  }}
-                  disabled={isArchived || isOpeningWorkspace}
-                  className="work-tool"
-                  title="Abrir ambiente de trabalho para uso com Gemini CLI"
-                >
-                  <span className="work-tool-icon" aria-hidden="true">
-                    <Bot />
-                  </span>
-                  <span className="work-tool-copy">
-                    <span className="work-tool-title">Gemini CLI</span>
-                    <span className="work-tool-detail">CLI · Google</span>
-                  </span>
-                </button>
-                {renderToolButton(
-                  'mimo',
-                  Bot,
-                  'MiMo AI',
-                  'Xiaomi',
-                  'Abrir no Xiaomi MiMo AI'
-                )}
-              </div>
-            </section>
+                    <span className="work-tool-icon" aria-hidden="true">
+                      <Bot />
+                    </span>
+                    <span className="work-tool-copy">
+                      <span className="work-tool-title">{LAUNCHER_IDENTITIES.gemini.label}</span>
+                      <span className="work-tool-detail">{LAUNCHER_IDENTITIES.gemini.subtitle}</span>
+                    </span>
+                  </button>
+                  {renderToolButton(
+                    'mimo',
+                    Bot,
+                    'MiMo AI',
+                    'Xiaomi',
+                    'Abrir no Xiaomi MiMo AI'
+                  )}
+                </div>
+              </section>
 
-            <section className="work-section" aria-labelledby={'browser-tools-' + project.id}>
-              <div className="work-section-heading">
-                <h3 id={'browser-tools-' + project.id}>Navegadores</h3>
-                <span className="work-section-meta">ChatGPT por conta</span>
-              </div>
-              <div className="work-tool-grid">
-                {renderToolButton(
-                  'chrome',
-                  Globe,
-                  'Chrome #1',
-                  'Conta 1',
-                  'Abrir ChatGPT no Google Chrome (Conta 1)'
-                )}
-                {renderToolButton(
-                  'brave',
-                  Globe,
-                  'Brave #2',
-                  'Conta 2',
-                  'Abrir ChatGPT no Brave (Conta 2)'
-                )}
-              </div>
-            </section>
-          </div>
+              <section className="work-section" aria-labelledby={'browser-tools-' + project.id}>
+                <div className="work-section-heading">
+                  <h3 id={'browser-tools-' + project.id}>Navegadores</h3>
+                  <span className="work-section-meta">ChatGPT por conta</span>
+                </div>
+                <div className="work-tool-grid">
+                  {renderToolButton(
+                    'chrome',
+                    Globe,
+                    'Chrome #1',
+                    'Conta 1',
+                    'Abrir ChatGPT no Google Chrome (Conta 1)'
+                  )}
+                  {renderToolButton(
+                    'brave',
+                    Globe,
+                    'Brave #2',
+                    'Conta 2',
+                    'Abrir ChatGPT no Brave (Conta 2)'
+                  )}
+                </div>
+              </section>
+            </div>
+          </DetailGroup>
         </div>
       </div>
     </article>

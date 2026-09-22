@@ -1,6 +1,7 @@
 import React, { Suspense, useState, useEffect, useCallback, useRef } from 'react'
 import { Header } from './components/Header'
 import { ProjectGrid } from './components/ProjectGrid'
+import { ProjectCard } from './components/ProjectCard'
 import { SettingsModal } from './components/SettingsModal'
 import { CodexAuthModal } from './components/CodexAuthModal'
 import { UsageBar } from './components/UsageBar'
@@ -17,6 +18,7 @@ import type { CreateActionId, NavigateActionId } from './components/command-cent
 import { resolvePaletteToggle } from './components/command-center-helpers'
 import type { PendingCanvasNode, WorkspaceUiRequest } from './components/workspace-request-helpers'
 import { buildPendingCanvasNode, buildWorkspaceUiRequest, computeWebSuppressed } from './components/workspace-request-helpers'
+import { shouldAutoDismissNotification } from './components/notification-helpers'
 import type {
   Project,
   OtherDir,
@@ -60,10 +62,12 @@ export const App: React.FC = () => {
   const [isGitDockOpen, setIsGitDockOpen] = useState(false)
   const [activeWorkspaceProject, setActiveWorkspaceProject] = useState<Project | null>(null)
   const [workspaceProjects, setWorkspaceProjects] = useState<Project[]>([])
+  const [projectTabs, setProjectTabs] = useState<Project[]>([])
+  const [activeProjectTabId, setActiveProjectTabId] = useState<string | null>(null)
   const restoredWorkspaceRef = useRef(false)
   const [workspaceDirty, setWorkspaceDirty] = useState<Record<string, boolean>>({})
   const [search, setSearch] = useState('')
-  const [workspaceView, setWorkspaceView] = useState<'projects' | 'usage' | 'workspace' | 'audit'>('projects')
+  const [workspaceView, setWorkspaceView] = useState<'projects' | 'project' | 'usage' | 'workspace' | 'audit'>('projects')
   const [theme, setThemeMode] = useState<ThemeMode>(() => initializeTheme())
   const [auditData, setAuditData] = useState<AuditDashboardData>({ entries: [] })
   const [hitlRequests, setHitlRequests] = useState<HitlApprovalRequest[]>([])
@@ -110,8 +114,7 @@ export const App: React.FC = () => {
       }
       notificationActionRef.current = options?.onAction || null
       setNotification({ message, type, ...(options?.actions ? { actions: options.actions } : {}) })
-      const hasActions = Boolean(options?.actions && options.actions.length > 0)
-      if (type !== 'error' && !hasActions) {
+      if (shouldAutoDismissNotification(type, options?.actions)) {
         notificationTimerRef.current = window.setTimeout(() => {
           setNotification((current) => current?.message === message && current.type === type ? null : current)
           notificationTimerRef.current = null
@@ -585,6 +588,40 @@ export const App: React.FC = () => {
     setConfig(saved)
     await handleRefresh()
   }
+  const openProjectTab = (project: Project) => {
+    setProjectTabs((current) => {
+      const existing = current.find((item) => item.id === project.id)
+      if (existing) return current.map((item) => (item.id === project.id ? project : item))
+      return [...current, project]
+    })
+    setActiveProjectTabId(project.id)
+    setWorkspaceView('project')
+  }
+
+  const activateProjectTab = (projectId: string) => {
+    const tab = projectTabs.find((item) => item.id === projectId)
+    if (!tab) return
+    setActiveProjectTabId(tab.id)
+    setWorkspaceView('project')
+  }
+
+  const closeProjectTab = (projectId: string) => {
+    const remaining = projectTabs.filter((item) => item.id !== projectId)
+    setProjectTabs(remaining)
+    if (activeProjectTabId !== projectId) return
+    const next = remaining[remaining.length - 1]
+    setActiveProjectTabId(next?.id ?? null)
+    if (!next) setWorkspaceView('projects')
+  }
+
+  useEffect(() => {
+    setProjectTabs((current) => current.map((tab) => projects.find((entry) => entry.id === tab.id) ?? tab))
+  }, [projects])
+
+  useEffect(() => {
+    if (workspaceView === 'project' && projectTabs.length === 0) setWorkspaceView('projects')
+  }, [projectTabs.length, workspaceView])
+
   const openIntegratedWorkspace = (project: Project) => {
     setWorkspaceProjects((current) => {
       const existingIndex = current.findIndex((item) => item.id === project.id)
@@ -902,7 +939,7 @@ export const App: React.FC = () => {
       <aside className="workspace-sidebar" aria-label="Navegação principal">
         <div className="sidebar-heading"><span>Área de trabalho</span><button className="icon-button" onClick={() => setSidebarCollapsed(!sidebarCollapsed)} aria-label={sidebarCollapsed ? 'Expandir navegação' : 'Recolher navegação'}>{sidebarCollapsed ? <PanelLeftOpen size={15}/> : <PanelLeftClose size={15}/>}</button></div>
         <nav>
-          <button className={`nav-item ${workspaceView === 'projects' ? 'active' : ''}`} aria-current={workspaceView === 'projects' ? 'page' : undefined} title="Projetos" onClick={() => setWorkspaceView('projects')}><FolderKanban size={17}/><span>Projetos</span><small>{projects.length}</small></button>
+          <button className={`nav-item ${workspaceView === 'projects' || workspaceView === 'project' ? 'active' : ''}`} aria-current={workspaceView === 'projects' || workspaceView === 'project' ? 'page' : undefined} title="Projetos" onClick={() => setWorkspaceView('projects')}><FolderKanban size={17}/><span>Projetos</span><small>{projects.length}</small></button>
           <button className={`nav-item ${workspaceView === 'usage' ? 'active' : ''}`} aria-current={workspaceView === 'usage' ? 'page' : undefined} title="Contas e uso" onClick={() => setWorkspaceView('usage')}><ChartNoAxesCombined size={17}/><span>Contas e uso</span></button>
           <button className={`nav-item ${workspaceView === 'audit' ? 'active' : ''}`} aria-current={workspaceView === 'audit' ? 'page' : undefined} title="Auditoria" onClick={() => setWorkspaceView('audit')}><ChartNoAxesCombined size={17}/><span>Auditoria</span></button>
           {activeWorkspaceProject && <button className={`nav-item ${workspaceView === 'workspace' ? 'active' : ''}`} aria-current={workspaceView === 'workspace' ? 'page' : undefined} title={`Ambiente integrado de ${activeWorkspaceProject.name}`} onClick={() => setWorkspaceView('workspace')}><LayoutDashboard size={17}/><span>Ambiente</span></button>}
@@ -986,7 +1023,7 @@ export const App: React.FC = () => {
         <AuditDashboard data={auditData} />
       </div>
       <div className="view-panel" hidden={workspaceView !== 'projects'}>
-      {/* Grid de Projetos */}
+      {/* Biblioteca visual de projetos */}
       <ProjectGrid
         projects={projects}
         otherDirs={otherDirs}
@@ -1007,8 +1044,85 @@ export const App: React.FC = () => {
         onFinalizeProject={handleFinalizeProject}
         onProjectAccountChange={handleProjectAccountChange}
         onOpenWorkspace={openIntegratedWorkspace}
+        onOpenProject={openProjectTab}
       />
 
+      </div>
+      <div className="view-panel project-tabs-view" hidden={workspaceView !== 'project'}>
+        {projectTabs.length > 0 && (
+          <div className="project-tabs" role="tablist" aria-label="Abas de projeto">
+            <div className="project-tab-list">
+              {projectTabs.map((projectTab) => (
+                <div
+                  key={projectTab.id}
+                  className={'project-tab' + (activeProjectTabId === projectTab.id ? ' active' : '')}
+                  role="presentation"
+                >
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={activeProjectTabId === projectTab.id}
+                    className="project-tab-select"
+                    onClick={() => activateProjectTab(projectTab.id)}
+                    title={projectTab.path}
+                  >
+                    <span>{projectTab.name}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="project-tab-close"
+                    aria-label={`Fechar aba de ${projectTab.name}`}
+                    title={`Fechar aba de ${projectTab.name}`}
+                    onClick={() => closeProjectTab(projectTab.id)}
+                  >
+                    <X size={12} aria-hidden="true" />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <button type="button" className="project-tab-projects" onClick={() => setWorkspaceView('projects')}>
+              <FolderKanban size={13} aria-hidden="true" /> Projetos
+            </button>
+          </div>
+        )}
+        <div className="project-tab-panes">
+          {projectTabs.map((projectTab) => (
+            <div
+              key={projectTab.id}
+              className="project-tab-pane"
+              hidden={activeProjectTabId !== projectTab.id}
+            >
+              <nav className="project-breadcrumb" aria-label="Caminho do projeto">
+                <button type="button" className="project-breadcrumb-home" onClick={() => setWorkspaceView('projects')}>
+                  <FolderKanban size={13} aria-hidden="true" /> Projetos
+                </button>
+                <span className="project-breadcrumb-sep" aria-hidden="true">/</span>
+                <span className="project-breadcrumb-parent" title={projectTab.path}>{projectTab.parentDir}</span>
+                <span className="project-breadcrumb-sep" aria-hidden="true">/</span>
+                <span className="project-breadcrumb-current" title={projectTab.name}>{projectTab.name}</span>
+              </nav>
+              <section className="project-detail" aria-label="Projeto selecionado">
+                <ProjectCard
+                  key={projectTab.id}
+                  project={projectTab}
+                  config={config}
+                  onSync={handleSyncProject}
+                  onStashSync={handleStashSyncProject}
+                  onOpenPushModal={(project) => openGitDock('push', project)}
+                  onOpenGitInit={(project) => openGitDock('init', project)}
+                  onNotify={notify}
+                  onOpenAuthModal={(acc) => setAuthModalAccount(acc)}
+                  onOpenMemory={(project) => setActiveMemoryProject(project)}
+                  onOpenBranches={(project) => openGitDock('branches', project)}
+                  onRestoreProject={handleRestoreProject}
+                  onFinalizeProject={handleFinalizeProject}
+                  onProjectAccountChange={handleProjectAccountChange}
+                  onOpenWorkspace={openIntegratedWorkspace}
+                />
+              </section>
+            </div>
+          ))}
+        </div>
       </div>
       </div>
       {isGitDockOpen && (

@@ -12,6 +12,10 @@ const SMELL_PATTERNS: Array<{ pattern: RegExp; category: AuditFinding['category'
   { pattern: /console\.log\s*\(/gu, category: 'smell', severity: 'low', message: 'Log direto pode vazar contexto operacional.', minutes: 10 },
 ]
 
+/** Métricas do motor são heurísticas de regex, não medição formal de débito. */
+export const AUDIT_METRICS_METHOD = 'heuristic-regex' as const
+export const AUDIT_METRICS_DISCLAIMER = 'Métricas baseadas em heurísticas de regex; não representam medição formal de débito.'
+
 interface SourceFile {
   relativePath: string
   content: string
@@ -110,11 +114,15 @@ export async function auditProject(projectPath: string): Promise<AuditSnapshot> 
   }
 }
 
+function findingIdentity(finding: AuditFinding): string {
+  return `${finding.file}:${finding.message}`
+}
+
 export function calculateGain(before: AuditSnapshot, after: AuditSnapshot, coverageDelta?: number): GainMeasurement {
-  const beforeLines = new Set(before.findings.map((finding) => `${finding.file}:${finding.line}:${finding.message}`))
-  const afterLines = new Set(after.findings.map((finding) => `${finding.file}:${finding.line}:${finding.message}`))
+  const beforeFindings = new Set(before.findings.map(findingIdentity))
+  const afterFindings = new Set(after.findings.map(findingIdentity))
   let linesProblematicRemoved = 0
-  for (const item of beforeLines) if (!afterLines.has(item)) linesProblematicRemoved += 1
+  for (const item of beforeFindings) if (!afterFindings.has(item)) linesProblematicRemoved += 1
   return {
     version: 1,
     measuredAt: new Date().toISOString(),
@@ -133,6 +141,7 @@ export function renderAuditMarkdown(snapshot: AuditSnapshot): string {
     `# Auditoria ${snapshot.projectPath}`,
     '',
     `Gerado em ${snapshot.generatedAt}. Arquivos: ${snapshot.filesScanned}. Linhas: ${snapshot.linesScanned}. Complexidade: ${snapshot.cyclomaticComplexity}. Débito estimado: ${snapshot.estimatedDebtMinutes} minutos.`,
+    `Método: ${AUDIT_METRICS_METHOD}. ${AUDIT_METRICS_DISCLAIMER}`,
     '',
     '| Severidade | Local | Categoria | Evidência |',
     '|---|---|---|---|',

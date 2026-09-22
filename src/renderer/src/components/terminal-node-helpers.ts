@@ -11,10 +11,13 @@ import type {
   TerminalPresetDefinition,
 } from '../../../shared/terminal-presets'
 import {
+  CUSTOM_TERMINAL_PRESET_LIMIT,
   CUSTOM_TERMINAL_PRESET_PREFIX,
   TERMINAL_PRESETS,
   sanitizeTerminalNodeConfig,
 } from '../../../shared/terminal-presets'
+
+export { CUSTOM_TERMINAL_PRESET_LIMIT }
 
 /** Versão atual do esquema do canvas no localStorage. */
 export const CANVAS_STATE_VERSION = 4
@@ -224,4 +227,64 @@ export function formatArgsInput(args?: readonly string[]): string {
   return args
     .map((arg) => (/\s/.test(arg) ? '"' + arg + '"' : arg))
     .join(' ')
+}
+
+/**
+ * Verifica se um id pertence a um preset personalizado do usuário.
+ */
+export function isCustomTerminalPresetId(presetId: string): boolean {
+  return presetId.startsWith(CUSTOM_TERMINAL_PRESET_PREFIX)
+}
+
+/**
+ * Exclui um preset customizado. Presets nativos/embutidos nunca podem ser excluídos.
+ */
+export function deleteCustomTerminalPreset(
+  presets: readonly CustomTerminalPreset[],
+  presetId: string,
+): { presets: CustomTerminalPreset[]; deleted?: CustomTerminalPreset; error?: string } {
+  if (!isCustomTerminalPresetId(presetId)) {
+    return { presets: [...presets], error: 'Não é permitido excluir presets nativos do sistema.' }
+  }
+  const found = presets.find((p) => p.id === presetId)
+  if (!found) {
+    return { presets: [...presets], error: 'Preset não encontrado.' }
+  }
+  return {
+    presets: presets.filter((p) => p.id !== presetId),
+    deleted: found,
+  }
+}
+
+/**
+ * Renomeia um preset customizado. Presets nativos não podem ser renomeados.
+ * Valida tamanho e colisão de nomes.
+ */
+export function renameCustomTerminalPreset(
+  presets: readonly CustomTerminalPreset[],
+  presetId: string,
+  rawNewName: string,
+): { presets: CustomTerminalPreset[]; updated?: CustomTerminalPreset; error?: string } {
+  if (!isCustomTerminalPresetId(presetId)) {
+    return { presets: [...presets], error: 'Não é permitido renomear presets nativos do sistema.' }
+  }
+  const target = presets.find((p) => p.id === presetId)
+  if (!target) {
+    return { presets: [...presets], error: 'Preset não encontrado.' }
+  }
+  const newName = rawNewName.trim().slice(0, 60)
+  if (!newName) {
+    return { presets: [...presets], error: 'O nome do preset não pode ser vazio.' }
+  }
+  const hasConflict = presets.some(
+    (p) => p.id !== presetId && p.name.trim().toLowerCase() === newName.toLowerCase(),
+  )
+  if (hasConflict) {
+    return { presets: [...presets], error: 'Já existe outro preset com este nome.' }
+  }
+  const updated: CustomTerminalPreset = { ...target, name: newName }
+  return {
+    presets: presets.map((p) => (p.id === presetId ? updated : p)),
+    updated,
+  }
 }

@@ -1,3 +1,4 @@
+import { spawn as spawnProcess, type SpawnOptions } from 'node:child_process'
 import { spawn as spawnPty, type IPty } from 'node-pty'
 import { clearPipesFor, resetPipes } from './pty-pipe'
 
@@ -192,6 +193,50 @@ export function resizeTerminal(id: string, cols: number, rows: number): boolean 
   return true
 }
 
+export interface TerminateProcessTreeFailure {
+  pid: number
+  reason: string
+}
+
+export interface TerminateProcessTreeDeps {
+  platform?: NodeJS.Platform
+  spawnImpl?: (command: string, args: string[], options: SpawnOptions) => {
+    unref?: () => void
+    on?: (event: 'error', listener: (error: Error) => void) => void
+  }
+  onFailure?: (failure: TerminateProcessTreeFailure) => void
+}
+
+/** Motivo curto e sem dados sensíveis (apenas código de erro, se houver). */
+function safeFailureReason(error: unknown): string {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code
+  if (typeof code === 'string' && code.length > 0 && code.length <= 64) return code
+  return 'spawn-failed'
+}
+
+/** Encerra a árvore de processos no Windows sem passar por shell. */
+export function terminateProcessTree(pid: number, deps: TerminateProcessTreeDeps = {}): boolean {
+  const platform = deps.platform ?? process.platform
+  if (platform !== 'win32') return false
+  if (!Number.isInteger(pid) || pid <= 0) return false
+  const spawnImpl = deps.spawnImpl ?? spawnProcess
+  try {
+    const child = spawnImpl('taskkill', ['/pid', String(pid), '/T', '/F'], {
+      windowsHide: true,
+      stdio: 'ignore',
+      shell: false,
+    })
+    child.on?.('error', (error) => {
+      deps.onFailure?.({ pid, reason: safeFailureReason(error) })
+    })
+    child.unref?.()
+    return true
+  } catch (error) {
+    deps.onFailure?.({ pid, reason: safeFailureReason(error) })
+    return false
+  }
+}
+
 export function stopTerminal(id: string, options?: { keepPipes?: boolean }): void {
   const record = sessions.get(id)
   // Limpeza bidirecional por padrão: remove cabos que saem E que chegam neste
@@ -199,6 +244,11 @@ export function stopTerminal(id: string, options?: { keepPipes?: boolean }): voi
   if (!options?.keepPipes) clearPipesFor(id)
   if (!record) return
   sessions.delete(id)
+  terminateProcessTree(record.terminal.pid, {
+    onFailure: ({ pid, reason }) => {
+      emit({ id, type: 'error', data: `Falha ao encerrar a árvore do processo ${pid}: ${reason}` })
+    },
+  })
   try {
     record.terminal.kill()
   } catch {

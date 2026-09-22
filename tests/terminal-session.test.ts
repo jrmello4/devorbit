@@ -1,10 +1,31 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { spawnMock } = vi.hoisted(() => ({
+type ErrorListener = (error: Error) => void
+
+interface FakeChildProcess {
+  unref: ReturnType<typeof vi.fn>
+  on: ReturnType<typeof vi.fn>
+  emitError: (error: Error) => void
+}
+
+function createFakeChildProcess(): FakeChildProcess {
+  const listeners: ErrorListener[] = []
+  return {
+    unref: vi.fn(),
+    on: vi.fn((event: string, listener: ErrorListener) => {
+      if (event === 'error') listeners.push(listener)
+    }),
+    emitError: (error: Error) => listeners.forEach((listener) => listener(error)),
+  }
+}
+
+const { spawnMock, childSpawnMock } = vi.hoisted(() => ({
   spawnMock: vi.fn(),
+  childSpawnMock: vi.fn(),
 }))
 
 vi.mock('node-pty', () => ({ spawn: spawnMock }))
+vi.mock('node:child_process', () => ({ spawn: childSpawnMock }))
 
 interface FakeTerminal {
   pid: number
@@ -40,6 +61,8 @@ describe('terminal-session', () => {
   beforeEach(() => {
     vi.resetModules()
     spawnMock.mockReset()
+    childSpawnMock.mockReset()
+    childSpawnMock.mockImplementation(() => createFakeChildProcess())
   })
 
   it('inicia PTY, encaminha saída, escrita e redimensionamento', async () => {
@@ -170,5 +193,77 @@ describe('terminal-session', () => {
     pipes.setPipe('pipe-src', 'pipe-dst')
     session.stopAllTerminals()
     expect(pipes.listPipes()).toEqual([])
+  })
+
+  it('terminateProcessTree usa taskkill sem shell e nunca dispara processo real nos testes', async () => {
+    const { terminateProcessTree } = await import('../src/main/terminal-session')
+
+    expect(terminateProcessTree(4242)).toBe(true)
+    expect(childSpawnMock).toHaveBeenCalledWith(
+      'taskkill',
+      ['/pid', '4242', '/T', '/F'],
+      expect.objectContaining({ windowsHide: true, stdio: 'ignore', shell: false }),
+    )
+
+    childSpawnMock.mockClear()
+    expect(terminateProcessTree(4242, { platform: 'linux' })).toBe(false)
+    expect(terminateProcessTree(-1)).toBe(false)
+    expect(terminateProcessTree(0)).toBe(false)
+    expect(terminateProcessTree(1.5)).toBe(false)
+    expect(childSpawnMock).not.toHaveBeenCalled()
+
+    childSpawnMock.mockImplementationOnce(() => { throw new Error('spawn blocked') })
+    expect(terminateProcessTree(99)).toBe(false)
+  })
+
+  it('stopTerminal encerra a árvore no Windows e ainda chama kill como fallback', async () => {
+    const terminal = createFakeTerminal(4242)
+    spawnMock.mockReturnValue(terminal)
+    const { startTerminal, stopTerminal } = await import('../src/main/terminal-session')
+
+    await startTerminal('tree-stop', 'C:\\workspace')
+    stopTerminal('tree-stop')
+
+    expect(childSpawnMock).toHaveBeenCalledWith(
+      'taskkill',
+      ['/pid', '4242', '/T', '/F'],
+      expect.objectContaining({ shell: false }),
+    )
+    expect(terminal.kill).toHaveBeenCalledOnce()
+  })
+
+  it('expoe falha assincrona de spawn do taskkill sem vazar dados sensiveis e mantem kill', async () => {
+    const terminal = createFakeTerminal(4343)
+    spawnMock.mockReturnValue(terminal)
+    const child = createFakeChildProcess()
+    childSpawnMock.mockReturnValue(child)
+    const { onTerminalEvent, startTerminal, stopTerminal } = await import('../src/main/terminal-session')
+
+    const events: Array<{ type: string; data?: string }> = []
+    const unsubscribe = onTerminalEvent((event) => events.push(event))
+    await startTerminal('tree-async-fail', 'C:\\workspace')
+    stopTerminal('tree-async-fail')
+
+    expect(terminal.kill).toHaveBeenCalledOnce()
+
+    child.emitError(Object.assign(new Error('spawn ENOENT: token=super-secret-value'), { code: 'ENOENT' }))
+    const failure = events.find((event) => event.type === 'error')
+    expect(failure?.data).toContain('4343')
+    expect(failure?.data).toContain('ENOENT')
+    expect(failure?.data).not.toContain('super-secret-value')
+    expect(failure?.data).not.toContain('token=')
+    unsubscribe()
+  })
+
+  it('reporta falha sincrona de spawn via onFailure e retorna false', async () => {
+    const { terminateProcessTree } = await import('../src/main/terminal-session')
+    const onFailure = vi.fn()
+    childSpawnMock.mockImplementationOnce(() => {
+      throw Object.assign(new Error('blocked password=hunter2'), { code: 'EACCES' })
+    })
+
+    expect(terminateProcessTree(55, { onFailure })).toBe(false)
+    expect(onFailure).toHaveBeenCalledWith({ pid: 55, reason: 'EACCES' })
+    expect(JSON.stringify(onFailure.mock.calls)).not.toContain('hunter2')
   })
 })

@@ -180,3 +180,49 @@ describe('summarizeAdapters', () => {
     expect(summarizeAdapters([])).toBe('')
   })
 })
+
+describe('UsageSharePanel semântica acessível', () => {
+  it('renderiza lista semântica (ul/li) e barra de progresso com role progressbar e ARIA', async () => {
+    const React = await import('react')
+    const { renderToStaticMarkup } = await import('react-dom/server')
+    const { UsageSharePanel } = await import('../src/renderer/src/components/UsageSharePanel')
+
+    const mockState = {
+      windows: {
+        day: {
+          window: 'day' as const,
+          since: '2026-09-22T00:00:00.000Z',
+          totalTokens: 5000,
+          totalTurns: 10,
+          models: [
+            makeModel({ model: 'gpt-5-codex', totalTokens: 3500, turns: 7 }),
+            makeModel({ model: 'claude-3-7-sonnet', totalTokens: 1500, turns: 3 }),
+          ],
+        },
+        week: makeWindow({ window: 'week' }),
+        all: makeWindow({ window: 'all' }),
+      },
+      quota: [],
+      adapters: [],
+      generatedAt: '2026-09-22T10:00:00.000Z',
+    }
+
+    const html = renderToStaticMarkup(
+      React.createElement(UsageSharePanel, {
+        initialState: mockState,
+      }),
+    )
+
+    // Lista semântica
+    expect(html).toContain('role="list"')
+    expect(html).toContain('<ul class="usage-share-rows"')
+    expect(html).toContain('<li class="usage-share-row"')
+
+    // Progressbar acessível
+    expect(html).toContain('role="progressbar"')
+    expect(html).toContain('aria-valuenow="70"')
+    expect(html).toContain('aria-valuemin="0"')
+    expect(html).toContain('aria-valuemax="100"')
+    expect(html).toContain('aria-valuetext="70% dos tokens"')
+  })
+})

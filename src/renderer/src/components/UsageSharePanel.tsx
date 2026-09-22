@@ -47,14 +47,22 @@ const hasAnyEvent = (state: UsageShareState) =>
   )
 
 const renderShareRow = (row: UsageShareRow) => (
-  <div key={`${row.provider}-${row.model}`} className="usage-share-row">
+  <li key={`${row.provider}-${row.model}`} className="usage-share-row">
     <div className="usage-share-row-head">
       <span className="usage-share-model" title={row.model}>{row.model}</span>
       <span className="usage-share-provider">{formatProviderLabel(row.provider)}</span>
       <span className="usage-share-tokens tabular-nums">{formatTokenCount(row.totalTokens)} tokens</span>
       <span className="usage-share-percent tabular-nums">{formatPercentLabel(row.percent)}</span>
     </div>
-    <div className="usage-share-bar" aria-hidden="true">
+    <div
+      className="usage-share-bar"
+      role="progressbar"
+      aria-label={`Participação do modelo ${row.model}`}
+      aria-valuenow={Math.round(row.percent)}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuetext={`${formatPercentLabel(row.percent)} dos tokens`}
+    >
       <div className="usage-share-bar-fill" style={{ width: `${Math.min(100, Math.max(0, row.percent))}%` }} />
     </div>
     <div className="usage-share-row-meta">
@@ -63,7 +71,7 @@ const renderShareRow = (row: UsageShareRow) => (
       </span>
       <span>{row.turns === 1 ? '1 turno' : `${row.turns} turnos`}</span>
     </div>
-  </div>
+  </li>
 )
 
 const renderQuotaChip = (snapshot: UsageQuotaSnapshotView, now: number) => {
@@ -93,20 +101,25 @@ const renderQuotaChip = (snapshot: UsageQuotaSnapshotView, now: number) => {
   )
 }
 
-/**
- * Seção "Uso por modelo": participação de cada modelo (Claude, Codex,
- * OpenCode, Gemini/Antigravity ou preset futuro) por janela, quota por conta
- * e estado dos adaptadores. Busca via preload (getUsageShare/refreshUsage).
- */
-export const UsageSharePanel: React.FC = () => {
-  const [state, setState] = useState<UsageShareState | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
+export interface UsageSharePanelProps {
+  initialState?: UsageShareState | null
+  initialLoading?: boolean
+}
+
+export const UsageSharePanel: React.FC<UsageSharePanelProps> = ({
+  initialState = null,
+  initialLoading,
+}) => {
+  const [state, setState] = useState<UsageShareState | null>(initialState)
+  const [isLoading, setIsLoading] = useState(initialLoading ?? !initialState)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [isUnavailable, setIsUnavailable] = useState(false)
   const [selectedWindow, setSelectedWindow] = useState<UsageShareWindowId>('day')
   const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
+    if (initialState !== null && initialLoading === false) return
+    if (!window?.devorbit?.getUsageShare) return
     let cancelled = false
     window.devorbit
       .getUsageShare()
@@ -194,7 +207,9 @@ export const UsageSharePanel: React.FC = () => {
       ) : (
         <>
           {rows.length > 0 ? (
-            <div className="usage-share-rows">{rows.map(renderShareRow)}</div>
+            <ul className="usage-share-rows" role="list" aria-label="Participação de uso por modelo">
+              {rows.map(renderShareRow)}
+            </ul>
           ) : (
             <p className="usage-share-note">Sem registros nesta janela.</p>
           )}

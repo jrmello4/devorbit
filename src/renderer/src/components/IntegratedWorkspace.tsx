@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   AlertCircle, ArrowLeft, ArrowRight, Check, Code2, Globe, GripVertical,
   LayoutDashboard, RefreshCw, Send, Terminal, X,
@@ -139,6 +140,28 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
   useEffect(() => {
     setCustomPresets(terminalPresets ?? [])
   }, [terminalPresets])
+  const [fallbackHost, setFallbackHost] = useState<HTMLDivElement | null>(null)
+  const [gridSlot, setGridSlot] = useState<HTMLDivElement | null>(null)
+  const [canvasSlot, setCanvasSlot] = useState<HTMLDivElement | null>(null)
+  const activePortalTarget = (isCanvas ? canvasSlot : gridSlot) || fallbackHost
+  const [stableHost] = useState(() => {
+    const el = document.createElement('div')
+    el.className = 'workspace-workbench-stable-host'
+    el.style.width = '100%'
+    el.style.height = '100%'
+    el.style.display = 'flex'
+    el.style.flexDirection = 'column'
+    el.style.minWidth = '0'
+    el.style.minHeight = '0'
+    el.style.overflow = 'hidden'
+    return el
+  })
+  useLayoutEffect(() => {
+    const target = activePortalTarget
+    if (target && stableHost.parentElement !== target) {
+      target.appendChild(stableHost)
+    }
+  }, [activePortalTarget, stableHost])
   const appliedPipesRef = useRef<Map<string, Set<string>>>(new Map())
   // Fila seriada por origem: clear -> add sempre nessa ordem observável,
   // mesmo sob mudanças rápidas de fanout.
@@ -472,17 +495,53 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
   }
 
   const toggleWorkspaceMode = () => {
-    const warning = isEditorDirty
-      ? 'Há alterações não salvas. Trocar o layout descarta esses rascunhos e reinicia o terminal. Continuar mesmo assim?'
-      : 'Trocar o layout reinicia o terminal interno. Continuar?'
-    if (!window.confirm(warning)) return
     setIsCanvas((current) => !current)
   }
 
   const canvasWorkbench = (
-    <div className="workspace-editor-stack">
-      <WorkspaceEditor projectPath={project.path} onNotify={onNotify} onContextChange={setEditorContext} onDirtyChange={(dirty) => { setIsEditorDirty(dirty); onDirtyChange?.(dirty) }} />
-      {layout.terminalVisible && <WorkspaceTerminal projectPath={project.path} terminalId={terminalId} codexAccount={codexAccount} provider={primaryProvider} autoStart={autoStartPrimary} autoStartCodexAccount={automation?.defaultCodexAccount} onNotify={onNotify} onRequestCodexAuth={onRequestCodexAuth} />}
+    <div
+      ref={setCanvasSlot}
+      className="workspace-workbench-slot canvas-workbench-slot"
+      style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}
+    />
+  )
+
+  const persistentWorkbench = (
+    <div className="workspace-editor-stack" style={{ width: '100%', height: '100%' }}>
+      <WorkspaceEditor
+        projectPath={project.path}
+        onNotify={onNotify}
+        onContextChange={setEditorContext}
+        onDirtyChange={(dirty) => {
+          setIsEditorDirty(dirty)
+          onDirtyChange?.(dirty)
+        }}
+      />
+      {layout.terminalVisible && (
+        <>
+          {!isCanvas && (
+            <button
+              type="button"
+              className="workspace-resize-handle horizontal"
+              onPointerDown={(event) => startDrag('terminal', event)}
+              aria-label="Redimensionar terminal"
+              title="Arraste para redimensionar o terminal"
+            >
+              <GripVertical size={15} aria-hidden="true" />
+            </button>
+          )}
+          <WorkspaceTerminal
+            projectPath={project.path}
+            terminalId={terminalId}
+            codexAccount={codexAccount}
+            provider={primaryProvider}
+            autoStart={autoStartPrimary}
+            autoStartCodexAccount={automation?.defaultCodexAccount}
+            onNotify={onNotify}
+            onRequestCodexAuth={onRequestCodexAuth}
+          />
+        </>
+      )}
     </div>
   )
   const canvasBrowser = (
@@ -547,33 +606,10 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
       )}
 
       {isCanvas ? <WorkspaceCanvas project={project} workbench={canvasWorkbench} browser={layout.webVisible ? canvasBrowser : undefined} codexAuthStatus={codexAuthStatus} onRequestCodexAuth={onRequestCodexAuth} agentProviders={agentProviders} defaultExecutor={automation?.defaultExecutor ?? null} onSendAgentTask={queueAgentTask} onCreateAgentWorktree={(node) => void isolateAgent(node)} onSelectionChange={onCanvasFocusChange} onConnectionsChange={syncCanvasPipes} pendingNodeRequest={pendingCanvasNode && isPendingNodeForProject(pendingCanvasNode, project.id) ? { kind: pendingCanvasNode.kind, nonce: pendingCanvasNode.nonce } : null} onPendingNodeConsumed={handlePendingCanvasNodeConsumed} onNotify={onNotify} renderAgent={(node: CanvasNode, onAgentResult, onAgentTaskFailure) => node.provider ? (<div className="canvas-agent-terminal"><div className="canvas-agent-review"><span>Worktree</span><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void reviewAgent(node)}>Alterações</button><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void mergeAgent(node)}>Integrar</button></div><WorkspaceTerminal projectPath={agentWorktrees[node.id]?.path || project.path} terminalId={agentTerminalId(project.id, node.id)} codexAccount={node.account} provider={node.provider} agentTask={agentTasks[node.id]} onAgentResult={onAgentResult} onAgentTaskFailure={onAgentTaskFailure} onNotify={onNotify} onRequestCodexAuth={onRequestCodexAuth} /></div>) : null} terminalPresets={customPresets} onTerminalPresetsSaved={setCustomPresets} renderTerminal={(node: CanvasNode) => (<div className="canvas-agent-terminal"><WorkspaceTerminal projectPath={project.path} terminalId={agentTerminalId(project.id, node.id)} codexAccount={codexAccount} provider={primaryProvider} runtimeConfig={node.terminal} customPresets={customPresets} onNotify={onNotify} onRequestCodexAuth={onRequestCodexAuth} /></div>)} /> : <>
-      <div className="workspace-editor-stack">
-        <WorkspaceEditor
-          projectPath={project.path}
-          onNotify={onNotify}
-          onContextChange={setEditorContext}
-          onDirtyChange={(dirty) => {
-            setIsEditorDirty(dirty)
-            onDirtyChange?.(dirty)
-          }}
-        />
-
-        {layout.terminalVisible && (
-          <>
-            <button type="button" className="workspace-resize-handle horizontal" onPointerDown={(event) => startDrag('terminal', event)} aria-label="Redimensionar terminal" title="Arraste para redimensionar o terminal"><GripVertical size={15} aria-hidden="true" /></button>
-            <WorkspaceTerminal
-              projectPath={project.path}
-              terminalId={terminalId}
-              codexAccount={codexAccount}
-              provider={primaryProvider}
-              autoStart={autoStartPrimary}
-              autoStartCodexAccount={automation?.defaultCodexAccount}
-              onNotify={onNotify}
-              onRequestCodexAuth={onRequestCodexAuth}
-            />
-          </>
-        )}
-      </div>
+      <div
+        ref={setGridSlot}
+        className="workspace-workbench-slot grid-workbench-slot"
+      />
 
       {layout.webVisible && (
         <>
@@ -600,6 +636,13 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
         </>
       )}
       </>}
+      <div
+        ref={setFallbackHost}
+        className="workspace-workbench-fallback-host"
+        style={{ display: 'none' }}
+        aria-hidden="true"
+      />
+      {createPortal(persistentWorkbench, stableHost)}
     </main>
   )
 }

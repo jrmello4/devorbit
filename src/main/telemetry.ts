@@ -46,6 +46,36 @@ export interface TelemetryOptions {
 const REDACTED = '[REDACTED]'
 const SENSITIVE_KEY = /(?:prompt|token|env|secret|password|authorization|api[-_]?key|credential|cookie)/iu
 
+const SECRET_VALUE_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/giu, `Bearer ${REDACTED}`],
+  [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/gu, REDACTED],
+  [/\b(?:sk|key|token)-[A-Za-z0-9_-]{8,}\b/gu, REDACTED],
+  [/\bgh[pousr]_[A-Za-z0-9]{8,}\b/gu, REDACTED],
+  [/\bgithub_pat_[A-Za-z0-9_]{8,}\b/gu, REDACTED],
+  [/\bglpat-[A-Za-z0-9_-]{8,}\b/gu, REDACTED],
+  [/\bnpm_[A-Za-z0-9]{8,}\b/gu, REDACTED],
+  [/\bxox[baprs]-[A-Za-z0-9-]{8,}\b/gu, REDACTED],
+  [/((?:api[_-]?key|token|secret|password|authorization)["'\s:=]+)[^\s"',}]+/giu, `$1${REDACTED}`],
+]
+
+const PLACEHOLDER_LIKE = /^(?:\*+|x{4,}|<[^>]+>|example|changeme|your[-_]?token|placeholder|dummy|redacted)/iu
+
+function isPlaceholderSecret(candidate: string): boolean {
+  return PLACEHOLDER_LIKE.test(candidate.trim())
+}
+
+export function redactSecretText(text: string): string {
+  let output = text
+  for (const [pattern, replacement] of SECRET_VALUE_PATTERNS) {
+    output = output.replace(pattern, (match, prefix?: string) => {
+      const secret = typeof prefix === 'string' && prefix.length > 0 ? match.slice(prefix.length) : match
+      if (isPlaceholderSecret(secret) || isPlaceholderSecret(match)) return match
+      return typeof prefix === 'string' && prefix.length > 0 ? `${prefix}${REDACTED}` : replacement
+    })
+  }
+  return output
+}
+
 function safeKey(key: string): string {
   return key.trim().slice(0, 200)
 }
@@ -53,7 +83,8 @@ function safeKey(key: string): string {
 function redactValue(value: unknown, key: string | undefined, seen: WeakSet<object>, depth: number): TelemetryValue {
   if (key && SENSITIVE_KEY.test(key)) return REDACTED
   if (value === null) return null
-  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value
+  if (typeof value === 'string') return redactSecretText(value)
+  if (typeof value === 'number' || typeof value === 'boolean') return value
   if (typeof value === 'bigint') return value.toString()
   if (typeof value === 'undefined') return REDACTED
   if (typeof value === 'function' || typeof value === 'symbol') return String(value)

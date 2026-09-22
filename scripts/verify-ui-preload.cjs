@@ -92,6 +92,13 @@ const statusFixtures = [
   },
 ]
 
+const parentFolders = [
+  'C:\\DevOrbit Fixture Workspace\\teams\\alpha-squad',
+  'C:\\DevOrbit Fixture Workspace\\teams\\beta-platform',
+  'C:\\DevOrbit Fixture Workspace\\teams\\gamma-design',
+  'C:\\DevOrbit Fixture Workspace\\teams\\delta-ops',
+]
+
 const projects = Array.from({ length: 36 }, (_, index) => {
   const fixture = statusFixtures[index % statusFixtures.length]
   const number = String(index + 1).padStart(2, '0')
@@ -102,7 +109,7 @@ const projects = Array.from({ length: 36 }, (_, index) => {
     id: `fixture-${number}`,
     name: `Fixture ${number} · ${fixture.suffix}${longTail}`,
     path: `C:\\DevOrbit Fixture Workspace\\teams\\long-team-name-${number}\\fixture-${number}`,
-    parentDir: `team-${number}-workspace`,
+    parentDir: parentFolders[index % parentFolders.length],
     lastModified: baseTime - index * 86_400_000,
     techs: [technologies[index % technologies.length], technologies[(index + 1) % technologies.length]],
     packageManager: index % 2 === 0 ? 'pnpm' : 'npm',

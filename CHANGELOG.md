@@ -2,6 +2,18 @@
 
 All notable changes to DevOrbit are documented here.
 
+## [1.0.35] - 2026-09-22
+
+### Changed
+
+- Project library architecture: Projects screen is a visual folder-grouped grid (Drive-style, no fixed detail pane, no external brand assets). Clicking a card opens its own `project-tabs` view with a full-width ProjectCard, breadcrumb/back, and independent open/close tabs (separate from workspace tabs). Local install only (no commit/push/tag/release).
+
+## [1.0.34] - 2026-09-22
+
+### Changed
+
+- Visual redesign of the shell and sub-screens: shared spacing/radius/typography tokens, collapsible workspace tool groups with a single primary action, and aligned Usage/Audit/Canvas panels. Local test build only (no publish).
+
 ## [1.0.33] - 2026-09-21
 
 ### Added

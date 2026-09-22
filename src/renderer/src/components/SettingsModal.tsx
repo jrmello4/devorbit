@@ -13,17 +13,25 @@ import {
   Code2,
   Rocket,
   LayoutDashboard,
+  Edit2,
 } from 'lucide-react'
 import type {
   AgentProviderId,
   AppConfig,
   AutomationConfig,
   CodexAccountStatus,
+  CustomTerminalPreset,
   ModelRoutingBaseUrlKey,
   ModelRoutingConfig,
   ModelRoutingSecretKey,
 } from '../types'
 import { MODEL_ROUTING_SECRET_KEYS } from '../types'
+import {
+  CUSTOM_TERMINAL_PRESET_LIMIT,
+  deleteCustomTerminalPreset,
+  isCustomTerminalPresetId,
+  renameCustomTerminalPreset,
+} from './terminal-node-helpers'
 import { AccessibleDialog } from './AccessibleDialog'
 
 interface SettingsModalProps {
@@ -102,6 +110,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [modelRouting, setModelRouting] = useState<ModelRoutingConfig>({})
   const [apiKeyInputs, setApiKeyInputs] = useState<Record<ModelRoutingSecretKey, string>>(blankApiKeyInputs)
   const [clearedApiKeys, setClearedApiKeys] = useState<ModelRoutingSecretKey[]>([])
+  const [terminalPresets, setTerminalPresets] = useState<CustomTerminalPreset[]>([])
+  const [editingPresetId, setEditingPresetId] = useState<string | null>(null)
+  const [editingPresetName, setEditingPresetName] = useState('')
   const [isSaving, setIsSaving] = useState(false)
   const [testingTool, setTestingTool] = useState<string | null>(null)
   const [isDirty, setIsDirty] = useState(false)
@@ -114,6 +125,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setModelRouting({})
       setApiKeyInputs(blankApiKeyInputs())
       setClearedApiKeys([])
+      setTerminalPresets([])
+      setEditingPresetId(null)
+      setEditingPresetName('')
       return
     }
 
@@ -126,6 +140,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setModelRouting(config.modelRouting ?? {})
       setApiKeyInputs(blankApiKeyInputs())
       setClearedApiKeys([])
+      setTerminalPresets(config.terminalPresets ?? [])
+      setEditingPresetId(null)
+      setEditingPresetName('')
       setIsDirty(false)
       initializedConfigRef.current = config
     }
@@ -252,6 +269,53 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   }
 
+  const handleStartRenamePreset = (preset: CustomTerminalPreset) => {
+    if (!isCustomTerminalPresetId(preset.id)) {
+      onNotify('Presets nativos do sistema não podem ser renomeados.', 'error')
+      return
+    }
+    setEditingPresetId(preset.id)
+    setEditingPresetName(preset.name)
+  }
+
+  const handleCommitRenamePreset = (presetId: string) => {
+    if (!editingPresetName.trim()) {
+      onNotify('O nome do preset não pode ser vazio.', 'error')
+      return
+    }
+    const res = renameCustomTerminalPreset(terminalPresets, presetId, editingPresetName)
+    if (res.error) {
+      onNotify(res.error, 'error')
+      return
+    }
+    setTerminalPresets(res.presets)
+    setEditingPresetId(null)
+    setEditingPresetName('')
+    setIsDirty(true)
+    onNotify(`Preset renomeado para "${res.updated?.name}".`, 'success')
+  }
+
+  const handleDeletePreset = (preset: CustomTerminalPreset) => {
+    if (!isCustomTerminalPresetId(preset.id)) {
+      onNotify('Presets nativos do sistema não podem ser excluídos.', 'error')
+      return
+    }
+    const confirmed = window.confirm(`Tem certeza que deseja excluir o preset "${preset.name}"?`)
+    if (!confirmed) return
+    const res = deleteCustomTerminalPreset(terminalPresets, preset.id)
+    if (res.error) {
+      onNotify(res.error, 'error')
+      return
+    }
+    setTerminalPresets(res.presets)
+    if (editingPresetId === preset.id) {
+      setEditingPresetId(null)
+      setEditingPresetName('')
+    }
+    setIsDirty(true)
+    onNotify(`Preset "${preset.name}" excluído.`, 'info')
+  }
+
   const handleSave = async () => {
     setIsSaving(true)
     try {
@@ -261,6 +325,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         chatGptAccount2Name: account2Name,
         customPaths,
         modelRouting: buildRoutingUpdates(),
+        terminalPresets,
         automation: {
           defaultExecutor: automation.defaultExecutor || undefined,
           defaultCodexAccount:
@@ -793,6 +858,115 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
               )}
             </div>
+          </div>
+
+          {/* Presets de Terminal Personalizados */}
+          <div className="pt-4 border-t border-[var(--color-border-subtle)]">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="font-semibold text-[var(--text-primary)] flex items-center gap-2">
+                <Terminal className="w-4 h-4 text-[var(--color-accent-strong)]" />
+                Presets de Terminal Personalizados
+              </h3>
+              <span className="text-xs font-mono text-[var(--color-text-secondary)]">
+                {terminalPresets.length} / {CUSTOM_TERMINAL_PRESET_LIMIT}
+              </span>
+            </div>
+            <p className="text-xs text-[var(--color-text-secondary)] mb-3">
+              Gerencie presets customizados criados no canvas. Presets nativos do sistema são protegidos contra alteração ou exclusão.
+            </p>
+
+            {terminalPresets.length === 0 ? (
+              <div className="rounded-lg bg-[var(--surface-muted)] border border-[var(--color-border-subtle)] p-3 text-xs text-[var(--color-text-muted)]">
+                Nenhum preset personalizado cadastrado. Salve configurações de nós de terminal diretamente nos cartões do Canvas para reutilizá-las aqui.
+              </div>
+            ) : (
+              <div className="space-y-2 text-xs">
+                {terminalPresets.map((preset) => {
+                  const isEditing = editingPresetId === preset.id
+                  return (
+                    <div
+                      key={preset.id}
+                      className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 rounded-lg bg-[var(--surface-muted)] border border-[var(--color-border-subtle)]"
+                    >
+                      <div className="flex-1 min-w-0">
+                        {isEditing ? (
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              value={editingPresetName}
+                              onChange={(e) => setEditingPresetName(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault()
+                                  handleCommitRenamePreset(preset.id)
+                                } else if (e.key === 'Escape') {
+                                  setEditingPresetId(null)
+                                  setEditingPresetName('')
+                                }
+                              }}
+                              className="w-full max-w-xs rounded border border-[var(--color-accent)] bg-[var(--color-bg-panel)] px-2 py-1 text-xs text-[var(--text-primary)] focus:outline-none"
+                              autoFocus
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleCommitRenamePreset(preset.id)}
+                              className="px-2 py-1 text-xs font-medium rounded bg-[var(--color-accent-strong)] text-[var(--color-accent-contrast)] hover:opacity-90 cursor-pointer"
+                            >
+                              Salvar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingPresetId(null)
+                                setEditingPresetName('')
+                              }}
+                              className="px-2 py-1 text-xs rounded border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] text-[var(--color-text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+                            >
+                              Cancelar
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-[var(--text-primary)] truncate" title={preset.name}>
+                              {preset.name}
+                            </span>
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-[var(--surface-selected)] text-[var(--color-accent-strong)] border border-[var(--color-border-subtle)]">
+                              Personalizado
+                            </span>
+                          </div>
+                        )}
+                        <div className="mt-1 flex flex-wrap items-center gap-x-3 text-[11px] text-[var(--color-text-secondary)] font-mono">
+                          <span>Comando: {preset.command || 'shell'}{preset.args && preset.args.length > 0 ? ` ${preset.args.join(' ')}` : ''}</span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 self-end sm:self-auto shrink-0">
+                        {!isEditing && (
+                          <button
+                            type="button"
+                            onClick={() => handleStartRenamePreset(preset)}
+                            aria-label={`Renomear preset ${preset.name}`}
+                            className="flex items-center gap-1 px-2.5 py-1 text-xs rounded border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] text-[var(--color-text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--color-border-strong)] transition-colors cursor-pointer"
+                          >
+                            <Edit2 className="w-3 h-3" />
+                            <span>Renomear</span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleDeletePreset(preset)}
+                          aria-label={`Excluir preset ${preset.name}`}
+                          className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-danger)] hover:bg-[var(--surface-hover)] rounded transition-colors cursor-pointer"
+                          title="Excluir preset"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
           </div>
         </div>
 

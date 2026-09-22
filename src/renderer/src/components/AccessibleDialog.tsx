@@ -11,6 +11,16 @@ interface AccessibleDialogProps {
 const FOCUSABLE_SELECTOR =
   'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
+export function isAccessibleElementVisible(element: HTMLElement): boolean {
+  if (element.hidden || element.getAttribute('aria-hidden') === 'true') return false
+  if (element.closest('[aria-hidden="true"], [hidden]')) return false
+  if (typeof window !== 'undefined' && typeof window.getComputedStyle === 'function') {
+    const style = window.getComputedStyle(element)
+    if (style.display === 'none' || style.visibility === 'hidden') return false
+  }
+  return true
+}
+
 /**
  * Lightweight dialog primitive for the Electron renderer.
  * It keeps the existing visual overlay while providing modal semantics,
@@ -50,20 +60,10 @@ export const AccessibleDialog: React.FC<AccessibleDialogProps> = ({
       })
     }
 
-function isVisible(element: HTMLElement): boolean {
-  if (element.hidden || element.getAttribute('aria-hidden') === 'true') return false
-  if (element.closest('[aria-hidden="true"], [hidden]')) return false
-  if (typeof window !== 'undefined' && typeof window.getComputedStyle === 'function') {
-    const style = window.getComputedStyle(element)
-    if (style.display === 'none' || style.visibility === 'hidden') return false
-  }
-  return true
-}
-
     const focusInitialElement = () => {
       const preferred = panel.querySelector<HTMLElement>('[autofocus]')
-      const validPreferred = preferred && isVisible(preferred) ? preferred : null
-      const focusable = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(isVisible)
+      const validPreferred = preferred && isAccessibleElementVisible(preferred) ? preferred : null
+      const focusable = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(isAccessibleElementVisible)
       const firstFocusable = focusable[0] || null
       ;(validPreferred || firstFocusable || panel).focus()
     }
@@ -76,7 +76,7 @@ function isVisible(element: HTMLElement): boolean {
       }
 
       if (event.key !== 'Tab') return
-      const focusable = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(isVisible)
+      const focusable = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(isAccessibleElementVisible)
       if (focusable.length === 0) {
         event.preventDefault()
         panel.focus()

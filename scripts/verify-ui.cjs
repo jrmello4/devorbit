@@ -479,13 +479,16 @@ async function inspectShell(window, viewport) {
     }
     const rows = Array.from(document.querySelectorAll('.project-list .project-row'))
     const strayRows = Array.from(document.querySelectorAll('.other-dirs .project-row'))
+    const groups = Array.from(document.querySelectorAll('.project-group'))
+    const groupLabels = Array.from(document.querySelectorAll('.project-group-label')).map((node) => node.innerText)
+    const collapsedGroups = Array.from(document.querySelectorAll('.project-group-items[hidden]')).length
     return {
       viewport: { width: window.innerWidth, height: window.innerHeight },
       document: { scrollWidth: document.documentElement.scrollWidth, scrollHeight: document.documentElement.scrollHeight },
       workspace: rect('.project-workspace'),
       content: rect('.workspace-content'),
       master: rect('.project-master'),
-      detail: rect('.project-detail'),
+      list: rect('.project-list'),
       rows: rows.length,
       rowNames: rows.map((row) => row.innerText),
       noGitRows: rows.filter((row) => row.innerText.includes('Sem repositório')).length,
@@ -493,6 +496,9 @@ async function inspectShell(window, viewport) {
       modifiedRows: rows.filter((row) => row.querySelector('[title="Alterações locais"]')).length,
       longNameRows: rows.filter((row) => row.innerText.includes('Extremely Long Project Name')).length,
       selectedRows: rows.filter((row) => row.matches('.selected,[aria-pressed="true"]')).length,
+      groups: groups.length,
+      groupLabels,
+      collapsedGroups,
       strayRows: strayRows.length,
       strayActions: strayRows.filter((row) => row.querySelector('[aria-label^="Adicionar Git"]') && row.querySelector('[aria-label^="Abrir pasta"]')).length,
       theme: (() => {
@@ -513,11 +519,14 @@ async function inspectShell(window, viewport) {
   assert(result.viewport.width >= 1366 && result.viewport.height >= 768, `${viewport.label}: viewport desktop insuficiente ${JSON.stringify(result.viewport)}`)
   assert(result.document.scrollWidth <= result.viewport.width + 1, `${viewport.label}: overflow horizontal global (${result.document.scrollWidth} > ${result.viewport.width})`)
   assert(result.document.scrollHeight <= result.viewport.height + 1, `${viewport.label}: overflow vertical global (${result.document.scrollHeight} > ${result.viewport.height})`)
-  for (const [name, box] of Object.entries({ workspace: result.workspace, content: result.content, master: result.master, detail: result.detail })) {
+  for (const [name, box] of Object.entries({ workspace: result.workspace, content: result.content, master: result.master, list: result.list })) {
     assert(box && box.width > 0 && box.height > 0, `${viewport.label}: ${name} não tem área visível`)
     assert(box.left >= -1 && box.right <= result.viewport.width + 1, `${viewport.label}: ${name} sai da viewport (${JSON.stringify(box)})`)
   }
   assert(result.rows >= 30, `${viewport.label}: esperado >=30 projetos, encontrado ${result.rows}`)
+  assert(result.groups >= 4, `${viewport.label}: esperado >=4 grupos por pasta pai, encontrado ${result.groups}`)
+  assert(result.groupLabels.some((label) => label.includes('alpha-squad')), `${viewport.label}: grupo alpha-squad ausente (${JSON.stringify(result.groupLabels)})`)
+  assert(result.collapsedGroups === 0, `${viewport.label}: grupos deveriam abrir expandidos (${result.collapsedGroups})`)
   assert(result.noGitRows > 0 && result.pullRows > 0 && result.modifiedRows > 0, `${viewport.label}: fixtures Git incompletas (${JSON.stringify({ noGit: result.noGitRows, pull: result.pullRows, modified: result.modifiedRows })})`)
   assert(result.longNameRows > 0, `${viewport.label}: fixture de nome longo não apareceu`)
   assert(result.selectedRows === 1, `${viewport.label}: seleção inicial inválida (${result.selectedRows})`)
@@ -527,7 +536,7 @@ async function inspectShell(window, viewport) {
   assert(result.theme.bodyBg === 'rgb(244, 245, 247)', `${viewport.label}: fundo da página fora do Carbon claro (${result.theme.bodyBg})`)
   assert(result.theme.titlebarBg === 'rgb(251, 251, 252)', `${viewport.label}: titlebar fora do Carbon claro (${result.theme.titlebarBg})`)
   assert(result.theme.sidebarBg === 'rgb(238, 240, 243)', `${viewport.label}: sidebar fora do Carbon claro (${result.theme.sidebarBg})`)
-  recordPass(viewport.label, `shell bounded at ${result.viewport.width}×${result.viewport.height}; ${result.rows} project rows; ${result.strayRows} stray dirs; Git fixtures visible; Carbon claro sem verde legado`)
+  recordPass(viewport.label, `shell bounded at ${result.viewport.width}×${result.viewport.height}; ${result.rows} project rows; ${result.groups} parent groups; ${result.strayRows} stray dirs; Git fixtures visible; Carbon claro sem verde legado`)
 }
 
 async function inspectDarkTheme(window, viewport) {
@@ -615,7 +624,7 @@ async function inspectProjectInteractions(window, viewport) {
     const rows = Array.from(document.querySelectorAll('.project-list .project-row'))
     const target = rows[1]
     if (!target) return null
-    const expected = target.innerText.split('\\n')[0]
+    const expected = target.querySelector('strong')?.innerText?.trim() || target.innerText.split('\\n')[0].trim()
     target.click()
     return expected
   })()`)
@@ -675,21 +684,12 @@ async function inspectProjectInteractions(window, viewport) {
   })()`)
   assert(dirtyEditor, `${viewport.label}: editor indisponível para verificar rascunho`)
   await waitFor(window, `Boolean(document.querySelector('.editor-dirty'))`, `${viewport.label} editor dirty state`)
-  await evaluate(window, `(() => {
-    window.__devorbitVerifyConfirmCalls = 0
-    window.confirm = () => { window.__devorbitVerifyConfirmCalls += 1; return false }
-    return true
-  })()`)
-  const canvasBeforeGuard = await evaluate(window, `Boolean(document.querySelector('.workspace-canvas'))`)
-  await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Abrir canvas' || node.getAttribute('aria-label') === 'Voltar ao layout integrado', `${viewport.label} guarded canvas launch`)
-  await waitFor(window, `Boolean(document.querySelector('.workspace-canvas')) === ${canvasBeforeGuard ? 'true' : 'false'}`, `${viewport.label} guarded canvas mode`)
-  const modeGuard = await evaluate(window, `({
-    confirmCalls: window.__devorbitVerifyConfirmCalls || 0,
-    canvas: Boolean(document.querySelector('.workspace-canvas')),
-  })`)
-  assert(modeGuard.confirmCalls > 0 && modeGuard.canvas === canvasBeforeGuard, `${viewport.label}: troca de layout ignorou rascunho (${JSON.stringify(modeGuard)})`)
-  recordPass(viewport.label, 'troca de layout confirma rascunhos e preserva o modo atual quando cancelada')
-  await evaluate(window, `(() => { window.confirm = () => true; return true })()`)
+  const canvasBeforeToggle = await evaluate(window, `Boolean(document.querySelector('.workspace-canvas'))`)
+  await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Abrir canvas' || node.getAttribute('aria-label') === 'Voltar ao layout integrado', `${viewport.label} canvas launch with preserved drafts`)
+  await waitFor(window, `Boolean(document.querySelector('.workspace-canvas')) !== ${canvasBeforeToggle ? 'true' : 'false'}`, `${viewport.label} canvas mode transition`)
+  const draftPreserved = await evaluate(window, `Boolean(document.querySelector('.editor-dirty'))`)
+  assert(draftPreserved, `${viewport.label}: rascunho do editor não foi preservado ao alternar layout`)
+  recordPass(viewport.label, 'troca de layout preserva rascunhos e terminal sem interrupção por diálogo')
   const canvasAlreadyOpen = await evaluate(window, `Boolean(document.querySelector('.workspace-canvas'))`)
   if (!canvasAlreadyOpen) await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Abrir canvas', `${viewport.label} canvas launch`)
   await waitFor(window, `document.querySelectorAll('.workspace-canvas [data-canvas-card]').length === 3`, `${viewport.label} canvas cards`)
@@ -947,7 +947,7 @@ async function inspectProjectInteractions(window, viewport) {
     if (!canvas || !raw) return false
     const saved = JSON.parse(raw)
     const card = saved.nodes?.find((item) => item.id === 'workbench')
-    return saved.version === 3 && Array.isArray(saved.squads) && card && Number(card.width) === Number.parseFloat(canvas.querySelector('[data-canvas-card="workbench"]').style.width)
+    return (saved.version === 4 || saved.version === 3) && Array.isArray(saved.squads) && card && Number(card.width) === Number.parseFloat(canvas.querySelector('[data-canvas-card="workbench"]').style.width)
   })()`, `${viewport.label} canvas geometry persistence`)
   await evaluate(window, `(function () {
     const note = document.querySelector('[data-canvas-note-editor]')
@@ -1028,7 +1028,22 @@ async function inspectProjectInteractions(window, viewport) {
   await waitFor(window, `document.querySelector('.view-panel:not([hidden])')?.innerText.includes('Projetos')`, `${viewport.label} multi-project view`)
   await setInputValue(window, '#project-search', 'Fixture 03')
   await waitFor(window, `document.querySelectorAll('.project-list .project-row').length === 1`, `${viewport.label} multi-project search`)
-  await clickButtonByText(window, (node) => node.classList.contains('workspace-open-all'), `${viewport.label} second workspace launch`)
+  const openSecondProjectTab = await evaluate(window, `(() => {
+    const row = document.querySelector('.project-list .project-row')
+    if (!row) return false
+    row.click()
+    return true
+  })()`)
+  assert(openSecondProjectTab, `${viewport.label}: linha Fixture 03 indisponível para abrir aba`)
+  await waitFor(window, `Boolean(document.querySelector('.project-tabs .project-tab.active') && document.querySelector('.project-tab-pane:not([hidden]) button.workspace-open-all'))`, `${viewport.label} second project tab pane`)
+  const launchedSecond = await evaluate(window, `(() => {
+    const button = document.querySelector('.project-tab-pane:not([hidden]) button.workspace-open-all')
+    if (!button) return false
+    button.focus()
+    button.click()
+    return true
+  })()`)
+  assert(launchedSecond, `${viewport.label}: botão abrir ambiente da aba ativa indisponível`)
   await waitFor(window, `document.querySelectorAll('.workspace-tabs .workspace-tab').length >= 2`, `${viewport.label} multiple workspace tabs`)
   // O modo dedicado esconde as abas; para trocar de projeto é preciso sair
   // dele pelo controle mínimo do canvas ativo.
@@ -1039,8 +1054,8 @@ async function inspectProjectInteractions(window, viewport) {
     await waitFor(window, `document.querySelector('.workspace-tabs')?.offsetParent !== null`, `${viewport.label} workspace tabs restored`)
   }
   await evaluate(window, `window.__devorbitVerifyFixture.resetCalls()`)
-  await clickButtonByText(window, (node) => node.classList.contains('workspace-tab') && /Fixture 02/.test(node.innerText), `${viewport.label} first workspace tab`)
-  await waitFor(window, `document.querySelector('.workspace-tab.active')?.innerText.includes('Fixture 02')`, `${viewport.label} first workspace tab active`)
+  await clickButtonByText(window, (node) => node.classList.contains('workspace-tab') && !node.classList.contains('active'), `${viewport.label} first workspace tab`)
+  await waitFor(window, `document.querySelector('.workspace-tab.active')?.innerText.includes(${JSON.stringify(selection)})`, `${viewport.label} first workspace tab active`)
   const webVisibilityCalls = await evaluate(window, `new Promise((resolve) => {
     window.setTimeout(() => resolve(window.__devorbitVerifyFixture.getCalls()
       .filter((call) => call.name === 'setWebVisible').map((call) => call.args[0])), 50)
@@ -1056,7 +1071,7 @@ async function inspectProjectInteractions(window, viewport) {
   await setInputValue(window, '#project-search', 'Fixture 02')
   await waitFor(window, `document.querySelectorAll('.project-list .project-row').length === 1`, `${viewport.label} busca`)
   const searchResult = await evaluate(window, `document.querySelector('.project-list .project-row')?.innerText || ''`)
-  assert(searchResult.includes('Fixture 02 · Pull pending develop'), `${viewport.label}: busca retornou projeto inesperado (${searchResult})`)
+  assert(searchResult.includes('Fixture 02') && searchResult.includes('develop'), `${viewport.label}: busca retornou projeto inesperado (${searchResult})`)
   recordPass(viewport.label, 'project search narrows to the matching fixture')
 
   await setInputValue(window, '#project-search', '')
@@ -1066,6 +1081,39 @@ async function inspectProjectInteractions(window, viewport) {
   recordPass(viewport.label, 'Git status filter shows only local-change fixtures')
   await setSelectValue(window, '.project-filters select', 'all')
   await waitFor(window, `document.querySelectorAll('.project-list .project-row').length >= 30`, `${viewport.label} reset do filtro`)
+
+  const openProjectTabFromLibrary = await evaluate(window, `(() => {
+    const row = document.querySelector('.project-list .project-row')
+    if (!row) return false
+    row.click()
+    return true
+  })()`)
+  assert(openProjectTabFromLibrary, `${viewport.label}: linha do projeto indisponível para abrir aba`)
+  await waitFor(window, `Boolean(document.querySelector('.project-tabs .project-tab.active') && document.querySelector('.project-tab-pane:not([hidden])'))`, `${viewport.label} project tabs view`)
+  const projectTabsInfo = await evaluate(window, `(() => {
+    const tabs = Array.from(document.querySelectorAll('.project-tabs .project-tab'))
+    const activeTab = document.querySelector('.project-tabs .project-tab.active')
+    const breadcrumb = document.querySelector('.project-tab-pane:not([hidden]) .project-breadcrumb')
+    return {
+      total: tabs.length,
+      activeName: activeTab?.querySelector('.project-tab-select')?.innerText?.trim() || '',
+      hasBreadcrumb: Boolean(breadcrumb && breadcrumb.innerText.includes('Projetos')),
+      canClose: Boolean(activeTab?.querySelector('.project-tab-close')),
+    }
+  })()`)
+  assert(projectTabsInfo.total >= 1 && projectTabsInfo.hasBreadcrumb && projectTabsInfo.canClose, `${viewport.label}: abas de projeto incompletas (${JSON.stringify(projectTabsInfo)})`)
+  const countBeforeClose = projectTabsInfo.total
+  await evaluate(window, `(() => {
+    const closeBtn = document.querySelector('.project-tabs .project-tab.active .project-tab-close')
+    closeBtn?.click()
+    return true
+  })()`)
+  if (countBeforeClose > 1) {
+    await waitFor(window, `document.querySelectorAll('.project-tabs .project-tab').length === ${countBeforeClose - 1}`, `${viewport.label} project tab close`)
+    await clickButtonByText(window, (node) => node.classList.contains('project-tab-projects') || node.classList.contains('project-breadcrumb-home'), `${viewport.label} return to project library`)
+  }
+  await waitFor(window, `Boolean(document.querySelector('.project-workspace.project-library') && document.querySelectorAll('.project-list .project-row').length >= 30)`, `${viewport.label} library restored after project tabs`)
+  recordPass(viewport.label, 'abas de projeto abrem, exibem breadcrumb, fecham e retornam à biblioteca')
   await screenshot(window, `desktop-${viewport.label}-projects`)
 }
 

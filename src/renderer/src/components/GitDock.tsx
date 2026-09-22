@@ -16,7 +16,15 @@ import {
   X,
 } from 'lucide-react'
 import type { AppConfig, GitBranch as GitBranchInfo, GitChange, GitFileDiff, Project, SyncResult } from '../types'
-import { canSubmitInitDock, classifyDiffLine, isInitPushAvailable, splitPreviewLines } from './git-dock-helpers'
+import {
+  canSubmitInitDock,
+  classifyDiffLine,
+  isInitPushAvailable,
+  splitPreviewLines,
+  GIT_DOCK_TABS,
+  getNextGitDockTabOnKey,
+  type GitDockTab,
+} from './git-dock-helpers'
 import { DiffViewer, type SerializableDiffLine } from './DiffViewer'
 
 export interface GitDockInitPreview {
@@ -51,7 +59,7 @@ export interface GitDockInitResult {
   output?: string
 }
 
-export type GitDockTab = 'push' | 'branches' | 'init' | 'clone'
+export type { GitDockTab } from './git-dock-helpers'
 
 interface GitDockProps {
   isOpen: boolean
@@ -417,12 +425,7 @@ export const GitDock: React.FC<GitDockProps> = ({
     }
   }
 
-  const tabs: Array<{ id: GitDockTab; label: string }> = [
-    { id: 'push', label: 'Push' },
-    { id: 'branches', label: 'Branches' },
-    { id: 'init', label: 'Init' },
-    { id: 'clone', label: 'Clonar' },
-  ]
+  const tabs = GIT_DOCK_TABS
 
   return (
     <aside
@@ -480,21 +483,9 @@ export const GitDock: React.FC<GitDockProps> = ({
                 aria-controls={`gitdock-panel-${tab.id}`}
                 onClick={() => setActiveTab(tab.id)}
                 onKeyDown={(event) => {
-                  let nextTab: GitDockTab | null = null
-                  if (event.key === 'ArrowRight') {
+                  const nextTab = getNextGitDockTabOnKey(tab.id, event.key, tabs)
+                  if (nextTab !== tab.id) {
                     event.preventDefault()
-                    nextTab = tabs[(index + 1) % tabs.length].id
-                  } else if (event.key === 'ArrowLeft') {
-                    event.preventDefault()
-                    nextTab = tabs[(index - 1 + tabs.length) % tabs.length].id
-                  } else if (event.key === 'Home') {
-                    event.preventDefault()
-                    nextTab = tabs[0].id
-                  } else if (event.key === 'End') {
-                    event.preventDefault()
-                    nextTab = tabs[tabs.length - 1].id
-                  }
-                  if (nextTab) {
                     setActiveTab(nextTab)
                     document.getElementById(`gitdock-tab-${nextTab}`)?.focus()
                   }

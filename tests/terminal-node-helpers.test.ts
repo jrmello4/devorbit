@@ -10,6 +10,9 @@ import {
   selectTerminalCommand,
   slugifyCustomPresetId,
   terminalNodeTitle,
+  isCustomTerminalPresetId,
+  deleteCustomTerminalPreset,
+  renameCustomTerminalPreset,
 } from '../src/renderer/src/components/terminal-node-helpers'
 import { TERMINAL_PRESETS } from '../src/shared/terminal-presets'
 
@@ -299,5 +302,56 @@ describe('formatação dos argumentos para o campo de texto', () => {
   it('lista vazia ou ausente vira string vazia', () => {
     expect(formatArgsInput([])).toBe('')
     expect(formatArgsInput(undefined)).toBe('')
+  })
+})
+
+describe('ciclo de vida de presets personalizados (renomear e excluir)', () => {
+  const customPresets = [
+    { id: 'custom:meu-servidor', name: 'Meu Servidor', command: 'npm start' },
+    { id: 'custom:testes', name: 'Testes', command: 'npm test' },
+  ]
+
+  it('identifica corretamente presets customizados vs nativos', () => {
+    expect(isCustomTerminalPresetId('custom:meu-servidor')).toBe(true)
+    expect(isCustomTerminalPresetId('custom:outro')).toBe(true)
+    expect(isCustomTerminalPresetId('shell')).toBe(false)
+    expect(isCustomTerminalPresetId('codex')).toBe(false)
+    expect(isCustomTerminalPresetId('dev-server')).toBe(false)
+  })
+
+  it('exclui preset customizado existente', () => {
+    const res = deleteCustomTerminalPreset(customPresets, 'custom:meu-servidor')
+    expect(res.error).toBeUndefined()
+    expect(res.deleted?.name).toBe('Meu Servidor')
+    expect(res.presets).toHaveLength(1)
+    expect(res.presets[0].id).toBe('custom:testes')
+  })
+
+  it('bloqueia exclusão de preset nativo', () => {
+    const res = deleteCustomTerminalPreset(customPresets, 'shell')
+    expect(res.error).toBe('Não é permitido excluir presets nativos do sistema.')
+    expect(res.presets).toHaveLength(2)
+  })
+
+  it('renomeia preset customizado com sucesso', () => {
+    const res = renameCustomTerminalPreset(customPresets, 'custom:meu-servidor', 'Servidor de Produção')
+    expect(res.error).toBeUndefined()
+    expect(res.updated?.name).toBe('Servidor de Produção')
+    expect(res.presets.find((p) => p.id === 'custom:meu-servidor')?.name).toBe('Servidor de Produção')
+  })
+
+  it('bloqueia renomeação de preset nativo', () => {
+    const res = renameCustomTerminalPreset(customPresets, 'codex', 'Novo Codex')
+    expect(res.error).toBe('Não é permitido renomear presets nativos do sistema.')
+  })
+
+  it('rejeita nome vazio ao renomear', () => {
+    const res = renameCustomTerminalPreset(customPresets, 'custom:meu-servidor', '   ')
+    expect(res.error).toBe('O nome do preset não pode ser vazio.')
+  })
+
+  it('rejeita colisão com nome de outro preset customizado existente', () => {
+    const res = renameCustomTerminalPreset(customPresets, 'custom:meu-servidor', 'testes')
+    expect(res.error).toBe('Já existe outro preset com este nome.')
   })
 })

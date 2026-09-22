@@ -42,3 +42,26 @@ export function splitPreviewLines(content: string, maxLines = 400): { lines: str
   if (lines.length <= maxLines) return { lines, truncated: false }
   return { lines: lines.slice(0, maxLines), truncated: true }
 }
+
+export type GitDockTab = 'push' | 'branches' | 'init' | 'clone'
+
+export const GIT_DOCK_TABS: ReadonlyArray<{ id: GitDockTab; label: string }> = [
+  { id: 'push', label: 'Push' },
+  { id: 'branches', label: 'Branches' },
+  { id: 'init', label: 'Init' },
+  { id: 'clone', label: 'Clonar' },
+]
+
+export function getNextGitDockTabOnKey(
+  currentTabId: GitDockTab,
+  key: string,
+  tabs: ReadonlyArray<{ id: GitDockTab; label: string }> = GIT_DOCK_TABS,
+): GitDockTab {
+  const index = tabs.findIndex((t) => t.id === currentTabId)
+  if (index === -1) return currentTabId
+  if (key === 'ArrowRight') return tabs[(index + 1) % tabs.length].id
+  if (key === 'ArrowLeft') return tabs[(index - 1 + tabs.length) % tabs.length].id
+  if (key === 'Home') return tabs[0].id
+  if (key === 'End') return tabs[tabs.length - 1].id
+  return currentTabId
+}

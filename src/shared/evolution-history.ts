@@ -71,6 +71,36 @@ export const EVOLUTION_REDACTED = '[REDACTED]'
 const SENSITIVE_KEY = /(?:api[-_]?key|authorization|bearer|cookie|credential|env(?:ironment)?|password|private[-_]?key|prompt|secret|token)/iu
 const MAX_REDACTION_DEPTH = 8
 
+const SECRET_VALUE_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/giu, `Bearer ${EVOLUTION_REDACTED}`],
+  [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/gu, EVOLUTION_REDACTED],
+  [/\b(?:sk|key|token)-[A-Za-z0-9_-]{8,}\b/gu, EVOLUTION_REDACTED],
+  [/\bgh[pousr]_[A-Za-z0-9]{8,}\b/gu, EVOLUTION_REDACTED],
+  [/\bgithub_pat_[A-Za-z0-9_]{8,}\b/gu, EVOLUTION_REDACTED],
+  [/\bglpat-[A-Za-z0-9_-]{8,}\b/gu, EVOLUTION_REDACTED],
+  [/\bnpm_[A-Za-z0-9]{8,}\b/gu, EVOLUTION_REDACTED],
+  [/\bxox[baprs]-[A-Za-z0-9-]{8,}\b/gu, EVOLUTION_REDACTED],
+  [/((?:api[_-]?key|token|secret|password|authorization)["'\s:=]+)[^\s"',}]+/giu, `$1${EVOLUTION_REDACTED}`],
+]
+
+const PLACEHOLDER_LIKE = /^(?:\*+|x{4,}|<[^>]+>|example|changeme|your[-_]?token|placeholder|dummy|redacted)/iu
+
+function isPlaceholderSecret(candidate: string): boolean {
+  return PLACEHOLDER_LIKE.test(candidate.trim())
+}
+
+export function redactSecretText(text: string): string {
+  let output = text
+  for (const [pattern, replacement] of SECRET_VALUE_PATTERNS) {
+    output = output.replace(pattern, (match, prefix?: string) => {
+      const secret = typeof prefix === 'string' && prefix.length > 0 ? match.slice(prefix.length) : match
+      if (isPlaceholderSecret(secret) || isPlaceholderSecret(match)) return match
+      return typeof prefix === 'string' && prefix.length > 0 ? `${prefix}${EVOLUTION_REDACTED}` : replacement
+    })
+  }
+  return output
+}
+
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
@@ -87,7 +117,8 @@ function redactValue(
 ): EvolutionJsonValue {
   if (key && SENSITIVE_KEY.test(key)) return EVOLUTION_REDACTED
   if (value === null) return null
-  if (typeof value === 'string' || typeof value === 'boolean') return value
+  if (typeof value === 'string') return redactSecretText(value)
+  if (typeof value === 'boolean') return value
   if (typeof value === 'number') return Number.isFinite(value) ? value : null
   if (typeof value === 'bigint') return value.toString()
   if (typeof value === 'undefined') return EVOLUTION_REDACTED

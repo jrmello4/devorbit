@@ -71,10 +71,14 @@ import {
   parseArgsInput,
   slugifyCustomPresetId,
   terminalNodeTitle,
+  deleteCustomTerminalPreset,
+  renameCustomTerminalPreset,
 } from "./terminal-node-helpers";
+import { CanvasNodeCard } from "./CanvasNodeCard";
+import { CanvasMinimap } from "./CanvasMinimap";
 import "./WorkspaceCanvas.css";
 
-type NodeKind = "workbench" | "browser" | "note" | "agent" | "terminal";
+export type NodeKind = "workbench" | "browser" | "note" | "agent" | "terminal";
 export type AgentRole = "Coordenador" | "Implementação" | "Revisão" | "Testes";
 export interface CanvasNode {
   id: string;
@@ -130,8 +134,8 @@ type OrchestrationPhase =
   | "finalizing"
   | "complete"
   | "blocked";
-type AgentProgressState = "queued" | "running" | "completed" | "blocked";
-interface AgentProgress {
+export type AgentProgressState = "queued" | "running" | "completed" | "blocked";
+export interface AgentProgress {
   state: AgentProgressState;
   label: string;
 }
@@ -1605,6 +1609,49 @@ export const WorkspaceCanvas: React.FC<{
     },
     [update],
   );
+  const updateNode = useCallback(
+    (id: string, patch: Partial<CanvasNode>) => {
+      update(
+        (current) => ({
+          ...current,
+          nodes: current.nodes.map((item) => (item.id === id ? { ...item, ...patch } : item)),
+        }),
+        true,
+      );
+    },
+    [update],
+  );
+  const disconnectNodeLinks = useCallback(
+    (id: string) => {
+      update(
+        (current) => ({
+          ...current,
+          connections: current.connections.filter((link) => link.from !== id && link.to !== id),
+        }),
+        true,
+      );
+    },
+    [update],
+  );
+  const focusNode = useCallback(
+    (id: string) => {
+      const node = canvasRef.current.nodes.find((item) => item.id === id);
+      const host = viewportRef.current?.getBoundingClientRect();
+      if (!node || !host) return;
+      update(
+        (current) => ({
+          ...current,
+          viewport: {
+            ...current.viewport,
+            x: host.width / 2 - (node.x + node.width / 2) * current.viewport.zoom,
+            y: host.height / 2 - (node.y + node.height / 2) * current.viewport.zoom,
+          },
+        }),
+        true,
+      );
+    },
+    [update],
+  );
   // Digitação nos campos de texto: só o rascunho local muda (ver comentário de
   // TerminalFieldDraft). O commit com sanitize acontece em blur/Enter.
   const setTerminalDraftField = useCallback(
@@ -1700,6 +1747,46 @@ export const WorkspaceCanvas: React.FC<{
       }
     },
     [onTerminalPresetsSaved, presetDraftName, terminalPresets],
+  );
+
+  const renameCustomPreset = useCallback(
+    async (presetId: string, newName: string) => {
+      const res = renameCustomTerminalPreset(terminalPresets, presetId, newName);
+      if (res.error) {
+        setPresetSaveStatus(res.error);
+        return;
+      }
+      try {
+        const saved = await window.devorbit.saveConfig({
+          terminalPresets: res.presets,
+        });
+        onTerminalPresetsSaved?.(saved.terminalPresets ?? res.presets);
+        setPresetSaveStatus(`Preset renomeado para "${res.updated?.name}".`);
+      } catch (error) {
+        setPresetSaveStatus("Não foi possível renomear o preset: " + (error instanceof Error ? error.message : String(error)));
+      }
+    },
+    [onTerminalPresetsSaved, terminalPresets],
+  );
+
+  const deleteCustomPresetAction = useCallback(
+    async (presetId: string) => {
+      const res = deleteCustomTerminalPreset(terminalPresets, presetId);
+      if (res.error) {
+        setPresetSaveStatus(res.error);
+        return;
+      }
+      try {
+        const saved = await window.devorbit.saveConfig({
+          terminalPresets: res.presets,
+        });
+        onTerminalPresetsSaved?.(saved.terminalPresets ?? res.presets);
+        setPresetSaveStatus(`Preset "${res.deleted?.name}" excluído.`);
+      } catch (error) {
+        setPresetSaveStatus("Não foi possível excluir o preset: " + (error instanceof Error ? error.message : String(error)));
+      }
+    },
+    [onTerminalPresetsSaved, terminalPresets],
   );
   const squadRegions = useMemo(
     () => computeSquadRegions(canvas.squads, canvas.nodes),
@@ -2647,577 +2734,99 @@ export const WorkspaceCanvas: React.FC<{
         {canvas.nodes
           .filter((node) => node.kind !== "browser" || browser)
           .map((node) => (
-            <section
+            <CanvasNodeCard
               key={node.id}
-              tabIndex={0}
-              role="region"
-              aria-label={`${node.title} (${node.kind === "agent" ? node.role : node.kind})`}
-              className={
-                "workspace-canvas-card canvas-" +
-                node.kind +
-                (selected.includes(node.id) ? " is-selected" : "") +
-                (connectFrom === node.id ? " is-connecting" : "") +
-                (agentProgress[node.id]
-                  ? " has-agent-progress progress-" + agentProgress[node.id].state
-                  : "")
+              node={node}
+              isSelected={selected.includes(node.id)}
+              isConnecting={connectFrom === node.id}
+              isConnectionTargetAvailable={Boolean(connectFrom && connectFrom !== node.id)}
+              isConfigOpen={configNodeId === node.id}
+              progress={agentProgress[node.id]}
+              agentProviders={agentProviders}
+              quickDeployChips={quickDeployChips}
+              terminalPresets={terminalPresets}
+              terminalDraft={terminalDraft}
+              terminalCommandHint={terminalCommandHint}
+              presetDraftName={presetDraftName}
+              presetSaveStatus={presetSaveStatus}
+              nodeMeta={nodeMeta}
+              spaceHeld={spaceHeldRef.current}
+              isSendDisabled={node.kind === 'agent' ? sendDisabledFor(node) : false}
+              sendTitle={
+                node.kind === 'agent'
+                  ? sendPolicyFor(node).disabled
+                    ? sendPolicyFor(node).reason
+                    : node.role === 'Coordenador'
+                      ? 'Iniciar orquestração com as notas conectadas'
+                      : 'Enviar as notas conectadas ao agente'
+                  : undefined
               }
-              data-canvas-card={node.kind}
-              data-canvas-node-id={node.id}
-              style={{
-                left: node.x,
-                top: node.y,
-                width: node.width,
-                height: node.height,
-                zIndex: node.z,
-              }}
-              onPointerDown={(event) => {
-                if (event.button === 1 || spaceHeldRef.current) {
-                  startPan(event);
-                  return;
-                }
-                event.stopPropagation();
-                selectNode(node.id, event.ctrlKey || event.metaKey);
-              }}
-              onKeyDown={(event) => {
-                if (event.target === event.currentTarget) {
-                  if (event.key === "Enter" || event.key === " ") {
-                    selectNode(node.id, event.ctrlKey || event.metaKey);
-                  } else if (event.key.toLowerCase() === "c") {
-                    event.preventDefault();
-                    chooseConnectionSource(node.id);
-                  }
-                }
-              }}
-            >
-              <button
-                type="button"
-                className={
-                  "canvas-port canvas-port-source" +
-                  (connectFrom === node.id ? " is-active" : "")
-                }
-                data-canvas-port="source"
-                data-canvas-node-id={node.id}
-                aria-label={"Iniciar conexão a partir de " + node.title}
-                aria-pressed={connectFrom === node.id}
-                onPointerDown={(event) => startConnection(event, node)}
-                onClick={() => chooseConnectionSource(node.id)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    chooseConnectionSource(node.id);
-                  }
-                }}
-              >
-                <span aria-hidden="true" />
-              </button>
-              <button
-                type="button"
-                className={
-                  "canvas-port canvas-port-target" +
-                  (connectFrom && connectFrom !== node.id ? " is-available" : "")
-                }
-                data-canvas-port="target"
-                data-canvas-node-id={node.id}
-                aria-label={"Conectar a " + node.title}
-                disabled={!connectFrom || connectFrom === node.id}
-                onPointerDown={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                }}
-                onClick={() => connectNodes(connectFrom, node.id)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    if (connectFrom && connectFrom !== node.id) {
-                      connectNodes(connectFrom, node.id);
-                    }
-                  }
-                }}
-              >
-                <span aria-hidden="true" />
-              </button>
-              <header
-                onPointerDown={(event) => {
-                  const target = event.target;
-                  if (
-                    closestElement(
-                      target,
-                      "button, input, select, textarea, a, [contenteditable=true]",
-                    )
-                  )
-                    return;
-                  startNodeDrag(event, node);
-                }}
-              >
-                <strong>
-                  {nodeMeta[node.kind].icon}
-                  {node.title}
-                </strong>
-                <span className="canvas-node-meta">
-                  {node.kind === "agent"
-                    ? node.role || "Implementação"
-                    : node.kind === "terminal"
-                      ? terminalMetaLabel(node)
-                      : nodeMeta[node.kind].meta}
-                </span>
-                {node.kind === "agent" && node.role === "Coordenador" && (
-                  <span
-                    className="canvas-command-mark"
-                    role="img"
-                    aria-label="Coordenador"
-                    title="Coordenador da squad"
-                  >
-                    <Crown size={11} aria-hidden="true" />
-                  </span>
-                )}
-                {node.kind === "agent" && agentProgress[node.id] && (
-                  <span
-                    className={
-                      "canvas-agent-progress progress-" +
-                      agentProgress[node.id].state
-                    }
-                    data-agent-progress={agentProgress[node.id].state}
-                    role="status"
-                    aria-label={
-                      "Status da tarefa: " + agentProgress[node.id].label
-                    }
-                  >
-                    <i aria-hidden="true" />
-                    {agentProgress[node.id].label}
-                  </span>
-                )}
-                {node.kind === "agent" && (
-                  <button
-                    type="button"
-                    className="canvas-icon-action"
-                    title="Criar worktree isolado"
-                    aria-label={"Isolar " + node.title}
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onClick={() => onCreateAgentWorktree?.(node)}
-                  >
-                    <GitBranch size={13} />
-                  </button>
-                )}
-                {(node.kind === "agent" || node.kind === "terminal") && (
-                  <button
-                    type="button"
-                    className="canvas-agent-config-toggle"
-                    aria-label={"Configurar " + node.title}
-                    aria-expanded={configNodeId === node.id}
-                    aria-controls={(node.kind === "agent" ? "agent-config-" : "terminal-config-") + node.id}
-                    title="Configuração do agente"
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setConfigNodeId((current) =>
-                        current === node.id ? null : node.id,
-                      );
-                    }}
-                  >
-                    <Settings2 size={13} />
-                  </button>
-                )}
-                {node.kind === "agent" && (
-                  <button
-                    type="button"
-                    className="canvas-send-task"
-                    data-agent-send
-                    aria-label={"Enviar tarefa para " + node.title}
-                    title={
-                      sendPolicyFor(node).disabled
-                        ? sendPolicyFor(node).reason
-                        : node.role === "Coordenador"
-                          ? "Iniciar orquestração com as notas conectadas"
-                          : "Enviar as notas conectadas ao agente"
-                    }
-                    disabled={sendDisabledFor(node)}
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onClick={() => sendAgentTask(node)}
-                  ><Send size={13} /></button>
-                )}
-                {!fixedKinds.has(node.kind) && (
-                  <button
-                    type="button"
-                    className="canvas-delete-node"
-                    aria-label={"Excluir " + node.title}
-                    title={node.kind === "agent" ? "Excluir terminal do agente" : node.kind === "terminal" ? "Excluir terminal" : "Excluir nota"}
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onClick={() => deleteNodes([node.id])}
-                  ><Trash2 size={13} /></button>
-                )}
-                <button
-                  data-canvas-drag-handle
-                  type="button"
-                  className="canvas-drag"
-                  aria-label={"Mover " + node.title}
-                  onPointerDown={(event) => {
-                    startNodeDrag(event, node);
-                  }}
-                >
-                  <Grip size={14} />
-                </button>
-              </header>
-              {node.kind === "agent" && (
-                <div
-                  className="canvas-agent-config"
-                  id={"agent-config-" + node.id}
-                  role="group"
-                  aria-label={"Configuração de " + node.title}
-                  hidden={configNodeId !== node.id}
-                  onPointerDown={(event) => event.stopPropagation()}
-                >
-                  <label className="canvas-agent-config-field">
-                    <span>Papel</span>
-                    <select
-                      aria-label="Papel do agente"
-                      value={node.role || "Implementação"}
-                      onChange={(event) =>
-                        update(
-                          (current) => ({
-                            ...current,
-                            nodes: current.nodes.map((item) =>
-                              item.id === node.id
-                                ? { ...item, role: event.target.value as AgentRole, title: "Agente: " + event.target.value }
-                                : item,
-                            ),
-                          }),
-                          true,
-                        )
-                      }
-                    >
-                      <option>Coordenador</option><option>Implementação</option><option>Revisão</option><option>Testes</option>
-                    </select>
-                  </label>
-                  <label className="canvas-agent-config-field">
-                    <span>Provider</span>
-                    <select
-                      value={node.provider || ""}
-                      aria-label="Provedor do agente"
-                      onChange={(event) =>
-                        update(
-                          (current) => ({
-                            ...current,
-                            nodes: current.nodes.map((item) => {
-                              if (item.id !== node.id) return item;
-                              const nextProvider = event.target.value
-                                ? (event.target.value as AgentProviderId)
-                                : undefined;
-                              return {
-                                ...item,
-                                provider: nextProvider,
-                                account:
-                                  nextProvider && requiresCodexAccount(nextProvider)
-                                    ? item.account
-                                    : undefined,
-                              };
-                            }),
-                          }),
-                          true,
-                        )
-                      }
-                    >
-                      <option value="">Configurar provider</option>
-                      {agentProviders.map((provider) => (
-                        <option key={provider.id} value={provider.id} disabled={provider.state !== "ready"}>
-                          {provider.label}{provider.state !== "ready" ? " (não encontrado)" : ""}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="canvas-agent-config-field">
-                    <span>Conta Codex</span>
-                    <select
-                      value={requiresCodexAccount(node.provider ?? null) ? node.account || "" : ""}
-                      aria-label="Conta Codex"
-                      title={
-                        requiresCodexAccount(node.provider ?? null)
-                          ? "Conta Codex deste agente"
-                          : "A conta só se aplica ao provider Codex"
-                      }
-                      disabled={!requiresCodexAccount(node.provider ?? null)}
-                      onChange={(event) =>
-                        update(
-                          (current) => ({
-                            ...current,
-                            nodes: current.nodes.map((item) =>
-                              item.id === node.id
-                                ? {
-                                    ...item,
-                                    account: event.target.value
-                                      ? (event.target.value as "account1" | "account2")
-                                      : undefined,
-                                  }
-                                : item,
-                            ),
-                          }),
-                          true,
-                        )
-                      }
-                    ><option value="">—</option><option value="account1">C1</option><option value="account2">C2</option></select>
-                  </label>
-                </div>
-              )}
-              {node.kind === "terminal" && node.terminal && (
-                <div
-                  className="canvas-agent-config canvas-terminal-config"
-                  id={"terminal-config-" + node.id}
-                  role="group"
-                  aria-label={"Configuração de " + node.title}
-                  hidden={configNodeId !== node.id}
-                  onPointerDown={(event) => event.stopPropagation()}
-                >
-                  <label className="canvas-agent-config-field">
-                    <span>Nome</span>
-                    <input
-                      value={node.title}
-                      aria-label="Nome do terminal"
-                      onChange={(event) => renameTerminalNode(node.id, event.target.value)}
-                    />
-                  </label>
-                  <label className="canvas-agent-config-field">
-                    <span>Preset</span>
-                    <select
-                      aria-label="Preset do terminal"
-                      value={node.terminal.presetId}
-                      onChange={(event) => {
-                        const chip = quickDeployChips.find((item) => item.id === event.target.value);
-                        if (!chip) return;
-                        // Trocar o preset volta aos defaults dele (comando,
-                        // auto-start, reinício) e preserva o diretório escolhido.
-                        // O rascunho de texto morre aqui: os defaults do novo
-                        // preset devem aparecer nos campos.
-                        setTerminalDraft(null);
-                        setTerminalCommandHint("");
-                        updateTerminalNode(node.id, () => {
-                          const next = createTerminalNodeConfig(chip.preset);
-                          return {
-                            ...next,
-                            cwdMode: node.terminal!.cwdMode,
-                            ...(node.terminal!.cwdMode === "custom" && node.terminal!.cwd
-                              ? { cwd: node.terminal!.cwd }
-                              : {}),
-                          };
-                        });
-                      }}
-                    >
-                      {quickDeployChips.map((chip) => (
-                        <option key={chip.id} value={chip.id}>{chip.label}</option>
-                      ))}
-                      {!quickDeployChips.some((chip) => chip.id === node.terminal!.presetId) && (
-                        <option value={node.terminal.presetId}>{node.terminal.presetId} (ausente)</option>
-                      )}
-                    </select>
-                  </label>
-                  <label className="canvas-agent-config-field">
-                    <span>Comando</span>
-                    <input
-                      value={terminalDraft?.nodeId === node.id ? terminalDraft.command : node.terminal.command ?? ""}
-                      aria-label="Comando do terminal"
-                      placeholder="ex.: npm run dev"
-                      spellCheck={false}
-                      onChange={(event) => {
-                        const value = event.target.value;
-                        setTerminalDraftField(node.id, "command", value);
-                        setTerminalCommandHint(isTerminalCommandTextRejected(value.trim()) ? TERMINAL_COMMAND_INVALID_HINT : "");
-                      }}
-                      onBlur={() => commitTerminalFields(node)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.preventDefault();
-                          commitTerminalFields(node);
-                        }
-                      }}
-                    />
-                    {terminalDraft?.nodeId === node.id && terminalCommandHint && (
-                      <span className="canvas-terminal-save-status" role="status">{terminalCommandHint}</span>
-                    )}
-                  </label>
-                  <label className="canvas-agent-config-field">
-                    <span>Argumentos (separados por espaço)</span>
-                    <input
-                      value={terminalDraft?.nodeId === node.id ? terminalDraft.args : formatArgsInput(node.terminal.args)}
-                      aria-label="Argumentos do comando"
-                      placeholder="ex.: --port 3000"
-                      spellCheck={false}
-                      onChange={(event) => setTerminalDraftField(node.id, "args", event.target.value)}
-                      onBlur={() => commitTerminalFields(node)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.preventDefault();
-                          commitTerminalFields(node);
-                        }
-                      }}
-                    />
-                  </label>
-                  <div className="canvas-agent-config-field" role="radiogroup" aria-label="Executar em">
-                    <span>Executar em</span>
-                    <label className="canvas-terminal-option">
-                      <input
-                        type="radio"
-                        name={"terminal-cwd-" + node.id}
-                        checked={node.terminal.cwdMode === "workspace"}
-                        onChange={() => updateTerminalNode(node.id, () => ({ cwdMode: "workspace", cwd: undefined }))}
-                      />
-                      Workspace
-                    </label>
-                    <label className="canvas-terminal-option">
-                      <input
-                        type="radio"
-                        name={"terminal-cwd-" + node.id}
-                        checked={node.terminal.cwdMode === "custom"}
-                        onChange={() => updateTerminalNode(node.id, () => ({ cwdMode: "custom" }))}
-                      />
-                      Diretório próprio
-                    </label>
-                    {node.terminal.cwdMode === "custom" && (
-                      <input
-                        className="canvas-terminal-path"
-                        value={terminalDraft?.nodeId === node.id ? terminalDraft.cwd : node.terminal.cwd ?? ""}
-                        aria-label="Diretório próprio de execução"
-                        placeholder="C:\caminho\do\diretório"
-                        spellCheck={false}
-                        onChange={(event) => setTerminalDraftField(node.id, "cwd", event.target.value)}
-                        onBlur={() => commitTerminalFields(node)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter") {
-                            event.preventDefault();
-                            commitTerminalFields(node);
-                          }
-                        }}
-                      />
-                    )}
-                  </div>
-                  <label className="canvas-terminal-option">
-                    <input
-                      type="checkbox"
-                      checked={node.terminal.autoStart}
-                      onChange={(event) => updateTerminalNode(node.id, () => ({ autoStart: event.target.checked }))}
-                    />
-                    Ao iniciar
-                  </label>
-                  <label className="canvas-agent-config-field">
-                    <span>Ao reiniciar</span>
-                    <select
-                      aria-label="Comportamento ao reiniciar"
-                      value={node.terminal.restartBehavior}
-                      onChange={(event) =>
-                        updateTerminalNode(node.id, () => ({
-                          restartBehavior: event.target.value as TerminalNodeRuntimeConfig["restartBehavior"],
-                        }))
-                      }
-                    >
-                      <option value="restart">Relançar agente</option>
-                      <option value="resume">Retomar sessão</option>
-                      <option value="shell">Shell puro</option>
-                    </select>
-                  </label>
-                  <label className="canvas-terminal-option">
-                    <input
-                      type="checkbox"
-                      checked={node.terminal.monitorActivity}
-                      onChange={(event) => updateTerminalNode(node.id, () => ({ monitorActivity: event.target.checked }))}
-                    />
-                    Monitorar atividade
-                  </label>
-                  <div className="canvas-terminal-preset-save">
-                    <label className="canvas-agent-config-field">
-                      <span>Salvar como preset</span>
-                      <input
-                        value={presetDraftName}
-                        aria-label="Nome do novo preset personalizado"
-                        placeholder="Nome do preset"
-                        onChange={(event) => {
-                          setPresetDraftName(event.target.value);
-                          setPresetSaveStatus("");
-                        }}
-                      />
-                    </label>
-                    <button
-                      type="button"
-                      className="canvas-terminal-save-button"
-                      disabled={!presetDraftName.trim()}
-                      onClick={() => void saveTerminalPreset(node)}
-                    >
-                      Salvar preset
-                    </button>
-                    {presetSaveStatus && (
-                      <span className="canvas-terminal-save-status" role="status">{presetSaveStatus}</span>
-                    )}
-                  </div>
-                </div>
-              )}
-              <div className="workspace-canvas-card-content">
-                {node.kind === "workbench" ? (
-                  workbench
-                ) : node.kind === "browser" ? (
-                  browser
-                ) : node.kind === "agent" ? (
-                  isAgentNodeConfigured(node, agentProviders) ? (
-                    <>{renderAgent?.(node, (result, taskId) => reportAgentResult(node.id, result, taskId), (taskId, message) => reportAgentTaskFailure(node.id, taskId, message)) || <div className="canvas-agent-empty">Terminal do agente indisponível.</div>}{node.content && <div className="canvas-agent-result" title={node.content}>{node.content}</div>}</>
-                  ) : (
-                    <div className="canvas-agent-empty" role="status">
-                      <p>{agentNodeSetupMessage(node, agentProviders)}</p>
-                    </div>
-                  )
-                ) : node.kind === "terminal" ? (
-                  renderTerminal ? (
-                    renderTerminal(node)
-                  ) : (
-                    <div className="canvas-agent-empty" role="status">
-                      <p>Terminal do nó indisponível.</p>
-                    </div>
-                  )
-                ) : (
-                  <textarea
-                    data-canvas-note-editor
-                    value={node.content || ""}
-                    onChange={(event) =>
-                      update((current) => ({
-                        ...current,
-                        nodes: current.nodes.map((item) =>
-                          item.id === node.id
-                            ? {
-                                ...item,
-                                content: event.target.value.slice(0, 24000),
-                              }
-                            : item,
-                        ),
-                      }))
-                    }
-                    placeholder="Tarefa, decisões, contexto e próximos passos…"
-                    aria-label={node.title}
-                  />
-                )}
-              </div>
-              <button
-                data-canvas-resize-handle
-                className="workspace-canvas-resize"
-                type="button"
-                aria-label={"Redimensionar " + node.title}
-                onPointerDown={(event) => {
-                  startResize(event, node);
-                }}
-              >
-                <Maximize2 size={12} />
-              </button>
-            </section>
+              onSelect={selectNode}
+              onStartPan={startPan}
+              onStartNodeDrag={startNodeDrag}
+              onStartResize={startResize}
+              onStartConnection={startConnection}
+              onChooseConnectionSource={chooseConnectionSource}
+              onConnectNodes={(targetId) => connectNodes(connectFrom, targetId)}
+              onDeleteNode={(id) => deleteNodes([id])}
+              onToggleConfig={(id) => setConfigNodeId((curr) => (curr === id ? null : id))}
+              onDisconnectLinks={disconnectNodeLinks}
+              onFocusNode={focusNode}
+              onUpdateGeometry={(id, geom) =>
+                update((current) => ({
+                  ...current,
+                  nodes: current.nodes.map((n) => (n.id === id ? { ...n, ...geom } : n)),
+                }))
+              }
+              onUpdateTitle={(id, title) => renameTerminalNode(id, title)}
+              onUpdateRole={(id, role) => updateNode(id, { role })}
+              onUpdateProvider={(id, provider) => updateNode(id, { provider })}
+              onUpdateAccount={(id, account) => updateNode(id, { account })}
+              onUpdateContent={(id, content) =>
+                update((current) => ({
+                  ...current,
+                  nodes: current.nodes.map((n) => (n.id === id ? { ...n, content } : n)),
+                }))
+              }
+              onSendTask={sendAgentTask}
+              onIsolateWorktree={onCreateAgentWorktree}
+              onUpdateTerminalNode={updateTerminalNode}
+              onSetTerminalDraftField={setTerminalDraftField}
+              onCommitTerminalFields={commitTerminalFields}
+              onSetTerminalDraft={setTerminalDraft}
+              onSetTerminalCommandHint={setTerminalCommandHint}
+              onSetPresetDraftName={setPresetDraftName}
+              onSetPresetSaveStatus={setPresetSaveStatus}
+              onSavePreset={saveTerminalPreset}
+              onRenameCustomPreset={renameCustomPreset}
+              onDeleteCustomPreset={deleteCustomPresetAction}
+              workbench={workbench}
+              browser={browser}
+              renderAgent={
+                renderAgent
+                  ? (n) =>
+                      renderAgent(
+                        n,
+                        (res, taskId) => reportAgentResult(n.id, res, taskId),
+                        (taskId, msg) => reportAgentTaskFailure(n.id, taskId, msg),
+                      )
+                  : undefined
+              }
+              renderTerminal={renderTerminal}
+            />
           ))}
       </div>
-      <div className="workspace-canvas-minimap" aria-label="Minimapa do canvas">
-        <svg
-          viewBox={`0 0 ${WORLD_WIDTH} ${WORLD_HEIGHT}`}
-          onPointerDown={startMinimapNavigation}
-          onPointerMove={continueMinimapNavigation}
-          onPointerUp={finishMinimapNavigation}
-          onPointerCancel={finishMinimapNavigation}
-          role="img"
-          tabIndex={0}
-          aria-label="Navegar pelo minimapa"
-        >
-          {canvas.nodes.map((node) => <rect key={node.id} x={node.x} y={node.y} width={node.width} height={node.height} className={'minimap-node ' + node.kind} />)}
-          {(() => { const host = viewportRef.current?.getBoundingClientRect(); const width = (host?.width || 900) / canvas.viewport.zoom; const height = (host?.height || 650) / canvas.viewport.zoom; return <rect className="minimap-viewport" x={-canvas.viewport.x / canvas.viewport.zoom} y={-canvas.viewport.y / canvas.viewport.zoom} width={width} height={height} /> })()}
-        </svg>
-      </div>
+      <CanvasMinimap
+        viewport={canvas.viewport}
+        nodes={canvas.nodes}
+        worldWidth={WORLD_WIDTH}
+        worldHeight={WORLD_HEIGHT}
+        viewportWidth={viewportRef.current?.getBoundingClientRect()?.width || 900}
+        viewportHeight={viewportRef.current?.getBoundingClientRect()?.height || 650}
+        onPointerDown={startMinimapNavigation}
+        onPointerMove={continueMinimapNavigation}
+        onPointerUp={finishMinimapNavigation}
+      />
       {connectFrom && (
         <div
           className="workspace-canvas-connection-status"

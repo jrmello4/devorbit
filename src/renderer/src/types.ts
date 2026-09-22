@@ -8,6 +8,7 @@ import type { LlmCompletionRequestView, LlmRouteView } from '../../shared/llm-co
 import type { EvolutionRecord } from '../../shared/evolution-history'
 import type { TextSearchRequest, TextSearchResult } from '../../shared/text-search-contract'
 import type { CustomTerminalPreset } from '../../shared/terminal-presets'
+export type { CustomTerminalPreset }
 import type { UsageShareState } from '../../shared/usage-contract'
 
 export interface TechStack {

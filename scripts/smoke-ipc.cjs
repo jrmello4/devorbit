@@ -141,6 +141,8 @@ const EXPECTED_METHODS = [
   'reportOrchestrationTurn',
   'reportOrchestrationQuota',
   'onOrchestrationEvent',
+  'getUsageShare',
+  'refreshUsage',
 ]
 
 const checks = []
