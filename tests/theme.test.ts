@@ -36,13 +36,14 @@ function createRoot(): ThemeRoot & { properties: Map<string, string> } {
 }
 
 describe('theme', () => {
-  it('usa claro como fallback determinístico e alterna apenas entre os dois modos', () => {
-    expect(DEFAULT_THEME).toBe('light')
-    expect(resolveTheme(null)).toBe('light')
-    expect(resolveTheme('other')).toBe('light')
+  it('mantém a interface sempre escura, independentemente de preferências anteriores', () => {
+    expect(DEFAULT_THEME).toBe('dark')
+    expect(resolveTheme(null)).toBe('dark')
+    expect(resolveTheme('other')).toBe('dark')
     expect(resolveTheme('dark')).toBe('dark')
+    expect(resolveTheme('light')).toBe('dark')
     expect(toggleTheme('light')).toBe('dark')
-    expect(toggleTheme('dark')).toBe('light')
+    expect(toggleTheme('dark')).toBe('dark')
   })
 
   it('ignora valores inválidos no localStorage', () => {
@@ -59,17 +60,18 @@ describe('theme', () => {
     expect(root.properties.get('--color-accent')).toBe(THEME_TOKENS.dark['--color-accent'])
   })
 
-  it('inicializa a preferência persistida sem consultar o sistema', () => {
-    const storage = createStorage('dark')
+  it('substitui uma preferência clara legada ao inicializar', () => {
+    const storage = createStorage('light')
     const root = createRoot()
     expect(initializeTheme(storage, root)).toBe('dark')
+    expect(storage.values.get(THEME_STORAGE_KEY)).toBe('dark')
     expect(root.dataset.theme).toBe('dark')
   })
 
-  it('persiste e aplica uma nova escolha', () => {
-    const storage = createStorage()
+  it('persiste e aplica apenas o tema escuro', () => {
+    const storage = createStorage('light')
     const root = createRoot()
-    expect(setTheme('dark', storage, root)).toBe('dark')
+    expect(setTheme('light', storage, root)).toBe('dark')
     expect(storage.values.get(THEME_STORAGE_KEY)).toBe('dark')
     expect(root.dataset.theme).toBe('dark')
   })

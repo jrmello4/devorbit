@@ -76,6 +76,7 @@ import {
 } from "./terminal-node-helpers";
 import { CanvasNodeCard } from "./CanvasNodeCard";
 import { CanvasMinimap } from "./CanvasMinimap";
+import { CanvasRadialMenu, type CanvasRadialItem } from "./CanvasRadialMenu";
 import "./WorkspaceCanvas.css";
 
 export type NodeKind = "workbench" | "browser" | "note" | "agent" | "terminal";
@@ -2544,6 +2545,85 @@ export const WorkspaceCanvas: React.FC<{
     [onNotify, project.path],
   );
 
+  const radialItems = useMemo<CanvasRadialItem[]>(
+    () => [
+      {
+        id: "terminal",
+        label: "Terminal",
+        icon: Terminal,
+        onSelect: openTerminalQuickDeploy,
+      },
+      {
+        id: "agent",
+        label: "Agente",
+        icon: Bot,
+        onSelect: openAgentCreation,
+      },
+      {
+        id: "squad",
+        label: "Squad",
+        icon: Users,
+        onSelect: openSquadCreation,
+      },
+      {
+        id: "note",
+        label: "Nota",
+        icon: NotebookPen,
+        onSelect: addNote,
+      },
+      {
+        id: "connect",
+        label: "Conectar",
+        icon: Link2,
+        disabled: !selected.length || Boolean(connectFrom),
+        disabledReason: connectFrom
+          ? "Escolha o destino do nó atual"
+          : "Selecione um nó do canvas para conectar",
+        onSelect: () => {
+          const source = selected[selected.length - 1];
+          if (source) setConnectFrom(source);
+        },
+      },
+      {
+        id: "duplicate",
+        label: "Duplicar",
+        icon: FileText,
+        disabled: nodeMap.get(selected[selected.length - 1])?.kind !== "note",
+        disabledReason: "Duplicar só está disponível para notas selecionadas",
+        onSelect: duplicateSelected,
+      },
+      {
+        id: "unlink",
+        label: "Desvincular",
+        icon: Unlink,
+        disabled: !selected.some((id) =>
+          canvas.connections.some((link) => link.from === id || link.to === id),
+        ),
+        disabledReason: "Selecione um nó com conexões para desvincular",
+        onSelect: removeLinks,
+      },
+      {
+        id: "reset",
+        label: "Resetar",
+        icon: RotateCcw,
+        onSelect: resetCanvas,
+      },
+    ],
+    [
+      addNote,
+      canvas.connections,
+      connectFrom,
+      duplicateSelected,
+      nodeMap,
+      openAgentCreation,
+      openSquadCreation,
+      openTerminalQuickDeploy,
+      removeLinks,
+      resetCanvas,
+      selected,
+    ],
+  );
+
   return (
     <div
       ref={viewportRef}
@@ -2561,7 +2641,7 @@ export const WorkspaceCanvas: React.FC<{
         if (
           closestElement(
             target,
-            ".workspace-canvas-card, .workspace-canvas-toolbar, .workspace-canvas-minimap",
+            ".workspace-canvas-card, .workspace-canvas-radial, .workspace-canvas-view-hud, .workspace-canvas-minimap",
           )
         )
           return;
@@ -2583,51 +2663,8 @@ export const WorkspaceCanvas: React.FC<{
       }}
     >
       <div className="workspace-canvas-grid" />
-      <div
-        className="workspace-canvas-toolbar"
-        role="toolbar"
-        aria-label="Ferramentas do canvas"
-      >
-        <button type="button" onClick={addNote} title="Criar nota" aria-label="Criar nota">
-          <NotebookPen size={14} /> Nota
-        </button>
-        <button type="button" onClick={openAgentCreation} title="Criar agente" aria-label="Criar agente">
-          <Bot size={14} /> Agente
-        </button>
-        <button type="button" onClick={openSquadCreation} title="Criar squad de agentes conectado a uma tarefa" aria-label="Criar squad de agentes">
-          <Users size={14} /> Squad
-        </button>
-        <button type="button" onClick={openTerminalQuickDeploy} title="Criar terminal com preset (Quick Deploy)" aria-label="Criar terminal">
-          <Terminal size={14} /> Terminal
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            const source = selected[selected.length - 1];
-            if (source) setConnectFrom(source);
-          }}
-          disabled={!selected.length || Boolean(connectFrom)}
-          title="Conectar o nó selecionado a outro"
-        >
-          <Link2 size={14} /> {connectFrom ? "Escolha o destino" : "Conectar"}
-        </button>
-        <button
-          type="button"
-          onClick={duplicateSelected}
-          disabled={nodeMap.get(selected[selected.length - 1])?.kind !== "note"}
-          title="Duplicar nota selecionada"
-        >
-          <FileText size={14} /> Duplicar
-        </button>
-        <button
-          type="button"
-          onClick={removeLinks}
-          disabled={!selected.length}
-          title="Remover conexões do item selecionado"
-        >
-          <Unlink size={14} />
-        </button>
-        <span className="workspace-canvas-toolbar-separator" />
+      <CanvasRadialMenu items={radialItems} label="Menu do canvas" />
+      <div className="workspace-canvas-view-hud">
         <button
           type="button"
           onClick={() => zoom(-0.1)}
@@ -2658,13 +2695,6 @@ export const WorkspaceCanvas: React.FC<{
           title="Encaixar conteúdo no canvas"
         >
           <Maximize2 size={14} />
-        </button>
-        <button
-          type="button"
-          onClick={resetCanvas}
-          title="Restaurar layout inicial"
-        >
-          <RotateCcw size={14} />
         </button>
       </div>
       <div

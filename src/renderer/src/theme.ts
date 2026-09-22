@@ -17,7 +17,7 @@ export interface ThemeRoot {
 }
 
 export const THEME_STORAGE_KEY = 'devorbit:theme'
-export const DEFAULT_THEME: ThemeMode = 'light'
+export const DEFAULT_THEME: ThemeMode = 'dark'
 
 const HERO_OPS_TOKENS = {
   '--ops-surface-0': '#08090c',
@@ -137,11 +137,13 @@ export function isThemeMode(value: unknown): value is ThemeMode {
 }
 
 export function resolveTheme(value: string | null | undefined): ThemeMode {
-  return isThemeMode(value) ? value : DEFAULT_THEME
+  void value
+  return DEFAULT_THEME
 }
 
 export function toggleTheme(theme: ThemeMode): ThemeMode {
-  return theme === 'light' ? 'dark' : 'light'
+  void theme
+  return 'dark'
 }
 
 export function readStoredTheme(storage: ThemeStorage | null = getLocalStorage()): ThemeMode | null {
@@ -155,13 +157,14 @@ export function readStoredTheme(storage: ThemeStorage | null = getLocalStorage()
 }
 
 export function applyTheme(theme: ThemeMode, root: ThemeRoot | null = getDocumentRoot()): ThemeMode {
-  if (!root) return theme
-  root.dataset.theme = theme
-  root.style.colorScheme = theme
-  for (const [property, value] of Object.entries(THEME_TOKENS[theme])) {
+  void theme
+  if (!root) return DEFAULT_THEME
+  root.dataset.theme = DEFAULT_THEME
+  root.style.colorScheme = DEFAULT_THEME
+  for (const [property, value] of Object.entries(THEME_TOKENS[DEFAULT_THEME])) {
     root.style.setProperty(property, value)
   }
-  return theme
+  return DEFAULT_THEME
 }
 
 export function persistTheme(theme: ThemeMode, storage: ThemeStorage | null = getLocalStorage()): ThemeMode {
@@ -175,17 +178,18 @@ export function persistTheme(theme: ThemeMode, storage: ThemeStorage | null = ge
 }
 
 export function setTheme(
-  theme: ThemeMode,
+  _theme: ThemeMode,
   storage: ThemeStorage | null = getLocalStorage(),
   root: ThemeRoot | null = getDocumentRoot(),
 ): ThemeMode {
-  persistTheme(theme, storage)
-  return applyTheme(theme, root)
+  persistTheme(DEFAULT_THEME, storage)
+  return applyTheme(DEFAULT_THEME, root)
 }
 
 export function initializeTheme(
   storage: ThemeStorage | null = getLocalStorage(),
   root: ThemeRoot | null = getDocumentRoot(),
 ): ThemeMode {
-  return applyTheme(resolveTheme(readStoredTheme(storage)), root)
+  persistTheme('dark', storage)
+  return applyTheme('dark', root)
 }

@@ -172,7 +172,6 @@
   color: var(--ops-text-primary);
 }
 .workspace-canvas-card button:focus-visible,
-.workspace-canvas-toolbar button:focus-visible,
 .workspace-canvas-delete:focus-visible,
 .workspace-canvas-resize:focus-visible,
 .canvas-port:focus-visible {
@@ -423,7 +422,115 @@
   color: var(--ops-text-primary);
   background: var(--ops-surface-4);
 }
-.workspace-canvas-toolbar {
+.workspace-canvas-radial {
+  position: absolute;
+  z-index: 100;
+  left: 50%;
+  bottom: calc(var(--space-6, 24px) + var(--space-5, 20px));
+  width: 0;
+  height: 0;
+}
+.workspace-canvas-radial-arc {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+}
+.workspace-canvas-radial-option {
+  position: absolute;
+  top: -24px;
+  left: -24px;
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--ops-border-subtle);
+  border-radius: 999px;
+  background: var(--ops-overlay);
+  color: var(--ops-text-secondary);
+  box-shadow: 0 10px 24px var(--ops-shadow-node);
+  backdrop-filter: blur(10px);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform 0.42s cubic-bezier(0.24, 1.34, 0.38, 1),
+    opacity 0.2s,
+    box-shadow 0.2s,
+    background 0.16s,
+    color 0.16s;
+}
+.workspace-canvas-radial-arc[data-open="true"] .workspace-canvas-radial-option {
+  opacity: 1;
+  pointer-events: auto;
+}
+.workspace-canvas-radial-option:hover,
+.workspace-canvas-radial-option[data-live="true"] {
+  color: var(--ops-text-primary);
+  background: var(--ops-surface-3);
+  box-shadow: 0 0 0 2px var(--ops-focus);
+  z-index: 2;
+}
+.workspace-canvas-radial-option[aria-disabled="true"],
+.workspace-canvas-radial-arc[data-open="true"] .workspace-canvas-radial-option[aria-disabled="true"] {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.workspace-canvas-radial-option:focus-visible {
+  outline: 2px solid var(--ops-focus);
+  outline-offset: 2px;
+}
+.workspace-canvas-radial-label {
+  position: absolute;
+  top: calc(100% + 5px);
+  color: var(--ops-text-muted);
+  font: 600 9px var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  opacity: 0;
+  font-style: normal;
+  transition: opacity 0.16s;
+  pointer-events: none;
+}
+.workspace-canvas-radial-option:hover .workspace-canvas-radial-label,
+.workspace-canvas-radial-option[data-live="true"] .workspace-canvas-radial-label {
+  opacity: 1;
+  color: var(--ops-text-secondary);
+}
+.workspace-canvas-radial-core {
+  position: relative;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  margin: -28px 0 0 -28px;
+  border: 1px solid var(--ops-border-subtle);
+  border-radius: 999px;
+  background: var(--ops-surface-3);
+  color: var(--ops-text-primary);
+  box-shadow: 0 12px 30px var(--ops-shadow-node);
+  cursor: pointer;
+  touch-action: none;
+  transition:
+    transform 0.38s cubic-bezier(0.24, 1.34, 0.38, 1),
+    background 0.16s;
+}
+.workspace-canvas-radial-core:hover {
+  background: var(--ops-surface-4);
+}
+.workspace-canvas-radial-core[data-open="true"] {
+  transform: rotate(135deg);
+}
+.workspace-canvas-radial-core:active {
+  transform: scale(0.94);
+}
+.workspace-canvas-radial-core[data-open="true"]:active {
+  transform: rotate(135deg) scale(0.94);
+}
+.workspace-canvas-view-hud {
   position: absolute;
   z-index: 100;
   top: var(--space-3);
@@ -438,9 +545,8 @@
   background: var(--ops-overlay);
   box-shadow: 0 12px 30px var(--ops-shadow-node);
   backdrop-filter: blur(10px);
-  max-width: calc(100% - var(--space-6));
 }
-.workspace-canvas-toolbar button {
+.workspace-canvas-view-hud button {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
@@ -454,30 +560,21 @@
   white-space: nowrap;
   cursor: pointer;
 }
-.workspace-canvas-toolbar button:hover:not(:disabled) {
+.workspace-canvas-view-hud button:hover:not(:disabled) {
   background: var(--ops-surface-3);
   color: var(--ops-text-primary);
 }
-.workspace-canvas-toolbar button:disabled {
+.workspace-canvas-view-hud button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
-.workspace-canvas-toolbar .workspace-canvas-zoom-value {
+.workspace-canvas-view-hud .workspace-canvas-zoom-value {
   min-width: 44px;
   justify-content: center;
   padding: 0 var(--space-1);
   color: var(--ops-text-muted);
   font: 650 10px var(--font-mono);
   font-variant-numeric: tabular-nums;
-}
-.workspace-canvas-toolbar .workspace-canvas-zoom-value:hover:not(:disabled) {
-  color: var(--ops-text-primary);
-}
-.workspace-canvas-toolbar-separator {
-  width: 1px;
-  height: 18px;
-  margin: 0 2px;
-  background: var(--ops-border-subtle);
 }
 .workspace-canvas-hint {
   position: absolute;
@@ -487,7 +584,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  max-width: min(520px, calc(100% - var(--space-6)));
+  max-width: min(520px, max(200px, calc(50% - 164px)));
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--ops-border-subtle);
   border-radius: var(--radius-control);
@@ -776,15 +873,6 @@
 }
 .canvas-delete-node:hover { border-color: rgba(181, 110, 118, .5); background: var(--ops-surface-4); color: var(--ops-danger); }
 @media (max-width: 760px) {
-  .workspace-canvas-toolbar {
-    left: var(--space-2);
-    right: var(--space-2);
-    transform: none;
-    overflow-x: auto;
-  }
-  .workspace-canvas-toolbar button {
-    padding: 0 6px;
-  }
   .workspace-canvas-hint {
     max-width: 280px;
     font-size: 0;
@@ -798,6 +886,11 @@
   .workspace-canvas-connections path,
   .canvas-agent-progress.progress-running i {
     animation: none;
+  }
+  .workspace-canvas-radial-option,
+  .workspace-canvas-radial-core {
+    transition-duration: 0.01ms;
+    transition-delay: 0ms !important;
   }
 }
 

@@ -12,7 +12,7 @@ import { UpdateModal } from './components/UpdateModal'
 import { ToolHealthModal } from './components/ToolHealthModal'
 import { AuditDashboard, type AuditDashboardData } from './components/AuditDashboard'
 import { HitlApprovalDialog, type HitlApprovalRequest } from './components/HitlApprovalDialog'
-import { applyTheme, initializeTheme, setTheme, toggleTheme, type ThemeMode } from './theme'
+import { initializeTheme } from './theme'
 import './components/EvolutionPanels.css'
 import type { CreateActionId, NavigateActionId } from './components/command-center-helpers'
 import { resolvePaletteToggle } from './components/command-center-helpers'
@@ -29,7 +29,7 @@ import type {
   UpdateState,
   HitlRequestView,
 } from './types'
-import { CheckCircle2, AlertCircle, Info, X, FolderKanban, ChartNoAxesCombined, Settings, ArrowRightLeft, GitPullRequest, PanelLeftClose, PanelLeftOpen, Wrench, LayoutDashboard, RefreshCw } from 'lucide-react'
+import { CheckCircle2, AlertCircle, Info, X, FolderKanban, ChartNoAxesCombined, ShieldCheck, Settings, ArrowRightLeft, GitPullRequest, PanelLeftClose, PanelLeftOpen, Wrench, LayoutDashboard, RefreshCw, Orbit } from 'lucide-react'
 import { resolveRestorableProjectId } from './components/workspace-restore'
 
 const IntegratedWorkspace = React.lazy(() => import('./components/IntegratedWorkspace').then((module) => ({ default: module.IntegratedWorkspace })))
@@ -68,11 +68,35 @@ export const App: React.FC = () => {
   const [workspaceDirty, setWorkspaceDirty] = useState<Record<string, boolean>>({})
   const [search, setSearch] = useState('')
   const [workspaceView, setWorkspaceView] = useState<'projects' | 'project' | 'usage' | 'workspace' | 'audit'>('projects')
-  const [theme, setThemeMode] = useState<ThemeMode>(() => initializeTheme())
+  const [theme] = useState(() => initializeTheme())
   const [auditData, setAuditData] = useState<AuditDashboardData>({ entries: [] })
   const [hitlRequests, setHitlRequests] = useState<HitlApprovalRequest[]>([])
   const [hitlSubmitting, setHitlSubmitting] = useState(false)
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(true)
+  const [isAccountPopoverOpen, setIsAccountPopoverOpen] = useState(false)
+  const accountMenuRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!isAccountPopoverOpen) return
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Node && !accountMenuRef.current?.contains(event.target)) {
+        setIsAccountPopoverOpen(false)
+      }
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsAccountPopoverOpen(false)
+        accountMenuRef.current?.querySelector<HTMLButtonElement>('.sidebar-account-trigger')?.focus()
+      }
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [isAccountPopoverOpen])
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false)
   const [focusedCanvasNode, setFocusedCanvasNode] = useState<{ id: string; title: string; kind: string } | null>(null)
   const [pendingCanvasNode, setPendingCanvasNode] = useState<PendingCanvasNode | null>(null)
@@ -123,10 +147,6 @@ export const App: React.FC = () => {
     },
     [],
   )
-
-  useEffect(() => {
-    applyTheme(theme)
-  }, [theme])
 
   const loadAudit = useCallback(async (project: Project | null) => {
     if (!project || !window.devorbit) {
@@ -853,6 +873,11 @@ export const App: React.FC = () => {
   }, [activeMemoryProject, authModalAccount, closeCommandPalette, isCommandPaletteOpen, isSettingsOpen, isToolHealthOpen, isUpdateDismissed, openCommandPalette, updateState])
 
   const gitProjectsCount = projects.filter((p) => p.git.isRepo).length
+  const activeAccount = config?.activeChatGptAccount || 'account1'
+  const activeAccountName = activeAccount === 'account2'
+    ? config?.chatGptAccount2Name || 'Conta 2'
+    : config?.chatGptAccount1Name || 'Conta 1'
+  const activeAccountConnected = Boolean(authStatus?.[activeAccount]?.connected)
   const isUpdateModalOpen = Boolean(
     updateState &&
     !isUpdateDismissed &&
@@ -931,24 +956,37 @@ export const App: React.FC = () => {
   }
 
   return (
-    <div className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${workspaceView === 'workspace' && canvasFocusProjectId === activeWorkspaceProject?.id ? 'canvas-focus' : ''}`}>
+    <div className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${workspaceView === 'workspace' && canvasFocusProjectId === activeWorkspaceProject?.id ? 'canvas-focus' : ''}`} data-theme={theme}>
       <Header search={search} setSearch={(value) => {setSearch(value); setWorkspaceView('projects')}}
         onOpenCommandPalette={openCommandPalette} onRefresh={handleRefresh} isRefreshing={isRefreshing}
-        theme={theme} onToggleTheme={() => setThemeMode(setTheme(toggleTheme(theme)))} />
+      />
       <div className="app-body">
       <aside className="workspace-sidebar" aria-label="Navegação principal">
-        <div className="sidebar-heading"><span>Área de trabalho</span><button className="icon-button" onClick={() => setSidebarCollapsed(!sidebarCollapsed)} aria-label={sidebarCollapsed ? 'Expandir navegação' : 'Recolher navegação'}>{sidebarCollapsed ? <PanelLeftOpen size={15}/> : <PanelLeftClose size={15}/>}</button></div>
-        <nav>
-          <button className={`nav-item ${workspaceView === 'projects' || workspaceView === 'project' ? 'active' : ''}`} aria-current={workspaceView === 'projects' || workspaceView === 'project' ? 'page' : undefined} title="Projetos" onClick={() => setWorkspaceView('projects')}><FolderKanban size={17}/><span>Projetos</span><small>{projects.length}</small></button>
-          <button className={`nav-item ${workspaceView === 'usage' ? 'active' : ''}`} aria-current={workspaceView === 'usage' ? 'page' : undefined} title="Contas e uso" onClick={() => setWorkspaceView('usage')}><ChartNoAxesCombined size={17}/><span>Contas e uso</span></button>
-          <button className={`nav-item ${workspaceView === 'audit' ? 'active' : ''}`} aria-current={workspaceView === 'audit' ? 'page' : undefined} title="Auditoria" onClick={() => setWorkspaceView('audit')}><ChartNoAxesCombined size={17}/><span>Auditoria</span></button>
-          {activeWorkspaceProject && <button className={`nav-item ${workspaceView === 'workspace' ? 'active' : ''}`} aria-current={workspaceView === 'workspace' ? 'page' : undefined} title={`Ambiente integrado de ${activeWorkspaceProject.name}`} onClick={() => setWorkspaceView('workspace')}><LayoutDashboard size={17}/><span>Ambiente</span></button>}
+        <div className="sidebar-heading">
+          <div className="sidebar-brand" title="DevOrbit"><Orbit size={19} strokeWidth={1.8} aria-hidden="true"/><strong>DevOrbit</strong></div>
+          <button type="button" className="icon-button sidebar-collapse-button" onClick={() => setSidebarCollapsed(!sidebarCollapsed)} aria-label={sidebarCollapsed ? 'Expandir navegação' : 'Recolher navegação'} title={sidebarCollapsed ? 'Expandir navegação' : 'Recolher navegação'}>{sidebarCollapsed ? <PanelLeftOpen size={15} aria-hidden="true"/> : <PanelLeftClose size={15} aria-hidden="true"/>}</button>
+        </div>
+        <nav aria-label="Seções">
+          <button type="button" className={`nav-item ${workspaceView === 'projects' || workspaceView === 'project' ? 'active' : ''}`} aria-label={`Projetos, ${projects.length}`} aria-current={workspaceView === 'projects' || workspaceView === 'project' ? 'page' : undefined} title="Projetos" onClick={() => setWorkspaceView('projects')}><FolderKanban size={18} aria-hidden="true"/><span>Projetos</span><small>{projects.length}</small></button>
+          <button type="button" className={`nav-item ${workspaceView === 'usage' ? 'active' : ''}`} aria-label="Contas e uso" aria-current={workspaceView === 'usage' ? 'page' : undefined} title="Contas e uso" onClick={() => setWorkspaceView('usage')}><ChartNoAxesCombined size={18} aria-hidden="true"/><span>Contas e uso</span></button>
+          <button type="button" className={`nav-item ${workspaceView === 'audit' ? 'active' : ''}`} aria-label="Auditoria" aria-current={workspaceView === 'audit' ? 'page' : undefined} title="Auditoria" onClick={() => setWorkspaceView('audit')}><ShieldCheck size={18} aria-hidden="true"/><span>Auditoria</span></button>
+          {activeWorkspaceProject && <button type="button" className={`nav-item ${workspaceView === 'workspace' ? 'active' : ''}`} aria-label="Ambiente integrado" aria-current={workspaceView === 'workspace' ? 'page' : undefined} title={`Ambiente integrado de ${activeWorkspaceProject.name}`} onClick={() => setWorkspaceView('workspace')}><LayoutDashboard size={18} aria-hidden="true"/><span>Ambiente</span></button>}
         </nav>
-        <div className="sidebar-tools"><span className="sidebar-label">Workspace</span><button className="nav-item" title="Sincronizar todos os repositórios" onClick={handleSyncAll} disabled={isSyncingAll}><GitPullRequest size={17}/><span>{isSyncingAll ? 'Sincronizando…' : 'Sincronizar Git'}</span></button><button className="nav-item" title="Configurações" onClick={() => setIsSettingsOpen(true)}><Settings size={17}/><span>Configurações</span></button><button className="nav-item" title="Diagnosticar ferramentas instaladas" onClick={() => setIsToolHealthOpen(true)}><Wrench size={17}/><span>Diagnóstico</span></button></div>
-        <div className="sidebar-bottom">
-          <div className="sidebar-account"><span className="account-avatar">{config?.activeChatGptAccount === 'account2' ? 'C2' : 'C1'}</span><div><strong title={config?.activeChatGptAccount === 'account2' ? config.chatGptAccount2Name : config?.chatGptAccount1Name}>{config?.activeChatGptAccount === 'account2' ? config.chatGptAccount2Name || 'Conta 2' : config?.chatGptAccount1Name || 'Conta 1'}</strong><span>{authStatus?.[config?.activeChatGptAccount || 'account1']?.connected ? 'Codex conectado' : 'Codex não conectado'}</span></div></div>
-          <button className="nav-item" title="Alternar conta do ChatGPT" onClick={handleToggleAccount} disabled={isSwitchingAccount}><ArrowRightLeft size={16}/><span>{isSwitchingAccount ? 'Alternando…' : 'Alternar conta'}</span></button>
-          {!authStatus?.[config?.activeChatGptAccount || 'account1']?.connected && <button className="sidebar-connect" title="Conectar Codex" onClick={() => setAuthModalAccount(config?.activeChatGptAccount || 'account1')}>Conectar Codex</button>}
+        <div className="sidebar-tools"><span className="sidebar-label">Workspace</span><button type="button" className="nav-item" aria-label="Sincronizar todos os repositórios" title="Sincronizar todos os repositórios" onClick={handleSyncAll} disabled={isSyncingAll}><GitPullRequest size={18} aria-hidden="true"/><span>{isSyncingAll ? 'Sincronizando…' : 'Sincronizar Git'}</span></button><button type="button" className="nav-item" aria-label="Configurações" title="Configurações" onClick={() => setIsSettingsOpen(true)}><Settings size={18} aria-hidden="true"/><span>Configurações</span></button><button type="button" className="nav-item" aria-label="Diagnóstico" title="Diagnosticar ferramentas instaladas" onClick={() => setIsToolHealthOpen(true)}><Wrench size={18} aria-hidden="true"/><span>Diagnóstico</span></button></div>
+        <div className="sidebar-bottom" ref={accountMenuRef}>
+          <div className="sidebar-account">
+            <button type="button" className="sidebar-account-trigger" aria-label={`Conta ativa: ${activeAccountName}`} aria-haspopup="true" aria-expanded={isAccountPopoverOpen} aria-controls="sidebar-account-popover" title={activeAccountName} onClick={() => setIsAccountPopoverOpen((open) => !open)}>
+              <span className="account-avatar" aria-hidden="true">{activeAccount === 'account2' ? 'C2' : 'C1'}</span>
+              <span className="sidebar-account-copy"><strong>{activeAccountName}</strong><span>{activeAccountConnected ? 'Codex conectado' : 'Codex desconectado'}</span></span>
+            </button>
+            {isAccountPopoverOpen && <div id="sidebar-account-popover" className="sidebar-account-popover" role="region" aria-label="Conta ativa">
+              <div className="sidebar-account-summary"><strong>{activeAccountName}</strong><span className={activeAccountConnected ? 'connected' : 'disconnected'}><i aria-hidden="true"/>{activeAccountConnected ? 'Codex conectado' : 'Codex desconectado'}</span></div>
+              <button type="button" className="sidebar-account-action" onClick={() => { void handleToggleAccount(); setIsAccountPopoverOpen(false) }} disabled={isSwitchingAccount}><ArrowRightLeft size={15} aria-hidden="true"/><span>{isSwitchingAccount ? 'Alternando…' : 'Alternar conta'}</span></button>
+              {!activeAccountConnected && <button type="button" className="sidebar-account-action" onClick={() => { setAuthModalAccount(activeAccount); setIsAccountPopoverOpen(false) }}><span>Conectar Codex</span></button>}
+              <button type="button" className="sidebar-account-action" onClick={() => { setWorkspaceView('usage'); setIsAccountPopoverOpen(false) }}><ChartNoAxesCombined size={15} aria-hidden="true"/><span>Contas e uso</span></button>
+              <button type="button" className="sidebar-account-action" onClick={() => { setIsSettingsOpen(true); setIsAccountPopoverOpen(false) }}><Settings size={15} aria-hidden="true"/><span>Configurações</span></button>
+            </div>}
+          </div>
         </div>
       </aside>
       <div id="main" tabIndex={-1} className="workspace-content">

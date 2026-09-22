@@ -9,7 +9,9 @@ const path = require('node:path')
 const projectRoot = path.resolve(__dirname, '..')
 const rendererEntry = path.join(projectRoot, 'dist', 'index.html')
 const fixturePreload = path.join(__dirname, 'verify-ui-preload.cjs')
-const artifactsRoot = path.join(projectRoot, 'artifacts', 'ui')
+const artifactsRoot = process.env.DEVORBIT_UI_ARTIFACTS_DIR
+  ? path.resolve(projectRoot, process.env.DEVORBIT_UI_ARTIFACTS_DIR)
+  : path.join(projectRoot, 'artifacts', 'ui')
 
 const viewports = [
   { width: 1366, height: 768, label: '1366x768' },
@@ -31,7 +33,8 @@ async function evaluate(window, expression) {
   try {
     return await window.webContents.executeJavaScript(`(${expression})`, true)
   } catch (error) {
-    throw new Error(`Renderer evaluation failed: ${expression} (${error && error.message ? error.message : error})`)
+    const consoleContext = rendererErrors.slice(-8).join('\n')
+    throw new Error(`Renderer evaluation failed: ${expression} (${error && error.message ? error.message : error})${consoleContext ? `\nRecent renderer errors:\n${consoleContext}` : ''}`)
   }
 }
 
@@ -470,98 +473,80 @@ async function screenshot(window, label) {
 }
 
 async function inspectShell(window, viewport) {
-  const result = await evaluate(window, `(() => {
-    const rect = (selector) => {
-      const node = document.querySelector(selector)
-      if (!node) return null
-      const box = node.getBoundingClientRect()
-      return { left: box.left, top: box.top, right: box.right, bottom: box.bottom, width: box.width, height: box.height }
-    }
-    const rows = Array.from(document.querySelectorAll('.project-list .project-row'))
-    const strayRows = Array.from(document.querySelectorAll('.other-dirs .project-row'))
-    const groups = Array.from(document.querySelectorAll('.project-group'))
-    const groupLabels = Array.from(document.querySelectorAll('.project-group-label')).map((node) => node.innerText)
-    const collapsedGroups = Array.from(document.querySelectorAll('.project-group-items[hidden]')).length
-    return {
-      viewport: { width: window.innerWidth, height: window.innerHeight },
-      document: { scrollWidth: document.documentElement.scrollWidth, scrollHeight: document.documentElement.scrollHeight },
-      workspace: rect('.project-workspace'),
-      content: rect('.workspace-content'),
-      master: rect('.project-master'),
-      list: rect('.project-list'),
-      rows: rows.length,
-      rowNames: rows.map((row) => row.innerText),
-      noGitRows: rows.filter((row) => row.innerText.includes('Sem repositório')).length,
-      pullRows: rows.filter((row) => row.querySelector('[title*="commits para receber"]')).length,
-      modifiedRows: rows.filter((row) => row.querySelector('[title="Alterações locais"]')).length,
-      longNameRows: rows.filter((row) => row.innerText.includes('Extremely Long Project Name')).length,
-      selectedRows: rows.filter((row) => row.matches('.selected,[aria-pressed="true"]')).length,
-      groups: groups.length,
-      groupLabels,
-      collapsedGroups,
-      strayRows: strayRows.length,
-      strayActions: strayRows.filter((row) => row.querySelector('[aria-label^="Adicionar Git"]') && row.querySelector('[aria-label^="Abrir pasta"]')).length,
-      theme: (() => {
-        const rootStyle = getComputedStyle(document.documentElement)
-        const titlebar = document.querySelector('.app-titlebar')
-        const sidebar = document.querySelector('.workspace-sidebar')
-        return {
-          mode: document.documentElement.dataset.theme || '',
-          accent: rootStyle.getPropertyValue('--color-accent').trim(),
-          bodyBg: getComputedStyle(document.body).backgroundColor,
-          titlebarBg: titlebar ? getComputedStyle(titlebar).backgroundColor : '',
-          sidebarBg: sidebar ? getComputedStyle(sidebar).backgroundColor : '',
-        }
-      })(),
-    }
-  })()`)
-
-  assert(result.viewport.width >= 1366 && result.viewport.height >= 768, `${viewport.label}: viewport desktop insuficiente ${JSON.stringify(result.viewport)}`)
-  assert(result.document.scrollWidth <= result.viewport.width + 1, `${viewport.label}: overflow horizontal global (${result.document.scrollWidth} > ${result.viewport.width})`)
-  assert(result.document.scrollHeight <= result.viewport.height + 1, `${viewport.label}: overflow vertical global (${result.document.scrollHeight} > ${result.viewport.height})`)
-  for (const [name, box] of Object.entries({ workspace: result.workspace, content: result.content, master: result.master, list: result.list })) {
-    assert(box && box.width > 0 && box.height > 0, `${viewport.label}: ${name} não tem área visível`)
-    assert(box.left >= -1 && box.right <= result.viewport.width + 1, `${viewport.label}: ${name} sai da viewport (${JSON.stringify(box)})`)
+  const result = await evaluate(window, [
+    '(() => {',
+    'const rect = (selector) => { const node = document.querySelector(selector); if (!node) return null; const box = node.getBoundingClientRect(); return { left: box.left, right: box.right, width: box.width, height: box.height } };',
+    'const grid = document.querySelector("[data-testid=project-grid]");',
+    'const tiles = Array.from(grid ? grid.querySelectorAll(".project-tile") : []);',
+    'const dots = tiles.map((tile) => tile.querySelector(".project-status-dot"));',
+    'const rootStyle = getComputedStyle(document.documentElement);',
+    'const titlebar = document.querySelector(".app-titlebar");',
+    'return {',
+    'viewport: { width: window.innerWidth, height: window.innerHeight },',
+    'document: { scrollWidth: document.documentElement.scrollWidth, scrollHeight: document.documentElement.scrollHeight },',
+    'workspace: rect(".project-workspace"), content: rect(".workspace-content"), master: rect(".project-master"), grid: rect("[data-testid=project-grid]"),',
+    'tiles: tiles.length, columns: grid ? getComputedStyle(grid).gridTemplateColumns.split(" ").filter(Boolean).length : 0,',
+    'noGitTiles: dots.filter((dot) => /Git/.test(dot?.getAttribute("aria-label") || "") && /configurado/.test(dot?.getAttribute("aria-label") || "")).length,',
+    'warningTiles: dots.filter((dot) => dot?.classList.contains("warning")).length,',
+    'longNameTiles: tiles.filter((tile) => tile.querySelector(".project-tile-name")?.textContent.includes("Extremely Long Project Name")).length,',
+    'strayRows: document.querySelectorAll(".other-dir-row").length,',
+    'strayActions: Array.from(document.querySelectorAll(".other-dir-row")).filter((row) => row.querySelector("[aria-label^=Adicionar]") && row.querySelector("[aria-label^=Abrir]")).length,',
+    'viewGridPressed: document.querySelector("[data-testid=project-view-toggle] button:first-child")?.getAttribute("aria-pressed"),',
+    'sidebarWidth: rect(".workspace-sidebar")?.width || 0,',
+    'contentScroll: (() => { const node = document.querySelector(".project-library-content"); return node ? node.scrollHeight > node.clientHeight : false })(),',
+    'theme: { mode: document.documentElement.dataset.theme || "", accent: rootStyle.getPropertyValue("--color-accent").trim(), bodyBg: getComputedStyle(document.body).backgroundColor, titlebarBg: titlebar ? getComputedStyle(titlebar).backgroundColor : "", sidebarBg: getComputedStyle(document.querySelector(".workspace-sidebar")).backgroundColor }',
+    '}',
+    '})()',
+  ].join(' '))
+  assert(result.viewport.width >= 1366 && result.viewport.height >= 768, 'desktop viewport too small')
+  assert(result.document.scrollWidth <= result.viewport.width + 1, 'desktop has horizontal overflow')
+  for (const [name, box] of Object.entries({ workspace: result.workspace, content: result.content, master: result.master, grid: result.grid })) {
+    assert(box && box.width > 0 && box.height > 0, name + ' has no visible area')
+    assert(box.left >= -1 && box.right <= result.viewport.width + 1, name + ' is outside the viewport')
   }
-  assert(result.rows >= 30, `${viewport.label}: esperado >=30 projetos, encontrado ${result.rows}`)
-  assert(result.groups >= 4, `${viewport.label}: esperado >=4 grupos por pasta pai, encontrado ${result.groups}`)
-  assert(result.groupLabels.some((label) => label.includes('alpha-squad')), `${viewport.label}: grupo alpha-squad ausente (${JSON.stringify(result.groupLabels)})`)
-  assert(result.collapsedGroups === 0, `${viewport.label}: grupos deveriam abrir expandidos (${result.collapsedGroups})`)
-  assert(result.noGitRows > 0 && result.pullRows > 0 && result.modifiedRows > 0, `${viewport.label}: fixtures Git incompletas (${JSON.stringify({ noGit: result.noGitRows, pull: result.pullRows, modified: result.modifiedRows })})`)
-  assert(result.longNameRows > 0, `${viewport.label}: fixture de nome longo não apareceu`)
-  assert(result.selectedRows === 1, `${viewport.label}: seleção inicial inválida (${result.selectedRows})`)
-  assert(result.strayRows >= 2 && result.strayActions === result.strayRows, `${viewport.label}: seção Outras pastas incompleta (${JSON.stringify({ stray: result.strayRows, actions: result.strayActions })})`)
-  assert(result.theme.mode === 'light', `${viewport.label}: tema padrão deveria ser claro (${result.theme.mode})`)
-  assert(result.theme.accent === '#5b6b86', `${viewport.label}: acento neutro Carbon ausente (${result.theme.accent})`)
-  assert(result.theme.bodyBg === 'rgb(244, 245, 247)', `${viewport.label}: fundo da página fora do Carbon claro (${result.theme.bodyBg})`)
-  assert(result.theme.titlebarBg === 'rgb(251, 251, 252)', `${viewport.label}: titlebar fora do Carbon claro (${result.theme.titlebarBg})`)
-  assert(result.theme.sidebarBg === 'rgb(238, 240, 243)', `${viewport.label}: sidebar fora do Carbon claro (${result.theme.sidebarBg})`)
-  recordPass(viewport.label, `shell bounded at ${result.viewport.width}×${result.viewport.height}; ${result.rows} project rows; ${result.groups} parent groups; ${result.strayRows} stray dirs; Git fixtures visible; Carbon claro sem verde legado`)
+  assert(result.tiles >= 30, 'expected at least 30 project cards')
+  assert(result.columns === 4, 'desktop grid should have four columns')
+  assert(result.viewGridPressed === 'true', 'grid is not the default view')
+  assert(result.noGitTiles > 0 && result.warningTiles > 0, 'Git status fixtures are missing')
+  assert(result.longNameTiles > 0, 'long project name fixture is missing')
+  assert(result.sidebarWidth === 60, 'navigation rail should be 60px')
+  assert(result.contentScroll, 'project grid has no internal scrolling')
+  assert(result.strayRows >= 2 && result.strayActions === result.strayRows, 'other folder actions are incomplete')
+  assert(result.theme.mode === 'dark', 'default theme should be dark')
+  assert(result.theme.accent === '#8797b4', 'DevOrbit accent token is missing')
+  assert(result.theme.bodyBg === 'rgb(13, 15, 20)', 'unexpected dark page background')
+  assert(result.theme.titlebarBg === 'rgb(17, 20, 27)', 'unexpected dark titlebar background')
+  assert(result.theme.sidebarBg === 'rgb(13, 15, 20)', 'unexpected dark rail background')
+  recordPass(viewport.label, 'desktop dark grid shell validated')
+  await screenshot(window, 'desktop-' + viewport.label + '-projects-clean')
+}
+async function inspectResponsiveGrid(window, viewport) {
+  const sizes = [{ width: 1024, columns: 3 }, { width: 768, columns: 2 }, { width: 480, columns: 1 }]
+  for (const size of sizes) {
+    window.setContentSize(size.width, viewport.height)
+    await waitFor(window, `window.innerWidth === ${size.width}`, `${viewport.label} resize to ${size.width}px`, 5_000)
+    await waitFor(window, `(() => { const grid = document.querySelector("[data-testid=project-grid]"); return Boolean(grid) && getComputedStyle(grid).gridTemplateColumns.split(" ").filter(Boolean).length === ${size.columns} })()`, `${viewport.label} responsive columns at ${size.width}px`, 5_000)
+    const result = await evaluate(window, '(() => { const grid = document.querySelector("[data-testid=project-grid]"); return { width: window.innerWidth, columns: grid ? getComputedStyle(grid).gridTemplateColumns.split(" ").filter(Boolean).length : 0, scrollWidth: document.documentElement.scrollWidth } })()')
+    assert(result.columns === size.columns, 'incorrect responsive column count at ' + size.width + 'px; window=' + result.width + ', columns=' + result.columns)
+    assert(result.scrollWidth <= size.width + 1, 'horizontal overflow at ' + size.width + 'px')
+    await screenshot(window, 'projects-responsive-' + size.width)
+  }
+  window.setContentSize(viewport.width, viewport.height)
+  await waitFor(window, `window.innerWidth === ${viewport.width}`, `${viewport.label} resize restore`, 5_000)
+  recordPass(viewport.label, 'responsive grid validated at 1024px, 768px and 480px')
 }
 
 async function inspectDarkTheme(window, viewport) {
-  await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Ativar tema escuro', `${viewport.label} dark theme toggle`)
-  await waitFor(window, `document.documentElement.dataset.theme === 'dark'`, `${viewport.label} dark theme applied`)
-  const dark = await evaluate(window, `(() => {
-    const rootStyle = getComputedStyle(document.documentElement)
-    const titlebar = document.querySelector('.app-titlebar')
-    return {
-      mode: document.documentElement.dataset.theme || '',
-      accent: rootStyle.getPropertyValue('--color-accent').trim(),
-      bodyBg: getComputedStyle(document.body).backgroundColor,
-      titlebarBg: titlebar ? getComputedStyle(titlebar).backgroundColor : '',
-    }
-  })()`)
-  assert(dark.mode === 'dark', `${viewport.label}: tema escuro não aplicou (${dark.mode})`)
-  assert(dark.accent === '#8797b4', `${viewport.label}: acento Carbon escuro ausente (${dark.accent})`)
-  assert(dark.bodyBg === 'rgb(13, 15, 20)', `${viewport.label}: fundo escuro fora do Carbon (${dark.bodyBg})`)
-  assert(dark.titlebarBg === 'rgb(17, 20, 27)', `${viewport.label}: titlebar escura fora do Carbon (${dark.titlebarBg})`)
-  await screenshot(window, `desktop-${viewport.label}-dark`)
-  await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Ativar tema claro', `${viewport.label} light theme toggle`)
-  await waitFor(window, `document.documentElement.dataset.theme === 'light'`, `${viewport.label} light theme restored`)
-  recordPass(viewport.label, 'tema escuro Carbon aplicado e tema claro restaurado')
+  const dark = await evaluate(window, '(() => { const rootStyle = getComputedStyle(document.documentElement); const titlebar = document.querySelector(".app-titlebar"); return { mode: document.documentElement.dataset.theme || "", accent: rootStyle.getPropertyValue("--color-accent").trim(), bodyBg: getComputedStyle(document.body).backgroundColor, titlebarBg: titlebar ? getComputedStyle(titlebar).backgroundColor : "" } })()')
+  assert(dark.mode === 'dark', 'dark theme is not applied')
+  assert(dark.accent === '#8797b4', 'dark accent is missing')
+  assert(dark.bodyBg === 'rgb(13, 15, 20)', 'unexpected dark page background')
+  assert(dark.titlebarBg === 'rgb(17, 20, 27)', 'unexpected dark titlebar background')
+  const themeControls = await evaluate(window, 'Array.from(document.querySelectorAll(".app-titlebar button")).some((button) => /tema claro|tema escuro/i.test(button.getAttribute("aria-label") || ""))')
+  assert(!themeControls, 'a theme toggle contradicts the permanent dark theme')
+  await screenshot(window, 'desktop-' + viewport.label + '-dark')
+  recordPass(viewport.label, 'permanent dark theme and DevOrbit accent verified')
 }
-
 async function inspectAudit(window, viewport) {
   await clickButtonByText(window, (node) => node.getAttribute('title') === 'Auditoria', `${viewport.label} audit navigation`)
   await waitFor(window, `Boolean(document.querySelector('.view-panel:not([hidden]) .evolution-dashboard'))`, `${viewport.label} audit dashboard`)
@@ -620,19 +605,17 @@ async function inspectAudit(window, viewport) {
 }
 
 async function inspectProjectInteractions(window, viewport) {
-  const selection = await evaluate(window, `(() => {
-    const rows = Array.from(document.querySelectorAll('.project-list .project-row'))
-    const target = rows[1]
-    if (!target) return null
-    const expected = target.querySelector('strong')?.innerText?.trim() || target.innerText.split('\\n')[0].trim()
-    target.click()
-    return expected
-  })()`)
-  assert(selection, `${viewport.label}: segunda linha não encontrada para seleção`)
-  await waitFor(window, `Boolean(document.querySelector('.project-list .project-row.selected, .project-list .project-row[aria-pressed="true"]'))`, `${viewport.label} seleção de projeto`)
-  const selectedText = await evaluate(window, `document.querySelector('.project-list .project-row.selected, .project-list .project-row[aria-pressed="true"]')?.innerText || ''`)
-  assert(selectedText.includes(selection), `${viewport.label}: seleção de projeto divergente (${JSON.stringify({ selection, selectedText })})`)
-  recordPass(viewport.label, 'project selection updates row and detail state')
+  const gridDefault = await evaluate(window, '(() => ({ view: document.querySelector("[data-testid=project-view-toggle] button:first-child")?.getAttribute("aria-pressed"), count: document.querySelectorAll("[data-testid=project-grid] .project-tile").length }))()')
+  assert(gridDefault.view === 'true' && gridDefault.count >= 30, 'project library did not start in grid mode')
+  recordPass(viewport.label, 'grid starts as the default project view')
+  await clickButtonByText(window, (node) => node.innerText.trim().includes('Lista'), viewport.label + ' list view toggle')
+  await waitFor(window, 'Boolean(document.querySelector("[data-testid=project-list] .project-row"))', viewport.label + ' list view')
+  const selection = await evaluate(window, '(() => { const rows = Array.from(document.querySelectorAll("[data-testid=project-list] .project-row")); const target = rows[1]; if (!target) return null; const name = target.querySelector(".project-tile-name")?.textContent?.trim() || ""; target.querySelector(".project-tile-main")?.click(); return name })()')
+  assert(selection, 'second project card was not available to open')
+  await waitFor(window, 'Boolean(document.querySelector(".project-tabs .project-tab.active"))', viewport.label + ' project card opens workspace')
+  const selectedText = await evaluate(window, 'document.querySelector(".project-tabs .project-tab.active")?.innerText || ""')
+  assert(selectedText.includes(selection), 'opened project tab does not match selected project')
+  recordPass(viewport.label, 'list view is selectable and opening a project preserves the existing workspace flow')
   const workspaceControls = await evaluate(window, `(() => ({
     openAll: Boolean(document.querySelector('button.workspace-open-all')),
     accountSelect: Boolean(document.querySelector('.work-account-control select')),
@@ -961,7 +944,9 @@ async function inspectProjectInteractions(window, viewport) {
   recordPass(viewport.label, 'canvas com cartões, arraste, redimensionamento e notas locais')
   await key(window, '0', { ctrlKey: true })
   await waitFor(window, `(() => { const canvas = document.querySelector('.workspace-canvas'); const id = canvas?.getAttribute('data-canvas-project-id'); const raw = id ? window.localStorage.getItem('devorbit:workspace-canvas:' + id) : null; return Boolean(raw && JSON.parse(raw).viewport.zoom === 1) })()`, `${viewport.label} canvas zoom reset before agent creation`)
-  await clickButtonByText(window, (node) => node.closest('.workspace-canvas-toolbar') && /Agente/.test(node.innerText), `${viewport.label} agent node creation`)
+  await clickButtonByText(window, (node) => node.matches?.('[data-canvas-radial-core]'), `${viewport.label} radial menu open`)
+  await waitFor(window, `document.querySelector('[data-canvas-radial][data-open="true"]')`, `${viewport.label} radial menu open state`)
+  await clickButtonByText(window, (node) => node.matches?.('[data-canvas-radial-item="agent"]'), `${viewport.label} agent node creation`)
   await waitFor(window, `Boolean(document.querySelector('[role="dialog"] #agent-creation-dialog-title'))`, `${viewport.label} agent creation dialog`)
   await selectCreationProvider(window, 'Implementação', 'codex', viewport.label)
   await selectCreationAccount(window, 'Implementação', 'account1', viewport.label)
@@ -975,7 +960,9 @@ async function inspectProjectInteractions(window, viewport) {
   await waitFor(window, `document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]').length === 0`, `${viewport.label} agent terminal deletion`)
   await waitFor(window, `Array.from(window.__devorbitVerifyFixture.getCalls()).some((call) => call.name === 'stopTerminal' && String(call.args[0]).startsWith('agent-'))`, `${viewport.label} agent terminal stop`)
   recordPass(viewport.label, 'canvas exclui terminal de agente e encerra seu PTY')
-  await clickButtonByText(window, (node) => node.closest('.workspace-canvas-toolbar') && /Squad/.test(node.innerText), `${viewport.label} squad template`)
+  await clickButtonByText(window, (node) => node.matches?.('[data-canvas-radial-core]'), `${viewport.label} radial menu open`)
+  await waitFor(window, `document.querySelector('[data-canvas-radial][data-open="true"]')`, `${viewport.label} radial menu open state`)
+  await clickButtonByText(window, (node) => node.matches?.('[data-canvas-radial-item="squad"]'), `${viewport.label} squad template`)
   await waitFor(window, `Boolean(document.querySelector('[role="dialog"] #agent-creation-dialog-title'))`, `${viewport.label} squad creation dialog`)
   for (const role of ['Implementação', 'Revisão', 'Testes']) await enableSquadRole(window, role, viewport.label)
   await waitFor(window, `document.querySelectorAll('[role="dialog"] [aria-label^="Provider do agente"]').length === 4`, `${viewport.label} squad participants`)
@@ -1031,7 +1018,7 @@ async function inspectProjectInteractions(window, viewport) {
   const openSecondProjectTab = await evaluate(window, `(() => {
     const row = document.querySelector('.project-list .project-row')
     if (!row) return false
-    row.click()
+    row.querySelector('.project-tile-main')?.click()
     return true
   })()`)
   assert(openSecondProjectTab, `${viewport.label}: linha Fixture 03 indisponível para abrir aba`)
@@ -1063,7 +1050,7 @@ async function inspectProjectInteractions(window, viewport) {
   assert(webVisibilityCalls.length > 0 && webVisibilityCalls.at(-1) === true, `${viewport.label}: painel web da aba ativa foi ocultado (${JSON.stringify(webVisibilityCalls)})`)
   recordPass(viewport.label, 'multiple projects use workspace tabs with inactive sessions suspended')
 
-  await clickButtonByText(window, (node) => /contas e uso/i.test(node.innerText), `${viewport.label} usage navigation from workspace`)
+  await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Contas e uso', `${viewport.label} usage navigation from workspace`)
   await waitFor(window, `document.querySelector('.view-panel:not([hidden])')?.innerText.includes('Quotas do provedor')`, `${viewport.label} usage navigation from workspace`)
   await clickButtonByText(window, (node) => (node.getAttribute('title') || '').startsWith('Ambiente integrado de '), `${viewport.label} workspace restore`)
   await waitFor(window, `Boolean(document.querySelector('.integrated-workspace') && document.querySelector('.integrated-workspace-view:not([hidden])'))`, `${viewport.label} workspace restore`)
@@ -1076,16 +1063,16 @@ async function inspectProjectInteractions(window, viewport) {
 
   await setInputValue(window, '#project-search', '')
   await waitFor(window, `document.querySelectorAll('.project-list .project-row').length >= 30`, `${viewport.label} limpeza da busca`)
-  await setSelectValue(window, '.project-filters select', 'modified')
-  await waitFor(window, `document.querySelectorAll('.project-list .project-row').length > 0 && Array.from(document.querySelectorAll('.project-list .project-row')).every((row) => row.querySelector('[title="Alterações locais"]'))`, `${viewport.label} filtro Git`)
+  await evaluate(window, 'document.querySelector("[data-testid=project-filter-toggle]")?.click()')
+  await setSelectValue(window, '[data-testid="filter-git-select"]', 'modified')
+  await waitFor(window, 'document.querySelectorAll(".project-list .project-row").length > 0 && Array.from(document.querySelectorAll(".project-list .project-row")).every((row) => row.querySelector(".project-status-dot.warning"))', viewport.label + ' Git filter')
   recordPass(viewport.label, 'Git status filter shows only local-change fixtures')
-  await setSelectValue(window, '.project-filters select', 'all')
-  await waitFor(window, `document.querySelectorAll('.project-list .project-row').length >= 30`, `${viewport.label} reset do filtro`)
-
+  await setSelectValue(window, '[data-testid="filter-git-select"]', 'all')
+  await waitFor(window, 'document.querySelectorAll(".project-list .project-row").length >= 30', viewport.label + ' reset do filtro')
   const openProjectTabFromLibrary = await evaluate(window, `(() => {
     const row = document.querySelector('.project-list .project-row')
     if (!row) return false
-    row.click()
+    row.querySelector('.project-tile-main')?.click()
     return true
   })()`)
   assert(openProjectTabFromLibrary, `${viewport.label}: linha do projeto indisponível para abrir aba`)
@@ -1114,17 +1101,57 @@ async function inspectProjectInteractions(window, viewport) {
   }
   await waitFor(window, `Boolean(document.querySelector('.project-workspace.project-library') && document.querySelectorAll('.project-list .project-row').length >= 30)`, `${viewport.label} library restored after project tabs`)
   recordPass(viewport.label, 'abas de projeto abrem, exibem breadcrumb, fecham e retornam à biblioteca')
+  await clickButtonByText(window, (node) => node.innerText.trim().includes('Grid'), `${viewport.label} return to grid`)
+  await waitFor(window, `document.querySelector('[data-testid="project-view-toggle"] button:first-child')?.getAttribute('aria-pressed') === 'true'`, `${viewport.label} grid view restored`)
+  const tileTriggerReady = await evaluate(window, `(() => {
+    const card = document.querySelector('[data-testid="project-grid"] .project-tile.is-selected')
+    const trigger = card?.querySelector('.project-tile-menu-wrap button')
+    if (!trigger) return false
+    trigger.focus()
+    return true
+  })()`)
+  assert(tileTriggerReady, `${viewport.label}: card selecionado sem gatilho de menu para navegação por teclado`)
+  window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'TAB' })
+  window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'TAB' })
+  await waitFor(window, `document.activeElement?.classList.contains('project-tile-main')`, `${viewport.label} foco por teclado no card do projeto`)
+  await waitFor(window, `(() => { const actions = document.querySelector('[data-testid="project-grid"] .project-tile.is-selected .project-quick-actions'); return Boolean(actions) && getComputedStyle(actions).opacity === '1' })()`, `${viewport.label} ações contextuais visíveis no foco`)
+  const selectedCardState = await evaluate(window, `(() => {
+    const card = document.querySelector('[data-testid="project-grid"] .project-tile.is-selected')
+    const main = card?.querySelector('.project-tile-main')
+    if (!card || !main) return null
+    const cardStyle = getComputedStyle(card)
+    return {
+      pressed: main.getAttribute('aria-pressed'),
+      keyboardFocus: document.activeElement === main,
+      focusRing: cardStyle.outlineStyle === 'solid' && cardStyle.outlineWidth === '2px',
+      quickActionsVisible: getComputedStyle(card.querySelector('.project-quick-actions')).opacity === '1',
+    }
+  })()`)
+  assert(selectedCardState?.pressed === 'true', `${viewport.label}: estado selecionado não retornou à biblioteca`)
+  assert(selectedCardState.keyboardFocus && selectedCardState.focusRing && selectedCardState.quickActionsVisible, `${viewport.label}: foco e ações contextuais não aparecem no card (${JSON.stringify(selectedCardState)})`)
+  const actionMenuOpened = await evaluate(window, `(() => {
+    const card = document.querySelector('[data-testid="project-grid"] .project-tile.is-selected')
+    const trigger = card?.querySelector('.project-tile-menu-wrap button')
+    trigger?.click()
+    return Boolean(trigger)
+  })()`)
+  await waitFor(window, `Boolean(document.querySelector('.project-tile.is-selected .project-action-menu'))`, `${viewport.label} project actions menu`)
+  const actionMenuExpanded = await evaluate(window, `document.querySelector('.project-tile.is-selected .project-tile-menu-wrap button')?.getAttribute('aria-expanded') || ''`)
+  assert(actionMenuOpened && actionMenuExpanded === 'true', `${viewport.label}: menu de ações não anunciou o estado aberto`)
+  await key(window, 'Escape')
+  await waitFor(window, `!document.querySelector('.project-action-menu')`, `${viewport.label} project actions Escape`)
+  recordPass(viewport.label, 'selected state, keyboard focus, hover actions and contextual menu verified')
   await screenshot(window, `desktop-${viewport.label}-projects`)
 }
 
 async function inspectUsage(window, viewport) {
-  await clickButtonByText(window, (node) => /contas e uso/i.test(node.innerText), `${viewport.label} usage navigation`)
+  await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Contas e uso', `${viewport.label} usage navigation`)
   await waitFor(window, `document.body.innerText.includes('Quotas do provedor') && document.querySelectorAll('[role="progressbar"]').length >= 2`, `${viewport.label} usage view`)
   const usage = await evaluate(window, `(() => ({
     hiddenProjects: document.querySelector('.view-panel[hidden]')?.innerText.includes('Projetos') || false,
     realUsage: document.body.innerText.includes('Quotas do provedor'),
     progressbars: document.querySelectorAll('[role="progressbar"]').length,
-    connected: document.body.innerText.includes('Codex conectado'),
+    connected: (document.querySelector('.sidebar-account')?.textContent || '').includes('Codex conectado'),
   }))()`)
   assert(usage.realUsage && usage.progressbars >= 2, `${viewport.label}: usage view incompleta (${JSON.stringify(usage)})`)
   assert(usage.connected, `${viewport.label}: auth fixture não aparece no workspace`)
@@ -1138,11 +1165,11 @@ async function inspectMemory(window, viewport) {
   const memory = await evaluate(window, `(() => ({
     title: document.querySelector('#ai-memory-dialog-title')?.innerText,
     textarea: Boolean(document.querySelector('#ai-memory-content')),
-    lightSurface: getComputedStyle(document.querySelector('[role="dialog"]')).backgroundColor,
+    darkSurface: getComputedStyle(document.querySelector('[role="dialog"]')).backgroundColor,
   }))()`)
   assert(memory.title === 'Memória e handoff' && memory.textarea, `${viewport.label}: memory dialog incompleto (${JSON.stringify(memory)})`)
-  assert(memory.lightSurface === 'rgb(255, 255, 255)', `${viewport.label}: memory dialog não usa superfície clara (${memory.lightSurface})`)
-  recordPass(viewport.label, 'memory dialog uses the light system and exposes an editable handoff')
+  assert(memory.darkSurface === 'rgb(23, 26, 34)', `${viewport.label}: memory dialog não usa superfície escura (${memory.darkSurface})`)
+  recordPass(viewport.label, 'memory dialog uses the dark surface and exposes an editable handoff')
   await screenshot(window, `desktop-${viewport.label}-memory`)
   await key(window, 'Escape')
   await waitFor(window, `!document.querySelector('[role="dialog"] #ai-memory-dialog-title')`, `${viewport.label} memory Escape`)
@@ -1226,7 +1253,7 @@ async function runViewport(viewport) {
       height: viewport.height,
       show: false,
       useContentSize: true,
-      backgroundColor: '#f4f5f7',
+      backgroundColor: '#0d0f14',
       webPreferences: {
         preload: fixturePreload,
         contextIsolation: true,
@@ -1245,16 +1272,17 @@ async function runViewport(viewport) {
     // before the page initializes so one viewport cannot affect the next.
     await window.webContents.session.clearStorageData({ storages: ['localstorage'] })
     await window.loadFile(rendererEntry)
-    await waitFor(window, `Boolean(document.querySelector('.project-workspace') && document.querySelector('.project-row'))`, `${viewport.label} renderer bootstrap`)
+    await waitFor(window, `Boolean(document.querySelector('.project-workspace') && document.querySelector('[data-testid="project-grid"]'))`, `${viewport.label} renderer bootstrap`)
     await inspectShell(window, viewport)
+    await inspectResponsiveGrid(window, viewport)
     await inspectAudit(window, viewport)
-    await clickButtonByText(window, (node) => /projetos/i.test(node.innerText) && node.getAttribute('title') === 'Projetos', `${viewport.label} projects navigation after audit`)
+    await clickButtonByText(window, (node) => node.getAttribute('title') === 'Projetos', `${viewport.label} projects navigation after audit`)
     await waitFor(window, `document.querySelector('.view-panel:not([hidden])')?.innerText.includes('Projetos')`, `${viewport.label} projects view after audit`)
     await inspectProjectInteractions(window, viewport)
     await inspectMemory(window, viewport)
     await inspectUsage(window, viewport)
     // Return to projects so the settings trigger lives in the visible shell.
-    await clickButtonByText(window, (node) => /projetos/i.test(node.innerText) && node.getAttribute('title') === 'Projetos', `${viewport.label} projects navigation`)
+    await clickButtonByText(window, (node) => node.getAttribute('title') === 'Projetos', `${viewport.label} projects navigation`)
     await waitFor(window, `document.querySelector('.view-panel:not([hidden])')?.innerText.includes('Projetos')`, `${viewport.label} projects navigation restore`)
     await inspectToolHealth(window, viewport)
     await inspectSettingsAndPalette(window, viewport)
@@ -1293,6 +1321,6 @@ app.whenReady().then(async () => {
     for (const check of checks) console.log(`PASS [${check.viewport}] ${check.message}`)
     process.exitCode = 1
   } finally {
-    app.quit()
+    app.exit(process.exitCode || 0)
   }
 })
