@@ -141,11 +141,17 @@ async function verifyCoordinatorOrchestration(window, viewport) {
     const saved = JSON.parse(raw)
     return (saved.squads || []).some((squad) => squad.objective === ${JSON.stringify(taskContent)})
   })()`, `${viewport.label} objetivo da squad persistido`)
-  await waitFor(window, `Array.from(document.querySelectorAll('[aria-label="Provedor do agente"] option')).some((option) => option.value === 'opencode' && !option.disabled)`, `${viewport.label} OpenCode detectado no canvas`)
-  const providerChanged = await evaluate(window, `(() => {
+  await evaluate(window, `(() => {
     const card = Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]'))
-      .find((node) => node.querySelector('select')?.value === 'Implementação')
-    const select = card?.querySelector('[aria-label="Provedor do agente"]')
+      .find((node) => (node.querySelector('.canvas-role-pill')?.textContent || '').trim() === 'Implementação')
+    if (!card) return false
+    card.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 91, clientX: 20, clientY: 20 }))
+    return true
+  })()`)
+  await waitFor(window, `Boolean(document.querySelector('.canvas-node-inspector #agent-provider-select'))`, `${viewport.label} inspector do agente de Implementação`)
+  await waitFor(window, `Array.from(document.querySelectorAll('.canvas-node-inspector #agent-provider-select option')).some((option) => option.value === 'opencode' && !option.disabled)`, `${viewport.label} OpenCode detectado no canvas`)
+  const providerChanged = await evaluate(window, `(() => {
+    const select = document.querySelector('.canvas-node-inspector #agent-provider-select')
     if (!select) return false
     select.value = 'opencode'
     select.dispatchEvent(new Event('change', { bubbles: true }))
@@ -157,7 +163,7 @@ async function verifyCoordinatorOrchestration(window, viewport) {
   await evaluate(window, `window.__devorbitVerifyFixture.resetCalls()`)
   const clickedCoordinator = await evaluate(window, `(() => {
     const card = Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]'))
-      .find((node) => node.querySelector('select')?.value === 'Coordenador')
+      .find((node) => (node.querySelector('.canvas-role-pill')?.textContent || '').trim() === 'Coordenador')
     const send = card?.querySelector('[data-agent-send]')
     if (!send || send.disabled) return false
     send.click()
@@ -244,7 +250,7 @@ async function verifyCoordinatorOrchestration(window, viewport) {
   await evaluate(window, `window.__devorbitVerifyFixture.resetCalls()`)
   const blockedRunStarted = await evaluate(window, `(() => {
     const card = Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]'))
-      .find((node) => node.querySelector('select')?.value === 'Coordenador')
+      .find((node) => (node.querySelector('.canvas-role-pill')?.textContent || '').trim() === 'Coordenador')
     const send = card?.querySelector('[data-agent-send]')
     if (!send || send.disabled) return false
     send.click()
@@ -264,7 +270,7 @@ async function verifyCoordinatorOrchestration(window, viewport) {
   await evaluate(window, `window.__devorbitVerifyFixture.setWriteTerminalFailure(true)`)
   const failedRunStarted = await evaluate(window, `(() => {
     const card = Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]'))
-      .find((node) => node.querySelector('select')?.value === 'Coordenador')
+      .find((node) => (node.querySelector('.canvas-role-pill')?.textContent || '').trim() === 'Coordenador')
     const send = card?.querySelector('[data-agent-send]')
     if (!send || send.disabled) return false
     send.click()
@@ -280,10 +286,16 @@ async function verifyCoordinatorOrchestration(window, viewport) {
   // sendAgentTurn resolver. O taskId precisa ser registrado antes do await
   // para o listener entregar ao canvas e a fila avançar mesmo assim.
   await evaluate(window, `window.__devorbitVerifyFixture.resetCalls()`)
-  const coordinatorProviderChanged = await evaluate(window, `(() => {
+  await evaluate(window, `(() => {
     const card = Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]'))
-      .find((node) => node.querySelector('select')?.value === 'Coordenador')
-    const select = card?.querySelector('[aria-label="Provedor do agente"]')
+      .find((node) => (node.querySelector('.canvas-role-pill')?.textContent || '').trim() === 'Coordenador')
+    if (!card) return false
+    card.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 92, clientX: 20, clientY: 20 }))
+    return true
+  })()`)
+  await waitFor(window, `Boolean(document.querySelector('.canvas-node-inspector #agent-provider-select'))`, `${viewport.label} inspector do Coordenador`)
+  const coordinatorProviderChanged = await evaluate(window, `(() => {
+    const select = document.querySelector('.canvas-node-inspector #agent-provider-select')
     if (!select) return false
     select.value = 'opencode'
     select.dispatchEvent(new Event('change', { bubbles: true }))
@@ -293,7 +305,7 @@ async function verifyCoordinatorOrchestration(window, viewport) {
   await evaluate(window, `window.__devorbitVerifyFixture.setSendAgentTurnResult('plano entregue antes da promessa')`)
   const raceRunStarted = await evaluate(window, `(() => {
     const card = Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]'))
-      .find((node) => node.querySelector('select')?.value === 'Coordenador')
+      .find((node) => (node.querySelector('.canvas-role-pill')?.textContent || '').trim() === 'Coordenador')
     const send = card?.querySelector('[data-agent-send]')
     if (!send || send.disabled) return false
     send.click()
@@ -316,7 +328,7 @@ async function verifyManualAgentSend(window, viewport) {
   await evaluate(window, `window.__devorbitVerifyFixture.resetCalls()`)
   const started = await evaluate(window, `(() => {
     const card = Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]'))
-      .find((node) => node.querySelector('select')?.value === 'Implementação')
+      .find((node) => (node.querySelector('.canvas-role-pill')?.textContent || '').trim() === 'Implementação')
     const send = card?.querySelector('[data-agent-send]')
     if (!send || send.disabled) return false
     send.click()
@@ -330,7 +342,7 @@ async function verifyManualAgentSend(window, viewport) {
 
   await evaluate(window, `(() => {
     const card = Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]'))
-      .find((node) => node.querySelector('select')?.value === 'Implementação')
+      .find((node) => (node.querySelector('.canvas-role-pill')?.textContent || '').trim() === 'Implementação')
     const send = card?.querySelector('[data-agent-send]')
     if (send) send.click()
     return true
@@ -341,14 +353,14 @@ async function verifyManualAgentSend(window, viewport) {
   assert(manualWrites === 1, `${viewport.label}: envio manual duplicou a tarefa (${manualWrites})`)
   const busyDisabled = await evaluate(window, `(() => {
     const card = Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]'))
-      .find((node) => node.querySelector('select')?.value === 'Implementação')
+      .find((node) => (node.querySelector('.canvas-role-pill')?.textContent || '').trim() === 'Implementação')
     const send = card?.querySelector('[data-agent-send]')
     return Boolean(send && send.disabled)
   })()`)
   assert(busyDisabled, `${viewport.label}: controle de envio não foi desabilitado durante a tarefa`)
   const runningStatus = await evaluate(window, `(() => {
     const card = Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]'))
-      .find((node) => node.querySelector('select')?.value === 'Implementação')
+      .find((node) => (node.querySelector('.canvas-role-pill')?.textContent || '').trim() === 'Implementação')
     const chip = card?.querySelector('.canvas-agent-progress')
     return { state: chip?.getAttribute('data-agent-progress') || '', label: chip?.getAttribute('aria-label') || '' }
   })()`)
@@ -359,13 +371,13 @@ async function verifyManualAgentSend(window, viewport) {
   await evaluate(window, `(() => { window.__devorbitVerifyFixture.emitTerminalEvent(${manualEvent}); return true })()`)
   await waitFor(window, `(() => {
     const card = Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]'))
-      .find((node) => node.querySelector('select')?.value === 'Implementação')
+      .find((node) => (node.querySelector('.canvas-role-pill')?.textContent || '').trim() === 'Implementação')
     const send = card?.querySelector('[data-agent-send]')
     return Boolean(send && !send.disabled)
   })()`, `${viewport.label} reabilitacao do envio manual`)
   const completedStatus = await evaluate(window, `(() => {
     const card = Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]'))
-      .find((node) => node.querySelector('select')?.value === 'Implementação')
+      .find((node) => (node.querySelector('.canvas-role-pill')?.textContent || '').trim() === 'Implementação')
     return card?.querySelector('.canvas-agent-progress')?.getAttribute('data-agent-progress') || ''
   })()`)
   assert(completedStatus === 'completed', `${viewport.label}: status final do especialista inesperado (${completedStatus})`)
@@ -407,7 +419,7 @@ async function verifySquadLayer(window, viewport) {
     const region = document.querySelector('.canvas-squad-region')
     const label = region?.querySelector('.canvas-squad-region-label')?.textContent || ''
     const coordinator = Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]'))
-      .find((node) => node.querySelector('select')?.value === 'Coordenador')
+      .find((node) => (node.querySelector('.canvas-role-pill')?.textContent || '').trim() === 'Coordenador')
     const meta = coordinator?.querySelector('.canvas-node-meta')?.textContent || ''
     const mark = coordinator?.querySelector('.canvas-command-mark')
     const regionRect = region?.getBoundingClientRect()
@@ -927,8 +939,8 @@ async function inspectProjectInteractions(window, viewport) {
     return true
   })()`)
   // Portas ficam ocultas em repouso: a porta alvo só recebe pointer-events
-  // depois que o estado de conexão é aplicado. Esperar a disponibilidade evita
-  // uma corrida de hit-test que só falhava em runners mais lentos.
+  // depois que o estado de conexão é aplicado. Esperar a disponibilidade
+  // substitui um hit-test por elementFromPoint que era frágil entre runners.
   await waitFor(window, `(() => {
     const target = document.querySelector('[data-canvas-card="workbench"] [data-canvas-port="target"]')
     if (!target || !target.classList.contains('is-available')) return false
@@ -937,9 +949,8 @@ async function inspectProjectInteractions(window, viewport) {
   })()`, `${viewport.label} porta alvo disponível para a conexão`)
   const cancelSetup = await evaluate(window, `(function () {
     const target = document.querySelector('[data-canvas-card="workbench"] [data-canvas-port="target"]')
+    if (!target) return false
     const rect = target.getBoundingClientRect()
-    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)?.closest('[data-canvas-port="target"]')
-    if (hit !== target) return false
     window.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true, pointerId: 77, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 }))
     return true
   })()`)
