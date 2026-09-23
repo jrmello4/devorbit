@@ -2,6 +2,19 @@
 
 All notable changes to DevOrbit are documented here.
 
+## [1.0.38] - 2026-09-23
+
+### Fixed
+
+- Canvas card gear now opens the side Inspector; the legacy inline agent config (role/provider inside the card) was removed, so the panel no longer duplicates or blocks the terminal.
+- Expanding and collapsing a canvas card works in any state: expanding shows the terminal and collapsing minimizes it again.
+- Connection ports stay hidden until the card is hovered, focused, selected or being connected.
+
+### Changed
+
+- Canvas gestures (pan/drag/resize), connection drafts and minimap navigation are coalesced per animation frame, and card handlers are stable so React.memo works, cutting per-frame re-renders.
+- Main process: provider health cache, PTY output coalescing, audit ledger size cap and single-stat usage scans reduce steady-state CPU and I/O.
+
 ## [1.0.37] - 2026-09-23
 
 ### Added
