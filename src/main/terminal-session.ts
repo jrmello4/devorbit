@@ -1,6 +1,6 @@
 import { spawn as spawnProcess, type SpawnOptions } from 'node:child_process'
 import { spawn as spawnPty, type IPty } from 'node-pty'
-import { clearPipesFor, resetPipes } from './pty-pipe'
+import { clearPipesFor, PTY_PIPE_MAX_CHUNK, resetPipes } from './pty-pipe'
 
 export interface TerminalEvent {
   id: string
@@ -31,6 +31,59 @@ export const TERMINAL_MAX_ROWS = 200
 const DEFAULT_COLS = 120
 const DEFAULT_ROWS = 32
 const MAX_WRITE_LENGTH = 64_000
+
+/**
+ * Coalescing de chunks de saída do PTY: bursts de output viram poucos eventos
+ * `data` (concatenados, ordem preservada) em vez de um IPC por chunk.
+ *
+ * Janela: chunks que chegam até TERMINAL_DATA_FLUSH_MS depois do primeiro
+ * chunk bufferizado saem juntos. O PRIMEIRO chunk de uma rajada sai síncrono:
+ * mantém a latência de eco/tecla em zero e evita atrasar o pontapé da janela.
+ */
+export const TERMINAL_DATA_FLUSH_MS = 16
+/** Teto do buffer pendente: passar disso, flush imediato. */
+const TERMINAL_DATA_FLUSH_BYTES = 64_000
+
+interface PendingTerminalData {
+  parts: string[]
+  length: number
+  timer: NodeJS.Timeout | undefined
+}
+
+const pendingDataByTerminal = new Map<string, PendingTerminalData>()
+
+/**
+ * Emite o buffer pendente como evento(s) `data` únicos(s). Fatias maiores que
+ * PTY_PIPE_MAX_CHUNK são divididas: o encaminhamento por cabos (pty-pipe)
+ * trunca cada evento nessa fatia, então emitir acima disso perderia dados.
+ */
+function flushPendingData(id: string): void {
+  const pending = pendingDataByTerminal.get(id)
+  if (!pending) return
+  pendingDataByTerminal.delete(id)
+  if (pending.timer !== undefined) clearTimeout(pending.timer)
+  if (pending.parts.length === 0) return
+  const data = pending.parts.join('')
+  for (let offset = 0; offset < data.length; offset += PTY_PIPE_MAX_CHUNK) {
+    emit({ id, type: 'data', data: data.slice(offset, offset + PTY_PIPE_MAX_CHUNK) })
+  }
+}
+
+function appendTerminalData(id: string, data: string): void {
+  const pending = pendingDataByTerminal.get(id)
+  if (!pending) {
+    // Primeiro chunk da rajada sai na hora; a janela abre para os próximos.
+    emit({ id, type: 'data', data })
+    const next: PendingTerminalData = { parts: [], length: 0, timer: undefined }
+    next.timer = setTimeout(() => flushPendingData(id), TERMINAL_DATA_FLUSH_MS)
+    if (typeof next.timer.unref === 'function') next.timer.unref()
+    pendingDataByTerminal.set(id, next)
+    return
+  }
+  pending.parts.push(data)
+  pending.length += data.length
+  if (pending.length >= TERMINAL_DATA_FLUSH_BYTES) flushPendingData(id)
+}
 
 /**
  * Segredos que nunca podem ser herdados por um PTY/agente. O updater e o
@@ -151,10 +204,12 @@ export async function startTerminal(
   emitStart(id)
 
   terminal.onData((data) => {
-    if (isCurrent(id, terminal)) emit({ id, type: 'data', data })
+    if (isCurrent(id, terminal)) appendTerminalData(id, data)
   })
   terminal.onExit(({ exitCode }) => {
     if (!isCurrent(id, terminal)) return
+    // Saída pendente vai ANTES do exit: ordem dos eventos é preservada.
+    flushPendingData(id)
     sessions.delete(id)
     emit({ id, type: 'exit', code: exitCode })
   })
@@ -189,6 +244,8 @@ export function resizeTerminal(id: string, cols: number, rows: number): boolean 
   }
   record.cols = next.cols
   record.rows = next.rows
+  // Dados pendentes saem antes do resize: ordem dos eventos é preservada.
+  flushPendingData(id)
   emit({ id, type: 'resize', cols: next.cols, rows: next.rows })
   return true
 }
@@ -239,6 +296,9 @@ export function terminateProcessTree(pid: number, deps: TerminateProcessTreeDeps
 
 export function stopTerminal(id: string, options?: { keepPipes?: boolean }): void {
   const record = sessions.get(id)
+  // Saída pendente do PTY que está morrendo vai antes de qualquer teardown:
+  // nunca depois (o PTY morreu) nem descartada.
+  flushPendingData(id)
   // Limpeza bidirecional por padrão: remove cabos que saem E que chegam neste
   // terminal. Restart interno usa keepPipes para preservar o grafo visual.
   if (!options?.keepPipes) clearPipesFor(id)

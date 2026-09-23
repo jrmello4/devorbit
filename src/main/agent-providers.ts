@@ -1393,15 +1393,59 @@ export async function resolveAgentProviderWithFallback(
   return { ...resolution, provider: preferred, fellBack: false }
 }
 
+/**
+ * Cache de saúde dos providers para polling periódico (timer do index.ts).
+ *
+ * O probing de PATH é caro (`where.exe` por alias + ~40 fs.stat por provider)
+ * e o resultado raramente muda: o timer só re-resolve um provider após o TTL
+ * (120s para `ready`, 300s para `missing` — ausência é o caminho caro e o mais
+ * estável). A chave inclui o comando configurado: trocar o path em
+ * Configurações invalida a entrada naturalmente.
+ *
+ * OPT-IN por segurança: o default NÃO usa cache. Resolução por turno
+ * (`resolveAgentTurn`) e launcher continuam frescos — turnos corretos primeiro.
+ */
+const AGENT_PROVIDER_HEALTH_READY_TTL_MS = 120_000
+const AGENT_PROVIDER_HEALTH_MISSING_TTL_MS = 300_000
+
+interface ProviderHealthCacheEntry {
+  item: AgentProvider
+  at: number
+  /** providerId + comando configurado na hora da resolução. */
+  key: string
+}
+
+const providerHealthCache = new Map<AgentProviderId, ProviderHealthCacheEntry>()
+
+/** Limpa o cache de saúde (ex.: depois de mudar paths/config de providers). */
+export function invalidateAgentProviderHealthCache(): void {
+  providerHealthCache.clear()
+}
+
+export interface AgentProviderHealthOptions {
+  /** Usa o cache por TTL (polling periódico); default é sempre fresco. */
+  useCache?: boolean
+}
+
 export async function getAgentProviderHealth(
-  config: AppConfig
+  config: AppConfig,
+  options: AgentProviderHealthOptions = {}
 ): Promise<AgentProvider[]> {
+  const useCache = options.useCache === true
   return Promise.all(
     AGENT_CLI_PROVIDER_IDS.map(async (providerId) => {
       const definition = providerDefinition(providerId)
       const configured = configuredCommand(config, providerId)
+      const cacheKey = `${providerId}:${configured ?? ''}`
+      const cached = providerHealthCache.get(providerId)
+      if (useCache && cached && cached.key === cacheKey) {
+        const ttl = cached.item.state === 'ready'
+          ? AGENT_PROVIDER_HEALTH_READY_TTL_MS
+          : AGENT_PROVIDER_HEALTH_MISSING_TTL_MS
+        if (Date.now() - cached.at < ttl) return cached.item
+      }
       const resolution = await resolveAgentProviderCommand(config, providerId)
-      return {
+      const item: AgentProvider = {
         id: providerId,
         label: definition.label,
         command: statusCommand(definition, configured),
@@ -1409,6 +1453,8 @@ export async function getAgentProviderHealth(
         path: resolution.path || undefined,
         message: resolution.message,
       }
+      providerHealthCache.set(providerId, { item, at: Date.now(), key: cacheKey })
+      return item
     })
   )
 }

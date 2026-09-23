@@ -564,7 +564,10 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
         for (const waiter of Array.from(terminalDataWaitersRef.current)) waiter()
         const nextSnapshot = outputSnapshotRef.current + event.data
         outputSnapshotRef.current = nextSnapshot.slice(-MAX_SNAPSHOT_LENGTH)
-        const detectedUrl = outputSnapshotRef.current.match(/https:\/\/[^\s"'<>`]+/i)?.[0]?.replace(/[),.;]+$/, '')
+        // Busca a URL só na cauda do snapshot: varrer os 40KB inteiros por
+        // chunk custa regex O(snapshot) a cada linha impressa; a URL aparece
+        // no fim da saída no momento em que é detectável.
+        const detectedUrl = outputSnapshotRef.current.slice(-2000).match(/https:\/\/[^\s"'<>`]+/i)?.[0]?.replace(/[),.;]+$/, '')
         if (detectedUrl) setLastDetectedUrl(detectedUrl)
         for (const parsed of resultScannerRef.current.push(event.data)) {
           if (parsed.kind === 'invalid') {

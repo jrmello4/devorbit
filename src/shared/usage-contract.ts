@@ -107,6 +107,12 @@ export interface UsageShareState {
 /** Estado incremental dos adaptadores (offsets por arquivo), persistido. */
 export interface UsageScanState {
   offsets: Record<string, number>
+  /**
+   * Carimbo opcional mtimeMs por arquivo: permite ao scanner pular a releitura
+   * do arquivo quando offset e mtime não mudaram. Opcional para manter
+   * compatibilidade com scan-state.json antigos (só offsets).
+   */
+  mtimes?: Record<string, number>
 }
 
 export interface UsageScanResult {

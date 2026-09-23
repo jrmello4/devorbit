@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { appendFile, mkdir, open, rm } from 'node:fs/promises'
+import { appendFile, mkdir, open, rename, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { createInterface } from 'node:readline'
 
@@ -112,12 +112,23 @@ function parseEntry(line: string): AuditEntry | undefined {
   }
 }
 
+/** Teto do arquivo: ao passar disso, o ledger é podado para a cauda. */
+const AUDIT_LEDGER_MAX_BYTES = 8 * 1024 * 1024
+/** Cauda mantida na poda (corte sempre em início de linha). */
+const AUDIT_LEDGER_TAIL_BYTES = 1024 * 1024
+const NEWLINE_BYTE = 0x0a
+
 export class AuditLedger {
   readonly filePath: string
   private readonly maxReadEntries: number
   private readonly clock: () => number
   private readonly idFactory: () => string
   private pending: Promise<void> = Promise.resolve()
+  /** mkdir(recursive) cacheado: um só por processo, re-tentado após ENOENT. */
+  private directoryReady: Promise<void> | undefined
+  /** Tamanho conhecido do arquivo (rastreia o teto sem stat por evento). */
+  private ceilingSizeKnown = false
+  private ceilingSize = 0
 
   constructor(filePathOrOptions: string | AuditLedgerOptions, options: AuditLedgerOptions = {}) {
     const configured = typeof filePathOrOptions === 'string'
@@ -139,13 +150,15 @@ export class AuditLedger {
       return Promise.reject(new TypeError('Audit entry type is required.'))
     }
     return this.enqueue(async () => {
-      await mkdir(path.dirname(this.filePath), { recursive: true })
       const entry = {
         ...redactAuditRecord(input),
         id: this.idFactory(),
         timestamp: new Date(this.clock()).toISOString(),
       } as AuditEntry
-      await appendFile(this.filePath, `${JSON.stringify(entry)}\n`, 'utf8')
+      // Ordem preservada: garante o diretório, aplica o teto e só então grava.
+      await this.ensureDirectory()
+      await this.enforceCeilingLocked()
+      await this.writeLineLocked(`${JSON.stringify(entry)}\n`)
       return entry
     })
   }
@@ -200,6 +213,93 @@ export class AuditLedger {
     const current = this.pending.then(operation)
     this.pending = current.then(() => undefined, () => undefined)
     return current
+  }
+
+  /** mkdir uma única vez; falha invalida o cache para a próxima tentativa. */
+  private ensureDirectory(): Promise<void> {
+    if (!this.directoryReady) {
+      this.directoryReady = mkdir(path.dirname(this.filePath), { recursive: true }).then(
+        () => undefined,
+        (error: unknown) => {
+          this.directoryReady = undefined
+          throw error
+        }
+      )
+    }
+    return this.directoryReady
+  }
+
+  /**
+   * Grava uma linha; ENOENT re-tenta o mkdir uma vez (o diretório pode ter
+   * sido apagado depois de cacheado). Chamado dentro da fila serializada.
+   */
+  private async writeLineLocked(line: string): Promise<void> {
+    try {
+      await appendFile(this.filePath, line, 'utf8')
+      this.ceilingSize += Buffer.byteLength(line, 'utf8')
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      this.directoryReady = undefined
+      await this.ensureDirectory()
+      await appendFile(this.filePath, line, 'utf8')
+      this.ceilingSize += Buffer.byteLength(line, 'utf8')
+    }
+  }
+
+  /**
+   * Teto do ledger (best-effort): na primeira passada mede o arquivo com um
+   * stat; depois rastreia o tamanho em memória e poda quando passa do teto,
+   * mantendo apenas a cauda (~1MB), cortada em início de linha, gravada de
+   * forma atômica (tmp + rename). Nunca derruba o append.
+   */
+  private async enforceCeilingLocked(): Promise<void> {
+    if (!this.ceilingSizeKnown) {
+      this.ceilingSizeKnown = true
+      try {
+        this.ceilingSize = (await stat(this.filePath)).size
+      } catch {
+        this.ceilingSize = 0 // arquivo ainda não existe
+        return
+      }
+    }
+    if (this.ceilingSize <= AUDIT_LEDGER_MAX_BYTES) return
+    this.ceilingSize = await this.rewriteKeepingTailLocked()
+  }
+
+  private async rewriteKeepingTailLocked(): Promise<number> {
+    const temporaryPath = `${this.filePath}.tmp`
+    let handle: Awaited<ReturnType<typeof open>> | undefined
+    try {
+      handle = await open(this.filePath, 'r')
+      const size = (await handle.stat()).size
+      if (size <= AUDIT_LEDGER_MAX_BYTES) return size
+      const tailLength = Math.min(AUDIT_LEDGER_TAIL_BYTES, size)
+      const tailStart = size - tailLength
+      const buffer = Buffer.alloc(tailLength)
+      await handle.read(buffer, 0, tailLength, tailStart)
+      // Corte em início de linha: descarta o fragmento antes do primeiro '\n'
+      // (exceto quando a cauda começa no início do arquivo).
+      let contentStart = 0
+      if (tailStart > 0) {
+        const newline = buffer.indexOf(NEWLINE_BYTE)
+        if (newline >= 0) contentStart = newline + 1
+      }
+      const tail = buffer.subarray(contentStart)
+      const temporary = await open(temporaryPath, 'w')
+      try {
+        await temporary.writeFile(tail)
+      } finally {
+        await temporary.close()
+      }
+      await rename(temporaryPath, this.filePath)
+      return tail.length
+    } catch {
+      // Poda é melhor-esforço: falha nunca bloqueia o append.
+      return (await stat(this.filePath).catch(() => null))?.size ?? 0
+    } finally {
+      await handle?.close().catch(() => undefined)
+      await rm(temporaryPath, { force: true }).catch(() => undefined)
+    }
   }
 }
 

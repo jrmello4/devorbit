@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import {
   X,
   Brain,
@@ -70,6 +70,12 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
   const [isGenerating, setIsGenerating] = useState(false)
   const [copied, setCopied] = useState(false)
   const [isDirty, setIsDirty] = useState(false)
+  // Timer do feedback "copiado": limpo no unmount para não tocar setState em
+  // componente desmontado.
+  const copiedTimerRef = useRef<number | null>(null)
+  useEffect(() => () => {
+    if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current)
+  }, [])
 
   useEffect(() => {
     if (isOpen && project) loadMemory()
@@ -163,7 +169,11 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
       await navigator.clipboard.writeText(content)
       setCopied(true)
       onNotify('Handoff da IA copiado para a área de transferência!', 'success')
-      setTimeout(() => setCopied(false), 2500)
+      if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current)
+      copiedTimerRef.current = window.setTimeout(() => {
+        copiedTimerRef.current = null
+        setCopied(false)
+      }, 2500)
     } catch (err: unknown) {
       setCopied(false)
       onNotify(`Não foi possível copiar o handoff: ${err instanceof Error ? err.message : String(err)}`, 'error')

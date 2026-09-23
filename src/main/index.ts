@@ -186,6 +186,8 @@ usageStore.setUsageScanner(async (previous) => {
 const usageScanTimer = setInterval(() => {
   void usageStore.refreshNow().catch(() => undefined)
 }, 60_000)
+// Não segura o processo vivo: o mesmo padrão do providerReadinessTimer.
+if (typeof usageScanTimer.unref === 'function') usageScanTimer.unref()
 
 // Sessões de uso: terminais com provider (start → exit) para a duração.
 const usageSessions = new Map<string, { provider: string; startedAt: number }>()
@@ -300,7 +302,7 @@ let providerReadinessTimer: NodeJS.Timeout | null = null
 
 function refreshProviderReadiness(): void {
   void loadConfig()
-    .then((config) => getAgentProviderHealth(config))
+    .then((config) => getAgentProviderHealth(config, { useCache: true }))
     .then((health) => {
       for (const item of health) providerReadiness.set(item.id, item.state === 'ready')
     })
@@ -316,7 +318,8 @@ const orchestrationService = createOrchestrationService({
   isProviderReady: (provider) => providerReadiness.get(provider) ?? true,
 })
 
-refreshProviderReadiness()
+// O primeiro refresh acontece no app.whenReady, DEPOIS de createWindow(): o
+// boot da janela não compete com o probing de PATH dos providers.
 providerReadinessTimer = setInterval(refreshProviderReadiness, 60_000)
 if (typeof providerReadinessTimer.unref === 'function') providerReadinessTimer.unref()
 
@@ -556,6 +559,8 @@ if (isSmokeRun) {
     setupIpcHandlers()
     agentBridgeRuntime.start()
     createWindow()
+    // Depois da janela: a prontidão dos providers não atrasa o primeiro paint.
+    refreshProviderReadiness()
     initializeUpdater((state) => {
       const window = mainWindow
       if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return

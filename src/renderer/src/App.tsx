@@ -66,6 +66,19 @@ export const App: React.FC = () => {
   const [activeProjectTabId, setActiveProjectTabId] = useState<string | null>(null)
   const restoredWorkspaceRef = useRef(false)
   const [workspaceDirty, setWorkspaceDirty] = useState<Record<string, boolean>>({})
+  // Handler de dirty estável por projeto: a inline arrow no loop de abas era
+  // recriada a cada render e derrotaria um futuro memo do IntegratedWorkspace.
+  const workspaceDirtyHandlersRef = useRef(new Map<string, (dirty: boolean) => void>())
+  const getWorkspaceDirtyHandler = useCallback((projectId: string) => {
+    let handler = workspaceDirtyHandlersRef.current.get(projectId)
+    if (!handler) {
+      handler = (dirty: boolean) => {
+        setWorkspaceDirty((current) => (current[projectId] === dirty ? current : { ...current, [projectId]: dirty }))
+      }
+      workspaceDirtyHandlersRef.current.set(projectId, handler)
+    }
+    return handler
+  }, [])
   const [search, setSearch] = useState('')
   const [workspaceView, setWorkspaceView] = useState<'projects' | 'project' | 'usage' | 'workspace' | 'audit'>('projects')
   const [theme] = useState(() => initializeTheme())
@@ -1031,7 +1044,7 @@ export const App: React.FC = () => {
                 isSuspended={activeWorkspaceProject?.id !== workspaceProject.id}
                 onRequestCodexAuth={setAuthModalAccount}
                 isWebSuppressed={isWorkspaceWebSuppressed || activeWorkspaceProject?.id !== workspaceProject.id}
-                onDirtyChange={(dirty) => setWorkspaceDirty((current) => current[workspaceProject.id] === dirty ? current : { ...current, [workspaceProject.id]: dirty })}
+                onDirtyChange={getWorkspaceDirtyHandler(workspaceProject.id)}
                 onCanvasFocusChange={activeWorkspaceProject?.id === workspaceProject.id ? setFocusedCanvasNode : undefined}
                 uiRequest={workspaceUiRequest && workspaceUiRequest.projectId === workspaceProject.id ? workspaceUiRequest : null}
                 onUiRequestConsumed={handleConsumeWorkspaceUiRequest}

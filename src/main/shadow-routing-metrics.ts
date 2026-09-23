@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import {
   getShadowObservations,
+  onShadowObservation,
   SHADOW_MAX_OBSERVATIONS,
   type ShadowObservation,
   type ShadowOutcome,
@@ -157,6 +158,12 @@ export function getShadowRoutingMetricsPath(userDataPath: string): string {
 let writeQueue: Promise<void> = Promise.resolve()
 let metricsUserDataPath: string | undefined
 let flushTimer: NodeJS.Timeout | undefined
+/**
+ * Só há o que gravar depois de uma observação nova (o agregado é derivado
+ * exclusivamente delas): sem dirty, o flush periódico de 30s não escreve.
+ */
+let metricsDirty = false
+let unsubscribeObservations: (() => void) | undefined
 
 function enqueueWrite(operation: () => Promise<void>): Promise<void> {
   const next = writeQueue.catch(() => undefined).then(operation)
@@ -205,10 +212,18 @@ export function startShadowRoutingMetrics(
 ): void {
   if (flushTimer && metricsUserDataPath === userDataPath) return
   if (flushTimer) clearInterval(flushTimer)
+  if (!unsubscribeObservations) {
+    // Qualquer observação nova muta o agregado: marca o relatório como sujo.
+    unsubscribeObservations = onShadowObservation(() => {
+      metricsDirty = true
+    })
+  }
   metricsUserDataPath = userDataPath
   void writeShadowRoutingMetrics(userDataPath)
   flushTimer = setInterval(() => {
-    if (metricsUserDataPath) void writeShadowRoutingMetrics(metricsUserDataPath)
+    if (!metricsUserDataPath || !metricsDirty) return
+    metricsDirty = false
+    void writeShadowRoutingMetrics(metricsUserDataPath)
   }, Math.max(1_000, intervalMs))
   flushTimer.unref?.()
 }
@@ -217,11 +232,22 @@ export function isShadowRoutingMetricsRunning(): boolean {
   return flushTimer !== undefined
 }
 
-/** Para novas gravações e atualiza uma última vez antes do encerramento. */
+/** Para novas gravações e, se houver mudança pendente, atualiza uma última vez. */
 export function stopShadowRoutingMetrics(): Promise<void> {
   if (flushTimer) clearInterval(flushTimer)
   flushTimer = undefined
+  if (unsubscribeObservations) {
+    unsubscribeObservations()
+    unsubscribeObservations = undefined
+  }
   const userDataPath = metricsUserDataPath
   metricsUserDataPath = undefined
-  return userDataPath ? writeShadowRoutingMetrics(userDataPath) : Promise.resolve()
+  if (!userDataPath) return Promise.resolve()
+  if (metricsDirty) {
+    metricsDirty = false
+    return writeShadowRoutingMetrics(userDataPath)
+  }
+  // Sem mudança pendente: apenas aguarda escritas já enfileiradas (ex.: a
+  // fotografia inicial) antes de devolver.
+  return writeQueue.catch(() => undefined)
 }

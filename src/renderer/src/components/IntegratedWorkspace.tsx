@@ -302,6 +302,10 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
   const dragRef = useRef({
     startX: 0, startY: 0, rightWidth: layout.rightWidth, terminalHeight: layout.terminalHeight,
   })
+  // Persistência do layout com debounce: durante o drag do split o layout muda
+  // por frame e gravar em localStorage a cada mudança é I/O síncrono por frame.
+  const layoutPersistTimerRef = useRef<number | null>(null)
+  const layoutPersistRef = useRef({ projectId: project.id, layout })
   useEffect(() => {
     if (isSuspended) restoreWebOnActivateRef.current = true
   }, [isSuspended])
@@ -345,8 +349,23 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
   }, [suppressNativeWeb])
 
   useEffect(() => {
-    try { window.localStorage.setItem(layoutKey(project.id), JSON.stringify(layout)) } catch { /* opcional */ }
+    layoutPersistRef.current = { projectId: project.id, layout }
   }, [layout, project.id])
+  useEffect(() => {
+    if (layoutPersistTimerRef.current !== null) window.clearTimeout(layoutPersistTimerRef.current)
+    layoutPersistTimerRef.current = window.setTimeout(() => {
+      layoutPersistTimerRef.current = null
+      try { window.localStorage.setItem(layoutKey(project.id), JSON.stringify(layout)) } catch { /* opcional */ }
+    }, 300)
+  }, [layout, project.id])
+  // Desmonte com persistência pendente: grava o último layout (ajuste de drag).
+  useEffect(() => () => {
+    if (layoutPersistTimerRef.current === null) return
+    window.clearTimeout(layoutPersistTimerRef.current)
+    layoutPersistTimerRef.current = null
+    const pending = layoutPersistRef.current
+    try { window.localStorage.setItem(layoutKey(pending.projectId), JSON.stringify(pending.layout)) } catch { /* opcional */ }
+  }, [])
 
   useEffect(() => {
     try { window.localStorage.setItem('devorbit:workspace-mode:' + project.id, isCanvas ? 'canvas' : 'grid') } catch { /* opcional */ }
@@ -364,7 +383,7 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
     const viewport = webViewportRef.current
     if (!viewport) return
     const canvas = viewport.closest('.workspace-canvas')
-    const updateBounds = () => {
+    const measureBounds = () => {
       const rect = viewport.getBoundingClientRect()
       const clip = canvas?.getBoundingClientRect()
       const left = Math.max(0, rect.left, clip?.left ?? 0)
@@ -382,6 +401,16 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
       })
       void window.devorbit.setWebVisible(visible)
     }
+    // Trailing rAF: MutationObserver dispara a cada mutação de style do canvas
+    // (um por frame durante gestos); medir/IPC uma vez por frame no máximo.
+    let frame: number | null = null
+    const updateBounds = () => {
+      if (frame !== null) return
+      frame = window.requestAnimationFrame(() => {
+        frame = null
+        measureBounds()
+      })
+    }
     const observer = new ResizeObserver(updateBounds)
     observer.observe(viewport)
     const mutationObserver = canvas ? new MutationObserver(updateBounds) : null
@@ -390,17 +419,26 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
     updateBounds()
     window.addEventListener('resize', updateBounds)
     return () => {
+      if (frame !== null) window.cancelAnimationFrame(frame)
       observer.disconnect()
       mutationObserver?.disconnect()
       canvas?.removeEventListener('scroll', updateBounds)
       window.removeEventListener('resize', updateBounds)
       void window.devorbit.setWebVisible(false)
     }
-  }, [isCanvas, suppressNativeWeb, layout.rightWidth, layout.webVisible])
+    // layout.rightWidth sai das deps: o ResizeObserver do viewport já reage ao
+    // split; recriar observers a cada frame do drag era custo puro.
+  }, [isCanvas, suppressNativeWeb, layout.webVisible])
 
   useEffect(() => {
     if (!dragging) return
-    const handlePointerMove = (event: PointerEvent) => {
+    // Mesmo padrão do canvas: pointermove só guarda as coords; o rAF aplica
+    // uma vez por frame e o pointerup aplica o delta final antes de encerrar.
+    let frame: number | null = null
+    let lastEvent: PointerEvent | null = null
+    let appliedEvent: PointerEvent | null = null
+    const applyMove = (event: PointerEvent) => {
+      appliedEvent = event
       if (dragging === 'browser') {
         const next = Math.min(MAX_RIGHT_WIDTH, Math.max(MIN_RIGHT_WIDTH, dragRef.current.rightWidth - (event.clientX - dragRef.current.startX)))
         setLayout((current) => ({ ...current, rightWidth: next }))
@@ -409,10 +447,28 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
         setLayout((current) => ({ ...current, terminalHeight: next }))
       }
     }
-    const handlePointerUp = () => setDragging(null)
+    const handlePointerMove = (event: PointerEvent) => {
+      lastEvent = event
+      if (frame !== null) return
+      frame = window.requestAnimationFrame(() => {
+        frame = null
+        if (lastEvent) applyMove(lastEvent)
+      })
+    }
+    const handlePointerUp = () => {
+      if (frame !== null) {
+        window.cancelAnimationFrame(frame)
+        frame = null
+      }
+      if (lastEvent && lastEvent !== appliedEvent) applyMove(lastEvent)
+      lastEvent = null
+      appliedEvent = null
+      setDragging(null)
+    }
     window.addEventListener('pointermove', handlePointerMove)
     window.addEventListener('pointerup', handlePointerUp)
     return () => {
+      if (frame !== null) window.cancelAnimationFrame(frame)
       window.removeEventListener('pointermove', handlePointerMove)
       window.removeEventListener('pointerup', handlePointerUp)
     }
@@ -605,7 +661,7 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
       </header>
       )}
 
-      {isCanvas ? <WorkspaceCanvas project={project} workbench={canvasWorkbench} browser={layout.webVisible ? canvasBrowser : undefined} codexAuthStatus={codexAuthStatus} onRequestCodexAuth={onRequestCodexAuth} agentProviders={agentProviders} defaultExecutor={automation?.defaultExecutor ?? null} onSendAgentTask={queueAgentTask} onCreateAgentWorktree={(node) => void isolateAgent(node)} onSelectionChange={onCanvasFocusChange} onConnectionsChange={syncCanvasPipes} pendingNodeRequest={pendingCanvasNode && isPendingNodeForProject(pendingCanvasNode, project.id) ? { kind: pendingCanvasNode.kind, nonce: pendingCanvasNode.nonce } : null} onPendingNodeConsumed={handlePendingCanvasNodeConsumed} onNotify={onNotify} renderAgent={(node: CanvasNode, onAgentResult, onAgentTaskFailure) => node.provider ? (<div className="canvas-agent-terminal"><div className="canvas-agent-review"><span>Worktree</span><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void reviewAgent(node)}>Alterações</button><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void mergeAgent(node)}>Integrar</button></div><WorkspaceTerminal projectPath={agentWorktrees[node.id]?.path || project.path} terminalId={agentTerminalId(project.id, node.id)} codexAccount={node.account} provider={node.provider} agentTask={agentTasks[node.id]} onAgentResult={onAgentResult} onAgentTaskFailure={onAgentTaskFailure} onNotify={onNotify} onRequestCodexAuth={onRequestCodexAuth} /></div>) : null} terminalPresets={customPresets} onTerminalPresetsSaved={setCustomPresets} renderTerminal={(node: CanvasNode) => (<div className="canvas-agent-terminal"><WorkspaceTerminal projectPath={project.path} terminalId={agentTerminalId(project.id, node.id)} codexAccount={codexAccount} provider={primaryProvider} runtimeConfig={node.terminal} customPresets={customPresets} onNotify={onNotify} onRequestCodexAuth={onRequestCodexAuth} /></div>)} /> : <>
+      {isCanvas ? <WorkspaceCanvas project={project} workbench={canvasWorkbench} browser={layout.webVisible ? canvasBrowser : undefined} codexAuthStatus={codexAuthStatus} onRequestCodexAuth={onRequestCodexAuth} agentProviders={agentProviders} defaultExecutor={automation?.defaultExecutor ?? null} onSendAgentTask={queueAgentTask} onCreateAgentWorktree={(node) => void isolateAgent(node)} onSelectionChange={onCanvasFocusChange} onConnectionsChange={syncCanvasPipes} pendingNodeRequest={pendingCanvasNode && isPendingNodeForProject(pendingCanvasNode, project.id) ? { kind: pendingCanvasNode.kind, nonce: pendingCanvasNode.nonce } : null} onPendingNodeConsumed={handlePendingCanvasNodeConsumed} onNotify={onNotify} renderAgent={(node: CanvasNode, onAgentResult, onAgentTaskFailure) => { const clearDeliveredTask = (taskId?: string) => { if (!taskId || agentTasks[node.id]?.id !== taskId) return; setAgentTasks((current) => { if (current[node.id]?.id !== taskId) return current; const next = { ...current }; delete next[node.id]; return next }) }; return node.provider ? (<div className="canvas-agent-terminal"><div className="canvas-agent-review"><span>Worktree</span><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void reviewAgent(node)}>Alterações</button><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void mergeAgent(node)}>Integrar</button></div><WorkspaceTerminal projectPath={agentWorktrees[node.id]?.path || project.path} terminalId={agentTerminalId(project.id, node.id)} codexAccount={node.account} provider={node.provider} agentTask={agentTasks[node.id]} onAgentResult={(result, taskId) => { clearDeliveredTask(taskId); onAgentResult(result, taskId) }} onAgentTaskFailure={(taskId, message) => { clearDeliveredTask(taskId); onAgentTaskFailure(taskId, message) }} onNotify={onNotify} onRequestCodexAuth={onRequestCodexAuth} /></div>) : null }} terminalPresets={customPresets} onTerminalPresetsSaved={setCustomPresets} renderTerminal={(node: CanvasNode) => (<div className="canvas-agent-terminal"><WorkspaceTerminal projectPath={project.path} terminalId={agentTerminalId(project.id, node.id)} codexAccount={codexAccount} provider={primaryProvider} runtimeConfig={node.terminal} customPresets={customPresets} onNotify={onNotify} onRequestCodexAuth={onRequestCodexAuth} /></div>)} /> : <>
       <div
         ref={setGridSlot}
         className="workspace-workbench-slot grid-workbench-slot"

@@ -193,6 +193,16 @@ function isValidScanState(value: unknown): value is UsageScanState {
   return Object.values(value.offsets).every((offset) => typeof offset === 'number' && Number.isFinite(offset) && offset >= 0)
 }
 
+/** Carimbos mtime são best-effort: entrada inválida é descartada, não o estado. */
+function sanitizeScanMtimes(value: unknown): Record<string, number> | undefined {
+  if (!isRecord(value)) return undefined
+  const output: Record<string, number> = {}
+  for (const [key, mtime] of Object.entries(value)) {
+    if (typeof mtime === 'number' && Number.isFinite(mtime) && mtime >= 0) output[key] = mtime
+  }
+  return Object.keys(output).length > 0 ? output : undefined
+}
+
 function isValidAdapterStatus(value: unknown): value is UsageAdapterStatus {
   return isRecord(value)
     && typeof value.source === 'string' && TOKEN_SOURCES.has(value.source)
@@ -280,7 +290,10 @@ export class UsageStore {
     const run = async (): Promise<UsageShareState> => {
       await this.pending
       await this.ensureLoaded()
-      const previous: UsageScanState = { offsets: { ...this.scanState.offsets } }
+      const previous: UsageScanState = {
+        offsets: { ...this.scanState.offsets },
+        ...(this.scanState.mtimes ? { mtimes: { ...this.scanState.mtimes } } : {}),
+      }
       // Fora da fila de propósito: o scan pode demorar e o scanner não pode
       // reentrar na fila (ver JSDoc de setUsageScanner).
       const result = await scanner(previous)
@@ -293,7 +306,14 @@ export class UsageStore {
         if (this.closed) throw new Error('Usage store is closed.')
         await this.appendBatchLocked(events)
         if (isValidScanState(result?.state)) {
-          this.scanState = { offsets: { ...this.scanState.offsets, ...result.state.offsets } }
+          const nextMtimes = {
+            ...this.scanState.mtimes,
+            ...sanitizeScanMtimes(result.state.mtimes),
+          }
+          this.scanState = {
+            offsets: { ...this.scanState.offsets, ...result.state.offsets },
+            ...(Object.keys(nextMtimes).length > 0 ? { mtimes: nextMtimes } : {}),
+          }
           await this.persistScanStateLocked()
         }
         const statuses = Array.isArray(result?.statuses) ? result.statuses.filter(isValidAdapterStatus).slice(0, MAX_ADAPTER_STATUSES) : []
@@ -309,13 +329,20 @@ export class UsageStore {
     await this.enqueue(async () => {
       await this.ensureLoaded()
     })
-    return { offsets: { ...this.scanState.offsets } }
+    return {
+      offsets: { ...this.scanState.offsets },
+      ...(this.scanState.mtimes ? { mtimes: { ...this.scanState.mtimes } } : {}),
+    }
   }
 
   async saveScanState(state: UsageScanState): Promise<void> {
     await this.enqueue(async () => {
       if (!isValidScanState(state)) throw new TypeError('Estado de scan inválido.')
-      this.scanState = { offsets: { ...state.offsets } }
+      const mtimes = sanitizeScanMtimes(state.mtimes)
+      this.scanState = {
+        offsets: { ...state.offsets },
+        ...(mtimes ? { mtimes: { ...mtimes } } : {}),
+      }
       await this.persistScanStateLocked()
     })
   }
@@ -397,7 +424,13 @@ export class UsageStore {
     if (stateContent !== undefined) {
       try {
         const parsed: unknown = JSON.parse(stateContent)
-        if (isValidScanState(parsed)) this.scanState = { offsets: { ...parsed.offsets } }
+        if (isValidScanState(parsed)) {
+          const mtimes = sanitizeScanMtimes(parsed.mtimes)
+          this.scanState = {
+            offsets: { ...parsed.offsets },
+            ...(mtimes ? { mtimes } : {}),
+          }
+        }
       } catch {
         // Estado de scan corrompido: recomeça do zero (adaptadores relem tudo).
       }

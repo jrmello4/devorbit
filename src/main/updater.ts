@@ -280,6 +280,12 @@ export function _setExecFileRunnerForTest(
   execFileRunner = fn ?? execFileAsync
 }
 
+/** Sem token via `gh`: re-tenta o spawn só depois deste TTL (evita um
+ * `gh auth token` por ciclo de retry com backoff). Positivo vale pelo
+ * tempo do processo — env é verificado antes do cache a cada chamada. */
+const GH_TOKEN_NEGATIVE_TTL_MS = 10 * 60 * 1000
+let cachedGhCliResolution: { resolution: GitHubTokenResolution; at: number } | undefined
+
 export async function resolveGitHubToken(): Promise<GitHubTokenResolution> {
   const ghToken = (process.env.GH_TOKEN || '').trim()
   if (ghToken) {
@@ -289,16 +295,27 @@ export async function resolveGitHubToken(): Promise<GitHubTokenResolution> {
   if (githubToken) {
     return { token: githubToken, source: 'env:GITHUB_TOKEN', masked: maskToken(githubToken) }
   }
+  const cached = cachedGhCliResolution
+  if (cached) {
+    const isPositive = cached.resolution.token !== null
+    if (isPositive || Date.now() - cached.at < GH_TOKEN_NEGATIVE_TTL_MS) {
+      return cached.resolution
+    }
+  }
   try {
     const result = await execFileRunner('gh', ['auth', 'token'], { timeout: 5000, windowsHide: true })
     const token = String(result.stdout || '').trim()
     if (token) {
-      return { token, source: 'gh-cli', masked: maskToken(token) }
+      const resolution: GitHubTokenResolution = { token, source: 'gh-cli', masked: maskToken(token) }
+      cachedGhCliResolution = { resolution, at: Date.now() }
+      return resolution
     }
   } catch {
     // gh CLI ausente, não autenticado ou erro na chamada
   }
-  return { token: null, source: 'none', masked: null }
+  const resolution: GitHubTokenResolution = { token: null, source: 'none', masked: null }
+  cachedGhCliResolution = { resolution, at: Date.now() }
+  return resolution
 }
 
 export async function getGitHubToken(): Promise<string | null> {
@@ -1005,5 +1022,6 @@ export function _resetUpdaterForTest(): void {
   portableDownloadInFlight = null
   currentDiagnostic = undefined
   execFileRunner = execFileAsync
+  cachedGhCliResolution = undefined
   state = { supported: false, status: 'unavailable', distribution: 'dev' }
 }

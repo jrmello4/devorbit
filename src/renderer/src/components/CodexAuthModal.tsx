@@ -42,6 +42,9 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
   const [message, setMessage] = useState('')
   const [browserReopenError, setBrowserReopenError] = useState('')
   const successTimerRef = useRef<number | null>(null)
+  // Timer do feedback "copiado": limpo no cleanup do efeito do modal para não
+  // tocar setState após o desmonte.
+  const copiedTimerRef = useRef<number | null>(null)
   const onSuccessRef = useRef(onSuccess)
 
   useEffect(() => {
@@ -82,6 +85,10 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
         window.clearTimeout(successTimerRef.current)
         successTimerRef.current = null
       }
+      if (copiedTimerRef.current !== null) {
+        window.clearTimeout(copiedTimerRef.current)
+        copiedTimerRef.current = null
+      }
     }
   }, [account, isOpen])
 
@@ -105,7 +112,11 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
     try {
       await navigator.clipboard.writeText(authUrl)
       setCopied(true)
-      setTimeout(() => setCopied(false), 2500)
+      if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current)
+      copiedTimerRef.current = window.setTimeout(() => {
+        copiedTimerRef.current = null
+        setCopied(false)
+      }, 2500)
     } catch (err: unknown) {
       setCopied(false)
       setBrowserReopenError(`Não foi possível copiar o link de autorização: ${err instanceof Error ? err.message : String(err)}`)

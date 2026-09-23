@@ -1,4 +1,4 @@
-import React, { useId, useState } from 'react'
+import React, { useEffect, useId, useRef, useState } from 'react'
 import {
   AlertCircle,
   Bot,
@@ -118,6 +118,12 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
   const [launchingTool, setLaunchingTool] = useState<LaunchTool | null>(null)
   const [isLifecycleBusy, setIsLifecycleBusy] = useState(false)
   const [isOpeningWorkspace, setIsOpeningWorkspace] = useState(false)
+  // Timers de feedback (launch/copy/open): limpos no unmount para não tocar
+  // setState em componente desmontado.
+  const feedbackTimersRef = useRef<number[]>([])
+  useEffect(() => () => {
+    for (const timerId of feedbackTimersRef.current) window.clearTimeout(timerId)
+  }, [])
 
   const handleSync = async () => {
     setIsSyncing(true)
@@ -166,7 +172,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
     } catch (err: any) {
       onNotify('Erro: ' + (err instanceof Error ? err.message : String(err || 'erro desconhecido')), 'error')
     } finally {
-      setTimeout(() => setLaunchingTool(null), 600)
+      feedbackTimersRef.current.push(window.setTimeout(() => setLaunchingTool(null), 600))
     }
   }
 
@@ -179,7 +185,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
           'Contexto do projeto copiado para a área de transferência!',
           'success'
         )
-        setTimeout(() => setCopied(false), 2000)
+        feedbackTimersRef.current.push(window.setTimeout(() => setCopied(false), 2000))
       } else {
         onNotify(res?.context || 'Falha ao copiar contexto', 'error')
       }
@@ -206,7 +212,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
     if (isOpeningWorkspace || isArchived || !onOpenWorkspace) return
     setIsOpeningWorkspace(true)
     onOpenWorkspace(project)
-    window.setTimeout(() => setIsOpeningWorkspace(false), 450)
+    feedbackTimersRef.current.push(window.setTimeout(() => setIsOpeningWorkspace(false), 450))
   }
   const statusDescription = isArchived
     ? 'Conteúdo local liberado; baixe o projeto quando for trabalhar nele.'

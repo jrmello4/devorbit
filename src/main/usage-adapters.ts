@@ -22,7 +22,10 @@
  * consumida. Cada varredura lê só o trecho novo, em blocos — nunca o
  * diretório inteiro na memória. Linha parcial no fim do JSONL fica pendente
  * até o '\n' completar (o offset só avança até o último '\n'); arquivo
- * truncado (menor que o offset registrado) é relido do zero.
+ * truncado (menor que o offset registrado) é relido do zero. Arquivo parado
+ * (offset já no fim + mtime/size iguais ao carimbo da última leitura) nem é
+ * aberto; o carimbo viaja como campo opcional `mtimes` do scan-state e
+ * entradas antigas sem ele seguem o caminho de hoje.
  *
  * Semântica do Codex (importante para o agregador): quando presente,
  * last_token_usage já é o DELTA do turno e cada evento carrega esse delta.
@@ -172,6 +175,8 @@ interface SourceOutcome {
   message?: string
   events: UsageTokenEvent[]
   offsets: Record<string, number>
+  /** Carimbo (mtimeMs) dos arquivos consumidos até o fim nesta passada. */
+  mtimes?: Record<string, number>
 }
 
 function missingOutcome(message = 'Diretório da fonte não encontrado.'): SourceOutcome {
@@ -181,13 +186,15 @@ function missingOutcome(message = 'Diretório da fonte não encontrado.'): Sourc
 function outcomeWithNotes(
   events: UsageTokenEvent[],
   offsets: Record<string, number>,
-  notes: string[]
+  notes: string[],
+  mtimes?: Record<string, number>
 ): SourceOutcome {
   return {
     status: events.length > 0 ? 'ok' : 'empty',
     ...(notes.length > 0 ? { message: notes.join('; ') } : {}),
     events,
     offsets,
+    ...(mtimes && Object.keys(mtimes).length > 0 ? { mtimes } : {}),
   }
 }
 
@@ -195,6 +202,26 @@ function previousOffsetFor(state: UsageScanState, key: string): number {
   const stored = state.offsets?.[key]
   return typeof stored === 'number' && Number.isFinite(stored) && stored >= 0 ? stored : 0
 }
+
+/**
+ * Estado de scan com carimbos opcionais por arquivo (mtimeMs). Campo irmão de
+ * `offsets`: entradas antigas do scan-state.json (só offsets) seguem o caminho
+ * de hoje e seguem válidas.
+ */
+type UsageScanStateWithMtimes = UsageScanState & { mtimes?: Record<string, number> }
+
+function persistedMtimeFor(previous: UsageScanState, file: string): number | undefined {
+  const value = (previous as UsageScanStateWithMtimes).mtimes?.[file]
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+/**
+ * Carimbo em memória (arquivo → mtimeMs) da última leitura concluída até o
+ * fim. O scan seguinte pula `readJsonlTail` quando o offset registrado já é
+ * o tamanho atual E o mtime não mudou (o tamanho do stat é feito de qualquer
+ * forma; o skip economiza open/read/close por arquivo parado).
+ */
+const fullyReadStamps = new Map<string, number>()
 
 /**
  * Caminha a árvore a partir de `root` coletando arquivos regulares.
@@ -826,6 +853,7 @@ async function scanJsonlSource(
   if (!(await isDirectory(sourceDir))) return missingOutcome()
 
   const offsets: Record<string, number> = {}
+  const mtimes: Record<string, number> = {}
   const events: UsageTokenEvent[] = []
   let malformed = 0
   let skippedLarge = 0
@@ -838,10 +866,21 @@ async function scanJsonlSource(
       if (!file.endsWith('.jsonl')) continue
       const previousOffset = previousOffsetFor(previous, file)
       let size = 0
+      let mtimeMs = 0
       try {
-        size = (await fs.stat(file)).size
+        const stats = await fs.stat(file)
+        size = stats.size
+        mtimeMs = stats.mtimeMs
       } catch {
         unreadableFiles += 1
+        continue
+      }
+      // Nada novo: o offset registrado já consumiu o arquivo inteiro e o
+      // carimbo da última leitura continua igual — pula a abertura do arquivo.
+      const knownMtimeMs = fullyReadStamps.get(file) ?? persistedMtimeFor(previous, file)
+      if (knownMtimeMs !== undefined && previousOffset === size && knownMtimeMs === mtimeMs) {
+        offsets[file] = previousOffset
+        mtimes[file] = knownMtimeMs
         continue
       }
       if (size > USAGE_MAX_FILE_BYTES) {
@@ -890,6 +929,12 @@ async function scanJsonlSource(
         }
       }
       offsets[file] = tail.nextOffset
+      // Leitura chegou ao fim: registra o carimbo para a próxima varredura
+      // poder pular o arquivo parado (linha parcial fica sem carimbo).
+      if (tail.nextOffset >= tail.size) {
+        fullyReadStamps.set(file, tail.mtimeMs)
+        mtimes[file] = tail.mtimeMs
+      }
     }
   } catch (error) {
     return {
@@ -905,7 +950,7 @@ async function scanJsonlSource(
   if (skippedLarge > 0) notes.push(`${skippedLarge} arquivo(s) acima de 50MB ignorado(s)`)
   if (unreadableFiles > 0) notes.push(`${unreadableFiles} arquivo(s) ilegível(is)`)
   if (unreadableDirs > 0) notes.push(`${unreadableDirs} subdiretório(s) ilegível(is)`)
-  return outcomeWithNotes(events, offsets, notes)
+  return outcomeWithNotes(events, offsets, notes, mtimes)
 }
 
 // ---------------------------------------------------------------------------
@@ -925,8 +970,17 @@ const codexAdapter = createCodexAdapter()
 export async function scanUsageAdapters(dirs: UsageSourceDirs, previous: UsageScanState): Promise<UsageScanResult> {
   const nowIso = new Date().toISOString()
   const offsets: Record<string, number> = { ...previous.offsets }
+  const mtimes: Record<string, number> = {}
   const events: UsageTokenEvent[] = []
   const statuses: UsageAdapterStatus[] = []
+
+  // Carimbos persistidos (scan-state com mtimes) semeiam o mapa em memória;
+  // o mapa em memória é sempre mais recente e não é sobrescrito.
+  for (const [file, value] of Object.entries((previous as UsageScanStateWithMtimes).mtimes ?? {})) {
+    if (typeof value === 'number' && Number.isFinite(value) && !fullyReadStamps.has(file)) {
+      fullyReadStamps.set(file, value)
+    }
+  }
 
   const claudeOutcome = await scanJsonlSource(dirs.claude, 'projects', previous, handleClaudeRecord)
   const codexOutcome = await scanJsonlSource(
@@ -949,8 +1003,13 @@ export async function scanUsageAdapters(dirs: UsageSourceDirs, previous: UsageSc
     { source: 'codex-rollouts', outcome: codexOutcome },
     { source: 'opencode-storage', outcome: opencodeOutcome },
   ]
+  const jsonlSeenOffsets = new Set<string>()
   for (const { source, outcome } of runs) {
-    for (const [key, value] of Object.entries(outcome.offsets)) offsets[key] = value
+    for (const [key, value] of Object.entries(outcome.offsets)) {
+      offsets[key] = value
+      if (source !== 'opencode-storage') jsonlSeenOffsets.add(key)
+    }
+    for (const [file, value] of Object.entries(outcome.mtimes ?? {})) mtimes[file] = value
     for (const event of outcome.events) events.push(event)
     statuses.push({
       source,
@@ -959,6 +1018,23 @@ export async function scanUsageAdapters(dirs: UsageSourceDirs, previous: UsageSc
       ...(outcome.message ? { message: outcome.message } : {}),
     })
   }
+
+  // Poda conservadora: entradas de arquivos que não apareceram em nenhum walk
+  // desta passada E cujo stat confirma ENOENT (erro transitório NÃO poda —
+  // EACCES/EPERM mantêm a entrada). Chaves sqlite (rowids) não são tocadas.
+  for (const key of Object.keys(offsets)) {
+    if (!key.endsWith('.jsonl') || jsonlSeenOffsets.has(key)) continue
+    try {
+      await fs.stat(key)
+    } catch (error) {
+      if (errorCode(error) === 'ENOENT') {
+        delete offsets[key]
+        delete mtimes[key]
+        fullyReadStamps.delete(key)
+      }
+    }
+  }
+
   statuses.push({
     source: 'gemini-local',
     status: 'missing',
@@ -973,5 +1049,7 @@ export async function scanUsageAdapters(dirs: UsageSourceDirs, previous: UsageSc
     )
     emitted = ordered.slice(Math.max(0, ordered.length - USAGE_MAX_EVENTS_PER_SCAN))
   }
-  return { events: emitted, state: { offsets }, statuses }
+  const state: UsageScanStateWithMtimes = { offsets }
+  if (Object.keys(mtimes).length > 0) state.mtimes = mtimes
+  return { events: emitted, state, statuses }
 }
