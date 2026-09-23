@@ -921,11 +921,23 @@ async function inspectProjectInteractions(window, viewport) {
   const duplicateLinks = await evaluate(window, `JSON.parse(window.localStorage.getItem('devorbit:workspace-canvas:${manualLink.id}')).connections.length`)
   assert(duplicateLinks === 1, `${viewport.label}: conexão duplicada foi criada (${duplicateLinks})`)
   await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Encaixar todo o conteúdo na tela', `${viewport.label} canvas fit before cancel`)
-  const cancelSetup = await evaluate(window, `(function () {
+  await evaluate(window, `(function () {
     const source = document.querySelector('[data-canvas-card="note"] [data-canvas-port="source"]')
+    source.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 77, clientX: 800, clientY: 200 }))
+    return true
+  })()`)
+  // Portas ficam ocultas em repouso: a porta alvo só recebe pointer-events
+  // depois que o estado de conexão é aplicado. Esperar a disponibilidade evita
+  // uma corrida de hit-test que só falhava em runners mais lentos.
+  await waitFor(window, `(() => {
+    const target = document.querySelector('[data-canvas-card="workbench"] [data-canvas-port="target"]')
+    if (!target || !target.classList.contains('is-available')) return false
+    const style = window.getComputedStyle(target)
+    return style.pointerEvents === 'auto' && Number.parseFloat(style.opacity) > 0
+  })()`, `${viewport.label} porta alvo disponível para a conexão`)
+  const cancelSetup = await evaluate(window, `(function () {
     const target = document.querySelector('[data-canvas-card="workbench"] [data-canvas-port="target"]')
     const rect = target.getBoundingClientRect()
-    source.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 77, clientX: 800, clientY: 200 }))
     const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)?.closest('[data-canvas-port="target"]')
     if (hit !== target) return false
     window.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true, pointerId: 77, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 }))
