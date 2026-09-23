@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>DevOrbit — Proposta de design 2026-09-23</title>
+<style>
+  :root{
+    --page:#0f1116; --header:#12151c; --panel:#171b24; --raised:#1d222e; --inset:#0a0c10;
+    --b-sub:rgba(232,236,243,.08); --b-strong:rgba(232,236,243,.16);
+    --t1:#e8ecf3; --t2:#a8b1c2; --t3:#7c8598; --t4:#59616f;
+    --olive:#a6bf8a; --olive-strong:#7d9a5e; --olive-btn:#4a6038; --olive-btn-h:#5a7344;
+    --ok:#69a986; --warn:#d0a05a; --danger:#c97a85; --amber:#d9a441; --violet:#b29dd6;
+    --mono:'Consolas',ui-monospace,monospace; --sans:'Segoe UI',system-ui,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scrollbar-width:none}
+  html::-webkit-scrollbar,body::-webkit-scrollbar{width:0;height:0;display:none}
+  body{background:#0c0d11;color:var(--t1);font:14px/1.5 var(--sans);padding:28px 0 620px}
+  .wrap{width:1420px;margin:0 auto}
+  h1{font-size:22px;font-weight:650;letter-spacing:-.3px}
+  .sub{color:var(--t3);font-size:13px;margin:6px 0 26px;max-width:860px}
+  .doc h2{font-size:15px;font-weight:650;margin:38px 0 4px}
+  .doc .legend{color:var(--t3);font-size:12.5px;margin-bottom:12px}
+  .frame{width:1366px;height:768px;background:var(--page);border:1px solid var(--b-strong);border-radius:10px;overflow:hidden;position:relative;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.45)}
+  .callout{position:absolute;width:20px;height:20px;border-radius:50%;background:var(--amber);color:#1a1408;font-size:11.5px;font-weight:700;display:grid;place-items:center;z-index:60;box-shadow:0 0 0 3px rgba(217,164,65,.25)}
+  .keys{margin:10px 0 8px;color:var(--t2);font-size:12.5px;display:flex;flex-wrap:wrap;gap:14px}
+  .keys b{color:var(--amber);font-weight:700;margin-right:5px}
+  /* ---------- cromo comum ---------- */
+  .titlebar{height:52px;background:var(--header);border-bottom:1px solid var(--b-sub);display:flex;align-items:center;padding:0 0 0 18px;gap:16px;flex-shrink:0}
+  .brand{display:flex;align-items:center;gap:9px;width:148px}
+  .orbit{width:22px;height:22px;border-radius:50%;border:2px solid var(--olive);position:relative}
+  .orbit::after{content:"";position:absolute;inset:5px;border-radius:50%;background:var(--olive)}
+  .brand strong{font-size:15.5px;font-weight:650;letter-spacing:-.2px}
+  .loc{color:var(--t3);font-size:12px}
+  .gsearch{display:flex;align-items:center;gap:9px;flex:0 1 420px;height:32px;padding:0 8px 0 10px;background:rgba(232,236,243,.05);border:1px solid var(--b-sub);border-radius:7px;color:var(--t3);font-size:12px;margin:auto}
+  .gsearch .kbd{margin-left:auto}
+  .kbd{font:10.5px var(--mono);color:var(--t3);border:1px solid var(--b-strong);border-radius:4px;padding:1px 5px;background:rgba(232,236,243,.04)}
+  .win{display:flex;height:52px}
+  .win i{width:42px;display:grid;place-items:center;font-style:normal;color:var(--t3);font-size:11px}
+  .rail{width:56px;border-right:1px solid var(--b-sub);display:flex;flex-direction:column;align-items:center;padding:10px 0;gap:4px;flex-shrink:0}
+  .rail .ic{width:36px;height:36px;border-radius:8px;display:grid;place-items:center;color:var(--t3);font-size:14px}
+  .rail .ic.on{background:rgba(166,191,138,.12);color:var(--olive);outline:1px solid rgba(166,191,138,.35)}
+  .rail .spacer{flex:1}
+  .acct{width:30px;height:30px;border-radius:8px;border:1px solid var(--b-strong);display:grid;place-items:center;font:11px var(--mono);color:var(--t2);margin-top:8px}
+  .statusbar{height:28px;border-top:1px solid var(--b-sub);display:flex;align-items:center;padding:0 14px;color:var(--t3);font-size:11.5px;gap:8px;flex-shrink:0}
+  .statusbar .right{margin-left:auto;display:flex;gap:16px}
+  .dot{width:7px;height:7px;border-radius:50%;display:inline-block}
+  /* ---------- biblioteca ---------- */
+  .lib-body{flex:1;display:flex;min-height:0}
+  .lib-main{flex:1;display:flex;flex-direction:column;min-width:0;padding:22px 26px 0}
+  .lib-head{display:flex;align-items:flex-end;gap:10px}
+  .lib-head h3{font-size:20px;font-weight:650;letter-spacing:-.3px}
+  .count{color:var(--t3);font-size:13px;padding-bottom:3px}
+  .lib-actions{margin-left:auto;display:flex;gap:8px}
+  .btn{height:30px;padding:0 12px;border-radius:7px;border:1px solid var(--b-strong);background:transparent;color:var(--t2);font-size:12.5px;display:inline-flex;align-items:center;gap:7px}
+  .btn.primary{background:var(--olive-btn);border-color:transparent;color:#fff}
+  .btn.ghost{border-color:transparent}
+  .seg{display:inline-flex;background:rgba(232,236,243,.05);border:1px solid var(--b-sub);border-radius:8px;padding:2px;gap:2px}
+  .seg i{font-style:normal;padding:4px 11px;border-radius:6px;font-size:12px;color:var(--t3);display:inline-flex;align-items:center;gap:7px}
+  .seg i.on{background:var(--raised);color:var(--t1);outline:1px solid var(--b-strong)}
+  .lib-toolbar{display:flex;align-items:center;margin:16px 0 14px}
+  .lib-toolbar .seg i{padding:5px 12px}
+  .lib-toolbar .right{margin-left:auto;display:flex;gap:8px;align-items:center}
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+  .card{position:relative;background:var(--panel);border:1px solid var(--b-sub);border-radius:10px;padding:13px 14px 12px 17px;height:118px;display:flex;flex-direction:column}
+  .card::before{content:"";position:absolute;left:0;top:10px;bottom:10px;width:3px;border-radius:3px;background:var(--spine,var(--t4))}
+  .card.sel{border-color:rgba(166,191,138,.5);outline:1px solid rgba(166,191,138,.5);background:#1a2029}
+  .card .row1{display:flex;align-items:center;gap:8px}
+  .card .name{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .card .menu{margin-left:auto;color:var(--t4);letter-spacing:2px;font-size:12px}
+  .card .branch{display:inline-flex;align-items:center;gap:6px;margin-top:7px;font:11px var(--mono);color:var(--t2);background:rgba(232,236,243,.05);border:1px solid var(--b-sub);border-radius:6px;padding:2.5px 8px;width:max-content;max-width:100%}
+  .card .branch span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .card .meta{margin-top:auto;display:flex;align-items:center;gap:8px;color:var(--t3);font-size:11.5px}
+  .tech{display:inline-flex;align-items:center;gap:6px}
+  .card .open{margin-left:auto;color:var(--olive);font-size:11.5px;display:none;align-items:center;gap:5px}
+  .card.sel .open,.card:hover .open{display:inline-flex}
+  /* ---------- canvas ---------- */
+  .cv{flex:1;position:relative;background:var(--inset);
+      background-image:radial-gradient(rgba(232,236,243,.055) 1px,transparent 1px);background-size:22px 22px}
+  .cv-toolbar{position:absolute;top:14px;left:50%;transform:translateX(-50%);height:42px;background:var(--raised);border:1px solid var(--b-strong);border-radius:11px;display:flex;align-items:center;padding:0 8px;gap:2px;box-shadow:0 10px 30px rgba(0,0,0,.5);z-index:20}
+  .tbtn{height:30px;padding:0 10px;border-radius:7px;display:inline-flex;align-items:center;gap:7px;color:var(--t2);font-size:12.5px}
+  .tbtn.hot{color:var(--olive)}
+  .tsep{width:1px;height:20px;background:var(--b-strong);margin:0 6px}
+  .zoompct{font:12px var(--mono);color:var(--t1);min-width:44px;text-align:center}
+  .zoomdd{color:var(--t3);font-size:10px;padding:0 6px 0 0}
+  .cv-chip{position:absolute;top:14px;right:14px;height:34px;background:var(--raised);border:1px solid var(--b-strong);border-radius:9px;display:flex;align-items:center;gap:9px;padding:0 12px;font-size:12.5px;color:var(--t2);z-index:20}
+  .node{position:absolute;background:var(--panel);border:1px solid var(--b-strong);border-radius:10px;box-shadow:0 12px 34px rgba(0,0,0,.5);z-index:10}
+  .node .nhead{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--b-sub)}
+  .node .nname{font-size:12.5px;font-weight:600}
+  .node .nbody{padding:9px 12px;font:11px var(--mono);color:var(--t3)}
+  .node.agent{border-left:3px solid var(--olive)}
+  .chip{font-size:10px;font-weight:600;letter-spacing:.3px;padding:1.5px 7px;border-radius:5px;background:rgba(166,191,138,.14);color:var(--olive)}
+  .chip.neutral{background:rgba(232,236,243,.07);color:var(--t2)}
+  .node.term .nhead{background:#10131a}
+  .node.term .nwell{height:64px;background:#000;border-radius:0 0 9px 9px;padding:8px 12px;font:11px var(--mono);color:#8fd3a8}
+  .node.note{border-left:3px solid var(--amber)}
+  .port{position:absolute;width:9px;height:9px;border-radius:50%;background:var(--raised);border:2px solid var(--t3)}
+  .port.hot{border-color:var(--olive)}
+  svg.edges{position:absolute;inset:0;z-index:5}
+  .minimap{position:absolute;right:356px;bottom:14px;width:190px;height:112px;background:rgba(23,27,36,.92);border:1px solid var(--b-strong);border-radius:9px;z-index:15;padding:8px}
+  .mm-node{position:absolute;background:rgba(232,236,243,.22);border-radius:2px}
+  .mm-view{position:absolute;border:1.5px solid var(--olive);border-radius:4px;background:rgba(166,191,138,.08)}
+  .help{position:absolute;left:14px;bottom:14px;width:30px;height:30px;border-radius:50%;background:var(--raised);border:1px solid var(--b-strong);color:var(--t2);display:grid;place-items:center;font-size:13px;z-index:15}
+  .toast{position:absolute;top:66px;left:50%;transform:translateX(-50%);background:var(--raised);border:1px solid var(--b-strong);border-radius:9px;padding:7px 12px 7px 10px;display:flex;align-items:center;gap:10px;font-size:12px;color:var(--t2);z-index:40;box-shadow:0 10px 26px rgba(0,0,0,.45)}
+  .toast .undo{color:var(--olive);font-weight:600}
+  .inspector{position:absolute;top:0;right:0;bottom:0;width:330px;background:var(--header);border-left:1px solid var(--b-sub);z-index:30;display:flex;flex-direction:column}
+  .insp-head{padding:14px 16px 0}
+  .insp-kicker{font-size:10.5px;font-weight:650;letter-spacing:.8px;color:var(--amber)}
+  .insp-title{font-size:15px;font-weight:650;margin:3px 0 10px}
+  .insp-tabs{display:flex;background:rgba(232,236,243,.05);border:1px solid var(--b-sub);border-radius:8px;padding:2px;gap:2px}
+  .insp-tabs i{flex:1;text-align:center;font-style:normal;font-size:11.5px;padding:5px 0;border-radius:6px;color:var(--t3)}
+  .insp-tabs i.on{background:var(--raised);color:var(--t1);outline:1px solid var(--b-strong)}
+  .insp-body{flex:1;padding:12px 16px;overflow:hidden}
+  .flabel{font-size:10.5px;font-weight:650;letter-spacing:.8px;color:var(--t3);margin:10px 0 6px}
+  .obj{background:rgba(232,236,243,.04);border:1px solid var(--b-sub);border-radius:8px;padding:9px 10px;font:11.5px var(--mono);color:var(--t2)}
+  .member{display:flex;align-items:center;gap:9px;padding:8px 10px;border:1px solid var(--b-sub);border-radius:8px;margin-bottom:7px;background:var(--panel)}
+  .member .mn{font-size:12px;font-weight:600}
+  .member .role{margin-left:auto}
+  .role{font-size:10px;font-weight:650;letter-spacing:.4px;padding:2px 8px;border-radius:5px}
+  .role.coord{background:rgba(166,191,138,.16);color:var(--olive)}
+  .role.impl{background:rgba(208,160,90,.14);color:var(--warn)}
+  .role.rev{background:rgba(178,157,214,.14);color:var(--violet)}
+  .role.test{background:rgba(105,169,134,.14);color:var(--ok)}
+  .insp-foot{padding:12px 16px;border-top:1px solid var(--b-sub)}
+  .insp-foot .btn{width:100%;justify-content:center;height:34px}
+  /* ---------- workspace ---------- */
+  .ws-tabs{height:38px;background:var(--header);border-bottom:1px solid var(--b-sub);display:flex;align-items:center;padding:0 12px;gap:4px;flex-shrink:0}
+  .ptab{display:flex;flex-direction:column;justify-content:center;padding:0 14px;height:38px;border-radius:0 0 0 0;font-size:12.5px;color:var(--t3);border-bottom:2px solid transparent}
+  .ptab.on{color:var(--t1);background:var(--page);border-bottom:2px solid var(--olive);font-weight:600}
+  .ptab small{font:10px var(--mono);color:var(--t4)}
+  .ws-tabs .views{margin-left:auto}
+  .ws-toolbar{height:40px;background:var(--page);border-bottom:1px solid var(--b-sub);display:flex;align-items:center;padding:0 16px;gap:10px;flex-shrink:0}
+  .crumb{font:11.5px var(--mono);color:var(--t3)}
+  .ws-toolbar .right{margin-left:auto;display:flex;gap:8px;align-items:center}
+  .ws-body{flex:1;display:grid;grid-template-columns:210px 1fr 300px;grid-template-rows:minmax(0,1fr) 190px;min-height:0}
+  .pnl{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(--page)}
+  .pnl.raised{background:var(--panel)}
+  .pnl-h{height:32px;flex-shrink:0;display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid var(--b-sub);font-size:10.5px;font-weight:650;letter-spacing:.8px;color:var(--t3)}
+  .pnl-h .acts{margin-left:auto;display:flex;gap:10px;color:var(--t3);font-size:13px;letter-spacing:0}
+  .pnl-b{flex:1;overflow:hidden;padding:10px 12px}
+  .tree div{display:flex;align-items:center;gap:8px;padding:4.5px 8px;border-radius:6px;color:var(--t2);font-size:12.5px}
+  .tree div.sub{padding-left:26px}
+  .tree .dirty{color:var(--warn)}
+  .editor{grid-column:2;grid-row:1;border-left:1px solid var(--b-sub);border-right:1px solid var(--b-sub)}
+  .etabs{display:flex;align-items:center;height:32px;border-bottom:1px solid var(--b-sub);padding:0 6px;gap:2px}
+  .etab{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--t3);padding:5px 10px;border-radius:6px}
+  .etab.on{background:var(--raised);color:var(--t1);outline:1px solid var(--b-sub)}
+  .etab .unsaved{width:6px;height:6px;border-radius:50%;background:var(--warn)}
+  .code{padding:14px 16px;font:12.5px/1.7 var(--mono);color:var(--t2);white-space:pre}
+  .code .kw{color:var(--olive)} .code .cm{color:var(--t4)} .code .st{color:var(--warn)}
+  .files{grid-column:1;grid-row:1}
+  .term{grid-column:1 / 4;grid-row:2;border-top:1px solid var(--b-sub)}
+  .web{grid-column:3;grid-row:1}
+  .urlrow{display:flex;gap:6px;padding:8px 10px 0}
+  .url{flex:1;height:28px;background:rgba(232,236,243,.05);border:1px solid var(--b-sub);border-radius:7px;color:var(--t2);font:11.5px var(--mono);display:flex;align-items:center;padding:0 9px}
+  .empty{margin:34px 18px;border:1px dashed var(--b-strong);border-radius:10px;padding:22px 16px;text-align:center;color:var(--t3);font-size:12px}
+  .empty b{display:block;color:var(--t2);font-size:12.5px;margin-bottom:5px}
+  .termwell{height:calc(100% - 32px);background:#000;font:12px var(--mono);color:#8fd3a8;padding:10px 14px}
+  /* ---------- tokens ---------- */
+  .tokens{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-top:14px}
+  .tok{background:var(--panel);border:1px solid var(--b-sub);border-radius:10px;overflow:hidden}
+  .tok .sw{height:56px}
+  .tok .lb{padding:8px 10px;font-size:11.5px;color:var(--t2)}
+  .tok .lb code{display:block;font:10.5px var(--mono);color:var(--t4);margin-top:2px}
+  .type{display:flex;flex-direction:column;gap:10px;background:var(--panel);border:1px solid var(--b-sub);border-radius:10px;padding:18px 20px;margin-top:14px}
+</style>
+</head>
+<body>
+<div class="wrap doc">
+  <h1>DevOrbit — Proposta de evolução visual</h1>
+  <p class="sub">Direção: <b>“Grafite + Oliva”</b> — mantém o tema dark atual, mas com escada de elevação clara (fundo → painel → elevado), um único acento oliva (como o DESIGN.md original pedia: “sem azul”) e cores semânticas de Git consistentes em todo o app. Tipografia e densidade atuais são preservadas; muda hierarquia, contraste e agrupamento — não a identidade.</p>
+
+  <!-- ==================== 1. BIBLIOTECA ==================== -->
+  <h2>1 · Biblioteca de projetos</h2>
+  <p class="legend">Referência “hoje”: artifacts/ui/desktop-1366x768-projects.png</p>
+  <div class="keys"><span><b>1</b> Espinha de 3px = estado Git (verde limpo · âmbar mudanças/pull · roxo à frente · cinza sem Git)</span><span><b>2</b> Card 26% mais curto, sem espaço morto</span><span><b>3</b> Branch em pílula mono legível</span><span><b>4</b> Filtros por situação real do Git (não repetindo “36”)</span></div>
+  <div class="frame">
+    <div class="titlebar">
+      <div class="brand"><div class="orbit"></div><strong>DevOrbit</strong></div>
+      <span class="loc">Workspace local</span>
+      <div class="gsearch">⌕&nbsp; Buscar projetos, pastas ou tecnologias… <span class="kbd">Ctrl K</span></div>
+      <div class="win"><i>⟳</i><i>—</i><i>▢</i><i>✕</i></div>
+    </div>
+    <div class="lib-body">
+      <div class="rail">
+        <div class="ic">◉</div><div class="ic">◫</div>
+        <div class="ic on">▤</div>
+        <div class="ic">◔</div><div class="ic">✓</div><div class="ic">▦</div><div class="ic">⑂</div><div class="ic">⚙</div><div class="ic">⌥</div>
+        <div class="spacer"></div><div class="acct">C1</div>
+      </div>
+      <div class="lib-main">
+        <div class="lib-head">
+          <h3>Projetos</h3><span class="count">36</span>
+          <div class="lib-actions">
+            <button class="btn">⑂ Clonar</button>
+            <button class="btn primary">＋ Novo projeto</button>
+          </div>
+        </div>
+        <div class="lib-toolbar">
+          <div class="seg">
+            <i class="on"><span class="dot" style="background:var(--t3)"></span>Todas as situações · 36</i>
+            <i><span class="dot" style="background:var(--warn)"></span>Pendentes · 18</i>
+            <i><span class="dot" style="background:var(--ok)"></span>Limpos · 12</i>
+            <i><span class="dot" style="background:var(--t4)"></span>Sem Git · 6</i>
+          </div>
+          <div class="right">
+            <button class="btn ghost">Ordenar: Recentes ▾</button>
+            <div class="seg"><i class="on">▦</i><i>☰</i></div>
+          </div>
+        </div>
+        <div class="grid">
+          <div class="card sel" style="--spine:var(--ok)">
+            <div class="row1"><span class="name">Fixture 01 · Clean main</span><span class="menu">⋯</span></div>
+            <div class="branch"><span class="dot" style="background:var(--ok)"></span><span>main</span></div>
+            <div class="meta"><span class="tech"><span class="dot" style="background:#7fb3d3"></span>React</span><span>·</span><span>atualizado há 12d</span><span class="open">Abrir ↗</span></div>
+          </div>
+          <div class="card" style="--spine:var(--warn)">
+            <div class="row1"><span class="name">Fixture 02 · Pull pending</span><span class="menu">⋯</span></div>
+            <div class="branch"><span class="dot" style="background:var(--warn)"></span><span>develop ↑2</span></div>
+            <div class="meta"><span class="tech"><span class="dot" style="background:#5f9ed0"></span>TypeScript</span><span>·</span><span>há 13d</span><span class="open">Abrir ↗</span></div>
+          </div>
+          <div class="card" style="--spine:var(--warn)">
+            <div class="row1"><span class="name">Fixture 03 · Local changes</span><span class="menu">⋯</span></div>
+            <div class="branch"><span class="dot" style="background:var(--warn)"></span><span>feature/ui-polish</span></div>
+            <div class="meta"><span class="tech"><span class="dot" style="background:#c77b4a"></span>Rust</span><span>·</span><span>há 14d</span><span class="open">Abrir ↗</span></div>
+          </div>
+          <div class="card" style="--spine:var(--violet)">
+            <div class="row1"><span class="name">Fixture 04 · Ahead push</span><span class="menu">⋯</span></div>
+            <div class="branch"><span class="dot" style="background:var(--violet)"></span><span>release/candidate</span></div>
+            <div class="meta"><span class="tech"><span class="dot" style="background:#8bc34a"></span>Node.js</span><span>·</span><span>há 15d</span><span class="open">Abrir ↗</span></div>
+          </div>
+          <div class="card" style="--spine:var(--t4)">
+            <div class="row1"><span class="name">Fixture 05 · No Git folder</span><span class="menu">⋯</span></div>
+            <div class="branch"><span class="dot" style="background:var(--t4)"></span><span>sem repositório</span></div>
+            <div class="meta"><span class="tech"><span class="dot" style="background:#7fb3d3"></span>React</span><span>·</span><span>há 16d</span><span class="open">Abrir ↗</span></div>
+          </div>
+          <div class="card" style="--spine:var(--ok)">
+            <div class="row1"><span class="name">Fixture 06 · Clean main</span><span class="menu">⋯</span></div>
+            <div class="branch"><span class="dot" style="background:var(--ok)"></span><span>main</span></div>
+            <div class="meta"><span class="tech"><span class="dot" style="background:#5f9ed0"></span>TypeScript</span><span>·</span><span>há 17d</span><span class="open">Abrir ↗</span></div>
+          </div>
+          <div class="card" style="--spine:var(--warn)">
+            <div class="row1"><span class="name">Fixture 07 · Pull pending</span><span class="menu">⋯</span></div>
+            <div class="branch"><span class="dot" style="background:var(--warn)"></span><span>develop</span></div>
+            <div class="meta"><span class="tech"><span class="dot" style="background:#c77b4a"></span>Rust</span><span>·</span><span>há 18d</span><span class="open">Abrir ↗</span></div>
+          </div>
+          <div class="card" style="--spine:var(--warn)">
+            <div class="row1"><span class="name">Fixture 08 · Local changes</span><span class="menu">⋯</span></div>
+            <div class="branch"><span class="dot" style="background:var(--warn)"></span><span>feature/ui-polish</span></div>
+            <div class="meta"><span class="tech"><span class="dot" style="background:#8bc34a"></span>Node.js</span><span>·</span><span>há 19d</span><span class="open">Abrir ↗</span></div>
+          </div>
+          <div class="card" style="--spine:var(--violet)">
+            <div class="row1"><span class="name">Fixture 09 · Ahead push</span><span class="menu">⋯</span></div>
+            <div class="branch"><span class="dot" style="background:var(--violet)"></span><span>release/candidate</span></div>
+            <div class="meta"><span class="tech"><span class="dot" style="background:#7fb3d3"></span>React</span><span>·</span><span>há 20d</span><span class="open">Abrir ↗</span></div>
+          </div>
+          <div class="card" style="--spine:var(--t4)">
+            <div class="row1"><span class="name">Fixture 10 · No Git folder</span><span class="menu">⋯</span></div>
+            <div class="branch"><span class="dot" style="background:var(--t4)"></span><span>sem repositório</span></div>
+            <div class="meta"><span class="tech"><span class="dot" style="background:#5f9ed0"></span>TypeScript</span><span>·</span><span>há 21d</span><span class="open">Abrir ↗</span></div>
+          </div>
+          <div class="card" style="--spine:var(--ok)">
+            <div class="row1"><span class="name">Fixture 11 · Clean main</span><span class="menu">⋯</span></div>
+            <div class="branch"><span class="dot" style="background:var(--ok)"></span><span>main</span></div>
+            <div class="meta"><span class="tech"><span class="dot" style="background:#c77b4a"></span>Rust</span><span>·</span><span>há 22d</span><span class="open">Abrir ↗</span></div>
+          </div>
+          <div class="card" style="--spine:var(--warn)">
+            <div class="row1"><span class="name">Fixture 12 · Pull pending</span><span class="menu">⋯</span></div>
+            <div class="branch"><span class="dot" style="background:var(--warn)"></span><span>develop</span></div>
+            <div class="meta"><span class="tech"><span class="dot" style="background:#8bc34a"></span>Node.js</span><span>·</span><span>há 23d</span><span class="open">Abrir ↗</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="statusbar"><span class="dot" style="background:var(--ok)"></span>36 projetos · 29 repositórios<span class="right"><span>Dados locais</span><span>Ctrl K Ações rápidas</span><span>Ctrl R Atualizar</span></span></div>
+    <div class="callout" style="top:178px;left:88px">1</div>
+    <div class="callout" style="top:330px;left:640px">2</div>
+    <div class="callout" style="top:206px;left:412px">3</div>
+    <div class="callout" style="top:150px;left:120px">4</div>
+  </div>
+
+  <!-- ==================== 2. CANVAS ==================== -->
+  <h2>2 · Canvas de orquestração</h2>
+  <p class="legend">Referência “hoje”: artifacts/ui/desktop-1366x768-canvas-squad.png e canvas-agent.png</p>
+  <div class="keys"><span><b>1</b> Toolbar única em pílula: criação ▸ conexão ▸ zoom (presets em dropdown)</span><span><b>2</b> Arestas com estado: cinza idle · âmbar animado em orquestração</span><span><b>3</b> Nós com espinha de tipo e preview</span><span><b>4</b> Inspetor em abas com CTA claro</span><span><b>5</b> Toast no topo, fora do fluxo do inspetor</span></div>
+  <div class="frame">
+    <div class="cv">
+      <svg class="edges" width="1366" height="768">
+        <path d="M 300 250 C 480 260, 560 300, 700 330" fill="none" stroke="#3a4152" stroke-width="2"/>
+        <path d="M 300 270 C 500 340, 640 420, 810 300" fill="none" stroke="#d9a441" stroke-width="2" stroke-dasharray="7 5" opacity=".9"/>
+        <circle cx="300" cy="250" r="5" fill="#1d222e" stroke="#7c8598" stroke-width="2"/>
+        <circle cx="700" cy="330" r="5" fill="#1d222e" stroke="#a6bf8a" stroke-width="2"/>
+        <circle cx="810" cy="300" r="5" fill="#1d222e" stroke="#d9a441" stroke-width="2"/>
+      </svg>
+      <div class="cv-toolbar">
+        <span class="tbtn hot">＋ ▾</span>
+        <span class="tbtn">Agente</span><span class="tbtn">Terminal</span><span class="tbtn">Nota</span><span class="tbtn">Squad</span>
+        <span class="tsep"></span>
+        <span class="tbtn">⇄ Conectar</span>
+        <span class="tsep"></span>
+        <span class="tbtn">−</span><span class="zoompct">78%</span><span class="tbtn">＋</span><span class="zoomdd">▾</span>
+        <span class="tsep"></span>
+        <span class="tbtn">⛶ Foco</span>
+      </div>
+      <div class="cv-chip">● Fixture 02 · Pull pending <span style="color:var(--t4)">|</span> <span class="kbd">Esc</span></div>
+      <div class="toast">✓&nbsp; Item excluído: <b>&nbsp;src&nbsp;</b> <span class="undo">Desfazer</span><span style="color:var(--t4)">·</span><span style="color:var(--t4)">✕</span></div>
+
+      <div class="node agent" style="left:120px;top:180px;width:250px">
+        <div class="nhead"><span class="dot" style="background:var(--ok)"></span><span class="nname">Agente: Implementação</span><span class="chip" style="margin-left:auto">Codex CLI</span></div>
+        <div class="nbody">▸ editando src/ui/polish.ts<br>▸ 3 arquivos alterados · há 2 min</div>
+        <div class="port" style="right:-5px;top:38px"></div>
+      </div>
+      <div class="node term" style="left:120px;top:330px;width:250px">
+        <div class="nhead"><span class="dot" style="background:var(--ok)"></span><span class="nname">Terminal · testes</span><span class="chip neutral" style="margin-left:auto">pronto</span></div>
+        <div class="nwell">$ npm test → 128 passed</div>
+      </div>
+      <div class="node note" style="left:560px;top:130px;width:210px">
+        <div class="nhead"><span class="nname">Handoff</span><span class="chip neutral" style="margin-left:auto">19 car.</span></div>
+        <div class="nbody">Validar a entrega ponta a ponta e consolidar o resultado.</div>
+      </div>
+      <div class="node agent" style="left:700px;top:270px;width:250px;border-left-color:var(--amber)">
+        <div class="nhead"><span class="dot" style="background:var(--amber)"></span><span class="nname">Coordenador</span><span class="chip" style="margin-left:auto;background:rgba(217,164,65,.15);color:var(--amber)">orquestrando</span></div>
+        <div class="nbody">▸ delegando para 3 especialistas…</div>
+        <div class="port hot" style="left:-5px;top:38px"></div>
+      </div>
+
+      <div class="minimap">
+        <div class="mm-node" style="left:12px;top:14px;width:26px;height:16px"></div>
+        <div class="mm-node" style="left:70px;top:44px;width:26px;height:16px"></div>
+        <div class="mm-node" style="left:120px;top:20px;width:22px;height:14px"></div>
+        <div class="mm-view" style="left:6px;top:8px;width:96px;height:60px"></div>
+      </div>
+      <div class="help">?</div>
+    </div>
+    <div class="inspector">
+      <div class="insp-head">
+        <div class="insp-kicker">SQUAD · 4 MEMBROS</div>
+        <div class="insp-title">Entrega E2E</div>
+        <div class="insp-tabs"><i>Visão</i><i class="on">Membros</i><i>Objetivo</i></div>
+      </div>
+      <div class="insp-body">
+        <div class="flabel">MEMBROS</div>
+        <div class="member"><span class="dot" style="background:var(--amber)"></span><span class="mn">Coordenador</span><span class="role coord">COORDENADOR</span></div>
+        <div class="member"><span class="dot" style="background:var(--ok)"></span><span class="mn">Agente de implementação</span><span class="role impl">IMPLEMENTAÇÃO</span></div>
+        <div class="member"><span class="dot" style="background:var(--ok)"></span><span class="mn">Agente: Revisão</span><span class="role rev">REVISÃO</span></div>
+        <div class="member"><span class="dot" style="background:var(--ok)"></span><span class="mn">Agente: Testes</span><span class="role test">TESTES</span></div>
+        <div class="flabel">OBJETIVO</div>
+        <div class="obj">Tarefa automatizada de ponta a ponta: executar a mudança e validar a entrega.</div>
+      </div>
+      <div class="insp-foot"><button class="btn primary">▶ Iniciar orquestração</button></div>
+    </div>
+    <div class="callout" style="top:26px;left:640px">1</div>
+    <div class="callout" style="top:352px;left:520px">2</div>
+    <div class="callout" style="top:272px;left:150px">3</div>
+    <div class="callout" style="top:120px;left:1200px">4</div>
+    <div class="callout" style="top:58px;left:796px">5</div>
+  </div>
+
+  <!-- ==================== 3. WORKSPACE ==================== -->
+  <h2>3 · Workspace integrado (código + terminal + web)</h2>
+  <p class="legend">Referência “hoje”: artifacts/ui/desktop-1366x768-dark.png</p>
+  <div class="keys"><span><b>1</b> Um seletor de visão (Canvas · Código · Web) no lugar de três botões-toggle</span><span><b>2</b> Cabeçalhos de painel unificados: 32px, rótulo 11px caixa-alta, ações à direita</span><span><b>3</b> Painel web com estado vazio orientado</span><span><b>4</b> Breadcrumb mono substitui título duplicado + caminho</span></div>
+  <div class="frame">
+    <div class="titlebar">
+      <div class="brand"><div class="orbit"></div><strong>DevOrbit</strong></div>
+      <span class="loc">Workspace local</span>
+      <div class="gsearch">⌕&nbsp; Buscar projetos, pastas ou tecnologias… <span class="kbd">Ctrl K</span></div>
+      <div class="win"><i>⟳</i><i>—</i><i>▢</i><i>✕</i></div>
+    </div>
+    <div class="ws-tabs">
+      <div class="ptab on">Fixture 02 · Pull pending develop<small>develop</small></div>
+      <div class="ptab">Fixture 03 · Local changes feature ui<small>feature/ui-polish</small></div>
+      <div class="seg views"><i>◫ Canvas</i><i class="on">⌨ Código</i><i>◐ Web</i></div>
+    </div>
+    <div class="ws-toolbar">
+      <span class="crumb">C:\DevOrbit Fixture Workspace\teams\fixture-02</span>
+      <div class="right">
+        <button class="btn">➤ Enviar contexto</button>
+        <button class="btn ghost">⟳</button>
+        <button class="btn ghost">✕ Fechar</button>
+      </div>
+    </div>
+    <div class="ws-body">
+      <div class="pnl raised files">
+        <div class="pnl-h">ARQUIVOS<span class="acts">＋ 📁 ✎ 🗑</span></div>
+        <div class="pnl-b tree">
+          <div>▾ ◧ src</div>
+          <div class="sub dirty">· main.ts <span style="margin-left:auto;font-size:10px;color:var(--warn)">M</span></div>
+          <div class="sub">· notes.md</div>
+          <div>▸ ◧ tests</div>
+          <div>· README.md</div>
+        </div>
+      </div>
+      <div class="pnl editor">
+        <div class="etabs">
+          <span class="etab">README.md</span>
+          <span class="etab on">main.ts <span class="unsaved"></span></span>
+          <span style="margin-left:auto"></span>
+          <span class="kbd" style="margin-right:8px">Buscar</span><span class="kbd" style="margin-right:8px">Símbolos</span><span class="kbd">Diff</span>
+        </div>
+        <div class="code"><span class="kw">export const</span> fixture = <span class="st">true</span>
+<span class="cm">// rascunho de verificacao</span>
+<span class="kw">function</span> <span style="color:var(--t1)">main</span>() {
+  <span class="kw">return</span> fixture
+}</div>
+      </div>
+      <div class="pnl web">
+        <div class="pnl-h">PESQUISA WEB</div>
+        <div class="urlrow"><div class="url">https://</div><span class="btn" style="height:28px">↵</span></div>
+        <div class="empty"><b>Navegue dentro do DevOrbit</b>A página abre ancorada ao viewport do canvas — use ⌂ para voltar ao início.</div>
+      </div>
+      <div class="pnl term">
+        <div class="pnl-h">TERMINAL<span style="display:inline-flex;align-items:center;gap:6px;letter-spacing:0;font-weight:400;color:var(--t2)"><span class="dot" style="background:var(--ok)"></span>pronto · cmd</span><span class="acts">⌨ Codex ▾&nbsp;&nbsp;♡&nbsp;&nbsp;⟲</span></div>
+        <div class="termwell">Terminal pronto · C:\DevOrbit Fixture Workspace\teams\fixture-02<br>$ _</div>
+      </div>
+    </div>
+    <div class="statusbar"><span class="dot" style="background:var(--ok)"></span>36 projetos · 29 repositórios<span class="right"><span>Dados locais</span><span>Ctrl K Ações rápidas</span><span>Ctrl R Atualizar</span></span></div>
+    <div class="callout" style="top:100px;left:1044px">1</div>
+    <div class="callout" style="top:166px;left:60px">2</div>
+    <div class="callout" style="top:420px;left:1150px">3</div>
+    <div class="callout" style="top:140px;left:80px">4</div>
+  </div>
+
+  <!-- ==================== 4. TOKENS ==================== -->
+  <h2>4 · Fundamentos: cor, elevação e tipo</h2>
+  <p class="legend">Substitui os tokens atuais por uma escada de elevação consistente + um acento só. Nomes novos mapeiam 1:1 nos tokens existentes (--color-bg-*, --color-accent*, estados de Git novos).</p>
+  <div class="tokens">
+    <div class="tok"><div class="sw" style="background:#0f1116"></div><div class="lb">Fundo página<code>#0f1116</code></div></div>
+    <div class="tok"><div class="sw" style="background:#171b24"></div><div class="lb">Painel/cartão<code>#171b24</code></div></div>
+    <div class="tok"><div class="sw" style="background:#1d222e"></div><div class="lb">Elevado (toolbar/hover)<code>#1d222e</code></div></div>
+    <div class="tok"><div class="sw" style="background:#0a0c10;border-bottom:1px solid #222"></div><div class="lb">Poço (canvas/terminal)<code>#0a0c10</code></div></div>
+    <div class="tok"><div class="sw" style="background:linear-gradient(90deg,#a6bf8a,#4a6038)"></div><div class="lb">Acento oliva<code>#a6bf8a · #4a6038</code></div></div>
+    <div class="tok"><div class="sw" style="background:linear-gradient(90deg,#69a986 0 25%,#d0a05a 0 50%,#b29dd6 0 75%,#c97a85 0)"></div><div class="lb">Git: limpo · pendente · à frente · conflito<code>semtânticos</code></div></div>
+  </div>
+  <div class="type">
+    <div style="font-size:20px;font-weight:650;letter-spacing:-.3px">Título de página — 20 / 650</div>
+    <div style="font-size:15px;font-weight:650">Título de painel — 15 / 650</div>
+    <div style="font-size:13px">Corpo — 13 / 400 · texto principal #e8ecf3, secundário #a8b1c2, apagado #7c8598</div>
+    <div style="font-size:11px;font-weight:650;letter-spacing:.8px;color:#7c8598">RÓTIMO DE PAINEL — 11 / 650 / +0.8px (caixa-alta)</div>
+    <div style="font:11.5px var(--mono);color:#a8b1c2">Mono — branches, caminhos, preview de terminal: develop ↑2 · C:\DevOrbit\fixture-02</div>
+  </div>
+</div>
+</body>
+</html>

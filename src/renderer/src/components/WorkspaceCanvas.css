@@ -3,7 +3,7 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: var(--ops-surface-0);
+  background: var(--color-bg-inset, var(--ops-surface-0));
   color: var(--ops-text-primary);
   font-family: var(--font-ui);
   isolation: isolate;
@@ -19,7 +19,7 @@
 .workspace-canvas-grid {
   position: absolute;
   inset: 0;
-  background-color: var(--ops-surface-0);
+  background-color: var(--color-bg-inset, var(--ops-surface-0));
   background-image:
     linear-gradient(var(--ops-grid-line) 1px, transparent 1px),
     linear-gradient(90deg, var(--ops-grid-line) 1px, transparent 1px);
@@ -40,11 +40,30 @@
   pointer-events: none;
   z-index: 0;
 }
+/* Aresta idle: traço cinza 2px, sem animação — a animação de fluxo fica
+   reservada à orquestração ativa (aresta com estado). */
 .workspace-canvas-connections path {
   fill: none;
-  stroke: var(--ops-connection);
+  stroke: var(--color-border-strong, var(--ops-connection));
   stroke-width: 2;
   stroke-linecap: round;
+}
+/* Cabo de piping (notas → agente, kind "context"): mantém distinção do idle
+   com traço tracejado mais leve. */
+.workspace-canvas-connections .edge-context .canvas-edge-path {
+  stroke-dasharray: 5 6;
+  opacity: 0.85;
+}
+/* Vínculo de squad: pontilhado discreto. */
+.workspace-canvas-connections .edge-membership .canvas-edge-path {
+  stroke-dasharray: 2 6;
+  opacity: 0.8;
+}
+/* Orquestração ATIVA: âmbar + dasharray animado existente (canvas-link-flow). */
+.workspace-canvas-connections .canvas-edge-path.is-orchestrating,
+.workspace-canvas-connections .is-orchestrating .canvas-edge-path {
+  stroke: var(--color-orchestrating, #d9a441);
+  stroke-width: 2;
   stroke-dasharray: 7 5;
   animation: canvas-link-flow 1.5s linear infinite;
 }
@@ -53,6 +72,13 @@
   stroke-width: 2.5;
   stroke-dasharray: 8 6;
   animation: none;
+}
+/* Pontas de seta acompanham o estado da aresta. */
+.canvas-edge-arrowhead {
+  fill: var(--color-border-strong, var(--ops-connection));
+}
+.canvas-edge-arrowhead-orchestrating {
+  fill: var(--color-orchestrating, #d9a441);
 }
 @keyframes canvas-link-flow {
   to {
@@ -114,14 +140,21 @@
     box-shadow 0.12s;
 }
 .workspace-canvas-card.canvas-workbench,
-.workspace-canvas-card.canvas-note,
 .workspace-canvas-card.canvas-browser {
   border-top: 1px solid var(--ops-border-subtle);
   background: var(--ops-surface-2);
 }
+/* Espinha de tipo — Agente: borda esquerda oliva (3px). */
 .workspace-canvas-card.canvas-agent {
   border-top: 1px solid var(--ops-border-subtle);
+  border-left: 3px solid var(--color-accent, var(--ops-focus));
   background: var(--ops-surface-2);
+}
+/* Espinha de tipo — Nota: borda âmbar; fundo permanece na família neutra
+   (asserção do harness: 1 único fundo entre cards do canvas). */
+.workspace-canvas-card.canvas-note {
+  border-top: 1px solid var(--ops-border-subtle);
+  border-left: 3px solid var(--color-orchestrating, var(--ops-warning));
 }
 .workspace-canvas-card.canvas-agent > header {
   border-bottom-color: var(--ops-border-subtle);
@@ -139,7 +172,43 @@
 .workspace-canvas-card.canvas-terminal[data-terminal-theme="rose"] { --term-accent: #e11d48; }
 .workspace-canvas-card.canvas-terminal > header {
   border-bottom-color: var(--ops-border-subtle);
-  background: var(--ops-surface-3);
+  /* Cabeçalho levemente elevado (superfície raised do contrato de tokens). */
+  background: var(--color-bg-raised, var(--ops-surface-3));
+}
+/* Badge de estado do terminal (pronto/executando) restilizado como pílula
+   dentro do nó do canvas — o markup vive no WorkspaceTerminal (keep-alive). */
+.workspace-canvas-card.canvas-terminal .terminal-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  height: 18px;
+  padding: 0 7px;
+  border: 1px solid var(--color-border-subtle, var(--ops-border-subtle));
+  border-radius: 999px;
+  background: var(--color-bg-raised, var(--ops-surface-4));
+  color: var(--ops-text-muted);
+  font: 650 9px/1 var(--font-ui);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.workspace-canvas-card.canvas-terminal .terminal-status i {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--ops-text-muted);
+}
+.workspace-canvas-card.canvas-terminal .terminal-status.ready i {
+  background: var(--color-success, var(--ops-success));
+}
+.workspace-canvas-card.canvas-terminal .terminal-status.starting i {
+  background: var(--color-orchestrating, var(--ops-warning));
+}
+.workspace-canvas-card.canvas-terminal .terminal-status.error i,
+.workspace-canvas-card.canvas-terminal .terminal-status.missing i {
+  background: var(--ops-danger);
 }
 .workspace-canvas-card.canvas-terminal > header .canvas-card-title svg {
   color: var(--term-accent, var(--ops-text-muted));
@@ -625,22 +694,94 @@
   font: 650 10px var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
-.workspace-canvas-hint {
+/* Ajuda de navegação: botão redondo "?" no canto inferior esquerdo; o popover
+   carrega o mesmo texto do antigo hint fixo e abre sob demanda. */
+.canvas-hint-wrap {
   position: absolute;
   z-index: 100;
   left: var(--space-3);
   bottom: var(--space-3);
   display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  max-width: min(520px, max(200px, calc(50% - 164px)));
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--ops-border-subtle);
-  border-radius: var(--radius-control);
+  flex-direction: column;
+  align-items: flex-start;
+}
+.canvas-hint-toggle {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--color-border-strong, var(--ops-border-subtle));
+  border-radius: 50%;
+  background: var(--color-bg-raised, var(--ops-surface-2));
+  color: var(--ops-text-secondary);
+  box-shadow: 0 8px 20px var(--ops-shadow-node);
+  font: 700 13px/1 var(--font-ui);
+  cursor: pointer;
+}
+.canvas-hint-toggle:hover {
+  border-color: var(--ops-focus);
+  color: var(--ops-text-primary);
+}
+.canvas-hint-toggle:focus-visible {
+  outline: 2px solid var(--ops-focus);
+  outline-offset: 2px;
+}
+.canvas-hint-popover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  max-width: min(440px, calc(100vw - var(--space-6)));
+  padding: 10px 30px 10px 12px;
+  border: 1px solid var(--color-border-strong, var(--ops-border-subtle));
+  border-radius: 10px;
+  background: var(--color-bg-popover, var(--ops-overlay));
   color: var(--ops-text-muted);
-  background: var(--ops-overlay);
+  box-shadow: 0 12px 28px var(--ops-shadow-node);
   font-size: var(--text-size-meta, 11px);
-  pointer-events: none;
+  line-height: 1.55;
+  user-select: text;
+}
+.canvas-hint-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ops-text-muted);
+  cursor: pointer;
+}
+.canvas-hint-close:hover {
+  background: var(--surface-hover, var(--ops-surface-4));
+  color: var(--ops-text-primary);
+}
+.canvas-hint-close:focus-visible {
+  outline: 2px solid var(--ops-focus);
+  outline-offset: 1px;
+}
+
+/* ==========================================================================
+   Toast de notificação com o canvas aberto
+   ==========================================================================
+   O toast é renderizado no App (canto inferior direito) — exatamente onde o
+   Inspector do canvas trabalha. Com um canvas na árvore, reposiciona para o
+   topo-centro, abaixo da toolbar (fora do caminho do Inspector). Escopo via
+   :has(): telas sem canvas mantêm o comportamento atual. */
+body:has(.workspace-canvas) .app-toast {
+  top: 56px !important;
+  right: auto !important;
+  bottom: auto !important;
+  left: 50% !important;
+  inset-inline-end: auto !important;
+  transform: translateX(-50%);
+  border-radius: 11px;
+  box-shadow: 0 14px 30px var(--ops-shadow-node);
 }
 .workspace-canvas-connection-status {
   position: absolute;
@@ -922,19 +1063,17 @@
 }
 .canvas-delete-node:hover { border-color: rgba(181, 110, 118, .5); background: var(--ops-surface-4); color: var(--ops-danger); }
 @media (max-width: 760px) {
-  .workspace-canvas-hint {
-    max-width: 280px;
-    font-size: 0;
-  }
-  .workspace-canvas-hint svg {
-    width: 14px;
-    height: 14px;
+  .canvas-hint-popover {
+    max-width: calc(100vw - 40px);
   }
 }
 @media (prefers-reduced-motion: reduce) {
+  /* !important vence a regra de orquestração ativa (mais específica), que
+     senão reiniciaria a animação para quem precisa de menos movimento. */
   .workspace-canvas-connections path,
+  .workspace-canvas-connections .canvas-edge-path.is-orchestrating,
   .canvas-agent-progress.progress-running i {
-    animation: none;
+    animation: none !important;
   }
   .workspace-canvas-radial-option,
   .workspace-canvas-radial-core {
@@ -1227,8 +1366,24 @@
   background: var(--ops-surface-2);
 }
 
+/* Badge âmbar do coordenador liderando orquestração ativa. */
+.canvas-node-orchestrating-badge {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border: 1px solid color-mix(in srgb, var(--color-orchestrating, #d9a441) 45%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-orchestrating, #d9a441) 14%, transparent);
+  color: var(--color-orchestrating, #d9a441);
+  font: 700 9px/1.2 var(--font-ui);
+  letter-spacing: 0.05em;
+  text-transform: lowercase;
+  white-space: nowrap;
+}
+
 /* ==========================================================================
-   Canvas Toolbar
+   Canvas Toolbar — pílula flutuante única (criação ▸ conexão ▸ zoom ▸ foco)
    ========================================================================== */
 .canvas-toolbar {
   position: absolute;
@@ -1238,11 +1393,11 @@
   z-index: 120;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   padding: 4px 6px;
-  border: 1px solid var(--ops-border-strong);
-  border-radius: var(--radius-panel, 8px);
-  background: var(--ops-surface-1);
+  border: 1px solid var(--color-border-strong, var(--ops-border-strong));
+  border-radius: 11px;
+  background: var(--color-bg-raised, var(--ops-surface-1));
   box-shadow: 0 12px 28px var(--ops-shadow-node);
   user-select: none;
 }
@@ -1253,11 +1408,18 @@
   gap: 2px;
 }
 
+/* Glifo "＋" que abre o grupo de criação (decorativo). */
+.canvas-toolbar-lead-icon {
+  flex: 0 0 auto;
+  margin-right: 2px;
+  color: var(--ops-text-muted);
+}
+
 .canvas-toolbar-separator {
   width: 1px;
   height: 20px;
   margin: 0 3px;
-  background: var(--ops-border-subtle);
+  background: var(--color-border-subtle, var(--ops-border-subtle));
 }
 
 .canvas-toolbar-btn {
@@ -1267,7 +1429,7 @@
   height: 28px;
   padding: 0 8px;
   border: 1px solid transparent;
-  border-radius: var(--radius-control, 4px);
+  border-radius: 7px;
   color: var(--ops-text-secondary);
   background: transparent;
   font: 600 11px var(--font-ui);
@@ -1276,20 +1438,20 @@
 }
 
 .canvas-toolbar-btn:hover:not(:disabled) {
-  border-color: var(--ops-border-subtle);
-  background: var(--ops-surface-3);
+  border-color: var(--color-border-subtle, var(--ops-border-subtle));
+  background: var(--surface-hover, var(--ops-surface-3));
   color: var(--ops-text-primary);
 }
 
 .canvas-toolbar-btn:focus-visible {
-  outline: 2px solid var(--ops-focus);
+  outline: 2px solid var(--color-focus-ring, var(--ops-focus));
   outline-offset: 1px;
 }
 
 .canvas-toolbar-btn.is-active {
-  border-color: var(--ops-focus);
-  background: var(--ops-surface-4);
-  color: var(--ops-focus);
+  border-color: var(--color-orchestrating, var(--ops-focus));
+  background: color-mix(in srgb, var(--color-orchestrating, #d9a441) 14%, transparent);
+  color: var(--color-orchestrating, var(--ops-focus));
 }
 
 .canvas-toolbar-btn:disabled {
@@ -1318,34 +1480,78 @@
   color: var(--ops-text-primary);
 }
 
+/* Wrapper do dropdown de presets: posiciona o menu popover sob o ▾. */
 .canvas-toolbar-zoom-presets {
-  display: flex;
+  position: relative;
+  display: inline-flex;
   align-items: center;
-  gap: 2px;
-  margin: 0 2px;
+  margin-left: 2px;
 }
 
-.canvas-toolbar-chip {
-  height: 22px;
-  padding: 0 6px;
-  border: 1px solid var(--ops-border-subtle);
-  border-radius: var(--radius-icon, 4px);
-  background: var(--ops-surface-2);
-  color: var(--ops-text-muted);
-  font: 600 10px var(--font-ui);
-  cursor: pointer;
-}
-
-.canvas-toolbar-chip:hover {
-  border-color: var(--ops-border-strong);
+.canvas-toolbar-zoom-trigger[aria-expanded="true"] {
+  border-color: var(--color-border-strong, var(--ops-border-strong));
+  background: var(--surface-hover, var(--ops-surface-3));
   color: var(--ops-text-primary);
-  background: var(--ops-surface-3);
 }
 
-.canvas-toolbar-chip.is-active {
-  border-color: var(--ops-focus);
-  color: var(--ops-focus);
-  background: var(--ops-surface-4);
+.canvas-toolbar-zoom-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 130;
+  display: grid;
+  min-width: 104px;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--color-border-strong, var(--ops-border-strong));
+  border-radius: 10px;
+  background: var(--color-bg-popover, var(--ops-surface-1));
+  box-shadow: 0 14px 30px var(--ops-shadow-node);
+}
+
+/* `display: grid` acima venceria o `[hidden]` do UA — restaurar o oculto. */
+.canvas-toolbar-zoom-menu[hidden] {
+  display: none;
+}
+
+.canvas-toolbar-zoom-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ops-text-secondary);
+  font: 600 11px var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
+  text-align: left;
+}
+
+.canvas-toolbar-zoom-option:hover {
+  background: var(--surface-hover, var(--ops-surface-3));
+  color: var(--ops-text-primary);
+}
+
+.canvas-toolbar-zoom-option:focus-visible {
+  outline: 2px solid var(--color-focus-ring, var(--ops-focus));
+  outline-offset: 1px;
+}
+
+.canvas-toolbar-zoom-option.is-active {
+  color: var(--color-accent, var(--ops-focus));
+  font-weight: 700;
+}
+
+.canvas-toolbar-zoom-check {
+  display: inline-grid;
+  place-items: center;
+  width: 12px;
+  flex: 0 0 auto;
 }
 
 /* ==========================================================================

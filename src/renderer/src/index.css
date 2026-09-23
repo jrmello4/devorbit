@@ -12,23 +12,33 @@
   --text-size-body: 13px;
   --text-size-meta: 11px;
   --text-size-title: 17px;
+  /* Sistema "Grafite + Oliva" — tema claro (default). Valores escuros nos blocos [data-theme="dark"] e prefers-color-scheme. */
   --color-bg-page: #f4f5f7;
   --color-bg-header: #fbfbfc;
   --color-bg-toolbar: #eef0f3;
   --color-bg-panel: #ffffff;
   --color-bg-popover: #ffffff;
-  --color-bg-card-start: #ffffff;
-  --color-bg-card-end: #ffffff;
+  --color-bg-inset: #e8eaef; /* poço do canvas e fundo atrás de nós */
+  --color-bg-raised: #ffffff; /* toolbar flutuante, hover elevado, segmented */
+  --color-bg-card-start: #ffffff; /* legado: mapeado ao painel */
+  --color-bg-card-end: #ffffff; /* legado: mapeado ao painel */
   --color-border-subtle: #d8dbe1;
   --color-border-strong: #b9bfc9;
   --color-text-muted: #646b78;
   --color-text-secondary: #454c58;
-  --color-accent: #5b6b86;
-  --color-accent-strong: #46536b;
-  --color-accent-hover: #3a4557;
-  --color-cyan: #5b6b86;
-  --color-focus-ring: #5b6b86;
+  --color-accent: #5f7a46;
+  --color-accent-strong: #4a6038;
+  --color-accent-hover: #3f5330;
+  --color-cyan: #5f7a46; /* legado: aponta para o accent oliva */
+  --color-focus-ring: #5f7a46;
   --color-accent-contrast: #ffffff;
+  /* Semânticos de Git */
+  --color-git-clean: #3f7a5c;
+  --color-git-pending: #8a6a33;
+  --color-git-ahead: #7a5fa0;
+  --color-git-conflict: #a0545e;
+  --color-git-none: #6b7280;
+  --color-orchestrating: #a8761c; /* aresta/orquestração ativa (âmbar escuro p/ claro) */
   --color-danger: #a0545e;
   --color-warning: #8a6a33;
   --color-success: #4f7a5f;
@@ -37,9 +47,12 @@
   --surface-selected: #dde2e9;
   --surface-muted: #f0f1f4;
 }
-:root { color-scheme: light; --text-primary:#20242b; --surface-hover:#e9ebef; --surface-selected:#dde2e9; --surface-muted:#f0f1f4; --radius:6px; --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px; --space-5:20px; --space-6:24px; --radius-sm:5px; --radius-md:8px; --text-size-body:13px; --text-size-meta:11px; --text-size-title:17px; --color-bg-page:#f4f5f7; --color-bg-header:#fbfbfc; --color-bg-toolbar:#eef0f3; --color-bg-panel:#ffffff; --color-bg-popover:#ffffff; --color-border-subtle:#d8dbe1; --color-border-strong:#b9bfc9; --color-text-muted:#646b78; --color-text-secondary:#454c58; --color-accent:#5b6b86; --color-accent-strong:#46536b; --color-accent-hover:#3a4557; --color-focus-ring:#5b6b86; --color-accent-contrast:#ffffff; --color-danger:#a0545e; --color-warning:#8a6a33; --color-success:#4f7a5f; }
-:root[data-theme="dark"] { color-scheme: dark; --text-primary:#f5f7fa; --surface-hover:#1d212b; --surface-selected:#232b39; --surface-muted:#141820; --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px; --space-5:20px; --space-6:24px; --radius-sm:5px; --radius-md:8px; --text-size-body:13px; --text-size-meta:11px; --text-size-title:17px; --color-bg-page:#0d0f14; --color-bg-header:#11141b; --color-bg-toolbar:#0d0f14; --color-bg-panel:#171a22; --color-bg-popover:#1d212b; --color-border-subtle:#252a34; --color-border-strong:#343b48; --color-text-muted:#8b93a3; --color-text-secondary:#b7bdc8; --color-accent:#8797b4; --color-accent-strong:#8797b4; --color-accent-hover:#9aa9c3; --color-focus-ring:#a3b1c9; --color-accent-contrast:#11141b; --color-danger:#b56e76; --color-warning:#c79a59; --color-success:#69a986; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme]) { color-scheme: dark; --text-primary:#f5f7fa; --surface-hover:#1d212b; --surface-selected:#232b39; --surface-muted:#141820; --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px; --space-5:20px; --space-6:24px; --radius-sm:5px; --radius-md:8px; --text-size-body:13px; --text-size-meta:11px; --text-size-title:17px; --color-bg-page:#0d0f14; --color-bg-header:#11141b; --color-bg-toolbar:#0d0f14; --color-bg-panel:#171a22; --color-bg-popover:#1d212b; --color-border-subtle:#252a34; --color-border-strong:#343b48; --color-text-muted:#8b93a3; --color-text-secondary:#b7bdc8; --color-accent:#8797b4; --color-accent-strong:#8797b4; --color-accent-hover:#9aa9c3; --color-focus-ring:#a3b1c9; --color-accent-contrast:#11141b; --color-danger:#b56e76; --color-warning:#c79a59; --color-success:#69a986; } }
+/* Tema claro (default): mesma paleta do @theme com acento oliva. */
+:root { color-scheme: light; --text-primary:#20242b; --surface-hover:#e9ebef; --surface-selected:#dde2e9; --surface-muted:#f0f1f4; --radius:6px; --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px; --space-5:20px; --space-6:24px; --radius-sm:5px; --radius-md:8px; --text-size-body:13px; --text-size-meta:11px; --text-size-title:17px; --color-bg-page:#f4f5f7; --color-bg-header:#fbfbfc; --color-bg-toolbar:#eef0f3; --color-bg-panel:#ffffff; --color-bg-popover:#ffffff; --color-bg-inset:#e8eaef; --color-bg-raised:#ffffff; --color-bg-card-start:#ffffff; --color-bg-card-end:#ffffff; --color-border-subtle:#d8dbe1; --color-border-strong:#b9bfc9; --color-text-muted:#646b78; --color-text-secondary:#454c58; --color-accent:#5f7a46; --color-accent-strong:#4a6038; --color-accent-hover:#3f5330; --color-focus-ring:#5f7a46; --color-accent-contrast:#ffffff; --color-cyan:#5f7a46; --color-git-clean:#3f7a5c; --color-git-pending:#8a6a33; --color-git-ahead:#7a5fa0; --color-git-conflict:#a0545e; --color-git-none:#6b7280; --color-orchestrating:#a8761c; --color-danger:#a0545e; --color-warning:#8a6a33; --color-success:#4f7a5f; }
+/* Tema escuro "Grafite + Oliva" (dark-first). Mantenha este bloco sincronizado com o @media abaixo. */
+:root[data-theme="dark"] { color-scheme: dark; --text-primary:#e8ecf3; --surface-hover:rgba(232,236,243,.06); --surface-selected:rgba(166,191,138,.14); --surface-muted:#141820; --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px; --space-5:20px; --space-6:24px; --radius-sm:5px; --radius-md:8px; --text-size-body:13px; --text-size-meta:11px; --text-size-title:17px; --color-bg-page:#0f1116; --color-bg-header:#12151c; --color-bg-toolbar:#12151c; --color-bg-panel:#171b24; --color-bg-popover:#1d222e; --color-bg-inset:#0a0c10; --color-bg-raised:#1d222e; --color-bg-card-start:#171b24; --color-bg-card-end:#171b24; --color-border-subtle:rgba(232,236,243,.08); --color-border-strong:rgba(232,236,243,.16); --color-text-muted:#7c8598; --color-text-secondary:#a8b1c2; --color-accent:#a6bf8a; --color-accent-strong:#4a6038; --color-accent-hover:#5a7344; --color-focus-ring:#a6bf8a; --color-accent-contrast:#ffffff; --color-cyan:#a6bf8a; --color-git-clean:#69a986; --color-git-pending:#d0a05a; --color-git-ahead:#b29dd6; --color-git-conflict:#c97a85; --color-git-none:#59616f; --color-orchestrating:#d9a441; --color-danger:#c97a85; --color-warning:#d0a05a; --color-success:#69a986; }
+/* Fallback do sistema: espelho exato do bloco [data-theme="dark"]. */
+@media (prefers-color-scheme: dark) { :root:not([data-theme]) { color-scheme: dark; --text-primary:#e8ecf3; --surface-hover:rgba(232,236,243,.06); --surface-selected:rgba(166,191,138,.14); --surface-muted:#141820; --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px; --space-5:20px; --space-6:24px; --radius-sm:5px; --radius-md:8px; --text-size-body:13px; --text-size-meta:11px; --text-size-title:17px; --color-bg-page:#0f1116; --color-bg-header:#12151c; --color-bg-toolbar:#12151c; --color-bg-panel:#171b24; --color-bg-popover:#1d222e; --color-bg-inset:#0a0c10; --color-bg-raised:#1d222e; --color-bg-card-start:#171b24; --color-bg-card-end:#171b24; --color-border-subtle:rgba(232,236,243,.08); --color-border-strong:rgba(232,236,243,.16); --color-text-muted:#7c8598; --color-text-secondary:#a8b1c2; --color-accent:#a6bf8a; --color-accent-strong:#4a6038; --color-accent-hover:#5a7344; --color-focus-ring:#a6bf8a; --color-accent-contrast:#ffffff; --color-cyan:#a6bf8a; --color-git-clean:#69a986; --color-git-pending:#d0a05a; --color-git-ahead:#b29dd6; --color-git-conflict:#c97a85; --color-git-none:#59616f; --color-orchestrating:#d9a441; --color-danger:#c97a85; --color-warning:#d0a05a; --color-success:#69a986; } }
 @layer base {
   * { box-sizing:border-box; }
   html,body,#root { width:100%; height:100%; margin:0; overflow:hidden; }

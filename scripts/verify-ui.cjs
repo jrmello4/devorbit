@@ -523,10 +523,10 @@ async function inspectShell(window, viewport) {
   assert(result.contentScroll, 'project grid has no internal scrolling')
   assert(result.strayRows >= 2 && result.strayActions === result.strayRows, 'other folder actions are incomplete')
   assert(result.theme.mode === 'dark', 'default theme should be dark')
-  assert(result.theme.accent === '#8797b4', 'DevOrbit accent token is missing')
-  assert(result.theme.bodyBg === 'rgb(13, 15, 20)', 'unexpected dark page background')
-  assert(result.theme.titlebarBg === 'rgb(17, 20, 27)', 'unexpected dark titlebar background')
-  assert(result.theme.sidebarBg === 'rgb(13, 15, 20)', 'unexpected dark rail background')
+  assert(result.theme.accent === '#a6bf8a', 'DevOrbit accent token is missing')
+  assert(result.theme.bodyBg === 'rgb(15, 17, 22)', 'unexpected dark page background')
+  assert(result.theme.titlebarBg === 'rgb(18, 21, 28)', 'unexpected dark titlebar background')
+  assert(result.theme.sidebarBg === 'rgb(18, 21, 28)', 'unexpected dark rail background')
   recordPass(viewport.label, 'desktop dark grid shell validated')
   await screenshot(window, 'desktop-' + viewport.label + '-projects-clean')
 }
@@ -590,9 +590,9 @@ async function inspectResponsiveGrid(window, viewport) {
 async function inspectDarkTheme(window, viewport) {
   const dark = await evaluate(window, '(() => { const rootStyle = getComputedStyle(document.documentElement); const titlebar = document.querySelector(".app-titlebar"); return { mode: document.documentElement.dataset.theme || "", accent: rootStyle.getPropertyValue("--color-accent").trim(), bodyBg: getComputedStyle(document.body).backgroundColor, titlebarBg: titlebar ? getComputedStyle(titlebar).backgroundColor : "" } })()')
   assert(dark.mode === 'dark', 'dark theme is not applied')
-  assert(dark.accent === '#8797b4', 'dark accent is missing')
-  assert(dark.bodyBg === 'rgb(13, 15, 20)', 'unexpected dark page background')
-  assert(dark.titlebarBg === 'rgb(17, 20, 27)', 'unexpected dark titlebar background')
+  assert(dark.accent === '#a6bf8a', 'dark accent is missing')
+  assert(dark.bodyBg === 'rgb(15, 17, 22)', 'unexpected dark page background')
+  assert(dark.titlebarBg === 'rgb(18, 21, 28)', 'unexpected dark titlebar background')
   const themeControls = await evaluate(window, 'Array.from(document.querySelectorAll(".app-titlebar button")).some((button) => /tema claro|tema escuro/i.test(button.getAttribute("aria-label") || ""))')
   assert(!themeControls, 'a theme toggle contradicts the permanent dark theme')
   await screenshot(window, 'desktop-' + viewport.label + '-dark')
@@ -765,7 +765,7 @@ async function inspectProjectInteractions(window, viewport) {
       uniqueCardBackgrounds: new Set(backgrounds).size,
     }
   })()`)
-  assert(canvasTheme.canvas === 'rgb(8, 9, 12)', `${viewport.label}: canvas fora do Carbon esperado (${canvasTheme.canvas})`)
+  assert(canvasTheme.canvas === 'rgb(10, 12, 16)', `${viewport.label}: canvas fora do poço Grafite esperado (${canvasTheme.canvas})`)
   assert(canvasTheme.uniqueCardBackgrounds === 1, `${viewport.label}: nós não compartilham família neutra (${canvasTheme.uniqueCardBackgrounds} fundos)`)
   recordPass(viewport.label, 'canvas usa base Carbon e família neutra de nós')
   await waitFor(window, `(() => {
@@ -1280,7 +1280,7 @@ async function inspectMemory(window, viewport) {
     darkSurface: getComputedStyle(document.querySelector('[role="dialog"]')).backgroundColor,
   }))()`)
   assert(memory.title === 'Memória e handoff' && memory.textarea, `${viewport.label}: memory dialog incompleto (${JSON.stringify(memory)})`)
-  assert(memory.darkSurface === 'rgb(23, 26, 34)', `${viewport.label}: memory dialog não usa superfície escura (${memory.darkSurface})`)
+  assert(memory.darkSurface === 'rgb(23, 27, 36)', `${viewport.label}: memory dialog não usa superfície escura (${memory.darkSurface})`)
   recordPass(viewport.label, 'memory dialog uses the dark surface and exposes an editable handoff')
   await screenshot(window, `desktop-${viewport.label}-memory`)
   await key(window, 'Escape')

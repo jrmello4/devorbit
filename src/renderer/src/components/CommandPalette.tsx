@@ -13,8 +13,6 @@ import type { LucideIcon } from 'lucide-react'
 import type { Project } from '../types'
 import { AccessibleDialog } from './AccessibleDialog'
 import {
-  CREATE_BINDINGS,
-  NAVIGATE_BINDINGS,
   detectPrefixQuery,
   matchTwoStroke,
   parseSpacedTwoStroke,
@@ -347,17 +345,10 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
           )}
         </div>
 
-        <div className="flex items-center justify-between border-t border-[var(--color-border-subtle)] px-4 py-2.5 text-[10px] text-[var(--color-text-muted)]">
-          <span>Use ↑ ↓ para navegar · G + tecla navega · C + tecla cria</span>
-          <span className="flex items-center gap-1"><kbd className="rounded border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-1">↵</kbd> executar</span>
-        </div>
-        <div className="flex flex-wrap gap-2 border-t border-[var(--color-border-subtle)]/55 px-4 py-2 text-[10px] text-[var(--color-text-muted)]" aria-label="Atalhos de dois tempos">
-          {NAVIGATE_BINDINGS.map((binding) => (
-            <span key={binding.hint} title={binding.label} className="rounded border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-1.5 py-0.5 font-semibold">{binding.hint}</span>
-          ))}
-          {CREATE_BINDINGS.map((binding) => (
-            <span key={binding.hint} title={binding.label} className="rounded border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-1.5 py-0.5 font-semibold">{binding.hint}</span>
-          ))}
+        {/* Rodapé enxuto: uma única linha de ajuda. Os atalhos de dois tempos
+            (G/C) continuam funcionando — apenas os chips decorativos saíram. */}
+        <div className="flex items-center justify-center border-t border-[var(--color-border-subtle)] px-4 py-2 text-[11px] text-[var(--color-text-muted)]">
+          <span>↑↓ para navegar · ↵ executa · G+letra vai · C+letra cria</span>
         </div>
       </div>
     </AccessibleDialog>

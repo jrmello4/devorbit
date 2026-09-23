@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import {
   Bot,
   Terminal,
@@ -13,6 +13,8 @@ import {
   Crosshair,
   SlidersHorizontal,
   RotateCcw,
+  ChevronDown,
+  Check,
 } from 'lucide-react'
 
 export type CanvasZoomPreset = 'close' | 'medium' | 'far'
@@ -56,6 +58,17 @@ export interface CanvasToolbarProps {
   continuity?: unknown
   orchestration?: unknown
 }
+
+/** Item do dropdown de zoom: um preset aplicável + marcação do nível atual. */
+interface CanvasZoomMenuItem {
+  key: string
+  percent: number
+  label: string
+  active: boolean
+  apply: () => void
+}
+
+const ZOOM_ACTIVE_EPSILON = 0.05
 
 export const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
   projectName,
@@ -105,6 +118,89 @@ export const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
 
   const zoomPercent = Math.round(zoom * 100)
 
+  // Dropdown de presets de zoom (25–150%): aberto pelo ▾; −/+ e o % ficam
+  // sempre visíveis e funcionais fora do menu.
+  const [zoomMenuOpen, setZoomMenuOpen] = useState(false)
+  const zoomMenuRef = useRef<HTMLDivElement | null>(null)
+  const zoomTriggerRef = useRef<HTMLButtonElement | null>(null)
+
+  // Fecha o menu com clique-fora ou Esc; Esc devolve o foco ao gatilho.
+  useEffect(() => {
+    if (!zoomMenuOpen) return
+    const handlePointerDown = (event: PointerEvent) => {
+      if (zoomMenuRef.current && !zoomMenuRef.current.contains(event.target as Node)) {
+        setZoomMenuOpen(false)
+      }
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setZoomMenuOpen(false)
+        zoomTriggerRef.current?.focus()
+      }
+    }
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [zoomMenuOpen])
+
+  // Itens do menu: níveis discretos quando fornecidos; sem eles, os três
+  // presets nomeados legados (Perto/Médio/Longe) mantêm a API compatível.
+  const zoomMenuItems: CanvasZoomMenuItem[] =
+    zoomLevels && zoomLevels.length > 0
+      ? zoomLevels.map((lvl) => {
+          const percent = Math.round(lvl * 100)
+          return {
+            key: `level-${lvl}`,
+            percent,
+            label: `${percent}%`,
+            active: Math.abs(zoom - lvl) < ZOOM_ACTIVE_EPSILON,
+            apply: () => {
+              if (onSetZoom) {
+                onSetZoom(lvl)
+              } else if (onSetZoomPreset) {
+                if (lvl > 1.15) onSetZoomPreset('close')
+                else if (lvl < 0.7) onSetZoomPreset('far')
+                else onSetZoomPreset('medium')
+              }
+            },
+          }
+        })
+      : [
+          {
+            key: 'close',
+            percent: 125,
+            label: 'Perto',
+            active: zoom > 1.15,
+            apply: () => {
+              if (onSetZoom) onSetZoom(1.25)
+              else if (onSetZoomPreset) onSetZoomPreset('close')
+            },
+          },
+          {
+            key: 'medium',
+            percent: 100,
+            label: 'Médio',
+            active: Math.abs(zoom - 1.0) < 0.1,
+            apply: () => {
+              if (onSetZoom) onSetZoom(1.0)
+              else if (onSetZoomPreset) onSetZoomPreset('medium')
+            },
+          },
+          {
+            key: 'far',
+            percent: 50,
+            label: 'Longe',
+            active: zoom < 0.65,
+            apply: () => {
+              if (onSetZoom) onSetZoom(0.5)
+              else if (onSetZoomPreset) onSetZoomPreset('far')
+            },
+          },
+        ]
+
   return (
     <nav
       className="canvas-toolbar"
@@ -113,8 +209,9 @@ export const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
       data-canvas-toolbar=""
       onPointerDown={(e) => e.stopPropagation()}
     >
-      {/* Grupo de Criação */}
+      {/* Grupo de Criação: botões de texto compactos */}
       <div className="canvas-toolbar-group" role="group" aria-label="Criar nós">
+        <Plus size={13} aria-hidden="true" className="canvas-toolbar-lead-icon" />
         {triggerCreateAgent && (
           <button
             type="button"
@@ -123,7 +220,7 @@ export const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
             aria-label="Novo agente"
             title="Adicionar agente ao canvas"
           >
-            <Bot size={14} aria-hidden="true" />
+            <Bot size={13} aria-hidden="true" />
             <span className="canvas-toolbar-btn-text">Agente</span>
           </button>
         )}
@@ -135,7 +232,7 @@ export const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
             aria-label="Novo terminal"
             title="Adicionar terminal ao canvas"
           >
-            <Terminal size={14} aria-hidden="true" />
+            <Terminal size={13} aria-hidden="true" />
             <span className="canvas-toolbar-btn-text">Terminal</span>
           </button>
         )}
@@ -147,7 +244,7 @@ export const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
             aria-label="Nova nota"
             title="Adicionar nota ao canvas"
           >
-            <NotebookPen size={14} aria-hidden="true" />
+            <NotebookPen size={13} aria-hidden="true" />
             <span className="canvas-toolbar-btn-text">Nota</span>
           </button>
         )}
@@ -159,7 +256,7 @@ export const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
             aria-label="Novo squad"
             title="Criar squad de agentes"
           >
-            <Users size={14} aria-hidden="true" />
+            <Users size={13} aria-hidden="true" />
             <span className="canvas-toolbar-btn-text">Squad</span>
           </button>
         )}
@@ -167,53 +264,57 @@ export const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
 
       <div className="canvas-toolbar-separator" aria-hidden="true" />
 
-      {/* Grupo de Conexão e Edição de Seleção */}
-      {effectiveSelectionCount > 0 && (
-        <>
-          <div className="canvas-toolbar-group" role="group" aria-label="Ações de seleção">
-            {onStartConnection && (
-              <button
-                type="button"
-                className={`canvas-toolbar-btn ${isConnecting ? 'is-active' : ''}`}
-                onClick={onStartConnection}
-                aria-label="Conectar nós selecionados"
-                title="Conectar com outro nó"
-              >
-                <Link2 size={13} aria-hidden="true" />
-                <span className="canvas-toolbar-btn-text">Conectar</span>
-              </button>
-            )}
-            {onRemoveLinks && (
-              <button
-                type="button"
-                className="canvas-toolbar-btn"
-                onClick={onRemoveLinks}
-                aria-label="Desvincular nós"
-                title="Desconectar conexões do nó selecionado"
-              >
-                <Unlink size={13} aria-hidden="true" />
-                <span className="canvas-toolbar-btn-text">Desvincular</span>
-              </button>
-            )}
-            {onDeleteSelected && effectiveCanDelete && (
-              <button
-                type="button"
-                className="canvas-toolbar-btn canvas-toolbar-btn-danger"
-                onClick={onDeleteSelected}
-                aria-label={`Excluir ${effectiveSelectionCount} nó(s) selecionado(s)`}
-                title="Excluir selecionados"
-              >
-                <Trash2 size={13} aria-hidden="true" />
-                <span className="canvas-toolbar-btn-text">Excluir</span>
-              </button>
-            )}
-          </div>
-          <div className="canvas-toolbar-separator" aria-hidden="true" />
-        </>
-      )}
+      {/* Grupo de Conexão: ⇄ Conectar com estado ativo; ações de seleção
+          continuam condicionadas a haver seleção. */}
+      <div className="canvas-toolbar-group" role="group" aria-label="Conexão e seleção">
+        {onStartConnection && (
+          <button
+            type="button"
+            className={`canvas-toolbar-btn ${isConnecting ? 'is-active' : ''}`}
+            onClick={onStartConnection}
+            disabled={effectiveSelectionCount === 0}
+            aria-label="Conectar nós selecionados"
+            aria-pressed={isConnecting}
+            title={
+              effectiveSelectionCount > 0
+                ? 'Conectar com outro nó'
+                : 'Selecione um nó para conectar'
+            }
+          >
+            <Link2 size={13} aria-hidden="true" />
+            <span className="canvas-toolbar-btn-text">Conectar</span>
+          </button>
+        )}
+        {effectiveSelectionCount > 0 && onRemoveLinks && (
+          <button
+            type="button"
+            className="canvas-toolbar-btn"
+            onClick={onRemoveLinks}
+            aria-label="Desvincular nós"
+            title="Desconectar conexões do nó selecionado"
+          >
+            <Unlink size={13} aria-hidden="true" />
+            <span className="canvas-toolbar-btn-text">Desvincular</span>
+          </button>
+        )}
+        {effectiveSelectionCount > 0 && onDeleteSelected && effectiveCanDelete && (
+          <button
+            type="button"
+            className="canvas-toolbar-btn canvas-toolbar-btn-danger"
+            onClick={onDeleteSelected}
+            aria-label={`Excluir ${effectiveSelectionCount} nó(s) selecionado(s)`}
+            title="Excluir selecionados"
+          >
+            <Trash2 size={13} aria-hidden="true" />
+            <span className="canvas-toolbar-btn-text">Excluir</span>
+          </button>
+        )}
+      </div>
 
-      {/* Grupo de Foco e Navegação */}
-      <div className="canvas-toolbar-group" role="group" aria-label="Controle de visualização e zoom">
+      <div className="canvas-toolbar-separator" aria-hidden="true" />
+
+      {/* Grupo de Zoom: − % ＋ sempre visíveis; ▾ abre os presets */}
+      <div className="canvas-toolbar-group" role="group" aria-label="Controle de zoom">
         <button
           type="button"
           className="canvas-toolbar-btn canvas-toolbar-btn-icon"
@@ -244,76 +345,57 @@ export const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
           <Plus size={14} aria-hidden="true" />
         </button>
 
-        {(onSetZoomPreset || onSetZoom) && (
-          <div className="canvas-toolbar-zoom-presets" role="group" aria-label="Níveis de zoom">
-            {zoomLevels && zoomLevels.length > 0 ? (
-              zoomLevels.map((lvl) => {
-                const percent = Math.round(lvl * 100)
-                const isActive = Math.abs(zoom - lvl) < 0.05
-                return (
-                  <button
-                    key={lvl}
-                    type="button"
-                    className={`canvas-toolbar-chip ${isActive ? 'is-active' : ''}`}
-                    onClick={() => {
-                      if (onSetZoom) {
-                        onSetZoom(lvl)
-                      } else if (onSetZoomPreset) {
-                        if (lvl > 1.15) onSetZoomPreset('close')
-                        else if (lvl < 0.7) onSetZoomPreset('far')
-                        else onSetZoomPreset('medium')
-                      }
-                    }}
-                    aria-label={`Zoom ${percent}%`}
-                    title={`Definir zoom para ${percent}%`}
-                  >
-                    {percent}%
-                  </button>
-                )
-              })
-            ) : (
-              <>
+        {(onSetZoom || onSetZoomPreset) && (
+          <div className="canvas-toolbar-zoom-presets" ref={zoomMenuRef}>
+            <button
+              type="button"
+              ref={zoomTriggerRef}
+              className="canvas-toolbar-btn canvas-toolbar-btn-icon canvas-toolbar-zoom-trigger"
+              onClick={() => setZoomMenuOpen((open) => !open)}
+              aria-haspopup="menu"
+              aria-expanded={zoomMenuOpen}
+              aria-label="Escolher nível de zoom"
+              title="Escolher nível de zoom (25% a 150%)"
+            >
+              <ChevronDown size={13} aria-hidden="true" />
+            </button>
+            {/* Menu popover de presets: fica no DOM (oculto) para leitura
+                estática/testes; `hidden` o tira da árvore de acessibilidade. */}
+            <div
+              className="canvas-toolbar-zoom-menu"
+              role="menu"
+              aria-label="Níveis de zoom"
+              hidden={!zoomMenuOpen}
+            >
+              {zoomMenuItems.map((item) => (
                 <button
+                  key={item.key}
                   type="button"
-                  className={`canvas-toolbar-chip ${zoom > 1.15 ? 'is-active' : ''}`}
+                  role="menuitemradio"
+                  aria-checked={item.active}
+                  className={`canvas-toolbar-zoom-option ${item.active ? 'is-active' : ''}`}
                   onClick={() => {
-                    if (onSetZoom) onSetZoom(1.25)
-                    else if (onSetZoomPreset) onSetZoomPreset('close')
+                    item.apply()
+                    setZoomMenuOpen(false)
                   }}
-                  aria-label="Zoom próximo (125%)"
-                  title="Zoom próximo (125%)"
+                  aria-label={`Zoom ${item.percent}%`}
+                  title={`Definir zoom para ${item.percent}%`}
                 >
-                  Perto
+                  <span className="canvas-toolbar-zoom-check" aria-hidden="true">
+                    {item.active ? <Check size={12} /> : null}
+                  </span>
+                  {item.label}
                 </button>
-                <button
-                  type="button"
-                  className={`canvas-toolbar-chip ${Math.abs(zoom - 1.0) < 0.1 ? 'is-active' : ''}`}
-                  onClick={() => {
-                    if (onSetZoom) onSetZoom(1.0)
-                    else if (onSetZoomPreset) onSetZoomPreset('medium')
-                  }}
-                  aria-label="Zoom médio (100%)"
-                  title="Zoom médio (100%)"
-                >
-                  Médio
-                </button>
-                <button
-                  type="button"
-                  className={`canvas-toolbar-chip ${zoom < 0.65 ? 'is-active' : ''}`}
-                  onClick={() => {
-                    if (onSetZoom) onSetZoom(0.5)
-                    else if (onSetZoomPreset) onSetZoomPreset('far')
-                  }}
-                  aria-label="Zoom distante (50%)"
-                  title="Zoom distante (50%)"
-                >
-                  Longe
-                </button>
-              </>
-            )}
+              ))}
+            </div>
           </div>
         )}
+      </div>
 
+      <div className="canvas-toolbar-separator" aria-hidden="true" />
+
+      {/* Grupo de Foco e Navegação */}
+      <div className="canvas-toolbar-group" role="group" aria-label="Foco e navegação">
         {triggerFit && (
           <button
             type="button"
@@ -351,34 +433,38 @@ export const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
       </div>
 
       {/* Grupo do Inspector & Reset */}
-      <div className="canvas-toolbar-separator" aria-hidden="true" />
-      <div className="canvas-toolbar-group" role="group" aria-label="Painéis e estado">
-        {onToggleInspector && (
-          <button
-            type="button"
-            className={`canvas-toolbar-btn ${isInspectorOpen ? 'is-active' : ''}`}
-            onClick={onToggleInspector}
-            aria-label="Alternar painel de inspeção"
-            aria-expanded={isInspectorOpen}
-            title="Abrir/fechar Inspector lateral"
-          >
-            <SlidersHorizontal size={13} aria-hidden="true" />
-            <span className="canvas-toolbar-btn-text">Inspector</span>
-          </button>
-        )}
+      {(onToggleInspector || onResetCanvas) && (
+        <>
+          <div className="canvas-toolbar-separator" aria-hidden="true" />
+          <div className="canvas-toolbar-group" role="group" aria-label="Painéis e estado">
+            {onToggleInspector && (
+              <button
+                type="button"
+                className={`canvas-toolbar-btn ${isInspectorOpen ? 'is-active' : ''}`}
+                onClick={onToggleInspector}
+                aria-label="Alternar painel de inspeção"
+                aria-expanded={isInspectorOpen}
+                title="Abrir/fechar Inspector lateral"
+              >
+                <SlidersHorizontal size={13} aria-hidden="true" />
+                <span className="canvas-toolbar-btn-text">Inspector</span>
+              </button>
+            )}
 
-        {onResetCanvas && (
-          <button
-            type="button"
-            className="canvas-toolbar-btn canvas-toolbar-btn-icon"
-            onClick={onResetCanvas}
-            aria-label="Resetar layout do canvas"
-            title="Resetar layout do canvas"
-          >
-            <RotateCcw size={13} aria-hidden="true" />
-          </button>
-        )}
-      </div>
+            {onResetCanvas && (
+              <button
+                type="button"
+                className="canvas-toolbar-btn canvas-toolbar-btn-icon"
+                onClick={onResetCanvas}
+                aria-label="Resetar layout do canvas"
+                title="Resetar layout do canvas"
+              >
+                <RotateCcw size={13} aria-hidden="true" />
+              </button>
+            )}
+          </div>
+        </>
+      )}
     </nav>
   )
 }

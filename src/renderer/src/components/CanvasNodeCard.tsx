@@ -72,6 +72,9 @@ export interface CanvasNodeCardProps {
   isDimmed?: boolean
   isSquadCoordinator?: boolean
   isCoordinator?: boolean
+  // Restyle puro: coordenador com orquestração ativa ganha badge âmbar no
+  // cabeçalho (sem alterar comportamento do card).
+  isOrchestrating?: boolean
   // Handlers
   onSelect: (id: string, multi: boolean) => void
   onStartPan: (event: React.PointerEvent<HTMLElement>) => void
@@ -153,6 +156,7 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
     isDimmed = false,
     isSquadCoordinator,
     isCoordinator,
+    isOrchestrating = false,
     onSelect,
     onStartPan,
     onStartNodeDrag,
@@ -402,6 +406,13 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
                 </span>
               )}
             </>
+          )}
+
+          {/* Coordenador liderando orquestração ativa: badge âmbar (visual). */}
+          {isOrchestrating && (
+            <span className="canvas-node-orchestrating-badge" role="status" aria-label="Orquestrando">
+              orquestrando
+            </span>
           )}
 
           {node.kind === 'terminal' && (

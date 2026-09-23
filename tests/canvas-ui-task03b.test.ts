@@ -117,6 +117,59 @@ describe('TASK-03B — CanvasToolbar UI Component', () => {
     expect(html).toContain('125%')
     expect(html).toContain('title="Definir zoom para 75%"')
   })
+
+  it('expõe os presets 25–150% como dropdown com marca no nível atual', () => {
+    const html = renderToStaticMarkup(
+      createElement(CanvasToolbar, {
+        zoom: 1.0,
+        zoomLevels: [0.25, 0.5, 0.75, 1.0, 1.25, 1.5],
+        onSetZoom: vi.fn(),
+        onZoomIn: vi.fn(),
+        onZoomOut: vi.fn(),
+        onResetViewport: vi.fn(),
+      }),
+    )
+
+    // Gatilho ▾ acessível e fechado por padrão (−/+ e % permanecem fora do menu)
+    expect(html).toContain('aria-label="Escolher nível de zoom"')
+    expect(html).toContain('aria-haspopup="menu"')
+    expect(html).toContain('aria-expanded="false"')
+    // Menu popover com os 6 presets, oculto até abrir
+    expect(html).toContain('role="menu"')
+    expect(html).toContain('aria-label="Níveis de zoom"')
+    expect(html).toContain('hidden=""')
+    expect(html).toContain('title="Definir zoom para 25%"')
+    expect(html).toContain('title="Definir zoom para 150%"')
+    // Nível atual (100%) marcado com aria-checked
+    expect(html).toMatch(/aria-checked="true"[^>]*aria-label="Zoom 100%"/)
+    expect(html).toMatch(/aria-checked="false"[^>]*aria-label="Zoom 25%"/)
+  })
+
+  it('mantém Conectar sempre presente (desabilitado sem seleção) com estado ativo ao conectar', () => {
+    const conectar = (props: Record<string, unknown>) =>
+      renderToStaticMarkup(
+        createElement(CanvasToolbar, {
+          zoom: 1.0,
+          onZoomIn: vi.fn(),
+          onZoomOut: vi.fn(),
+          onResetViewport: vi.fn(),
+          ...props,
+        }),
+      ).match(/<button[^>]*aria-label="Conectar nós selecionados"[^>]*>/)?.[0] ?? ''
+
+    // Sem seleção: botão visível porém desabilitado
+    const idleHtml = conectar({ onStartConnection: vi.fn(), selectionCount: 0 })
+    expect(idleHtml).toContain('disabled=""')
+
+    // Conectando: estado ativo (aria-pressed)
+    const activeHtml = conectar({
+      onStartConnection: vi.fn(),
+      selectionCount: 1,
+      isConnecting: true,
+    })
+    expect(activeHtml).not.toContain('disabled=""')
+    expect(activeHtml).toContain('aria-pressed="true"')
+  })
 })
 
 describe('TASK-03B — CanvasNodeInspector UI Component', () => {
@@ -716,6 +769,38 @@ describe('TASK-03B — CanvasNodeCard UI Component & Keep-Alive', () => {
 
     expect(html).toContain('Coordenador')
     expect(html).not.toContain('title="Coordenador da squad"')
+  })
+
+  it('renderiza badge âmbar "orquestrando" no cabeçalho apenas durante orquestração ativa', () => {
+    const coordinator: CanvasNode = {
+      id: 'agent-orchestrating',
+      kind: 'agent',
+      title: 'Coordenador',
+      x: 100,
+      y: 100,
+      width: 400,
+      height: 300,
+      z: 1,
+      role: 'Coordenador',
+    }
+
+    // Sem orquestração: badge ausente
+    const idleHtml = renderToStaticMarkup(
+      createElement(CanvasNodeCard, { ...baseCardProps, node: coordinator }),
+    )
+    expect(idleHtml).not.toContain('canvas-node-orchestrating-badge')
+
+    // Com orquestração ativa: badge presente e anunciado por role="status"
+    const orchestratingHtml = renderToStaticMarkup(
+      createElement(CanvasNodeCard, {
+        ...baseCardProps,
+        node: coordinator,
+        isOrchestrating: true,
+      }),
+    )
+    expect(orchestratingHtml).toContain('canvas-node-orchestrating-badge')
+    expect(orchestratingHtml).toContain('role="status"')
+    expect(orchestratingHtml).toContain('orquestrando')
   })
 
   it('preserva montagem do terminal no DOM quando o card está recolhido (isCompact)', () => {

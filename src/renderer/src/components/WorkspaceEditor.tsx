@@ -120,20 +120,6 @@ function findSearchResults(content: string, query: string): SearchResults {
 }
 
 
-function syntaxLanguage(filePath: string): string {
-  const extension = filePath.split('.').pop()?.toLowerCase()
-  if (extension === 'ts' || extension === 'tsx') return 'TypeScript'
-  if (extension === 'js' || extension === 'jsx' || extension === 'mjs' || extension === 'cjs') return 'JavaScript'
-  if (extension === 'json') return 'JSON'
-  if (extension === 'md' || extension === 'mdx') return 'Markdown'
-  if (extension === 'css' || extension === 'scss') return 'CSS'
-  if (extension === 'html' || extension === 'htm') return 'HTML'
-  if (extension === 'py') return 'Python'
-  if (extension === 'rs') return 'Rust'
-  if (extension === 'yml' || extension === 'yaml') return 'YAML'
-  return extension ? extension.toUpperCase() : 'Texto'
-}
-
 function escapeHtml(value: string): string {
   return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll('\'', '&#39;')
 }
@@ -249,7 +235,6 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
     () => buildDiff(activeTab?.savedContent || '', activeTab?.content || ''),
     [activeTab?.content, activeTab?.savedContent],
   )
-  const activeLanguage = activeTab ? syntaxLanguage(activeTab.path) : 'Texto'
 
   const activeSearchMatchIndex = useMemo(() => {
     if (!activeTab) return -1
@@ -782,73 +767,18 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
       </aside>
 
       <section className="workspace-editor-panel" aria-label="Editor de texto">
+        {/* Cabeçalho único de 32px (spec do painel): rótulo + abas ao lado +
+            ações à direita como ícones de 28px. Os atributos title preservam os
+            seletores usados pelo harness (scripts/verify-ui.cjs) — não renomear. */}
         <div className="workspace-panel-heading editor-heading">
-          <div>
-            <strong>{activeTab ? fileName(activeTab.path) : 'Editor'}</strong>
-            <span>{activeTab?.path || 'Selecione um arquivo à esquerda'}{activeTab ? ' · ' + activeLanguage : ''}</span>
-          </div>
-          <div className="editor-actions">
-            {activeIsDirty && <span className="editor-dirty" title="Alterações não salvas">Não salvo</span>}
-            <button
-              type="button"
-              className="workspace-tool-button"
-              onClick={() => setIsSearchOpen(true)}
-              disabled={!activeTab}
-              aria-pressed={isSearchOpen}
-              title="Buscar no arquivo atual (Ctrl+F)"
-            >
-              <Search size={14} aria-hidden="true" /><span>Buscar</span>
-            </button>
-            <button
-              type="button"
-              className="workspace-tool-button"
-              onClick={() => setIsSymbolsOpen((current) => !current)}
-              disabled={!activeTab}
-              aria-pressed={isSymbolsOpen}
-              title="Mostrar símbolos do arquivo atual"
-            >
-              <ListTree size={14} aria-hidden="true" /><span>Símbolos</span>
-            </button>
-            <button
-              type="button"
-              className="workspace-tool-button"
-              onClick={() => setIsDiffOpen((current) => !current)}
-              disabled={!activeTab || !activeIsDirty}
-              aria-pressed={isDiffOpen}
-              title="Ver alterações não salvas"
-            >
-              <GitCompare size={14} aria-hidden="true" /><span>Diff</span>
-            </button>
-            <button
-              type="button"
-              className="workspace-send-button"
-              onClick={sendToContext}
-              disabled={!activeTab}
-              title="Enviar arquivo ao contexto"
-            >
-              <Send size={14} aria-hidden="true" /><span>Enviar arquivo ao contexto</span>
-            </button>
-            <button
-              type="button"
-              className="workspace-save-button"
-              onClick={() => { if (activePath) void saveTab(activePath) }}
-              disabled={!activeTab || !activeIsDirty || activeTab.isSaving}
-              aria-busy={activeTab?.isSaving || false}
-              title="Salvar arquivo (Ctrl+S)"
-            >
-              <Save size={14} aria-hidden="true" /><span>{activeTab?.isSaving ? 'Salvando…' : 'Salvar'}</span>
-            </button>
-          </div>
-        </div>
-
-        {tabs.length > 0 && (
-          <div className="workspace-panel-heading" role="tablist" aria-label="Arquivos abertos">
-            <div className="editor-actions" style={{ flex: 1, minWidth: 0, overflowX: 'auto', overflowY: 'hidden', gap: 4 }}>
+          <strong className="editor-heading-label"><FileText size={13} aria-hidden="true" /> Editor</strong>
+          {tabs.length > 0 && (
+            <div className="editor-tabs" role="tablist" aria-label="Arquivos abertos">
               {tabs.map((tab) => {
                 const isActive = tab.path === activePath
                 const isDirty = tab.content !== tab.savedContent
                 return (
-                  <div key={tab.path} style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                  <div key={tab.path} className="editor-tab-item">
                     <button
                       type="button"
                       role="tab"
@@ -857,15 +787,14 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
                       aria-selected={isActive}
                       aria-controls={editorTextAreaId}
                       title={tab.path}
-                      style={{ maxWidth: 190, minWidth: 0 }}
                     >
                       <FileText size={13} aria-hidden="true" />
-                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fileName(tab.path)}</span>
+                      <span>{fileName(tab.path)}</span>
                       {isDirty && <Circle size={6} fill="currentColor" aria-label="Não salvo" />}
                     </button>
                     <button
                       type="button"
-                      className="workspace-icon-button"
+                      className="workspace-icon-button editor-tab-close"
                       onClick={() => closeTab(tab.path)}
                       aria-label={'Fechar aba ' + fileName(tab.path)}
                       title="Fechar aba"
@@ -876,8 +805,65 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
                 )
               })}
             </div>
+          )}
+          <div className="editor-actions">
+            {activeIsDirty && <span className="editor-dirty" title="Alterações não salvas">Não salvo</span>}
+            <button
+              type="button"
+              className={'workspace-icon-button' + (isSearchOpen ? ' active' : '')}
+              onClick={() => setIsSearchOpen(true)}
+              disabled={!activeTab}
+              aria-pressed={isSearchOpen}
+              aria-label="Buscar no arquivo atual"
+              title="Buscar no arquivo atual (Ctrl+F)"
+            >
+              <Search size={15} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className={'workspace-icon-button' + (isSymbolsOpen ? ' active' : '')}
+              onClick={() => setIsSymbolsOpen((current) => !current)}
+              disabled={!activeTab}
+              aria-pressed={isSymbolsOpen}
+              aria-label="Símbolos do arquivo atual"
+              title="Mostrar símbolos do arquivo atual"
+            >
+              <ListTree size={15} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className={'workspace-icon-button' + (isDiffOpen ? ' active' : '')}
+              onClick={() => setIsDiffOpen((current) => !current)}
+              disabled={!activeTab || !activeIsDirty}
+              aria-pressed={isDiffOpen}
+              aria-label="Ver alterações não salvas"
+              title="Ver alterações não salvas"
+            >
+              <GitCompare size={15} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="workspace-icon-button"
+              onClick={sendToContext}
+              disabled={!activeTab}
+              aria-label="Enviar arquivo ao contexto"
+              title="Enviar arquivo ao contexto"
+            >
+              <Send size={15} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="workspace-icon-button editor-save-button"
+              onClick={() => { if (activePath) void saveTab(activePath) }}
+              disabled={!activeTab || !activeIsDirty || activeTab.isSaving}
+              aria-busy={activeTab?.isSaving || false}
+              aria-label={activeTab?.isSaving ? 'Salvando arquivo' : 'Salvar arquivo'}
+              title="Salvar arquivo (Ctrl+S)"
+            >
+              <Save size={15} aria-hidden="true" />
+            </button>
           </div>
-        )}
+        </div>
 
         {isSymbolsOpen && activeTab && (
           <div className="workspace-symbol-list" aria-label="Símbolos do arquivo">

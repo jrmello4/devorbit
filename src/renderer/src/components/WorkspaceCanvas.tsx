@@ -16,7 +16,6 @@ import {
   Globe2,
   Grip,
   Link2,
-  MousePointer2,
   NotebookPen,
   RotateCcw,
   Send,
@@ -1090,6 +1089,10 @@ export const WorkspaceCanvas: React.FC<{
   const [connectionDraft, setConnectionDraft] = useState<ConnectionDraft | null>(null);
   const [creationMode, setCreationMode] = useState<"agent" | "squad" | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState(false);
+  // Ajuda de navegação ("?"): substitui o hint permanente do rodapé; o mesmo
+  // texto agora vive num popover aberto sob demanda.
+  const [hintOpen, setHintOpen] = useState(false);
+  const hintRef = useRef<HTMLDivElement | null>(null);
   const [selectedSquadId, setSelectedSquadId] = useState<string | null>(null);
   const [quickDeployOpen, setQuickDeployOpen] = useState(false);
   const [presetDraftName, setPresetDraftName] = useState("");
@@ -2582,6 +2585,24 @@ export const WorkspaceCanvas: React.FC<{
   useEffect(() => {
     if (selected.length === 1) setInspectorOpen(true);
   }, [selected]);
+  // Popover de ajuda: fecha com clique-fora ou Esc.
+  useEffect(() => {
+    if (!hintOpen) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (hintRef.current && !hintRef.current.contains(event.target as Node)) {
+        setHintOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setHintOpen(false);
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [hintOpen]);
   const orchestrationActive = Boolean(
     orchestration &&
       orchestration.phase !== "complete" &&
@@ -2590,6 +2611,23 @@ export const WorkspaceCanvas: React.FC<{
   const orchestrationTarget = orchestration
     ? nodeMap.get(orchestration.expectedAgentId)
     : undefined;
+  // Arestas da orquestração ATIVA: ligações entre o coordenador e os
+  // especialistas da run corrente. Recebem a classe is-orchestrating (traço
+  // âmbar + dasharray animado) para diferenciar do estado idle.
+  const orchestrationEdgeIds = useMemo(() => {
+    if (!orchestrationActive || !orchestration) return null;
+    const participants = new Set<string>([
+      orchestration.coordinatorId,
+      ...orchestration.specialists.map((specialist) => specialist.id),
+    ]);
+    const ids = new Set<string>();
+    for (const connection of canvas.connections) {
+      if (participants.has(connection.from) && participants.has(connection.to)) {
+        ids.add(connection.id);
+      }
+    }
+    return ids;
+  }, [orchestrationActive, orchestration, canvas.connections]);
   const orchestrationStatusText = orchestration
     ? orchestration.phase === "planning"
       ? "Coordenador preparando o plano"
@@ -3833,6 +3871,18 @@ export const WorkspaceCanvas: React.FC<{
             >
               <path d="M 0 0 L 10 5 L 0 10 z" className="canvas-edge-arrowhead" />
             </marker>
+            {/* Ponta âmbar para arestas de orquestração ativa */}
+            <marker
+              id="canvas-edge-arrow-orchestrating"
+              viewBox="0 0 10 10"
+              refX="9"
+              refY="5"
+              markerWidth="6"
+              markerHeight="6"
+              orient="auto-start-reverse"
+            >
+              <path d="M 0 0 L 10 5 L 0 10 z" className="canvas-edge-arrowhead canvas-edge-arrowhead-orchestrating" />
+            </marker>
           </defs>
           {canvas.connections.map((connection) => {
             const from =
@@ -3843,17 +3893,25 @@ export const WorkspaceCanvas: React.FC<{
             const label = canvasEdgeLabel(kind, connection.label);
             const midX = (from.x + from.width + to.x) / 2;
             const midY = (from.y + from.height / 2 + to.y + to.height / 2) / 2;
+            const isOrchestratingEdge = orchestrationEdgeIds?.has(connection.id) ?? false;
             return (
               <g
                 key={connection.id}
-                className={"canvas-edge edge-" + kind}
+                className={"canvas-edge edge-" + kind + (isOrchestratingEdge ? " is-orchestrating" : "")}
                 data-edge-kind={kind}
                 data-edge-label={label}
+                data-orchestrating={isOrchestratingEdge ? "true" : undefined}
               >
                 <path
                   className="canvas-edge-path"
                   d={connectionPath(from, to.x, to.y + to.height / 2)}
-                  markerEnd={kind === "visual" ? undefined : "url(#canvas-edge-arrow)"}
+                  markerEnd={
+                    isOrchestratingEdge
+                      ? "url(#canvas-edge-arrow-orchestrating)"
+                      : kind === "visual"
+                        ? undefined
+                        : "url(#canvas-edge-arrow)"
+                  }
                 />
                 {connection.label && (
                   <text
@@ -3933,6 +3991,7 @@ export const WorkspaceCanvas: React.FC<{
               isSendDisabled={node.kind === 'agent' ? (agentSendInfoByNode.get(node.id)?.sendDisabled ?? false) : false}
               sendTitle={node.kind === 'agent' ? agentSendInfoByNode.get(node.id)?.sendTitle : undefined}
               isSquadCoordinator={node.kind === 'agent' ? agentSendInfoByNode.get(node.id)?.isCoordinator : undefined}
+              isOrchestrating={orchestrationActive && node.id === orchestration?.coordinatorId}
               onSelect={selectNode}
               onStartPan={startPan}
               onStartNodeDrag={startNodeDrag}
@@ -4105,10 +4164,35 @@ export const WorkspaceCanvas: React.FC<{
           </span>
         </div>
       )}
-      <div className="workspace-canvas-hint">
-        <MousePointer2 size={12} /> Arraste o cabeçalho para mover · Arraste o
-        fundo para navegar · Espaço ou botão do meio também navega · Roda move
-        · Ctrl/Cmd + roda aplica zoom · Ctrl+D duplica notas
+      {/* Ajuda de navegação: botão redondo "?" com popover (mesmo texto do
+          antigo hint fixo do rodapé, sem ruído permanente). */}
+      <div className="canvas-hint-wrap" ref={hintRef}>
+        {hintOpen && (
+          <div className="canvas-hint-popover" role="note" data-canvas-hint-popover="">
+            <button
+              type="button"
+              className="canvas-hint-close"
+              aria-label="Fechar ajuda de navegação"
+              onClick={() => setHintOpen(false)}
+            >
+              <X size={12} aria-hidden="true" />
+            </button>
+            Arraste o cabeçalho para mover · Arraste o fundo para navegar ·
+            Espaço ou botão do meio também navega · Roda move · Ctrl/Cmd + roda
+            aplica zoom · Ctrl+D duplica notas
+          </div>
+        )}
+        <button
+          type="button"
+          className="canvas-hint-toggle"
+          aria-label="Ajuda de navegação do canvas"
+          aria-expanded={hintOpen}
+          data-canvas-hint-toggle=""
+          title="Como navegar no canvas"
+          onClick={() => setHintOpen((open) => !open)}
+        >
+          ?
+        </button>
       </div>
       {canDelete && (
         <button

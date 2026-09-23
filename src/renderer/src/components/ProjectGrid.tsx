@@ -1,7 +1,16 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Archive, ArchiveRestore, ChevronDown, Clock3, Code2, Ellipsis, ExternalLink, Folder, FolderOpen, GitBranch, GitPullRequest, LayoutGrid, List, Plus, Search, SlidersHorizontal, Terminal, X } from 'lucide-react'
+import { Archive, ArchiveRestore, ChevronDown, Code2, Ellipsis, ExternalLink, Folder, FolderOpen, GitBranch, GitPullRequest, LayoutGrid, List, Plus, Search, SlidersHorizontal, Terminal, X } from 'lucide-react'
 import type { Project, OtherDir, AppConfig } from '../types'
 import { groupProjectsByParent } from './project-explorer-helpers'
+import {
+  SITUATION_SEGMENTS,
+  branchPillText,
+  branchSyncLabel,
+  getProjectStatus,
+  matchSituationFilter,
+  relativeDate,
+  type SituationFilter,
+} from './project-library-helpers'
 import './ProjectLibrary.css'
 
 interface ProjectGridProps {
@@ -15,34 +24,12 @@ interface ProjectGridProps {
   onProjectAccountChange?: (project: Project, account: 'account1' | 'account2') => Promise<void>
   onOpenWorkspace?: (project: Project) => void; onOpenProject?: (project: Project) => void
 }
-type LifecycleFilter = 'all' | 'development' | 'archived'
 type GitFilter = 'all' | 'pull' | 'modified' | 'no-git'
-
-const relativeDate = (value: number) => {
-  if (!Number.isFinite(value) || value <= 0) return 'Data desconhecida'
-  const minutes = Math.floor(Math.max(0, Date.now() - value) / 60000)
-  if (minutes < 1) return 'agora'
-  if (minutes < 60) return `há ${minutes}min`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `há ${hours}h`
-  const days = Math.floor(hours / 24)
-  if (days < 30) return `há ${days}d`
-  return new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short' }).format(value)
-}
-const getStatus = (p: Project) => {
-  if (p.lifecycle === 'archived') return { color: 'neutral', label: 'Projeto arquivado' }
-  if (!p.git.isRepo) return { color: 'neutral', label: 'Git não configurado' }
-  const statusMessage = (p.git.statusMessage || '').toLocaleLowerCase()
-  if (/erro|error|conflit|conflict/.test(statusMessage)) return { color: 'danger', label: p.git.statusMessage || 'Erro ou conflito no Git' }
-  if (p.git.behind > 0 && p.git.ahead > 0) return { color: 'warning', label: 'Branch local e remoto divergentes' }
-  if (p.git.behind > 0) return { color: 'warning', label: `${p.git.behind} commit(s) aguardando pull` }
-  if (p.git.hasChanges || p.git.ahead > 0) return { color: 'warning', label: 'Alterações locais pendentes' }
-  return { color: 'success', label: 'Sincronizado' }
-}
 
 export const ProjectGrid: React.FC<ProjectGridProps> = (props) => {
   const { projects, otherDirs, search, isLoading, onOpenSettings, onOpenClone, onOpenGitInit, onNotify, onOpenProject, onOpenWorkspace, onRestoreProject, onFinalizeProject } = props
-  const [lifecycleFilter, setLifecycleFilter] = useState<LifecycleFilter>('all'); const [gitFilter, setGitFilter] = useState<GitFilter>('all'); const [tech, setTech] = useState(''); const [branch, setBranch] = useState(''); const [location, setLocation] = useState(''); const [sort, setSort] = useState<'name' | 'recent'>('name')
+  // Estado dos filtros mora aqui no ProjectGrid (não no App) — mantido no local original.
+  const [situationFilter, setSituationFilter] = useState<SituationFilter>('all'); const [gitFilter, setGitFilter] = useState<GitFilter>('all'); const [tech, setTech] = useState(''); const [branch, setBranch] = useState(''); const [location, setLocation] = useState(''); const [sort, setSort] = useState<'name' | 'recent'>('name')
   const [view, setView] = useState<'grid' | 'list'>('grid'); const [showFilters, setShowFilters] = useState(false); const [grouped, setGrouped] = useState(false)
   const [openMenu, setOpenMenu] = useState<string | null>(null); const [selectedId, setSelectedId] = useState<string | null>(null); const [finalizingId, setFinalizingId] = useState<string | null>(null); const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
   useEffect(() => {
@@ -55,18 +42,25 @@ export const ProjectGrid: React.FC<ProjectGridProps> = (props) => {
     return () => document.removeEventListener('keydown', handleEscape)
   }, [])
   const techs = useMemo(() => Array.from(new Map(projects.flatMap((p) => p.techs.map((t) => [t.id, t.label] as const)))), [projects])
-  const counts = useMemo(() => ({ all: projects.length, development: projects.filter((p) => p.lifecycle !== 'archived').length, archived: projects.filter((p) => p.lifecycle === 'archived').length }), [projects])
+  // Contagens REAIS do segmentado, derivadas da mesma função de situação dos cards.
+  const counts = useMemo(() => ({
+    all: projects.length,
+    pending: projects.filter((p) => matchSituationFilter(p, 'pending')).length,
+    clean: projects.filter((p) => matchSituationFilter(p, 'clean')).length,
+    none: projects.filter((p) => matchSituationFilter(p, 'none')).length,
+    archived: projects.filter((p) => matchSituationFilter(p, 'archived')).length,
+  }), [projects])
   const branches = useMemo(() => Array.from(new Set(projects.map((p) => p.git.branch).filter(Boolean))).sort(), [projects])
   const locations = useMemo(() => Array.from(new Set(projects.map((p) => p.parentDir).filter(Boolean))).sort(), [projects])
   const filtered = useMemo(() => {
     const query = search.trim().toLocaleLowerCase()
     return projects.filter((p) => {
       const matchQuery = !query || [p.name, p.path, p.git.branch, ...p.techs.map((t) => t.label)].some((v) => v.toLocaleLowerCase().includes(query))
-      const matchLife = lifecycleFilter === 'all' || lifecycleFilter === 'development' && p.lifecycle !== 'archived' || lifecycleFilter === 'archived' && p.lifecycle === 'archived'
+      const matchSituation = matchSituationFilter(p, situationFilter)
       const matchGit = gitFilter === 'all' || gitFilter === 'pull' && p.git.isRepo && p.git.behind > 0 || gitFilter === 'modified' && p.git.isRepo && p.git.hasChanges || gitFilter === 'no-git' && !p.git.isRepo
-      return matchQuery && matchLife && matchGit && (!tech || p.techs.some((t) => t.id === tech)) && (!branch || p.git.branch === branch) && (!location || p.parentDir === location)
+      return matchQuery && matchSituation && matchGit && (!tech || p.techs.some((t) => t.id === tech)) && (!branch || p.git.branch === branch) && (!location || p.parentDir === location)
     }).sort((a, b) => sort === 'recent' ? b.lastModified - a.lastModified : a.name.localeCompare(b.name))
-  }, [projects, search, lifecycleFilter, gitFilter, tech, branch, location, sort])
+  }, [projects, search, situationFilter, gitFilter, tech, branch, location, sort])
   const groups = useMemo(() => groupProjectsByParent(filtered, { groupBySort: 'name', groupSortDirection: 'asc', projectSortBy: sort, projectSortDirection: sort === 'recent' ? 'desc' : 'asc' }), [filtered, sort])
   const visibleOtherDirs = useMemo(() => { const q = search.trim().toLocaleLowerCase(); return otherDirs.filter((d) => !q || [d.name, d.path].some((v) => v.toLocaleLowerCase().includes(q))) }, [otherDirs, search])
   const openProject = (p: Project) => { setSelectedId(p.id); setOpenMenu(null); onOpenProject?.(p) }
@@ -84,13 +78,16 @@ export const ProjectGrid: React.FC<ProjectGridProps> = (props) => {
     try { await onFinalizeProject(p) } finally { setFinalizingId(null) }
   }
   const renderProject = (p: Project) => {
-    const status = getStatus(p)
+    const status = getProjectStatus(p)
     const archived = p.lifecycle === 'archived'
     const selected = selectedId === p.id
+    const tech = p.techs[0]
+    const syncLabel = branchSyncLabel(p)
 
     return (
       <article
         key={p.id}
+        data-situation={status.situation}
         className={'project-tile' + (view === 'list' ? ' project-row' : '') + (selected ? ' is-selected' : '') + (archived ? ' is-archived' : '')}
       >
         <div className="project-tile-menu-wrap project-tile-menu-outside">
@@ -126,22 +123,23 @@ export const ProjectGrid: React.FC<ProjectGridProps> = (props) => {
           onClick={() => openProject(p)}
           title={'Abrir projeto ' + p.name}
         >
-          <span className="project-tile-top">
-            <span className="project-tile-icon"><Folder aria-hidden="true" /></span>
-            <span className={'project-status-dot ' + status.color} role="img" title={status.label} aria-label={status.label} />
-          </span>
           <span className="project-tile-name" title={p.name}>{p.name}</span>
-          <span className="project-tile-meta">
-            {p.techs[0]?.label && <span>{p.techs[0].label}</span>}
-            {p.techs[0]?.label && p.git.branch && <span className="project-meta-separator" aria-hidden="true">·</span>}
-            {p.git.branch && <span>{p.git.branch}</span>}
+          <span className="project-tile-branch" title={status.label}>
+            <span className={'project-status-dot ' + status.classes} role="img" title={status.label} aria-label={status.label} />
+            <span className="project-tile-branch-name">{branchPillText(p)}</span>
+            {syncLabel && <span className="project-tile-branch-sync">{syncLabel}</span>}
           </span>
-          <span className="project-tile-updated"><Clock3 aria-hidden="true" />Atualizado {relativeDate(p.lastModified)}</span>
         </button>
 
-        <div className="project-quick-actions" aria-label={'Ações rápidas de ' + p.name} onClick={(event) => event.stopPropagation()}>
-          <button type="button" onClick={() => openProject(p)}><ExternalLink aria-hidden="true" />Abrir</button>
-          {!archived && <button type="button" title="Abrir terminal" aria-label={'Abrir terminal em ' + p.name} onClick={() => void safeLaunchTerminal(p)}><Terminal aria-hidden="true" /></button>}
+        <div className="project-tile-footer">
+          <span className="project-tile-updated">
+            {tech && <><span className="project-tile-tech-dot" style={{ background: tech.color }} aria-hidden="true" /><span>{tech.label}</span><span className="project-meta-separator" aria-hidden="true">·</span></>}
+            <span>atualizado {relativeDate(p.lastModified)}</span>
+          </span>
+          <div className="project-quick-actions" aria-label={'Ações rápidas de ' + p.name} onClick={(event) => event.stopPropagation()}>
+            <button type="button" className="project-open-button" onClick={() => openProject(p)}><ExternalLink aria-hidden="true" />Abrir</button>
+            {!archived && <button type="button" title="Abrir terminal" aria-label={'Abrir terminal em ' + p.name} onClick={() => void safeLaunchTerminal(p)}><Terminal aria-hidden="true" /></button>}
+          </div>
         </div>
       </article>
     )
@@ -154,7 +152,35 @@ export const ProjectGrid: React.FC<ProjectGridProps> = (props) => {
   }
   return <main className="project-workspace project-library" aria-busy={isLoading} onClick={() => { if (openMenu) setOpenMenu(null); if (showFilters) setShowFilters(false) }}><section className="project-master" aria-label="Biblioteca de projetos">
     <header className="project-library-header"><div><h1>Projetos <span className="project-header-count">{projects.length}</span></h1><p>Seus projetos em um só lugar.</p></div><div className="project-header-actions">{onOpenClone && <button type="button" className="project-secondary-button" onClick={onOpenClone}><GitPullRequest aria-hidden="true" />Clonar</button>}{onOpenSettings && <button type="button" className="project-primary-button" onClick={onOpenSettings}><Plus aria-hidden="true" />Novo projeto</button>}</div></header>
-    <div className="project-library-toolbar"><div className="project-filter-pills" aria-label="Filtrar ciclo de vida">{(['all', 'development', 'archived'] as const).map((key) => <button key={key} type="button" aria-pressed={lifecycleFilter === key} className={lifecycleFilter === key ? 'is-active' : ''} onClick={() => setLifecycleFilter(key)}>{key === 'all' ? 'Todos' : key === 'development' ? 'Em desenvolvimento' : 'Arquivados'} <span>{counts[key]}</span></button>)}</div><div className="project-view-tools"><div className="project-filter-popover-wrap"><button type="button" className={`project-tool-button${showFilters ? ' is-active' : ''}`} aria-expanded={showFilters} data-testid="project-filter-toggle" onClick={(e) => { e.stopPropagation(); setShowFilters(!showFilters) }}><SlidersHorizontal aria-hidden="true" />Filtros{(tech || gitFilter !== 'all' || branch || location) && <span className="filter-indicator" />}</button>{showFilters && <div className="project-filter-popover" role="dialog" aria-label="Filtros de projetos" data-testid="project-filter-popover" onClick={(e) => e.stopPropagation()}><div className="project-filter-popover-title">Filtros <button type="button" aria-label="Fechar filtros" onClick={() => setShowFilters(false)}><X aria-hidden="true" /></button></div><label>Status Git<select data-testid="filter-git-select" value={gitFilter} onChange={(e) => setGitFilter(e.target.value as GitFilter)}><option value="all">Todos</option><option value="pull">Pull pendente</option><option value="modified">Com alterações</option><option value="no-git">Sem Git</option></select></label><label>Tecnologia<select data-testid="filter-tech-select" value={tech} onChange={(e) => setTech(e.target.value)}><option value="">Todas</option>{techs.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label><label>Branch<select data-testid="filter-branch-select" value={branch} onChange={(e) => setBranch(e.target.value)}><option value="">Todas</option>{branches.map((value) => <option key={value} value={value}>{value}</option>)}</select></label><label>Localização<select data-testid="filter-location-select" value={location} onChange={(e) => setLocation(e.target.value)}><option value="">Todas</option>{locations.map((value) => <option key={value} value={value}>{value}</option>)}</select></label><label>Ordenar<select data-testid="filter-sort-select" value={sort} onChange={(e) => setSort(e.target.value as 'name' | 'recent')}><option value="name">Nome A–Z</option><option value="recent">Mais recentes</option></select></label><label className="project-filter-check"><input type="checkbox" checked={grouped} onChange={(e) => setGrouped(e.target.checked)} />Agrupar por pasta</label></div>}</div><div className="project-view-toggle" role="group" aria-label="Modo de visualização" data-testid="project-view-toggle"><button type="button" aria-label="Visualização em grade" aria-pressed={view === 'grid'} className={view === 'grid' ? 'is-active' : ''} onClick={() => setView('grid')}><LayoutGrid aria-hidden="true" />Grid</button><button type="button" aria-label="Visualização em lista" aria-pressed={view === 'list'} className={view === 'list' ? 'is-active' : ''} onClick={() => setView('list')}><List aria-hidden="true" />Lista</button></div></div></div>
+    <div className="project-library-toolbar">
+      {/* Segmentado por situação Git real (limpo/pendente/sem Git) + Arquivados quando existir. */}
+      <div className="project-filter-pills" role="group" aria-label="Filtrar por situação do Git" data-testid="project-situation-filter">
+        {SITUATION_SEGMENTS.filter((segment) => segment.key !== 'archived' || counts.archived > 0).map((segment) => (
+          <button
+            key={segment.key}
+            type="button"
+            data-testid={'situation-filter-' + segment.key}
+            aria-pressed={situationFilter === segment.key}
+            className={situationFilter === segment.key ? 'is-active' : ''}
+            onClick={() => setSituationFilter(segment.key)}
+          >
+            <span className={'project-filter-dot ' + segment.dotClass} aria-hidden="true" />
+            {segment.label} <span>· {counts[segment.key]}</span>
+          </button>
+        ))}
+      </div>
+      <div className="project-view-tools">
+        <label className="project-sort-control">
+          <span>Ordenar:</span>
+          <select data-testid="filter-sort-select" value={sort} onChange={(e) => setSort(e.target.value as 'name' | 'recent')}>
+            <option value="name">Nome A–Z</option>
+            <option value="recent">Mais recentes</option>
+          </select>
+        </label>
+        <div className="project-filter-popover-wrap"><button type="button" className={`project-tool-button${showFilters ? ' is-active' : ''}`} aria-expanded={showFilters} data-testid="project-filter-toggle" onClick={(e) => { e.stopPropagation(); setShowFilters(!showFilters) }}><SlidersHorizontal aria-hidden="true" />Filtros{(tech || gitFilter !== 'all' || branch || location) && <span className="filter-indicator" />}</button>{showFilters && <div className="project-filter-popover" role="dialog" aria-label="Filtros de projetos" data-testid="project-filter-popover" onClick={(e) => e.stopPropagation()}><div className="project-filter-popover-title">Filtros <button type="button" aria-label="Fechar filtros" onClick={() => setShowFilters(false)}><X aria-hidden="true" /></button></div><label>Status Git<select data-testid="filter-git-select" value={gitFilter} onChange={(e) => setGitFilter(e.target.value as GitFilter)}><option value="all">Todos</option><option value="pull">Pull pendente</option><option value="modified">Com alterações</option><option value="no-git">Sem Git</option></select></label><label>Tecnologia<select data-testid="filter-tech-select" value={tech} onChange={(e) => setTech(e.target.value)}><option value="">Todas</option>{techs.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label><label>Branch<select data-testid="filter-branch-select" value={branch} onChange={(e) => setBranch(e.target.value)}><option value="">Todas</option>{branches.map((value) => <option key={value} value={value}>{value}</option>)}</select></label><label>Localização<select data-testid="filter-location-select" value={location} onChange={(e) => setLocation(e.target.value)}><option value="">Todas</option>{locations.map((value) => <option key={value} value={value}>{value}</option>)}</select></label><label className="project-filter-check"><input type="checkbox" checked={grouped} onChange={(e) => setGrouped(e.target.checked)} />Agrupar por pasta</label></div>}</div>
+        <div className="project-view-toggle" role="group" aria-label="Modo de visualização" data-testid="project-view-toggle"><button type="button" aria-label="Visualização em grade" aria-pressed={view === 'grid'} className={view === 'grid' ? 'is-active' : ''} onClick={() => setView('grid')}><LayoutGrid aria-hidden="true" />Grid</button><button type="button" aria-label="Visualização em lista" aria-pressed={view === 'list'} className={view === 'list' ? 'is-active' : ''} onClick={() => setView('list')}><List aria-hidden="true" />Lista</button></div>
+      </div>
+    </div>
     {search && <div className="project-search-context"><Search aria-hidden="true" />Resultados para <strong>{search}</strong></div>}
     <div className="project-library-content">
       {collection()}

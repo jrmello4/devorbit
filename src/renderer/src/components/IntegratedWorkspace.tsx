@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  AlertCircle, ArrowLeft, ArrowRight, Check, Code2, Globe, GripVertical,
-  LayoutDashboard, RefreshCw, Send, Terminal, X,
+  AlertCircle, ArrowLeft, ArrowRight, Check, Code2, Frame, Globe, GripVertical,
+  LayoutDashboard, RefreshCw, Send, X,
 } from 'lucide-react'
 import type { AgentBridgeEvent } from '../../../shared/agent-bridge-event'
 import type { AgentProvider, AgentProviderId, AutomationConfig, CodexAccountStatus, Project, ToolHealth, WebPanelEvent } from '../types'
@@ -604,7 +604,11 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
     <aside className="workspace-browser-panel" aria-label="Pesquisa web">
       <div className="workspace-panel-heading browser-heading"><div><strong><Globe size={14} aria-hidden="true" /> Pesquisa web</strong><span title={webTitle}>{webTitle}</span></div><div className="browser-actions"><button type="button" className="workspace-icon-button" onClick={() => void moveWebHistory(-1)} disabled={webHistory.index === 0} aria-label="Voltar na pesquisa web" title="Voltar"><ArrowLeft size={14} aria-hidden="true" /></button><button type="button" className="workspace-icon-button" onClick={() => void moveWebHistory(1)} disabled={webHistory.index >= webHistory.entries.length - 1} aria-label="Avançar na pesquisa web" title="Avançar"><ArrowRight size={14} aria-hidden="true" /></button><button type="button" className="workspace-icon-button" onClick={() => void window.devorbit.reloadWeb()} aria-label="Recarregar pesquisa web" title="Recarregar"><RefreshCw size={14} aria-hidden="true" /></button></div></div>
       <form className="workspace-browser-form" onSubmit={(event) => void navigateBrowser(event)}><label className="sr-only" htmlFor="workspace-canvas-web-url">Endereço da página web</label><input id="workspace-canvas-web-url" value={webUrl} onChange={(event) => setWebUrl(event.target.value)} spellCheck={false} autoComplete="off" /><button type="submit" className="workspace-send-button" aria-label="Navegar" title="Navegar"><Check size={14} aria-hidden="true" /></button></form>
-      <div ref={webViewportRef} className="workspace-web-viewport">{webError && <div className="workspace-web-message"><AlertCircle size={18} aria-hidden="true" /><strong>Não foi possível carregar</strong><span>{webError}</span></div>}</div>
+      <div ref={webViewportRef} className="workspace-web-viewport">{webError
+        ? <div className="workspace-web-message"><AlertCircle size={18} aria-hidden="true" /><strong>Não foi possível carregar</strong><span>{webError}</span></div>
+        : /* Cartão vazio sob o WebContentsView nativo: só aparece quando o painel
+             nativo não está cobrindo (suprimido/oculto). Decorativo (aria-hidden). */
+        <div className="workspace-web-empty" aria-hidden="true"><strong>Navegue dentro do DevOrbit</strong><span>Digite um endereço acima para abrir a página aqui mesmo.</span></div>}</div>
     </aside>
   )
   return (
@@ -642,15 +646,44 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
           <div><strong>{project.name}</strong><span title={project.path}>{project.path}</span></div>
         </div>
         <div className="integrated-toolbar-actions">
-          <button type="button" className={'workspace-tool-button' + (isCanvas ? ' active' : '')} onClick={toggleWorkspaceMode} aria-pressed={isCanvas} aria-label={isCanvas ? 'Voltar ao layout integrado' : 'Abrir canvas'} title={isCanvas ? 'Voltar ao layout integrado' : 'Abrir canvas'}>
-            <Code2 size={14} aria-hidden="true" /><span>{isCanvas ? 'Ambiente' : 'Canvas'}</span>
-          </button>
-          <button type="button" className={'workspace-tool-button' + (layout.terminalVisible ? ' active' : '')} onClick={() => setLayout((current) => ({ ...current, terminalVisible: !current.terminalVisible }))} aria-pressed={layout.terminalVisible} title="Mostrar ou ocultar terminal">
-            <Terminal size={14} aria-hidden="true" /><span>Terminal</span>
-          </button>
-          <button type="button" className={'workspace-tool-button' + (layout.webVisible ? ' active' : '')} onClick={() => setLayout((current) => ({ ...current, webVisible: !current.webVisible }))} aria-pressed={layout.webVisible} title="Mostrar ou ocultar navegador">
-            <Globe size={14} aria-hidden="true" /><span>Web</span>
-          </button>
+          {/* Seletor segmentado de visão: Canvas (nós), Código (visão de
+              grid/editor de hoje) e Web (painel de pesquisa) no lugar dos três
+              botões-toggle. Semântica de estado preservada: Canvas/Código
+              controlam isCanvas; Web alterna layout.webVisible. Os nomes
+              acessíveis "Abrir canvas" e "Mostrar ou ocultar navegador" são
+              consultados pelo harness (scripts/verify-ui.cjs) — não renomear. */}
+          <div className="workspace-view-switch" role="group" aria-label="Visão do ambiente">
+            <button
+              type="button"
+              className={'workspace-segment' + (isCanvas ? ' active' : '')}
+              onClick={() => setIsCanvas(true)}
+              aria-pressed={isCanvas}
+              aria-label={isCanvas ? 'Voltar ao layout integrado' : 'Abrir canvas'}
+              title={isCanvas ? 'Voltar ao layout integrado' : 'Abrir canvas'}
+            >
+              <Frame size={13} aria-hidden="true" /><span>Canvas</span>
+            </button>
+            <button
+              type="button"
+              className={'workspace-segment' + (isCanvas ? '' : ' active')}
+              onClick={() => setIsCanvas(false)}
+              aria-pressed={!isCanvas}
+              aria-label="Ver código"
+              title="Ver código (arquivos e editor)"
+            >
+              <Code2 size={13} aria-hidden="true" /><span>Código</span>
+            </button>
+            <button
+              type="button"
+              className={'workspace-segment' + (layout.webVisible ? ' active' : '')}
+              onClick={() => setLayout((current) => ({ ...current, webVisible: !current.webVisible }))}
+              aria-pressed={layout.webVisible}
+              aria-label="Mostrar ou ocultar navegador"
+              title="Mostrar ou ocultar navegador"
+            >
+              <Globe size={13} aria-hidden="true" /><span>Web</span>
+            </button>
+          </div>
           <button type="button" className="workspace-tool-button" onClick={() => void sendContextToTerminal()} disabled={!editorContext?.path} title="Enviar arquivo e pesquisa web ao terminal">
             <Send size={14} aria-hidden="true" /><span>Enviar contexto</span>
           </button>
@@ -685,7 +718,11 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
               <button type="submit" className="workspace-send-button" aria-label="Navegar" title="Navegar"><Check size={14} aria-hidden="true" /></button>
             </form>
             <div ref={webViewportRef} className="workspace-web-viewport">
-              {webError && <div className="workspace-web-message"><AlertCircle size={18} aria-hidden="true" /><strong>Não foi possível carregar</strong><span>{webError}</span></div>}
+              {/* Mesmo empty state do painel do canvas: fica sob o conteúdo
+                  nativo e orienta quando não há página visível. */}
+              {webError
+                ? <div className="workspace-web-message"><AlertCircle size={18} aria-hidden="true" /><strong>Não foi possível carregar</strong><span>{webError}</span></div>
+                : <div className="workspace-web-empty" aria-hidden="true"><strong>Navegue dentro do DevOrbit</strong><span>Digite um endereço acima para abrir a página aqui mesmo.</span></div>}
             </div>
           </aside>
           <button type="button" className="workspace-resize-handle vertical" onPointerDown={(event) => startDrag('browser', event)} aria-label="Redimensionar pesquisa web" title="Arraste para redimensionar a pesquisa web"><GripVertical size={15} aria-hidden="true" /></button>

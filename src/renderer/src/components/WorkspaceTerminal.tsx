@@ -867,9 +867,13 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
 
   return (
     <section className="workspace-terminal-panel" aria-label="Terminal interno">
+      {/* Cabeçalho unificado de 32px: rótulo TERMINAL + ponto de status com o
+          executor ativo; o nome do preset (Smart Terminals) vira um rótulo ao
+          lado em vez de título do painel. A seção mantém aria-label "Terminal
+          interno", consultado pelo harness (scripts/verify-ui.cjs). */}
       <div className="workspace-panel-heading terminal-heading">
         <div>
-          <strong><TerminalIcon size={14} aria-hidden="true" /> {headingLabel}</strong>
+          <strong><TerminalIcon size={13} aria-hidden="true" /> Terminal</strong>
           <span className={'terminal-status ' + (missingPreset ? 'missing' : terminalState)}>
             <i />
             {missingPreset ? 'Preset não encontrado'
@@ -877,6 +881,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
               : terminalState === 'starting' ? 'Iniciando'
               : terminalState === 'error' ? 'Erro' : 'Encerrado'}
           </span>
+          {launch && <span className="terminal-heading-executor" title={headingLabel}>{headingLabel}</span>}
           {/* Chip de atividade: oculto enquanto não há processo (parado sem
               ter iniciado); após exit mostra Concluído/Falhou. O texto carrega
               o estado — cor é só reforço (DESIGN.md). */}
