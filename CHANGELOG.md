@@ -2,7 +2,7 @@
 
 All notable changes to DevOrbit are documented here.
 
-## [1.0.39] - 2026-09-23
+## [1.0.40] - 2026-09-23
 
 ### Added
 
@@ -14,6 +14,7 @@ All notable changes to DevOrbit are documented here.
 - Expanding and collapsing a canvas card works in any state: expanding shows the terminal and collapsing minimizes it again.
 - Connection ports stay hidden until the card is hovered, focused, selected or being connected.
 - UI verification: the connection-cancel check now waits for the target port to become available, fixing a flaky hit-test that failed only on CI.
+- UI verification: agent role/provider interactions now use the side Inspector and the header role pill, after the inline agent config was removed.
 
 ### Changed
 
