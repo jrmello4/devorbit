@@ -8,17 +8,15 @@ import React, {
 import {
   Bot,
   Crown,
+  Edit2,
   FileCode2,
   FileText,
   GitBranch,
   Globe2,
   Grip,
   Link2,
-  Maximize2,
-  Minus,
   MousePointer2,
   NotebookPen,
-  Plus,
   RotateCcw,
   Send,
   Settings2,
@@ -48,14 +46,41 @@ import {
   sanitizeCustomTerminalPreset,
   sanitizeTerminalNodeConfig,
 } from "../../../shared/terminal-presets";
-import { createsAgentCycle, computeSquadRegions, sanitizeAgentCycles } from "./workspace-request-helpers";
+import {
+  addSquadMember,
+  CANVAS_ZOOM_LEVELS,
+  collectSquadAnchorIds,
+  computeCanvasFocus,
+  computeFocusViewport,
+  computeSquadRegions,
+  createsAgentCycle,
+  inferCanvasEdgeKind,
+  parseSquadAnchorId,
+  removeSquadMember,
+  resolveCanvasNodeSlot,
+  renameSquad,
+  sanitizeAgentCycles,
+  sanitizeCanvasEdges,
+  setSquadCoordinator,
+  setSquadObjective,
+  squadAnchorId,
+  squadCoordinatedBy,
+  squadForNode,
+  stepZoomLevel,
+  toggleSquadCollapsed,
+} from "./workspace-request-helpers";
 import { AgentCreationDialog } from "./AgentCreationDialog";
+import { CanvasToolbar, type CanvasZoomPreset } from "./CanvasToolbar";
+import { CanvasNodeInspector } from "./CanvasNodeInspector";
 import {
   agentNodeBlockedLabel,
   agentNodeSetupMessage,
   isAgentNodeConfigured,
+  isCoordinatorRole,
   requiresCodexAccount,
   resolveAgentProvider,
+  resolveSquadCoordinator,
+  sanitizeAgentRole,
   type AgentCreationSpec,
   type SquadCreationSpec,
 } from "./agent-creation-helpers";
@@ -65,12 +90,17 @@ import {
   READABLE_CANVAS_VERSIONS,
   TERMINAL_COMMAND_INVALID_HINT,
   buildQuickDeployChips,
+  canvasEdgeLabel,
+  defaultCanvasEdgeKind,
   formatArgsInput,
+  isOrderingEdgeKind,
   isTerminalCommandTextRejected,
   migrateCanvasNodesForTerminals,
+  migrateCanvasStateV5,
   parseArgsInput,
   slugifyCustomPresetId,
   terminalNodeTitle,
+  type CanvasEdgeKind,
   deleteCustomTerminalPreset,
   renameCustomTerminalPreset,
 } from "./terminal-node-helpers";
@@ -91,7 +121,8 @@ export interface CanvasNode {
   height: number;
   z: number;
   content?: string;
-  role?: AgentRole;
+  /** Papel built-in ou string custom; orquestração só reconhece built-ins. */
+  role?: string;
   account?: "account1" | "account2";
   provider?: AgentProviderId;
   terminal?: TerminalNodeRuntimeConfig;
@@ -100,12 +131,19 @@ export interface CanvasConnection {
   id: string;
   from: string;
   to: string;
+  /** Semântica da aresta; ausente = 'flow' (comportamento v2–v4). */
+  kind?: CanvasEdgeKind;
+  /** Rótulo opcional exibido na aresta. */
+  label?: string;
 }
 export interface CanvasSquad {
   id: string;
   title: string;
-  coordinatorNodeId: string;
+  objective?: string;
+  /** Ausente = sem coordenador; sempre um membro quando definido. */
+  coordinatorNodeId?: string;
   memberNodeIds: string[];
+  collapsed?: boolean;
 }
 interface CanvasState {
   version: typeof CANVAS_STATE_VERSION;
@@ -148,13 +186,13 @@ export interface OrchestrationNote {
 export interface OrchestrationAgent {
   id: string;
   title: string;
-  role: AgentRole;
+  role: string;
   notes: OrchestrationNote[];
 }
 interface OrchestrationResult {
   agentId: string;
   title: string;
-  role: AgentRole;
+  role: string;
   content: string;
 }
 interface OrchestrationRun {
@@ -201,6 +239,9 @@ const WORLD_HEIGHT = 3400;
 const MIN_ZOOM = 0.08;
 const MAX_ZOOM = 1.6;
 const GRID = 20;
+/** Geometria efêmera do cartão compacto (não persiste em width/height). */
+export const COMPACT_NODE_WIDTH = 320;
+export const COMPACT_NODE_HEIGHT = 130;
 const fixedKinds = new Set<NodeKind>(["workbench", "browser"]);
 const nodeMeta: Record<NodeKind, { label: string; meta: string; icon: React.ReactNode }> = {
   workbench: { label: "Editor e terminal", meta: "WORKBENCH", icon: <FileCode2 size={13} /> },
@@ -257,7 +298,24 @@ const nodeId = () =>
   Date.now().toString(36) +
   "-" +
   Math.random().toString(36).slice(2, 7);
-const orchestrationRoleOrder: AgentRole[] = [
+
+/** Default compacto: apenas Agent/Terminal nascem resumidos. */
+export function isCompactByDefault(node: Pick<CanvasNode, "kind">): boolean {
+  return node.kind === "agent" || node.kind === "terminal";
+}
+
+/**
+ * Geometria efêmera de exibição: cartão compacto vira 320x130 sem tocar em
+ * `width`/`height` persistidos. Usado por arestas, região de squad, fit e
+ * minimap para alinhar a geometria derivada ao DOM compacto.
+ */
+export function nodeDisplayGeometry(node: CanvasNode, compact: boolean): CanvasNode {
+  return compact
+    ? { ...node, width: COMPACT_NODE_WIDTH, height: COMPACT_NODE_HEIGHT }
+    : node;
+}
+
+const orchestrationRoleOrder: readonly string[] = [
   "Implementação",
   "Revisão",
   "Testes",
@@ -295,7 +353,11 @@ const agentProviderIds: AgentProviderId[] = [
 function isAgentProviderId(value: unknown): value is AgentProviderId {
   return typeof value === "string" && agentProviderIds.includes(value as AgentProviderId);
 }
-const connectionPath = (from: CanvasNode, toX: number, toY: number) => {
+const connectionPath = (
+  from: { x: number; y: number; width: number; height: number },
+  toX: number,
+  toY: number,
+) => {
   const x1 = from.x + from.width;
   const y1 = from.y + from.height / 2;
   const distance = Math.abs(toX - x1);
@@ -354,11 +416,8 @@ function sanitizeNode(
         ? value.content.slice(0, 24000)
         : fallback.content,
     role:
-      value.role === "Coordenador" ||
-      value.role === "Implementação" ||
-      value.role === "Revisão" ||
-      value.role === "Testes"
-        ? value.role
+      typeof value.role === "string" && value.role.trim()
+        ? sanitizeAgentRole(value.role)
         : fallback.role,
     account:
       value.account === "account2"
@@ -370,9 +429,14 @@ function sanitizeNode(
     terminal,
   };
 }
-function sanitizeSquads(value: unknown, nodes: readonly CanvasNode[]): CanvasSquad[] {
+/**
+ * Saneia squads v5: membros livres (sem teto 4/32), papéis vivem nos nós,
+ * coordenador OPCIONAL e sempre membro, objetivo e collapse persistidos.
+ * Squad sem membro válido é descartado; coordenador inválido vira ausente —
+ * nunca promove substituto.
+ */
+export function sanitizeSquads(value: unknown, nodes: readonly CanvasNode[]): CanvasSquad[] {
   if (!Array.isArray(value)) return [];
-  const nodeIds = new Set(nodes.map((node) => node.id));
   const agentNodeIds = new Set(nodes.filter((node) => node.kind === "agent").map((node) => node.id));
   const result: CanvasSquad[] = [];
   for (const item of value) {
@@ -385,25 +449,44 @@ function sanitizeSquads(value: unknown, nodes: readonly CanvasNode[]): CanvasSqu
       typeof raw.id !== "string" ||
       typeof raw.title !== "string" ||
       !raw.title.trim() ||
-      typeof raw.coordinatorNodeId !== "string" ||
-      !agentNodeIds.has(raw.coordinatorNodeId) ||
-      !memberNodeIds.includes(raw.coordinatorNodeId)
+      memberNodeIds.length === 0
     ) continue;
+    const coordinatorNodeId =
+      typeof raw.coordinatorNodeId === "string" && memberNodeIds.includes(raw.coordinatorNodeId)
+        ? raw.coordinatorNodeId
+        : undefined;
     result.push({
       id: raw.id.slice(0, 80),
       title: raw.title.trim().slice(0, 80),
-      coordinatorNodeId: raw.coordinatorNodeId,
-      memberNodeIds: memberNodeIds.slice(0, 32),
+      objective: typeof raw.objective === "string" ? raw.objective.slice(0, 2000) : "",
+      memberNodeIds,
+      ...(coordinatorNodeId ? { coordinatorNodeId } : {}),
+      collapsed: raw.collapsed === true,
     });
   }
-  return result.slice(0, 100);
+  return result;
 }
-function read(id: string, defaultProvider: AgentProviderId | null = null): CanvasState {
+export type RawCanvasState =
+  | ({
+      version?: number;
+      nodes?: unknown;
+      connections?: unknown;
+      viewport?: CanvasState["viewport"];
+    } & LegacyCanvas)
+  | null;
+
+/**
+ * Restaura o estado persistido (fixture de restore testável): migra v2–v4 para
+ * v5 sem perder nós, posições, arestas nem squads legados; entrada inválida cai
+ * no canvas default. É o mesmo caminho usado pelo localStorage em `read`.
+ */
+export function parseCanvasState(
+  raw: RawCanvasState,
+  defaultProvider: AgentProviderId | null = null,
+): CanvasState {
   const fallback = defaults();
-  try {
-    const raw = JSON.parse(
-      window.localStorage.getItem(key(id)) || "",
-    ) as { version?: number; nodes?: unknown; connections?: unknown; viewport?: CanvasState["viewport"] } & LegacyCanvas;
+  if (!raw || typeof raw !== "object") return fallback;
+  {
     if (
       (READABLE_CANVAS_VERSIONS as readonly number[]).includes(raw.version ?? -1) &&
       Array.isArray(raw.nodes)
@@ -434,29 +517,31 @@ function read(id: string, defaultProvider: AgentProviderId | null = null): Canva
       );
       const ids = new Set(nodes.map((node) => node.id));
       const agentIds = new Set(nodes.filter((node) => node.kind === "agent").map((node) => node.id));
-      const validConnections = Array.isArray(raw.connections)
-        ? raw.connections.filter(
-            (connection): connection is CanvasConnection =>
-              Boolean(
-                connection &&
-                typeof connection.id === "string" &&
-                typeof connection.from === "string" &&
-                typeof connection.to === "string" &&
-                connection.from !== connection.to &&
-                ids.has(connection.from) &&
-                ids.has(connection.to),
-              ),
-          )
-        : [];
+      // Migração v4 → v5 não-destrutiva: arestas ganham tipo default e squads
+      // ganham objetivo/coordenador opcional/collapse sem perder posições.
+      const migratedState = migrateCanvasStateV5(raw);
+      // Canvas v2 nunca teve squads explícitos. Não inferimos participação
+      // por conexões: ela só passa a existir após confirmação do usuário.
+      const squads = raw.version !== 2 ? sanitizeSquads(migratedState.squads, nodes) : [];
+      const anchorIds = collectSquadAnchorIds(squads);
+      const validConnections = migratedState.connections.filter(
+        (connection): connection is CanvasConnection =>
+          Boolean(
+            connection &&
+            typeof connection === "object" &&
+            typeof (connection as CanvasConnection).id === "string" &&
+            typeof (connection as CanvasConnection).from === "string" &&
+            typeof (connection as CanvasConnection).to === "string",
+          ),
+      );
       return {
         version: CANVAS_STATE_VERSION,
         nodes,
-        // Saneia ciclos agente-agente persistidos: nenhum ciclo visual pode
-        // ficar sem aresta de piping correspondente no main.
-        connections: sanitizeAgentCycles(validConnections, agentIds),
-        // Canvas v2 nunca teve squads explícitos. Não inferimos participação
-        // por conexões: ela só passa a existir após confirmação do usuário.
-        squads: raw.version !== 2 ? sanitizeSquads(raw.squads, nodes) : [],
+        // Saneia arestas persistidas: ciclos de ordenação agente-agente são
+        // descartados na ordem armazenada; vínculos Nota→Squad sobrevivem via
+        // âncora `squad:<id>`.
+        connections: sanitizeCanvasEdges(validConnections, ids, agentIds, anchorIds),
+        squads,
         viewport: {
           x: Number.isFinite(raw.viewport?.x)
             ? raw.viewport!.x
@@ -487,10 +572,175 @@ function read(id: string, defaultProvider: AgentProviderId | null = null): Canva
         ),
       };
     }
+    return fallback;
+  }
+}
+
+export interface CanvasStorageLike {
+  getItem(storageKey: string): string | null;
+}
+
+export interface CanvasStorageWriter {
+  setItem(storageKey: string, value: string): void;
+}
+
+/** Leitura real do workspace (mesmo caminho do localStorage, injetável em teste). */
+export function readCanvasState(
+  storage: CanvasStorageLike,
+  projectId: string,
+  defaultProvider: AgentProviderId | null = null,
+): CanvasState {
+  try {
+    return parseCanvasState(
+      JSON.parse(storage.getItem(key(projectId)) || "null") as RawCanvasState,
+      defaultProvider,
+    );
   } catch {
     /* clean canvas */
+    return defaults();
   }
-  return fallback;
+}
+
+/** Gravação real do workspace: JSON do estado v5 na chave do projeto. */
+export function persistCanvasState(
+  storage: CanvasStorageWriter,
+  projectId: string,
+  state: CanvasState,
+): void {
+  try {
+    storage.setItem(key(projectId), JSON.stringify(state));
+  } catch {
+    /* optional */
+  }
+}
+
+function read(id: string, defaultProvider: AgentProviderId | null = null): CanvasState {
+  return readCanvasState(window.localStorage, id, defaultProvider);
+}
+
+export interface SquadCreationPlanOptions {
+  defaultExecutor?: AgentProviderId | null;
+  /** Gerador de id injetável (determinístico em teste). */
+  createId?: () => string;
+  /**
+   * Quando true, cria a nota "Plano da tarefa" ligada à âncora do squad.
+   * Default false: o squad nasce independente e sem nota; o objetivo persiste
+   * no próprio squad e a nota só existe por ação explícita do usuário.
+   */
+  createNote?: boolean;
+}
+
+export interface SquadCreationPlan {
+  agents: CanvasNode[];
+  note: CanvasNode | null;
+  connections: CanvasConnection[];
+  squad: CanvasSquad;
+  selectedIds: string[];
+}
+
+/**
+ * Monta a criação de um squad de forma pura e testável: agentes, squad e
+ * arestas de coordenação. A Nota (e o vínculo Note→Squad) só entra quando
+ * `createNote` é explicitamente verdadeiro — o default é squad sem nota.
+ */
+export function planSquadCreation(
+  spec: SquadCreationSpec,
+  layout: { originX: number; originY: number; zBase: number },
+  options: SquadCreationPlanOptions = {},
+): SquadCreationPlan {
+  const createId = options.createId ?? nodeId;
+  const participants = spec.participants;
+  const squadId = "squad-" + createId().slice(5);
+  const objective = (spec.objective ?? "").trim().slice(0, 2000);
+  const columns = participants.length <= 2 ? participants.length : participants.length <= 4 ? 2 : 3;
+  const cellWidth = 460;
+  const cellHeight = 320;
+  const gapX = 40;
+  const gapY = 40;
+  const agents: CanvasNode[] = participants.map((participant, index) => {
+    const role = sanitizeAgentRole(participant.role);
+    const provider = participant.provider ?? options.defaultExecutor ?? undefined;
+    const column = index % columns;
+    const row = Math.floor(index / columns);
+    return {
+      id: createId(),
+      kind: "agent",
+      title: participant.title?.trim().slice(0, 80) || (role === "Implementação" ? "Agente de implementação" : "Agente: " + role),
+      role,
+      ...(participant.account ? { account: participant.account } : {}),
+      ...(provider ? { provider } : {}),
+      x: clamp(layout.originX + column * (cellWidth + gapX), 0, WORLD_WIDTH - cellWidth),
+      y: clamp(layout.originY + row * (cellHeight + gapY), 0, WORLD_HEIGHT - cellHeight),
+      width: cellWidth,
+      height: cellHeight,
+      z: layout.zBase + index + 2,
+    };
+  });
+  // Coordenador explícito ou ausente — nunca inferido por papel.
+  const coordinatorChoice = resolveSquadCoordinator(spec);
+  const coordinator =
+    coordinatorChoice.valid && coordinatorChoice.index !== null
+      ? agents[coordinatorChoice.index]
+      : undefined;
+  const connections: CanvasConnection[] = coordinator
+    ? agents
+        .filter((agent) => agent.id !== coordinator.id)
+        .map((agent) => ({
+          id: "link-" + coordinator.id + "-" + agent.id,
+          from: coordinator.id,
+          to: agent.id,
+          kind: "coordination" as const,
+        }))
+    : [];
+  let note: CanvasNode | null = null;
+  if (options.createNote) {
+    note = {
+      id: createId(),
+      kind: "note",
+      title: "Plano da tarefa",
+      content: objective
+        ? "# Objetivo\n\n" + objective
+        : "# Objetivo\n\nDescreva a tarefa, critérios de aceite e limites aqui.\n\n# Entregáveis\n\n- Implementação\n- Revisão\n- Testes",
+      x: layout.originX,
+      y: layout.originY,
+      width: 340,
+      height: 300,
+      z: layout.zBase + 1,
+    };
+    connections.unshift({
+      id: "link-" + note.id + "-" + squadId,
+      from: note.id,
+      to: squadAnchorId(squadId),
+      kind: "membership",
+      ...(objective ? { label: "objetivo" } : {}),
+    });
+  }
+  const squad: CanvasSquad = {
+    id: squadId,
+    title: spec.title.trim(),
+    objective,
+    memberNodeIds: agents.map((agent) => agent.id),
+    ...(coordinator ? { coordinatorNodeId: coordinator.id } : {}),
+    collapsed: false,
+  };
+  const selectedIds = note
+    ? [note.id, ...agents.map((agent) => agent.id)]
+    : agents.map((agent) => agent.id);
+  return { agents, note, connections, squad, selectedIds };
+}
+
+/**
+ * Guarda de integridade do squad v5: o modelo exige ao menos um membro. Squad
+ * vazio não é desenhado por `computeSquadRegions` e é descartado por
+ * `sanitizeSquads` no reload (perde título/objetivo). Remover o último membro
+ * é bloqueado; remover quem não é membro é inócuo.
+ */
+export function canRemoveSquadMember(
+  squad: Pick<CanvasSquad, "memberNodeIds">,
+  nodeId: string,
+): boolean {
+  if (!squad.memberNodeIds.includes(nodeId)) return false;
+  return squad.memberNodeIds.length > 1;
 }
 
 function connectedNotes(
@@ -521,14 +771,70 @@ function connectedNotes(
     }));
 }
 
-function orchestrationAgentRole(node: CanvasNode): AgentRole {
-  return node.role === "Revisão" || node.role === "Testes"
-    ? node.role
-    : "Implementação";
+/**
+ * Contexto de orquestração de um membro. Preserva as notas ligadas
+ * diretamente ao agente (legado) e soma as notas ligadas à âncora do squad
+ * (`squad:<id>`) e o objetivo explícito da squad, para que uma Note→Squad
+ * alimente a equipe sem exigir cabo direto ao nó. O objetivo só entra como
+ * nota sintética quando nenhuma nota já o carrega, evitando duplicação.
+ * Retorno vazio = sem contexto: a orquestração não deve iniciar.
+ */
+export function orchestrationContextNotes(
+  state: Pick<CanvasState, "nodes" | "connections">,
+  memberNodeId: string,
+  squad?: Pick<CanvasSquad, "id" | "objective"> | null,
+): OrchestrationNote[] {
+  const notes = new Map<string, OrchestrationNote>();
+  for (const note of connectedNotes(state, memberNodeId)) notes.set(note.id, note);
+  if (squad) {
+    const anchor = squadAnchorId(squad.id);
+    const anchoredNoteIds = new Set(
+      state.connections
+        .filter((connection) => connection.from === anchor || connection.to === anchor)
+        .map((connection) => (connection.from === anchor ? connection.to : connection.from)),
+    );
+    for (const node of state.nodes) {
+      if (node.kind !== "note" || !anchoredNoteIds.has(node.id) || !node.content?.trim()) continue;
+      notes.set(node.id, { id: node.id, title: node.title, content: node.content.trim() });
+    }
+    const objective = (squad.objective ?? "").trim();
+    if (objective && ![...notes.values()].some((note) => note.content.includes(objective))) {
+      notes.set("squad-objective-" + squad.id, {
+        id: "squad-objective-" + squad.id,
+        title: "Objetivo da squad",
+        content: objective,
+      });
+    }
+  }
+  return [...notes.values()];
 }
 
-function continuityRoleFor(role: AgentRole | undefined): OrchestrationRole {
-  if (role === "Coordenador") return "coordinator";
+/**
+ * Contexto usado no envio manual de um membro: se ele pertence a um squad,
+ * herda o contexto da squad (Note→Squad + objetivo); agente avulso mantém
+ * apenas as notas ligadas diretamente a ele (comportamento legado).
+ */
+export function memberContextNotes(
+  state: Pick<CanvasState, "nodes" | "connections" | "squads">,
+  memberNodeId: string,
+): OrchestrationNote[] {
+  const squad = squadForNode(state.squads, memberNodeId);
+  return squad
+    ? orchestrationContextNotes(state, memberNodeId, squad)
+    : connectedNotes(state, memberNodeId);
+}
+
+/**
+ * Papel efetivo na orquestração. Papel custom NUNCA é reescrito para
+ * "Implementação": ele mantém o texto do usuário e fica neutro na ordenação
+ * (prioridade 999, tie-break por título), sem virar Coordenador.
+ */
+function orchestrationAgentRole(node: CanvasNode): string {
+  return sanitizeAgentRole(node.role);
+}
+
+function continuityRoleFor(role: string | undefined, isCoordinator = false): OrchestrationRole {
+  if (isCoordinator || role === "Coordenador") return "coordinator";
   if (role === "Revisão") return "reviewer";
   if (role === "Testes") return "tester";
   return "implementer";
@@ -559,8 +865,14 @@ export function orderSpecialistsByGraph(
   const ids = new Set(specialists.map((s) => s.id));
   const specialistMap = new Map(specialists.map((s) => [s.id, s]));
 
+  // Só arestas de ordenação (flow legado, delegation, dependency) impõem
+  // sequência; coordenação/contexto/membership não reordenam especialistas.
   const relevantConnections = connections.filter(
-    (c) => ids.has(c.from) && ids.has(c.to) && c.from !== c.to,
+    (c) =>
+      ids.has(c.from) &&
+      ids.has(c.to) &&
+      c.from !== c.to &&
+      isOrderingEdgeKind(defaultCanvasEdgeKind(c.kind)),
   );
 
   const safeConnections = sanitizeAgentCycles(relevantConnections, ids);
@@ -577,7 +889,7 @@ export function orderSpecialistsByGraph(
     inDegree.set(conn.to, (inDegree.get(conn.to) || 0) + 1);
   }
 
-  const rolePriority = (role: AgentRole): number => {
+  const rolePriority = (role: string): number => {
     const idx = orchestrationRoleOrder.indexOf(role);
     return idx >= 0 ? idx : 999;
   };
@@ -625,8 +937,31 @@ export function discoverSpecialists(
   state: Pick<CanvasState, "nodes" | "connections">,
   coordinator: CanvasNode,
   notes: OrchestrationNote[] = connectedNotes(state, coordinator.id),
+  squad?: Pick<CanvasSquad, "memberNodeIds"> | null,
 ): OrchestrationAgent[] {
   const nodeMap = new Map(state.nodes.map((node) => [node.id, node]));
+
+  // Squad-first: quando o coordenador pertence a um squad explícito, os
+  // especialistas são exatamente os membros (menos o coordenador) — sem
+  // depender de alcançabilidade por cabos e sem inferir participação.
+  if (squad && squad.memberNodeIds.length > 0) {
+    const memberIds = new Set(squad.memberNodeIds.filter((id) => id !== coordinator.id));
+    const rawSpecialists = state.nodes
+      .filter((node) => node.kind === "agent" && memberIds.has(node.id))
+      .map((node) => ({
+        id: node.id,
+        title: node.title,
+        role: orchestrationAgentRole(node),
+        notes: connectedNotes(state, node.id),
+      }));
+    const internalConnections = state.connections.filter(
+      (connection) =>
+        memberIds.has(connection.from) &&
+        memberIds.has(connection.to) &&
+        isOrderingEdgeKind(defaultCanvasEdgeKind(connection.kind)),
+    );
+    return orderSpecialistsByGraph(rawSpecialists, internalConnections);
+  }
 
   const adjacency = new Map<string, string[]>();
   for (const conn of state.connections) {
@@ -655,7 +990,7 @@ export function discoverSpecialists(
           node &&
           node.kind === "agent" &&
           node.id !== coordinator.id &&
-          node.role !== "Coordenador"
+          !isCoordinatorRole(node.role)
         ) {
           reachableAgentIds.add(neighborId);
         }
@@ -751,6 +1086,8 @@ export const WorkspaceCanvas: React.FC<{
   const [gesture, setGesture] = useState<CanvasGesture | null>(null);
   const [connectionDraft, setConnectionDraft] = useState<ConnectionDraft | null>(null);
   const [creationMode, setCreationMode] = useState<"agent" | "squad" | null>(null);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [selectedSquadId, setSelectedSquadId] = useState<string | null>(null);
   const [quickDeployOpen, setQuickDeployOpen] = useState(false);
   const [presetDraftName, setPresetDraftName] = useState("");
   const [presetSaveStatus, setPresetSaveStatus] = useState("");
@@ -763,6 +1100,9 @@ export const WorkspaceCanvas: React.FC<{
     Record<string, AgentProgress>
   >({});
   const [configNodeId, setConfigNodeId] = useState<string | null>(null);
+  // Estado efêmero de compactação por nó (default compacto para Agent/Terminal;
+  // nunca persiste em width/height). Resetado ao trocar de projeto.
+  const [compactOverrides, setCompactOverrides] = useState<Record<string, boolean>>({});
   const [continuity, setContinuity] = useState<OrchestrationState | null>(null);
   const manualTasksRef = useRef<Set<string>>(new Set());
   const continuityRef = useRef<OrchestrationState | null>(null);
@@ -777,13 +1117,11 @@ export const WorkspaceCanvas: React.FC<{
   const minimapPointerRef = useRef<number | null>(null);
   const consumedPendingRef = useRef<Set<number>>(new Set());
   const spaceHeldRef = useRef(false);
+  const compactOverridesRef = useRef<Record<string, boolean>>(compactOverrides);
+  const displayNodesRef = useRef<CanvasNode[]>([]);
   const persist = useCallback(
     (value: CanvasState) => {
-      try {
-        window.localStorage.setItem(key(project.id), JSON.stringify(value));
-      } catch {
-        /* optional */
-      }
+      persistCanvasState(window.localStorage, project.id, value);
     },
     [project.id],
   );
@@ -847,6 +1185,9 @@ export const WorkspaceCanvas: React.FC<{
     setOrchestration(null);
     setAgentProgress({});
     setConfigNodeId(null);
+    setInspectorOpen(false);
+    setSelectedSquadId(null);
+    setCompactOverrides({});
   }, [project.id, defaultExecutor]);
   useEffect(() => {
     window.addEventListener("pagehide", flush);
@@ -876,12 +1217,27 @@ export const WorkspaceCanvas: React.FC<{
         }
         return;
       }
+      const nodes = canvasRef.current.nodes;
+      const fromNode = nodes.find((node) => node.id === from);
+      const toNode = nodes.find((node) => node.id === to);
+      const kind = inferCanvasEdgeKind(fromNode?.kind ?? "", toNode?.kind ?? "");
       const agentIds = new Set(
-        canvasRef.current.nodes.filter((node) => node.kind === "agent").map((node) => node.id),
+        nodes.filter((node) => node.kind === "agent").map((node) => node.id),
       );
-      // Recusa determinística de ciclo agente-agente: o main rejeitaria o
-      // setPipe e o cabo ficaria desenhado sem piping. Cancela o gesto.
-      if (createsAgentCycle(canvasRef.current.connections, agentIds, from, to)) {
+      // Recusa determinística de ciclo apenas em arestas de ordenação
+      // agente-agente (flow legado/delegação/dependência): o main rejeitaria
+      // o setPipe e o cabo ficaria desenhado sem piping. Cancela o gesto.
+      if (
+        isOrderingEdgeKind(kind) &&
+        createsAgentCycle(
+          canvasRef.current.connections.filter((connection) =>
+            isOrderingEdgeKind(defaultCanvasEdgeKind(connection.kind)),
+          ),
+          agentIds,
+          from,
+          to,
+        )
+      ) {
         setConnectFrom(null);
         connectionDraftRef.current = null;
         setConnectionDraft(null);
@@ -891,8 +1247,9 @@ export const WorkspaceCanvas: React.FC<{
         (current) =>
           current.connections.some(
             (connection) =>
-              (connection.from === from && connection.to === to) ||
-              (connection.from === to && connection.to === from),
+              connection.from === from &&
+              connection.to === to &&
+              defaultCanvasEdgeKind(connection.kind) === kind,
           )
             ? current
             : {
@@ -903,6 +1260,7 @@ export const WorkspaceCanvas: React.FC<{
                     id: "link-" + Date.now().toString(36),
                     from,
                     to,
+                    kind,
                   },
                 ],
               },
@@ -911,7 +1269,15 @@ export const WorkspaceCanvas: React.FC<{
       connectionDraftRef.current = null;
       setConnectionDraft(null);
       setConnectFrom(null);
-      setSelected([to]);
+      // Concluir numa âncora de squad seleciona o squad (não um id virtual).
+      const anchoredSquadId = parseSquadAnchorId(to);
+      if (anchoredSquadId) {
+        setSelected([]);
+        setSelectedSquadId(anchoredSquadId);
+        setInspectorOpen(true);
+      } else {
+        setSelected([to]);
+      }
     },
     [update],
   );
@@ -921,6 +1287,7 @@ export const WorkspaceCanvas: React.FC<{
         connectNodes(connectFrom, id);
         return;
       }
+      setSelectedSquadId(null);
       setSelected((current) =>
         additive
           ? current.includes(id)
@@ -931,6 +1298,14 @@ export const WorkspaceCanvas: React.FC<{
     },
     [connectFrom, connectNodes],
   );
+  // Selecionar o squad (header da região) mostra o Inspector do squad com
+  // node=null; membros continuam arrastáveis porque o header fica na faixa de
+  // padding acima dos cartões.
+  const selectSquad = useCallback((squadId: string) => {
+    setSelectedSquadId(squadId);
+    setSelected([]);
+    setInspectorOpen(true);
+  }, []);
   const addNote = useCallback(() => {
     const rect = viewportRef.current?.getBoundingClientRect();
     const view = canvasRef.current.viewport;
@@ -972,6 +1347,7 @@ export const WorkspaceCanvas: React.FC<{
     const x = snap(((rect?.width || 900) / 2 - view.x) / view.zoom - 220);
     const y = snap(((rect?.height || 650) / 2 - view.y) / view.zoom - 160);
     const provider = spec.provider ?? defaultExecutor ?? undefined;
+    const role = sanitizeAgentRole(spec.role);
     update(
       (current) => ({
         ...current,
@@ -980,8 +1356,8 @@ export const WorkspaceCanvas: React.FC<{
           {
             id,
             kind: "agent",
-            title: spec.role === "Implementação" ? "Agente de implementação" : "Agente: " + spec.role,
-            role: spec.role,
+            title: spec.title?.trim().slice(0, 80) || (role === "Implementação" ? "Agente de implementação" : "Agente: " + role),
+            role,
             ...(spec.account ? { account: spec.account } : {}),
             ...(provider ? { provider } : {}),
             x,
@@ -1067,27 +1443,33 @@ export const WorkspaceCanvas: React.FC<{
     onPendingNodeConsumed?.(pendingNodeRequest.nonce)
   }, [addNote, onPendingNodeConsumed, openAgentCreation, openSquadCreation, openTerminalQuickDeploy, pendingNodeRequest]);
   const createSquad = useCallback((spec: SquadCreationSpec) => {
+    const participants = spec.participants;
+    if (!participants.length) return;
     const rect = viewportRef.current?.getBoundingClientRect();
     const view = canvasRef.current.viewport;
-    const originX = snap(((rect?.width || 1100) / 2 - view.x) / view.zoom - 380);
-    const originY = snap(((rect?.height || 700) / 2 - view.y) / view.zoom - 260);
-    const noteId = nodeId();
-    const squadId = "squad-" + nodeId().slice(5);
-    const agents = spec.participants.map((participant, index) => ({
-      id: nodeId(), kind: "agent" as const, title: "Agente: " + participant.role, role: participant.role as AgentRole,
-      ...(participant.account ? { account: participant.account } : {}),
-      ...((participant.provider ?? defaultExecutor) ? { provider: participant.provider ?? defaultExecutor ?? undefined } : {}),
-      x: originX + 390 + (index % 2) * 430, y: originY + Math.floor(index / 2) * 300,
-      width: 500, height: 340, z: index + 2,
-    }));
-    const coordinator = agents.find((agent) => agent.role === "Coordenador") || agents[0];
+    const existing = canvasRef.current.nodes;
+    const margin = 120;
+    const fallbackX = snap(((rect?.width || 1100) / 2 - view.x) / view.zoom - 380);
+    const fallbackY = snap(((rect?.height || 700) / 2 - view.y) / view.zoom - 260);
+    // Layout inicial sensato: à direita do conteúdo existente, sem mover
+    // nenhum nó já posicionado. Canvas vazio usa o centro da viewport.
+    const originX = existing.length
+      ? clamp(snap(Math.max(...existing.map((node) => node.x + node.width)) + margin), 0, WORLD_WIDTH - 1000)
+      : clamp(fallbackX, 0, WORLD_WIDTH - 1000);
+    const originY = existing.length
+      ? clamp(snap(Math.min(...existing.map((node) => node.y))), 0, WORLD_HEIGHT - 800)
+      : clamp(fallbackY, 0, WORLD_HEIGHT - 800);
+    const zBase = Math.max(0, ...existing.map((node) => node.z));
+    // Squad + agentes, sem Nota por padrão. A Nota (e o vínculo Note→Squad)
+    // só existem por ação explícita do usuário; o objetivo vive no squad.
+    const plan = planSquadCreation(spec, { originX, originY, zBase }, { defaultExecutor });
     update((current) => ({
       ...current,
-      nodes: [...current.nodes, { id: noteId, kind: "note", title: "Plano da tarefa", content: "# Objetivo\n\nDescreva a tarefa, critérios de aceite e limites aqui.\n\n# Entregáveis\n\n- Implementação\n- Revisão\n- Testes", x: originX, y: originY + 130, width: 350, height: 290, z: 1 }, ...agents.map((agent) => ({ ...agent, z: Math.max(0, ...current.nodes.map((node) => node.z)) + agent.z }))],
-      connections: [...current.connections, ...agents.map((agent) => ({ id: "link-" + noteId + "-" + agent.id, from: noteId, to: agent.id }))],
-      squads: [...current.squads, { id: squadId, title: spec.title.trim(), coordinatorNodeId: coordinator.id, memberNodeIds: agents.map((agent) => agent.id) }],
+      nodes: [...current.nodes, ...plan.agents, ...(plan.note ? [plan.note] : [])],
+      connections: [...current.connections, ...plan.connections],
+      squads: [...current.squads, plan.squad],
     }), true);
-    setSelected([noteId, ...agents.map((agent) => agent.id)]);
+    setSelected(plan.selectedIds);
     setCreationMode(null);
   }, [defaultExecutor, update]);
   const deleteNodes = useCallback((ids: string[]) => {
@@ -1108,11 +1490,12 @@ export const WorkspaceCanvas: React.FC<{
             !removable.has(connection.from) && !removable.has(connection.to),
         ),
         squads: current.squads
-          .map((squad) => ({
-            ...squad,
-            memberNodeIds: squad.memberNodeIds.filter((nodeIdValue) => !removable.has(nodeIdValue)),
-          }))
-          .filter((squad) => !removable.has(squad.coordinatorNodeId) && squad.memberNodeIds.length > 0),
+          .map((squad) => {
+            let next = squad;
+            for (const id of removable) next = removeSquadMember(next, id);
+            return next;
+          })
+          .filter((squad) => squad.memberNodeIds.length > 0),
       }),
       true,
     );
@@ -1148,6 +1531,189 @@ export const WorkspaceCanvas: React.FC<{
     );
     setSelected([id]);
   }, [selected, update]);
+  // ---- Edição de squad (persistida imediatamente, sem mover nós) ----
+  const updateSquadById = useCallback(
+    (squadId: string, updater: (squad: CanvasSquad) => CanvasSquad) => {
+      update(
+        (current) => ({
+          ...current,
+          squads: current.squads.map((squad) => (squad.id === squadId ? updater(squad) : squad)),
+        }),
+        true,
+      );
+    },
+    [update],
+  );
+  const addSquadMemberById = useCallback(
+    (squadId: string, nodeIdValue: string) => {
+      const node = canvasRef.current.nodes.find(
+        (item) => item.id === nodeIdValue && item.kind === "agent",
+      );
+      if (!node) return;
+      updateSquadById(squadId, (squad) => addSquadMember(squad, nodeIdValue));
+    },
+    [updateSquadById],
+  );
+  // Cria um agente NOVO ao lado do squad (sem mover nenhum nó existente) e já
+  // o adiciona como membro; o fluxo de diálogo continua no radial "Agente".
+  const addNewAgentToSquad = useCallback(
+    (squadId: string) => {
+      const current = canvasRef.current;
+      const squad = current.squads.find((item) => item.id === squadId);
+      if (!squad) return;
+      const members = squad.memberNodeIds
+        .map((id) => current.nodes.find((node) => node.id === id))
+        .filter((node): node is CanvasNode => Boolean(node));
+      const margin = 80;
+      const cellWidth = 460;
+      const cellHeight = 320;
+      const maxRight = members.length ? Math.max(...members.map((node) => node.x + node.width)) : 0;
+      const minX = members.length ? Math.min(...members.map((node) => node.x)) : 120;
+      const minY = members.length ? Math.min(...members.map((node) => node.y)) : 120;
+      const maxBottom = members.length ? Math.max(...members.map((node) => node.y + node.height)) : 0;
+      const fitsRight = maxRight + margin + cellWidth <= WORLD_WIDTH;
+      const x = clamp(snap(fitsRight ? maxRight + margin : minX), 0, WORLD_WIDTH - cellWidth);
+      const y = clamp(snap(fitsRight ? minY : maxBottom + margin), 0, WORLD_HEIGHT - cellHeight);
+      const id = nodeId();
+      const role = "Implementação";
+      const provider = defaultExecutor ?? undefined;
+      update(
+        (state) => ({
+          ...state,
+          nodes: [
+            ...state.nodes,
+            {
+              id,
+              kind: "agent" as const,
+              title: "Agente: " + role,
+              role,
+              ...(provider ? { provider } : {}),
+              x,
+              y,
+              width: cellWidth,
+              height: cellHeight,
+              z: Math.max(0, ...state.nodes.map((node) => node.z)) + 1,
+            },
+          ],
+          squads: state.squads.map((item) =>
+            item.id === squadId ? addSquadMember(item, id) : item,
+          ),
+        }),
+        true,
+      );
+      setSelected([id]);
+      setSelectedSquadId(null);
+    },
+    [defaultExecutor, update],
+  );
+  const removeSquadMemberById = useCallback(
+    (squadId: string, nodeIdValue: string) => {
+      const squad = canvasRef.current.squads.find((item) => item.id === squadId);
+      if (!squad) return;
+      // O modelo v5 exige >=1 membro: squad vazio some da região e é
+      // descartado no reload, perdendo título/objetivo. Bloqueia o último.
+      if (squad.memberNodeIds.includes(nodeIdValue) && !canRemoveSquadMember(squad, nodeIdValue)) {
+        onNotify?.(
+          "Um squad precisa de ao menos um membro. Adicione outro membro antes de remover o último.",
+          "info",
+        );
+        return;
+      }
+      updateSquadById(squadId, (current) => removeSquadMember(current, nodeIdValue));
+    },
+    [onNotify, updateSquadById],
+  );
+  const setSquadCoordinatorById = useCallback(
+    (squadId: string, nodeIdValue: string | null) =>
+      updateSquadById(squadId, (squad) => setSquadCoordinator(squad, nodeIdValue)),
+    [updateSquadById],
+  );
+  const renameSquadById = useCallback(
+    (squadId: string, title: string) =>
+      updateSquadById(squadId, (squad) => renameSquad(squad, title)),
+    [updateSquadById],
+  );
+  const setSquadObjectiveById = useCallback(
+    (squadId: string, objective: string) =>
+      updateSquadById(squadId, (squad) => setSquadObjective(squad, objective)),
+    [updateSquadById],
+  );
+  const toggleSquadCollapsedById = useCallback(
+    (squadId: string) => updateSquadById(squadId, toggleSquadCollapsed),
+    [updateSquadById],
+  );
+  const editSquadObjective = useCallback(
+    (squadId: string) => {
+      const squad = canvasRef.current.squads.find((item) => item.id === squadId);
+      if (!squad) return;
+      const next = window.prompt("Objetivo do squad", squad.objective ?? "");
+      if (next === null) return;
+      updateSquadById(squadId, (current) => setSquadObjective(current, next));
+    },
+    [updateSquadById],
+  );
+  // Squad independente da Nota: cria só o vínculo de membros, sem nós novos e
+  // sem mover nada. Coordenador fica vazio até escolha explícita no Inspector.
+  const createSquadFromSelection = useCallback(() => {
+    const agentIds = selected.filter((id) =>
+      canvasRef.current.nodes.some((node) => node.id === id && node.kind === "agent"),
+    );
+    if (!agentIds.length) {
+      onNotify?.("Selecione ao menos um agente para criar um squad.", "info");
+      return;
+    }
+    const id = "squad-" + nodeId().slice(5);
+    update(
+      (current) => ({
+        ...current,
+        squads: [
+          ...current.squads,
+          { id, title: "Novo squad", objective: "", memberNodeIds: agentIds, collapsed: false },
+        ],
+      }),
+      true,
+    );
+    onNotify?.("Squad criado. Defina o coordenador no Inspector.", "success");
+  }, [onNotify, selected, update]);
+  const squadTargetForSelection = useCallback((): CanvasSquad | undefined => {
+    const current = canvasRef.current;
+    for (const id of selected) {
+      const squad = squadForNode(current.squads, id);
+      if (squad) return squad;
+    }
+    return current.squads.length === 1 ? current.squads[0] : undefined;
+  }, [selected]);
+  const addSelectionToSquad = useCallback(() => {
+    const squad = squadTargetForSelection();
+    const agentIds = selected.filter((id) =>
+      canvasRef.current.nodes.some((node) => node.id === id && node.kind === "agent"),
+    );
+    if (!squad || !agentIds.length) return;
+    for (const id of agentIds) addSquadMemberById(squad.id, id);
+  }, [addSquadMemberById, selected, squadTargetForSelection]);
+  const removeSelectionFromSquad = useCallback(() => {
+    for (const id of selected) {
+      const squad = squadForNode(canvasRef.current.squads, id);
+      if (squad) removeSquadMemberById(squad.id, id);
+    }
+  }, [removeSquadMemberById, selected]);
+  const promoteSelectionToCoordinator = useCallback(() => {
+    const target = selected[selected.length - 1];
+    if (!target) return;
+    const membership = squadForNode(canvasRef.current.squads, target);
+    if (!membership) return;
+    setSquadCoordinatorById(membership.id, target);
+  }, [selected, setSquadCoordinatorById]);
+  const renameSquadFromPrompt = useCallback(
+    (squadId: string) => {
+      const squad = canvasRef.current.squads.find((item) => item.id === squadId);
+      if (!squad) return;
+      const next = window.prompt("Nome do squad", squad.title);
+      if (next === null) return;
+      renameSquadById(squadId, next);
+    },
+    [renameSquadById],
+  );
   const resetCanvas = useCallback(() => {
     const fresh = defaults();
     update(() => fresh, true);
@@ -1198,7 +1764,28 @@ export const WorkspaceCanvas: React.FC<{
       ),
     [update],
   );
-  const zoom = useCallback((amount: number) => zoomAt(amount), [zoomAt]);
+  // Níveis discretos de zoom: botões/atalhos andam de nível em nível; a roda
+  // com Ctrl/Cmd continua contínua.
+  const zoomByLevel = useCallback(
+    (direction: 1 | -1) => {
+      const current = canvasRef.current.viewport.zoom;
+      zoomAt(stepZoomLevel(current, direction) - current);
+    },
+    [zoomAt],
+  );
+  const setZoomPreset = useCallback(
+    (preset: CanvasZoomPreset) => {
+      const target = preset === "close" ? 1.25 : preset === "medium" ? 1 : 0.5;
+      zoomAt(target - canvasRef.current.viewport.zoom);
+    },
+    [zoomAt],
+  );
+  const setZoomLevel = useCallback(
+    (level: number) => {
+      zoomAt(clamp(level, MIN_ZOOM, MAX_ZOOM) - canvasRef.current.viewport.zoom);
+    },
+    [zoomAt],
+  );
   useEffect(() => {
     const host = viewportRef.current;
     if (!host) return;
@@ -1236,7 +1823,9 @@ export const WorkspaceCanvas: React.FC<{
   }, [update]);
   const fitCanvas = useCallback(() => {
     const host = viewportRef.current?.getBoundingClientRect();
-    const nodes = canvasRef.current.nodes.filter(
+    // Geometria efêmera: enquadra os cartões no tamanho real exibido (compacto
+    // 320x130), sem depender das dimensões persistidas.
+    const nodes = displayNodesRef.current.filter(
       (node) => node.kind !== "browser" || browser,
     );
     if (!host || !nodes.length) return;
@@ -1274,7 +1863,7 @@ export const WorkspaceCanvas: React.FC<{
       const rect = host.getBoundingClientRect();
       if (rect.width < 50 || rect.height < 50) return;
       const view = canvasRef.current.viewport;
-      const nodes = canvasRef.current.nodes.filter(
+      const nodes = displayNodesRef.current.filter(
         (node) => node.kind !== "browser" || browser,
       );
       if (!nodes.length) return;
@@ -1524,14 +2113,15 @@ export const WorkspaceCanvas: React.FC<{
         (event.key === "+" || event.key === "=")
       ) {
         event.preventDefault();
-        zoom(0.1);
+        zoomByLevel(1);
       }
       if ((event.ctrlKey || event.metaKey) && event.key === "-") {
         event.preventDefault();
-        zoom(-0.1);
+        zoomByLevel(-1);
       }
       if (event.key === "Escape") {
         setSelected([]);
+        setSelectedSquadId(null);
         setConnectFrom(null);
         connectionDraftRef.current = null;
         setConnectionDraft(null);
@@ -1556,11 +2146,49 @@ export const WorkspaceCanvas: React.FC<{
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("blur", onWindowBlur);
     };
-  }, [deleteSelected, duplicateSelected, resetViewport, update, zoom]);
+  }, [deleteSelected, duplicateSelected, resetViewport, update, zoomByLevel]);
   const nodeMap = useMemo(
     () => new Map(canvas.nodes.map((node) => [node.id, node])),
     [canvas.nodes],
   );
+  // Compactação é estado de UI: o nó cujo painel de configuração está aberto
+  // renderiza expandido mesmo que seu override seja compacto.
+  const isNodeCompact = useCallback(
+    (node: CanvasNode) =>
+      node.id !== configNodeId &&
+      (typeof compactOverrides[node.id] === "boolean"
+        ? compactOverrides[node.id]
+        : isCompactByDefault(node)),
+    [compactOverrides, configNodeId],
+  );
+  const toggleNodeCompact = useCallback((nodeIdValue: string) => {
+    setCompactOverrides((current) => {
+      const node = canvasRef.current.nodes.find((item) => item.id === nodeIdValue);
+      const base =
+        typeof current[nodeIdValue] === "boolean"
+          ? current[nodeIdValue]
+          : node
+            ? isCompactByDefault(node)
+            : false;
+      return { ...current, [nodeIdValue]: !base };
+    });
+  }, []);
+  // Geometria derivada usada por arestas, região de squad, fit e minimap:
+  // 320x130 quando compacto, sem tocar nas dimensões persistidas.
+  const displayNodes = useMemo(
+    () => canvas.nodes.map((node) => nodeDisplayGeometry(node, isNodeCompact(node))),
+    [canvas.nodes, isNodeCompact],
+  );
+  const displayNodeMap = useMemo(
+    () => new Map(displayNodes.map((node) => [node.id, node])),
+    [displayNodes],
+  );
+  useEffect(() => {
+    compactOverridesRef.current = compactOverrides;
+  }, [compactOverrides]);
+  useEffect(() => {
+    displayNodesRef.current = displayNodes;
+  }, [displayNodes]);
   const quickDeployChips = useMemo(
     () => buildQuickDeployChips(terminalPresets),
     [terminalPresets],
@@ -1653,6 +2281,20 @@ export const WorkspaceCanvas: React.FC<{
     },
     [update],
   );
+  const focusSelected = useCallback(() => {
+    const nodes = selected
+      .map((id) => canvasRef.current.nodes.find((node) => node.id === id))
+      .filter((node): node is CanvasNode => Boolean(node));
+    const host = viewportRef.current?.getBoundingClientRect();
+    if (!nodes.length || !host) return;
+    const viewport = computeFocusViewport(nodes, host, {
+      padding: 120,
+      minZoom: MIN_ZOOM,
+      maxZoom: MAX_ZOOM,
+    });
+    if (!viewport) return;
+    update((current) => ({ ...current, viewport }), true);
+  }, [selected, update]);
   // Digitação nos campos de texto: só o rascunho local muda (ver comentário de
   // TerminalFieldDraft). O commit com sanitize acontece em blur/Enter.
   const setTerminalDraftField = useCallback(
@@ -1790,9 +2432,70 @@ export const WorkspaceCanvas: React.FC<{
     [onTerminalPresetsSaved, terminalPresets],
   );
   const squadRegions = useMemo(
-    () => computeSquadRegions(canvas.squads, canvas.nodes),
-    [canvas.nodes, canvas.squads],
+    () => computeSquadRegions(canvas.squads, displayNodes),
+    [displayNodes, canvas.squads],
   );
+  const squadById = useMemo(
+    () => new Map(canvas.squads.map((squad) => [squad.id, squad])),
+    [canvas.squads],
+  );
+  // Geometria virtual da âncora de squad (`squad:<id>`) para desenhar arestas
+  // que não terminam em nó — ex.: vínculo Nota→Squad.
+  const squadAnchorGeometry = useMemo(() => {
+    const map = new Map<string, { x: number; y: number; width: number; height: number }>();
+    for (const region of squadRegions) {
+      map.set(squadAnchorId(region.id), {
+        x: region.x,
+        y: region.y,
+        width: region.width,
+        height: 28,
+      });
+    }
+    return map;
+  }, [squadRegions]);
+  // Membros de squads recolhidos continuam MONTADOS (sessões de terminal
+  // preservadas): o cartão só fica oculto por wrapper, nunca desmonta.
+  const collapsedMemberIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const squad of canvas.squads) {
+      if (!squad.collapsed) continue;
+      for (const id of squad.memberNodeIds) ids.add(id);
+    }
+    return ids;
+  }, [canvas.squads]);
+  const canvasFocus = useMemo(
+    () => computeCanvasFocus(selected, canvas.connections),
+    [selected, canvas.connections],
+  );
+  const inspectorNode = selected.length === 1 ? nodeMap.get(selected[0]) ?? null : null;
+  // Squad inspecionável: seleção explícita do header ou contexto do nó.
+  const inspectorSquad = useMemo(() => {
+    if (selectedSquadId) return squadById.get(selectedSquadId) ?? null;
+    if (inspectorNode) return squadForNode(canvas.squads, inspectorNode.id) ?? null;
+    return null;
+  }, [canvas.squads, inspectorNode, selectedSquadId, squadById]);
+  const inspectorSquadMembers = useMemo(
+    () =>
+      inspectorSquad
+        ? inspectorSquad.memberNodeIds
+            .map((id) => nodeMap.get(id))
+            .filter((node): node is CanvasNode => Boolean(node))
+        : [],
+    [inspectorSquad, nodeMap],
+  );
+  useEffect(() => {
+    if (selectedSquadId && !squadById.has(selectedSquadId)) setSelectedSquadId(null);
+  }, [selectedSquadId, squadById]);
+  const isOrchestrationCoordinatorNode = useCallback(
+    (node: CanvasNode) => {
+      if (squadCoordinatedBy(canvas.squads, node.id)) return true;
+      return !squadForNode(canvas.squads, node.id) && isCoordinatorRole(node.role);
+    },
+    [canvas.squads],
+  );
+  useEffect(() => {
+    if (selected.length === 1) setInspectorOpen(true);
+  }, [selected]);
   const orchestrationActive = Boolean(
     orchestration &&
       orchestration.phase !== "complete" &&
@@ -1822,7 +2525,7 @@ export const WorkspaceCanvas: React.FC<{
       configured: isAgentNodeConfigured(node, agentProviders),
       configuredMessage: agentNodeSetupMessage(node, agentProviders),
       orchestrationActive,
-      noteCount: connectedNotes(canvas, node.id).length,
+      noteCount: memberContextNotes(canvas, node.id).length,
       progressState: agentProgress[node.id]?.state ?? null,
     });
   // Nota ausente é o único bloqueio que mantém o botão clicável: o clique
@@ -1943,7 +2646,7 @@ export const WorkspaceCanvas: React.FC<{
     [markOrchestrationBlocked, project.id, project.path],
   );
   const startCoordinatorOrchestration = useCallback(
-    (coordinator: CanvasNode) => {
+    (coordinator: CanvasNode, squad?: CanvasSquad | null) => {
       const previous = orchestrationRef.current;
       if (
         previous &&
@@ -1957,18 +2660,27 @@ export const WorkspaceCanvas: React.FC<{
         (node) => node.id === coordinator.id && node.kind === "agent",
       );
       if (!currentCoordinator) return;
-      const notes = connectedNotes(current, currentCoordinator.id);
+      const activeSquad =
+        squad ?? squadCoordinatedBy(current.squads, currentCoordinator.id) ?? null;
+      // Contexto explícito: notas diretas ao coordenador (legado), notas da
+      // âncora do squad e objetivo da squad. Vazio não inicia a orquestração.
+      const notes = orchestrationContextNotes(current, currentCoordinator.id, activeSquad);
       if (!notes.length) {
         onNotify?.(
-          "Conecte uma nota com conteúdo ao coordenador para iniciar a orquestração.",
+          activeSquad
+            ? "Conecte uma nota com conteúdo (ou defina o objetivo do squad) para iniciar a orquestração."
+            : "Conecte uma nota com conteúdo ao coordenador para iniciar a orquestração.",
           "info",
         );
         return;
       }
+      // Squad-first: membros explícitos do squad; sem squad, alcançabilidade
+      // por cabos (comportamento legado) permanece.
       const specialists = discoverSpecialists(
         current,
         currentCoordinator,
         notes,
+        activeSquad,
       );
       const run: OrchestrationRun = {
         id: orchestrationRunId(),
@@ -2031,8 +2743,15 @@ export const WorkspaceCanvas: React.FC<{
         currentRun.phase !== "blocked"
       )
         return;
-      if (agent.role === "Coordenador") {
-        startCoordinatorOrchestration(agent);
+      // Função de coordenação é explícita: coordenador do squad OU papel
+      // built-in "Coordenador" fora de squad. Papel custom nunca dispara.
+      const coordinatingSquad = squadCoordinatedBy(canvasRef.current.squads, agent.id);
+      const squadMembership = squadForNode(canvasRef.current.squads, agent.id);
+      const isOrchestrationCoordinator = coordinatingSquad
+        ? true
+        : !squadMembership && isCoordinatorRole(agent.role);
+      if (isOrchestrationCoordinator) {
+        startCoordinatorOrchestration(agent, coordinatingSquad ?? null);
         return;
       }
       const current = canvasRef.current;
@@ -2046,10 +2765,12 @@ export const WorkspaceCanvas: React.FC<{
         currentProgress?.state === "running"
       )
         return;
-      const linkedNotes = connectedNotes(current, currentAgent.id);
+      const linkedNotes = memberContextNotes(current, currentAgent.id);
       if (!linkedNotes.length) {
         onNotify?.(
-          "Conecte uma nota com conteúdo a este agente antes de enviar a tarefa.",
+          squadMembership
+            ? "Conecte uma nota com conteúdo (ou defina o objetivo do squad) antes de enviar a tarefa."
+            : "Conecte uma nota com conteúdo a este agente antes de enviar a tarefa.",
           "info",
         );
         return;
@@ -2425,10 +3146,10 @@ export const WorkspaceCanvas: React.FC<{
   // Assinatura estável dos assentos elegíveis do canvas; evita loop de sync.
   const continuitySeatSignature = canvas.nodes
     .filter((node) => node.kind === "agent" && node.provider)
-    .map(
-      (node) =>
-        `${node.id}:${node.provider}:${continuityRoleFor(node.role)}:${node.account || ""}`,
-    )
+    .map((node) => {
+      const isCoordinator = Boolean(squadCoordinatedBy(canvas.squads, node.id));
+      return `${node.id}:${node.provider}:${continuityRoleFor(node.role, isCoordinator)}:${node.account || ""}`;
+    })
     .sort()
     .join("|");
 
@@ -2502,7 +3223,10 @@ export const WorkspaceCanvas: React.FC<{
         .upsertOrchestrationSeat(project.path, {
           id: node.id,
           provider: node.provider as AgentProviderId,
-          role: continuityRoleFor(node.role),
+          role: continuityRoleFor(
+            node.role,
+            Boolean(squadCoordinatedBy(canvasRef.current.squads, node.id)),
+          ),
           ...(node.account ? { account: node.account } : {}),
         })
         .catch(() => undefined);
@@ -2564,6 +3288,51 @@ export const WorkspaceCanvas: React.FC<{
         label: "Squad",
         icon: Users,
         onSelect: openSquadCreation,
+      },
+      {
+        id: "squad-selection",
+        label: "Squad c/ seleção",
+        icon: Users,
+        disabled: !selected.some((id) =>
+          canvas.nodes.some((node) => node.id === id && node.kind === "agent"),
+        ),
+        disabledReason: "Selecione ao menos um agente para criar um squad",
+        onSelect: createSquadFromSelection,
+      },
+      {
+        id: "squad-add",
+        label: "Adicionar à squad",
+        icon: Users,
+        disabled: !squadTargetForSelection(),
+        disabledReason: "Selecione agentes de um squad (ou tenha um único squad)",
+        onSelect: addSelectionToSquad,
+      },
+      {
+        id: "squad-remove",
+        label: "Remover da squad",
+        icon: Unlink,
+        disabled: !selected.some((id) => Boolean(squadForNode(canvas.squads, id))),
+        disabledReason: "Selecione membros de um squad para remover",
+        onSelect: removeSelectionFromSquad,
+      },
+      {
+        id: "squad-coordinator",
+        label: "Tornar coordenador",
+        icon: Crown,
+        disabled: !selected.some((id) => Boolean(squadForNode(canvas.squads, id))),
+        disabledReason: "Selecione um membro do squad para coordenar",
+        onSelect: promoteSelectionToCoordinator,
+      },
+      {
+        id: "squad-rename",
+        label: "Renomear squad",
+        icon: Edit2,
+        disabled: !squadTargetForSelection(),
+        disabledReason: "Selecione um membro do squad (ou tenha um único squad)",
+        onSelect: () => {
+          const squad = squadTargetForSelection();
+          if (squad) renameSquadFromPrompt(squad.id);
+        },
       },
       {
         id: "note",
@@ -2655,6 +3424,7 @@ export const WorkspaceCanvas: React.FC<{
           return;
         if (event.button === 0) {
           setSelected([]);
+          setSelectedSquadId(null);
           setConnectFrom(null);
           connectionDraftRef.current = null;
           setConnectionDraft(null);
@@ -2664,39 +3434,36 @@ export const WorkspaceCanvas: React.FC<{
     >
       <div className="workspace-canvas-grid" />
       <CanvasRadialMenu items={radialItems} label="Menu do canvas" />
-      <div className="workspace-canvas-view-hud">
-        <button
-          type="button"
-          onClick={() => zoom(-0.1)}
-          aria-label="Diminuir zoom"
-        >
-          <Minus size={15} />
-        </button>
-        <button
-          type="button"
-          className="workspace-canvas-zoom-value"
-          onClick={resetViewport}
-          aria-label={'Zoom em ' + Math.round(canvas.viewport.zoom * 100) + ' por cento. Restaurar zoom e posição iniciais'}
-          title="Restaurar zoom e posição iniciais"
-        >
-          {Math.round(canvas.viewport.zoom * 100)}%
-        </button>
-        <button
-          type="button"
-          onClick={() => zoom(0.1)}
-          aria-label="Aumentar zoom"
-        >
-          <Plus size={15} />
-        </button>
-        <button
-          type="button"
-          onClick={fitCanvas}
-          aria-label="Encaixar conteúdo no canvas"
-          title="Encaixar conteúdo no canvas"
-        >
-          <Maximize2 size={14} />
-        </button>
-      </div>
+      <CanvasToolbar
+        projectName={project.name}
+        zoom={canvas.viewport.zoom}
+        zoomLevels={CANVAS_ZOOM_LEVELS}
+        onSetZoom={setZoomLevel}
+        onZoomIn={() => zoomByLevel(1)}
+        onZoomOut={() => zoomByLevel(-1)}
+        onResetViewport={resetViewport}
+        onFitCanvas={fitCanvas}
+        onSetZoomPreset={setZoomPreset}
+        onOpenAgentCreation={openAgentCreation}
+        onOpenSquadCreation={openSquadCreation}
+        onAddNote={addNote}
+        onOpenTerminalQuickDeploy={openTerminalQuickDeploy}
+        onResetCanvas={resetCanvas}
+        selectionCount={selected.length}
+        hasSelection={selected.length > 0}
+        canDelete={canDelete}
+        onDeleteSelected={deleteSelected}
+        onFocusSelected={focusSelected}
+        isFocusModeActive={canvasFocus.active}
+        isInspectorOpen={inspectorOpen}
+        onToggleInspector={() => setInspectorOpen((current) => !current)}
+        isConnecting={Boolean(connectFrom)}
+        onStartConnection={() => {
+          const source = selected[selected.length - 1];
+          if (source) setConnectFrom(source);
+        }}
+        onRemoveLinks={removeLinks}
+      />
       <div
         className="workspace-canvas-world"
         style={{
@@ -2715,46 +3482,206 @@ export const WorkspaceCanvas: React.FC<{
           startPan(event);
         }}
       >
-        {squadRegions.map((region) => (
-          <div
-            key={region.id}
-            className="canvas-squad-region"
-            data-canvas-squad-id={region.id}
-            style={{
-              left: region.x,
-              top: region.y,
-              width: region.width,
-              height: region.height,
-            }}
-          >
-            <span className="canvas-squad-region-label">
-              <Users size={11} aria-hidden="true" />
-              SQUAD · {region.title}
-            </span>
-          </div>
-        ))}
+        {squadRegions.map((region) => {
+          const squad = squadById.get(region.id);
+          const memberCount = squad?.memberNodeIds.length ?? 0;
+          return (
+            <div
+              key={region.id}
+              className={
+                "canvas-squad-region" +
+                (region.collapsed ? " is-collapsed" : "") +
+                (selectedSquadId === region.id ? " is-selected" : "")
+              }
+              data-canvas-squad-id={region.id}
+              data-collapsed={region.collapsed ? "true" : "false"}
+              data-selected={selectedSquadId === region.id ? "true" : "false"}
+              style={{
+                left: region.x,
+                top: region.y,
+                width: region.width,
+                height: region.height,
+                pointerEvents: "none",
+                ...(selectedSquadId === region.id
+                  ? {
+                      outline: "2px solid var(--color-accent-strong, #3b82f6)",
+                      outlineOffset: 2,
+                    }
+                  : {}),
+              }}
+            >
+              {/* Âncora visual do squad: arestas Nota→Squad terminam aqui. */}
+              <span
+                className="canvas-squad-region-anchor"
+                data-canvas-squad-anchor={squadAnchorId(region.id)}
+                style={{
+                  position: "absolute",
+                  left: 0,
+                  top: 0,
+                  width: "100%",
+                  height: 28,
+                  pointerEvents: "none",
+                }}
+                aria-hidden="true"
+              />
+              <button
+                type="button"
+                className="canvas-squad-region-label"
+                data-canvas-squad-header={region.id}
+                aria-pressed={selectedSquadId === region.id}
+                aria-label={"Selecionar squad " + region.title}
+                title="Selecionar squad e abrir o Inspector"
+                onClick={() => selectSquad(region.id)}
+                style={{
+                  pointerEvents: "auto",
+                  background: "transparent",
+                  border: 0,
+                  cursor: "pointer",
+                  font: "inherit",
+                  color: "inherit",
+                  textAlign: "left",
+                }}
+              >
+                <Users size={11} aria-hidden="true" />
+                SQUAD · {region.title}
+                {region.collapsed ? ` · ${memberCount} membro(s)` : ""}
+                {!region.coordinatorNodeId ? " · sem coordenador" : ""}
+              </button>
+              <span
+                className="canvas-squad-region-actions"
+                style={{
+                  position: "absolute",
+                  top: 2,
+                  right: 4,
+                  display: "flex",
+                  gap: 4,
+                  pointerEvents: "auto",
+                }}
+              >
+                {/* Alvo discreto: liga uma Nota existente à âncora squad:<id>
+                    sem bloquear a seleção do header nem o drag dos membros. */}
+                <button
+                  type="button"
+                  className={"canvas-squad-anchor-port" + (connectFrom ? " is-available" : "")}
+                  data-canvas-port="target"
+                  data-canvas-node-id={squadAnchorId(region.id)}
+                  aria-label={"Conectar nota ao squad " + region.title}
+                  title="Arraste uma conexão até aqui para vincular a nota ao squad"
+                  disabled={!connectFrom}
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                  }}
+                  onClick={() => connectNodes(connectFrom, squadAnchorId(region.id))}
+                  style={{ fontSize: 10, padding: "1px 6px", cursor: connectFrom ? "crosshair" : "default" }}
+                >
+                  Nota
+                </button>
+                <button
+                  type="button"
+                  onClick={() => addNewAgentToSquad(region.id)}
+                  aria-label={"Criar agente e adicionar ao squad " + region.title}
+                  title="Cria um agente novo ao lado do squad (sem mover os existentes)"
+                  style={{ fontSize: 10, padding: "1px 6px", cursor: "pointer" }}
+                >
+                  + Agente
+                </button>
+                <button
+                  type="button"
+                  onClick={() => renameSquadFromPrompt(region.id)}
+                  aria-label={"Renomear squad " + region.title}
+                  title="Renomear squad"
+                  style={{ fontSize: 10, padding: "1px 6px", cursor: "pointer" }}
+                >
+                  Renomear
+                </button>
+                <button
+                  type="button"
+                  onClick={() => editSquadObjective(region.id)}
+                  aria-label={"Editar objetivo do squad " + region.title}
+                  title={squad?.objective ? "Objetivo: " + squad.objective : "Definir objetivo do squad"}
+                  style={{ fontSize: 10, padding: "1px 6px", cursor: "pointer" }}
+                >
+                  Objetivo
+                </button>
+                <button
+                  type="button"
+                  onClick={() => toggleSquadCollapsedById(region.id)}
+                  aria-label={
+                    region.collapsed
+                      ? "Expandir squad " + region.title
+                      : "Recolher squad " + region.title
+                  }
+                  aria-expanded={!region.collapsed}
+                  title={region.collapsed ? "Expandir squad" : "Recolher squad"}
+                  style={{ fontSize: 10, padding: "1px 6px", cursor: "pointer" }}
+                >
+                  {region.collapsed ? "Expandir" : "Recolher"}
+                </button>
+              </span>
+            </div>
+          );
+        })}
         <svg
           className="workspace-canvas-connections"
           width={WORLD_WIDTH}
           height={WORLD_HEIGHT}
           aria-hidden="true"
         >
+          <defs>
+            <marker
+              id="canvas-edge-arrow"
+              viewBox="0 0 10 10"
+              refX="9"
+              refY="5"
+              markerWidth="6"
+              markerHeight="6"
+              orient="auto-start-reverse"
+            >
+              <path d="M 0 0 L 10 5 L 0 10 z" className="canvas-edge-arrowhead" />
+            </marker>
+          </defs>
           {canvas.connections.map((connection) => {
-            const from = nodeMap.get(connection.from);
-            const to = nodeMap.get(connection.to);
+            const from =
+              displayNodeMap.get(connection.from) ?? squadAnchorGeometry.get(connection.from);
+            const to = displayNodeMap.get(connection.to) ?? squadAnchorGeometry.get(connection.to);
             if (!from || !to) return null;
+            const kind = defaultCanvasEdgeKind(connection.kind);
+            const label = canvasEdgeLabel(kind, connection.label);
+            const midX = (from.x + from.width + to.x) / 2;
+            const midY = (from.y + from.height / 2 + to.y + to.height / 2) / 2;
             return (
-              <path
+              <g
                 key={connection.id}
-                d={connectionPath(from, to.x, to.y + to.height / 2)}
-              />
+                className={"canvas-edge edge-" + kind}
+                data-edge-kind={kind}
+                data-edge-label={label}
+              >
+                <path
+                  className="canvas-edge-path"
+                  d={connectionPath(from, to.x, to.y + to.height / 2)}
+                  markerEnd={kind === "visual" ? undefined : "url(#canvas-edge-arrow)"}
+                />
+                {connection.label && (
+                  <text
+                    className="canvas-edge-label"
+                    x={midX}
+                    y={midY - 4}
+                    textAnchor="middle"
+                    style={{ fontSize: 10, pointerEvents: "none" }}
+                  >
+                    {connection.label}
+                  </text>
+                )}
+                <title>{label}</title>
+              </g>
             );
           })}
-          {connectionDraft && nodeMap.get(connectionDraft.from) && (
+          {connectionDraft && displayNodeMap.get(connectionDraft.from) && (
             <path
               className="workspace-canvas-connection-preview"
               d={connectionPath(
-                nodeMap.get(connectionDraft.from)!,
+                displayNodeMap.get(connectionDraft.from)!,
                 connectionDraft.x,
                 connectionDraft.y,
               )}
@@ -2763,14 +3690,43 @@ export const WorkspaceCanvas: React.FC<{
         </svg>
         {canvas.nodes
           .filter((node) => node.kind !== "browser" || browser)
-          .map((node) => (
+          .map((node) => {
+            const slot = resolveCanvasNodeSlot(node.id, collapsedMemberIds, canvasFocus);
+            // Wrapper SEMPRE presente e estável (mesma posição/key na lista):
+            // collapse/atenuação mudam só classe/style. Alternar entre retornar
+            // o cartão direto e embrulhá-lo trocaria o tipo do elemento e
+            // desmontaria CanvasNodeCard/WorkspaceTerminal, matando a sessão.
+            return (
+              <div
+                key={node.id}
+                className={
+                  "canvas-node-slot" +
+                  (slot.hidden ? " is-collapsed" : "") +
+                  (slot.dimmed ? " is-dimmed" : "")
+                }
+                data-canvas-node-slot={node.id}
+                data-collapsed={slot.hidden ? "true" : "false"}
+                data-dimmed={slot.dimmed ? "true" : "false"}
+                style={{
+                  position: "absolute",
+                  left: 0,
+                  top: 0,
+                  width: 0,
+                  height: 0,
+                  ...(slot.hidden
+                    ? { visibility: "hidden" as const, pointerEvents: "none" as const }
+                    : {}),
+                  ...(slot.dimmed ? { opacity: 0.32 } : {}),
+                }}
+              >
             <CanvasNodeCard
-              key={node.id}
               node={node}
               isSelected={selected.includes(node.id)}
               isConnecting={connectFrom === node.id}
               isConnectionTargetAvailable={Boolean(connectFrom && connectFrom !== node.id)}
               isConfigOpen={configNodeId === node.id}
+              isCompact={isNodeCompact(node)}
+              onToggleCompact={toggleNodeCompact}
               progress={agentProgress[node.id]}
               agentProviders={agentProviders}
               quickDeployChips={quickDeployChips}
@@ -2786,11 +3742,12 @@ export const WorkspaceCanvas: React.FC<{
                 node.kind === 'agent'
                   ? sendPolicyFor(node).disabled
                     ? sendPolicyFor(node).reason
-                    : node.role === 'Coordenador'
+                    : isOrchestrationCoordinatorNode(node)
                       ? 'Iniciar orquestração com as notas conectadas'
                       : 'Enviar as notas conectadas ao agente'
                   : undefined
               }
+              isSquadCoordinator={node.kind === 'agent' ? isOrchestrationCoordinatorNode(node) : undefined}
               onSelect={selectNode}
               onStartPan={startPan}
               onStartNodeDrag={startNodeDrag}
@@ -2844,11 +3801,13 @@ export const WorkspaceCanvas: React.FC<{
               }
               renderTerminal={renderTerminal}
             />
-          ))}
+              </div>
+            );
+          })}
       </div>
       <CanvasMinimap
         viewport={canvas.viewport}
-        nodes={canvas.nodes}
+        nodes={displayNodes}
         worldWidth={WORLD_WIDTH}
         worldHeight={WORLD_HEIGHT}
         viewportWidth={viewportRef.current?.getBoundingClientRect()?.width || 900}
@@ -3051,6 +4010,42 @@ export const WorkspaceCanvas: React.FC<{
           onCreateSquad={createSquad}
         />
       )}
+      {/* Inspector só configura o nó: o terminal vivo permanece montado no
+          CanvasNodeCard, então abrir/fechar o painel não perde sessão. */}
+      <CanvasNodeInspector
+        isOpen={inspectorOpen}
+        onClose={() => setInspectorOpen(false)}
+        node={inspectorNode}
+        squad={inspectorSquad}
+        squadMembers={inspectorSquadMembers}
+        availableAgentsForSquad={canvas.nodes.filter((node) => node.kind === "agent")}
+        onUpdateSquadTitle={(squadId, title) => renameSquadById(squadId, title)}
+        onSetSquadObjective={(squadId, objective) => setSquadObjectiveById(squadId, objective)}
+        onSetSquadCoordinator={(squadId, coordinatorNodeId) =>
+          setSquadCoordinatorById(squadId, coordinatorNodeId)
+        }
+        onAddSquadMember={(squadId, memberId) => addSquadMemberById(squadId, memberId)}
+        onRemoveSquadMember={(squadId, memberId) => removeSquadMemberById(squadId, memberId)}
+        onToggleSquadCollapsed={(squadId) => toggleSquadCollapsedById(squadId)}
+        onCreateAgentForSquad={(squadId) => addNewAgentToSquad(squadId)}
+        agentProviders={agentProviders}
+        codexAuthStatus={codexAuthStatus}
+        onRequestCodexAuth={onRequestCodexAuth}
+        onUpdateTitle={(id, title) => renameTerminalNode(id, title)}
+        onUpdateRole={(id, role) => updateNode(id, { role: sanitizeAgentRole(role) })}
+        onUpdateProvider={(id, provider) => updateNode(id, { provider })}
+        onUpdateAccount={(id, account) => updateNode(id, { account })}
+        onUpdateContent={(id, content) => updateNode(id, { content: content.slice(0, 24000) })}
+        onDeleteNode={(id) => deleteNodes([id])}
+        onFocusNode={focusNode}
+        onDisconnectLinks={disconnectNodeLinks}
+        onSendTask={sendAgentTask}
+        onIsolateWorktree={onCreateAgentWorktree}
+        terminalPresets={terminalPresets}
+        quickDeployChips={quickDeployChips}
+        onUpdateTerminalNode={updateTerminalNode}
+        progress={inspectorNode ? agentProgress[inspectorNode.id] : undefined}
+      />
     </div>
   );
 };

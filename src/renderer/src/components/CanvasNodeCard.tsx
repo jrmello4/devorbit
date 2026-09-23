@@ -7,14 +7,18 @@ import {
   ChevronRight,
   X,
   Unlink,
-  Sparkles,
-  AlertCircle,
   Terminal,
   Trash2,
   Edit2,
   Check,
   GripVertical,
   Send,
+  Crosshair,
+  Minimize2,
+  Maximize2,
+  SlidersHorizontal,
+  Bot,
+  NotebookPen,
 } from 'lucide-react'
 import type { AgentRole, CanvasNode, NodeKind, AgentProgress } from './WorkspaceCanvas'
 import type { AgentProvider, AgentProviderId, CodexAccountId } from '../types'
@@ -57,6 +61,14 @@ export interface CanvasNodeCardProps {
   spaceHeld?: boolean
   isSendDisabled?: boolean
   sendTitle?: string
+  // Extensões de Compactação, Foco e Inspector
+  isCompact?: boolean
+  onToggleCompact?: (nodeId: string) => void
+  onOpenInspector?: (node: CanvasNode) => void
+  isFocused?: boolean
+  isDimmed?: boolean
+  isSquadCoordinator?: boolean
+  isCoordinator?: boolean
   // Handlers
   onSelect: (id: string, multi: boolean) => void
   onStartPan: (event: React.PointerEvent<HTMLElement>) => void
@@ -131,6 +143,13 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
     spaceHeld,
     isSendDisabled,
     sendTitle,
+    isCompact,
+    onToggleCompact,
+    onOpenInspector,
+    isFocused = false,
+    isDimmed = false,
+    isSquadCoordinator,
+    isCoordinator,
     onSelect,
     onStartPan,
     onStartNodeDrag,
@@ -167,6 +186,51 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
   }) {
     const [renamingCustomPreset, setRenamingCustomPreset] = useState(false)
     const [renameDraft, setRenameDraft] = useState('')
+    const [localCompact, setLocalCompact] = useState<boolean>(() => {
+      return node.kind === 'agent' || node.kind === 'terminal'
+    })
+
+    // O coordenador da squad prevalece sobre o texto do papel
+    const isActualCoordinator =
+      typeof isSquadCoordinator === 'boolean'
+        ? isSquadCoordinator
+        : (isCoordinator ?? (node.role === 'Coordenador'))
+
+    // O estado compacto pode vir de fora ou ser gerenciado localmente
+    const effectiveCompact = typeof isCompact === 'boolean' ? isCompact : localCompact
+    const isCompactCard =
+      effectiveCompact &&
+      (node.kind === 'agent' || node.kind === 'terminal' || node.kind === 'note') &&
+      !isConfigOpen
+
+    // Tarefa real do agente: prioriza progress.label (estado ativo/etapa atual),
+    // seguido por node.content quando confiável, ou fallback amigável.
+    const agentTaskText =
+      progress?.label?.trim() ||
+      (node.content?.trim() ? node.content.trim() : 'Aguardando atribuição de tarefa...')
+
+    // Comando do terminal formatado para resumo
+    const terminalArgsFormatted = Array.isArray(node.terminal?.args)
+      ? formatArgsInput(node.terminal.args)
+      : typeof (node.terminal?.args as unknown) === 'string'
+        ? (node.terminal?.args as unknown as string)
+        : ''
+    const terminalCommandText =
+      node.terminal?.command?.trim()
+        ? `${node.terminal.command} ${terminalArgsFormatted}`.trim()
+        : 'Shell interativo'
+
+    const toggleCompactMode = useCallback(
+      (e: React.MouseEvent) => {
+        e.stopPropagation()
+        if (onToggleCompact) {
+          onToggleCompact(node.id)
+        } else {
+          setLocalCompact((c) => !c)
+        }
+      },
+      [node.id, onToggleCompact],
+    )
 
     const currentPresetId = node.terminal?.presetId || ''
     const isCustomPreset = isCustomTerminalPresetId(currentPresetId)
@@ -194,28 +258,37 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
       [node, onChooseConnectionSource, onSelect, onUpdateGeometry],
     )
 
+    const cardClasses = [
+      'workspace-canvas-card',
+      'canvas-' + node.kind,
+      isSelected ? 'is-selected' : '',
+      isConnecting ? 'is-connecting' : '',
+      isCompactCard ? 'is-compact' : '',
+      isConfigOpen ? 'has-config-open' : '',
+      isFocused ? 'is-focused-node' : '',
+      isDimmed ? 'is-dimmed' : '',
+      progress ? 'has-agent-progress progress-' + progress.state : '',
+    ]
+      .filter(Boolean)
+      .join(' ')
+
     return (
       <section
         tabIndex={0}
         role="region"
-        aria-label={`${node.title} (${node.kind === 'agent' ? node.role : node.kind})`}
+        aria-label={`${node.title} (${node.kind === 'agent' ? node.role : node.kind})${effectiveCompact ? ' [recolhido]' : ''}`}
         aria-roledescription="cartão do canvas"
         aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight Shift+ArrowRight Shift+ArrowDown Alt+ArrowRight Alt+ArrowDown"
         title={`${node.title} · Mover: Setas · Redimensionar: Alt+Setas`}
-        className={
-          'workspace-canvas-card canvas-' +
-          node.kind +
-          (isSelected ? ' is-selected' : '') +
-          (isConnecting ? ' is-connecting' : '') +
-          (progress ? ' has-agent-progress progress-' + progress.state : '')
-        }
+        className={cardClasses}
         data-canvas-card={node.kind}
         data-canvas-node-id={node.id}
+        data-is-compact={effectiveCompact ? 'true' : 'false'}
         style={{
           left: node.x,
           top: node.y,
-          width: node.width,
-          height: node.height,
+          width: isCompactCard ? 320 : node.width,
+          height: isCompactCard ? 130 : node.height,
           zIndex: node.z,
         }}
         onPointerDown={(event) => {
@@ -228,6 +301,7 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
         }}
         onKeyDown={handleKeyDown}
       >
+        {/* Porta de Conexão de Saída (Source) */}
         <button
           type="button"
           className={'canvas-port canvas-port-source' + (isConnecting ? ' is-active' : '')}
@@ -246,6 +320,8 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
         >
           <span aria-hidden="true" />
         </button>
+
+        {/* Porta de Conexão de Entrada (Target) */}
         <button
           type="button"
           className={'canvas-port canvas-port-target' + (isConnectionTargetAvailable ? ' is-available' : '')}
@@ -267,17 +343,21 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
         >
           <span aria-hidden="true" />
         </button>
+
+        {/* Cabeçalho do Card */}
         <header
+          className="canvas-card-header"
           onPointerDown={(event) => {
             const target = event.target
             if (closestElement(target, 'button:not([data-canvas-drag-handle]), input, select, textarea, a, [contenteditable=true]')) return
             onStartNodeDrag(event, node)
           }}
         >
-          <strong>
-            {nodeMeta[node.kind].icon}
-            {node.title}
+          <strong className="canvas-card-title">
+            {nodeMeta[node.kind]?.icon || (node.kind === 'agent' ? <Bot size={13} /> : <Terminal size={13} />)}
+            <span className="canvas-card-title-text">{node.title}</span>
           </strong>
+
           <button
             data-canvas-drag-handle=""
             type="button"
@@ -292,31 +372,56 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
           >
             <GripVertical size={13} aria-hidden="true" />
           </button>
-          <span className="canvas-node-meta">
-            {node.kind === 'agent'
-              ? node.role || 'Implementação'
-              : node.kind === 'terminal'
-                ? terminalMetaLabel(node)
-                : nodeMeta[node.kind].meta}
-          </span>
-          {node.kind === 'agent' && node.role === 'Coordenador' && (
-            <span className="canvas-command-mark" role="img" aria-label="Coordenador" title="Coordenador da squad">
-              <Crown size={11} aria-hidden="true" />
+
+          {/* Badges de Identificação por Tipo */}
+          {node.kind === 'agent' && (
+            <>
+              <span className="canvas-node-meta canvas-role-pill">
+                {node.role || 'Implementação'}
+              </span>
+              {isActualCoordinator && (
+                <span className="canvas-command-mark" role="img" aria-label="Coordenador" title="Coordenador da squad">
+                  <Crown size={11} aria-hidden="true" className="canvas-icon-gold" />
+                </span>
+              )}
+              {node.provider && (
+                <span className="canvas-node-meta canvas-provider-pill" title={`Provedor: ${node.provider}`}>
+                  {node.provider.toUpperCase()}
+                  {node.account ? ` (${node.account === 'account1' ? 'C1' : 'C2'})` : ''}
+                </span>
+              )}
+            </>
+          )}
+
+          {node.kind === 'terminal' && (
+            <span className="canvas-node-meta canvas-terminal-pill">
+              {terminalMetaLabel(node)}
             </span>
           )}
+
+          {node.kind === 'note' && (
+            <span className="canvas-node-meta canvas-note-pill">
+              {(node.content || '').length} car.
+            </span>
+          )}
+
+          {/* Status real do agente (sem animação permanente pesada) */}
           {node.kind === 'agent' && progress && (
             <span
               className={'canvas-agent-progress progress-' + progress.state}
               data-agent-progress={progress.state}
               role="status"
-              aria-label={'Status da tarefa: ' + progress.label}
+              aria-label={'Status: ' + progress.label}
               title={progress.label}
             >
               <i aria-hidden="true" />
-              {progress.label}
+              <span>{progress.label}</span>
             </span>
           )}
+
+          {/* Ações do Cabeçalho */}
           <div className="canvas-card-actions">
+            {/* Executar Tarefa do Agente */}
             {node.kind === 'agent' && isAgentNodeConfigured(node, agentProviders ?? []) && (
               <button
                 type="button"
@@ -325,7 +430,7 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
                 aria-label={'Enviar tarefa para ' + node.title}
                 title={
                   sendTitle ||
-                  (node.role === 'Coordenador'
+                  (isActualCoordinator
                     ? 'Iniciar orquestração com as notas conectadas'
                     : 'Enviar as notas conectadas ao agente')
                 }
@@ -338,6 +443,8 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
                 <Send size={11} aria-hidden="true" />
               </button>
             )}
+
+            {/* Isolar em Worktree */}
             {node.kind === 'agent' && onIsolateWorktree && (
               <button
                 type="button"
@@ -352,6 +459,8 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
                 <span className="canvas-card-worktree-mark" aria-hidden="true">WT</span>
               </button>
             )}
+
+            {/* Focar Câmera no Nó */}
             <button
               type="button"
               className="canvas-card-action-btn"
@@ -362,8 +471,28 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
                 onFocusNode(node.id)
               }}
             >
-              <span className="canvas-card-focus-mark" aria-hidden="true">⌖</span>
+              <Crosshair size={11} aria-hidden="true" />
             </button>
+
+            {/* Alternar Modo Compacto / Expandido */}
+            {node.kind !== 'workbench' && node.kind !== 'browser' && (
+              <button
+                type="button"
+                className="canvas-card-action-btn canvas-compact-toggle"
+                onClick={toggleCompactMode}
+                aria-label={effectiveCompact ? (node.kind === 'note' ? 'Expandir nota' : 'Expandir terminal') : 'Recolher cartão'}
+                aria-expanded={!effectiveCompact}
+                title={effectiveCompact ? (node.kind === 'note' ? 'Expandir nota' : 'Expandir terminal') : 'Recolher cartão'}
+              >
+                {effectiveCompact ? (
+                  <Maximize2 size={11} aria-hidden="true" />
+                ) : (
+                  <Minimize2 size={11} aria-hidden="true" />
+                )}
+              </button>
+            )}
+
+            {/* Desconectar Links */}
             <button
               type="button"
               className="canvas-card-action-btn"
@@ -376,12 +505,34 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
             >
               <Unlink size={11} aria-hidden="true" />
             </button>
+
+            {/* Abrir no Inspector ou Alternar Configuração */}
+            <button
+              type="button"
+              className={'canvas-card-action-btn canvas-agent-config-toggle' + (isConfigOpen ? ' is-active' : '')}
+              aria-label={'Configurações de ' + node.title}
+              aria-expanded={isConfigOpen}
+              aria-controls={'agent-config-' + node.id}
+              title="Abrir configurações e inspeção detalhada"
+              onClick={(event) => {
+                event.stopPropagation()
+                if (onOpenInspector) {
+                  onOpenInspector(node)
+                } else {
+                  onToggleConfig(node.id)
+                }
+              }}
+            >
+              <SlidersHorizontal size={11} aria-hidden="true" />
+            </button>
+
+            {/* Excluir Nó */}
             {node.kind !== 'workbench' && node.kind !== 'browser' && (
               <button
                 type="button"
                 className="canvas-card-action-btn canvas-card-action-delete canvas-delete-node"
                 aria-label={'Excluir ' + node.title}
-                title={node.kind === 'agent' ? 'Excluir terminal do agente' : 'Excluir nota'}
+                title={node.kind === 'agent' ? 'Excluir agente' : node.kind === 'terminal' ? 'Excluir terminal' : 'Excluir nota'}
                 onClick={(event) => {
                   event.stopPropagation()
                   onDeleteNode(node.id)
@@ -390,41 +541,10 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
                 <Trash2 size={11} aria-hidden="true" />
               </button>
             )}
-            {node.kind === 'agent' && (
-              <button
-                type="button"
-                className={'canvas-card-action-btn canvas-agent-config-toggle' + (isConfigOpen ? ' is-active' : '')}
-                aria-label={'Configurar ' + node.title}
-                aria-expanded={isConfigOpen}
-                aria-controls={'agent-config-' + node.id}
-                title="Configuração do agente"
-                onClick={(event) => {
-                  event.stopPropagation()
-                  onToggleConfig(node.id)
-                }}
-              >
-                <Settings2 size={11} aria-hidden="true" />
-              </button>
-            )}
-            {node.kind === 'terminal' && (
-              <button
-                type="button"
-                className={'canvas-card-action-btn canvas-card-action-config' + (isConfigOpen ? ' is-active' : '')}
-                aria-label={(isConfigOpen ? 'Fechar' : 'Abrir') + ' configurações de ' + node.title}
-                aria-expanded={isConfigOpen}
-                title="Configurações do nó"
-                onClick={(event) => {
-                  event.stopPropagation()
-                  onToggleConfig(node.id)
-                }}
-              >
-                <Settings size={11} aria-hidden="true" />
-                {isConfigOpen ? <ChevronDown size={10} aria-hidden="true" /> : <ChevronRight size={10} aria-hidden="true" />}
-              </button>
-            )}
           </div>
         </header>
 
+        {/* Painel Inline de Configuração de Agente (fallback acessível e automação) */}
         {node.kind === 'agent' && (
           <div
             className="canvas-agent-config"
@@ -483,6 +603,7 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
           </div>
         )}
 
+        {/* Painel Inline de Configuração de Terminal (fallback) */}
         {isConfigOpen && node.kind === 'terminal' && node.terminal && (
           <div className="canvas-agent-config-panel" role="region" aria-label="Configuração do terminal">
             <label className="canvas-agent-config-field">
@@ -526,7 +647,6 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
               </select>
             </label>
 
-            {/* Ciclo completo de presets customizados: renomear e excluir */}
             {isCustomPreset && customPresetObj && (
               <div
                 className="canvas-custom-preset-management"
@@ -786,7 +906,221 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
           </div>
         )}
 
-        <div className="workspace-canvas-card-content">
+        {/*
+          RESUMO ÚTIL E CONCISO PARA MODO COMPACTO (~130px de altura total):
+          Exibido apenas em modo compacto para agent, terminal e note.
+          O WorkspaceTerminal continua montado na div abaixo com .is-compact-hidden.
+        */}
+        {isCompactCard && (
+          <div
+            className="workspace-canvas-card-summary"
+            data-canvas-summary={node.kind}
+            onPointerDown={(event) => {
+              const target = event.target
+              if (closestElement(target, 'button, input, select, textarea, a')) return
+              onStartNodeDrag(event, node)
+            }}
+          >
+            {node.kind === 'agent' && (
+              <>
+                <div className="canvas-summary-header-row">
+                  <span className="canvas-summary-status" data-agent-status={progress?.state || 'idle'}>
+                    <span
+                      className={`canvas-status-dot status-${progress?.state || 'idle'}`}
+                      aria-hidden="true"
+                    />
+                    <span>
+                      {progress?.label ||
+                        (isAgentNodeConfigured(node, agentProviders ?? [])
+                          ? 'Configurado'
+                          : 'Aguardando configuração')}
+                    </span>
+                  </span>
+                  {node.provider && (
+                    <span className="canvas-summary-provider-badge" title={`Provedor: ${node.provider}`}>
+                      {node.provider.toUpperCase()}
+                      {node.account ? ` (${node.account === 'account1' ? 'C1' : 'C2'})` : ''}
+                    </span>
+                  )}
+                </div>
+
+                <div className="canvas-summary-task" title={agentTaskText}>
+                  <span className="canvas-summary-task-label">Tarefa:</span>
+                  <span className="canvas-summary-task-text">{agentTaskText}</span>
+                </div>
+
+                <div className="canvas-summary-actions">
+                  <button
+                    type="button"
+                    className="canvas-summary-action-btn canvas-summary-btn-terminal"
+                    onClick={toggleCompactMode}
+                    aria-label="Expandir terminal"
+                    title="Expandir cartão e operar terminal interativo"
+                  >
+                    <Terminal size={12} aria-hidden="true" />
+                    <span>Expandir terminal</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    className="canvas-summary-action-btn canvas-summary-btn-inspector"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      if (onOpenInspector) {
+                        onOpenInspector(node)
+                      } else {
+                        onToggleConfig(node.id)
+                      }
+                    }}
+                    aria-label="Abrir Inspector"
+                    title="Abrir detalhes e configurações no Inspector"
+                  >
+                    <SlidersHorizontal size={12} aria-hidden="true" />
+                    <span>Inspector</span>
+                  </button>
+
+                  {isAgentNodeConfigured(node, agentProviders ?? []) && onSendTask && (
+                    <button
+                      type="button"
+                      className="canvas-summary-action-btn canvas-summary-btn-send"
+                      disabled={isSendDisabled}
+                      aria-label={'Enviar tarefa para ' + node.title}
+                      title={
+                        sendTitle ||
+                        (isActualCoordinator
+                          ? 'Iniciar orquestração com as notas conectadas'
+                          : 'Enviar as notas conectadas ao agente')
+                      }
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        onSendTask(node)
+                      }}
+                    >
+                      <Send size={11} aria-hidden="true" />
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+
+            {node.kind === 'terminal' && (
+              <>
+                <div className="canvas-summary-header-row">
+                  <span className="canvas-summary-status">
+                    <span className="canvas-status-dot status-idle" aria-hidden="true" />
+                    <span>{customPresetObj?.name || node.terminal?.presetId || 'Shell'}</span>
+                  </span>
+                  <span className="canvas-summary-provider-badge">
+                    {node.terminal?.autoStart ? 'Auto-início' : 'Manual'}
+                  </span>
+                </div>
+
+                <div className="canvas-summary-task" title={terminalCommandText}>
+                  <span className="canvas-summary-task-label">Comando:</span>
+                  <span className="canvas-summary-task-text canvas-summary-task-mono">
+                    {terminalCommandText}
+                  </span>
+                </div>
+
+                <div className="canvas-summary-actions">
+                  <button
+                    type="button"
+                    className="canvas-summary-action-btn canvas-summary-btn-terminal"
+                    onClick={toggleCompactMode}
+                    aria-label="Expandir terminal"
+                    title="Expandir cartão e operar terminal"
+                  >
+                    <Terminal size={12} aria-hidden="true" />
+                    <span>Expandir terminal</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    className="canvas-summary-action-btn canvas-summary-btn-inspector"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      if (onOpenInspector) {
+                        onOpenInspector(node)
+                      } else {
+                        onToggleConfig(node.id)
+                      }
+                    }}
+                    aria-label="Abrir Inspector"
+                    title="Configurar terminal no Inspector"
+                  >
+                    <SlidersHorizontal size={12} aria-hidden="true" />
+                    <span>Inspector</span>
+                  </button>
+                </div>
+              </>
+            )}
+
+            {node.kind === 'note' && (
+              <>
+                <div className="canvas-summary-header-row">
+                  <span className="canvas-summary-status">
+                    <span className="canvas-status-dot status-idle" aria-hidden="true" />
+                    <span>Nota rápida</span>
+                  </span>
+                  <span className="canvas-summary-provider-badge">
+                    {(node.content || '').length} car.
+                  </span>
+                </div>
+
+                <div className="canvas-summary-task" title={node.content || 'Nota vazia'}>
+                  <span className="canvas-summary-task-label">Nota:</span>
+                  <span className="canvas-summary-task-text">
+                    {node.content?.trim() || 'Nota vazia (clique em Expandir para editar)'}
+                  </span>
+                </div>
+
+                <div className="canvas-summary-actions">
+                  <button
+                    type="button"
+                    className="canvas-summary-action-btn canvas-summary-btn-terminal"
+                    onClick={toggleCompactMode}
+                    aria-label="Expandir nota"
+                    title="Expandir cartão e editar nota"
+                  >
+                    <Maximize2 size={12} aria-hidden="true" />
+                    <span>Expandir nota</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    className="canvas-summary-action-btn canvas-summary-btn-inspector"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      if (onOpenInspector) {
+                        onOpenInspector(node)
+                      } else {
+                        onToggleConfig(node.id)
+                      }
+                    }}
+                    aria-label="Abrir Inspector"
+                    title="Editar nota no Inspector"
+                  >
+                    <SlidersHorizontal size={12} aria-hidden="true" />
+                    <span>Inspector</span>
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/*
+          CONTEÚDO DO CARTÃO:
+          CRUCIAL KEEP-ALIVE:
+          Esta div NUNCA é desmontada condicionalmente quando compactada!
+          Em modo compacto, usamos display/visibility/height CSS via .is-compact
+          para que o WorkspaceTerminal e os processos PTY nativos permaneçam 100%
+          vivos, conectados e operando em background.
+        */}
+        <div
+          className={'workspace-canvas-card-content' + (effectiveCompact ? ' is-compact-hidden' : '')}
+          aria-hidden={effectiveCompact}
+        >
           {node.kind === 'workbench' ? (
             workbench
           ) : node.kind === 'browser' ? (
@@ -819,12 +1153,16 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
             />
           )}
         </div>
-        <div
-          className="workspace-canvas-resize-handle"
-          data-canvas-resize-handle=""
-          onPointerDown={(event) => onStartResize(event, node)}
-          aria-hidden="true"
-        />
+
+        {/* Handle de redimensionamento (apenas no modo expandido) */}
+        {!effectiveCompact && (
+          <div
+            className="workspace-canvas-resize-handle"
+            data-canvas-resize-handle=""
+            onPointerDown={(event) => onStartResize(event, node)}
+            aria-hidden="true"
+          />
+        )}
       </section>
     )
   },

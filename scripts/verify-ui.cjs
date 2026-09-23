@@ -18,6 +18,10 @@ const viewports = [
   { width: 1920, height: 1080, label: '1920x1080' },
 ]
 
+// Objetivo único do squad de verificação: a nova UI cria Squad + agentes sem
+// Nota obrigatória, então o contexto da equipe vem do objetivo persistido.
+const SQUAD_OBJECTIVE = 'Tarefa automatizada de ponta a ponta: executar a mudança e validar a entrega.'
+
 const checks = []
 const rendererErrors = []
 
@@ -85,47 +89,38 @@ async function setSelectValue(window, selector, value) {
   assert(changed, `select não encontrado (${selector})`)
 }
 
-async function selectCreationProvider(window, role, provider, label) {
-  const selector = `[aria-label="Provider do agente ${role}"]`
+// O diálogo de criação atual é dinâmico: papéis são campos de texto com
+// datalist e cada participante expõe um select de provedor com aria-label
+// próprio ("Provedor do agente" no modo avulso, "Provedor do membro N" no
+// squad). As contas Codex são radios cujo `name` identifica o papel do membro.
+async function selectDialogProvider(window, ariaLabel, provider, label) {
+  const selector = `[role="dialog"] [aria-label=${JSON.stringify(ariaLabel)}]`
   await waitFor(window, `(() => {
     const select = document.querySelector(${JSON.stringify(selector)})
     if (!select) return false
     return Array.from(select.options).some((option) => option.value === ${JSON.stringify(provider)} && !option.disabled)
-  })()`, `${label} provider ${provider} para ${role}`)
+  })()`, `${label} provider ${provider}`)
   const selected = await evaluate(window, `(function () {
     const select = document.querySelector(${JSON.stringify(selector)})
     if (!select) return false
     select.value = ${JSON.stringify(provider)}
     select.dispatchEvent(new Event('change', { bubbles: true }))
-    return true
+    return select.value === ${JSON.stringify(provider)}
   })()`)
-  assert(selected, `${label}: não foi possível selecionar ${provider} para ${role}`)
+  assert(selected, `${label}: não foi possível selecionar ${provider}`)
 }
 
-async function selectCreationAccount(window, role, account, label) {
-  const selector = `input[type="radio"][name="codex-account-${role}"]`
-  const index = account === 'account2' ? 1 : 0
-  await waitFor(window, `document.querySelectorAll(${JSON.stringify(selector)}).length > ${index}`, `${label} opções de conta para ${role}`)
+async function selectDialogAccount(window, namePrefix, account, label) {
+  const fullName = `${namePrefix}-${account}`
+  const selector = `[role="dialog"] input[type="radio"][name=${JSON.stringify(fullName)}]`
+  await waitFor(window, `Boolean(document.querySelector(${JSON.stringify(selector)}))`, `${label} opção de conta ${account}`)
   const clicked = await evaluate(window, `(function () {
-    const radios = Array.from(document.querySelectorAll(${JSON.stringify(selector)}))
-    const radio = radios[${index}]
+    const radio = document.querySelector(${JSON.stringify(selector)})
     if (!radio) return false
     radio.click()
     return radio.checked
   })()`)
-  assert(clicked, `${label}: conta ${account} indisponível para ${role}`)
-}
-
-async function enableSquadRole(window, role, label) {
-  const clicked = await evaluate(window, `(function () {
-    const labelNode = Array.from(document.querySelectorAll('[role="dialog"] label'))
-      .find((node) => node.querySelector('input[type="checkbox"]') && node.innerText.includes(${JSON.stringify(role)}))
-    const checkbox = labelNode?.querySelector('input[type="checkbox"]')
-    if (!checkbox || checkbox.disabled) return false
-    if (!checkbox.checked) checkbox.click()
-    return checkbox.checked
-  })()`)
-  assert(clicked, `${label}: papel ${role} não pôde ser marcado no squad`)
+  assert(clicked, `${label}: conta ${account} indisponível`)
 }
 
 async function confirmCreationDialog(window, label) {
@@ -135,20 +130,17 @@ async function confirmCreationDialog(window, label) {
 
 
 async function verifyCoordinatorOrchestration(window, viewport) {
-  const taskContent = 'Tarefa automatizada de ponta a ponta: executar a mudança e validar a entrega.'
-  const noteUpdated = await evaluate(window, `(function () {
-    const card = Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card="note"]'))
-      .find((node) => node.querySelector('textarea[data-canvas-note-editor][aria-label="Plano da tarefa"]'))
-    const editor = card?.querySelector('textarea[data-canvas-note-editor]')
-    if (!editor) return false
-    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set
-    setter.call(editor, ${JSON.stringify(taskContent)})
-    editor.dispatchEvent(new Event('input', { bubbles: true }))
-    editor.dispatchEvent(new Event('change', { bubbles: true }))
-    return true
-  })()`)
-  assert(noteUpdated, `${viewport.label}: nota Plano da tarefa não encontrada`)
-  await waitFor(window, `Array.from(document.querySelectorAll('textarea[data-canvas-note-editor]')).some((editor) => editor.getAttribute('aria-label') === 'Plano da tarefa' && editor.value === ${JSON.stringify(taskContent)})`, `${viewport.label} tarefa do squad`)
+  const taskContent = SQUAD_OBJECTIVE
+  // A nova UI cria o squad sem Nota obrigatória: o contexto vem do objetivo
+  // persistido no squad (Note→Squad é opcional e não tem UI dedicada).
+  await waitFor(window, `(() => {
+    const canvas = document.querySelector('.workspace-canvas')
+    const id = canvas?.getAttribute('data-canvas-project-id')
+    const raw = id ? window.localStorage.getItem('devorbit:workspace-canvas:' + id) : null
+    if (!raw) return false
+    const saved = JSON.parse(raw)
+    return (saved.squads || []).some((squad) => squad.objective === ${JSON.stringify(taskContent)})
+  })()`, `${viewport.label} objetivo da squad persistido`)
   await waitFor(window, `Array.from(document.querySelectorAll('[aria-label="Provedor do agente"] option')).some((option) => option.value === 'opencode' && !option.disabled)`, `${viewport.label} OpenCode detectado no canvas`)
   const providerChanged = await evaluate(window, `(() => {
     const card = Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]'))
@@ -361,7 +353,7 @@ async function verifyManualAgentSend(window, viewport) {
     return { state: chip?.getAttribute('data-agent-progress') || '', label: chip?.getAttribute('aria-label') || '' }
   })()`)
   assert(runningStatus.state === 'running', `${viewport.label}: status de execução ilegível (${runningStatus.state})`)
-  assert(runningStatus.label.includes('Status da tarefa'), `${viewport.label}: status sem rótulo acessível (${runningStatus.label})`)
+  assert(runningStatus.label.includes('Status:'), `${viewport.label}: status sem rótulo acessível (${runningStatus.label})`)
 
   const manualEvent = JSON.stringify({ id: promptWrite.args[0], type: 'data', data: '\r\nDEVORBIT_RESULT: {"version":1,"outcome":"completed","summary":"manual concluido"}\r\n' })
   await evaluate(window, `(() => { window.__devorbitVerifyFixture.emitTerminalEvent(${manualEvent}); return true })()`)
@@ -423,11 +415,16 @@ async function verifySquadLayer(window, viewport) {
     const cardRect = coordinator?.getBoundingClientRect()
     const canvasRect = document.querySelector('.workspace-canvas')?.getBoundingClientRect()
     let topHitIsCard = false
+    let regionInHitStack = false
     if (cardRect && canvasRect) {
       const left = (Math.max(cardRect.left, canvasRect.left) + Math.min(cardRect.right, canvasRect.right)) / 2
       const top = (Math.max(cardRect.top, canvasRect.top) + Math.min(cardRect.bottom, canvasRect.bottom)) / 2
-      const hit = document.elementFromPoint(left, top)
-      topHitIsCard = Boolean(hit && hit.closest('[data-canvas-card]'))
+      // elementsFromPoint revela toda a pilha sob o nó: a região (pointer-events
+      // none) não pode aparecer; o cartão precisa continuar hit-testável mesmo
+      // com overlays de chrome (toolbar) acima.
+      const stack = document.elementsFromPoint(left, top)
+      topHitIsCard = stack.some((element) => Boolean(element.closest && element.closest('[data-canvas-card]')))
+      regionInHitStack = stack.some((element) => Boolean(element.classList && element.classList.contains('canvas-squad-region')))
     }
     return {
       label,
@@ -436,6 +433,7 @@ async function verifySquadLayer(window, viewport) {
       commandMark: Boolean(mark && mark.getAttribute('aria-label') === 'Coordenador'),
       containsCoordinator: Boolean(regionRect && cardRect && regionRect.left <= cardRect.left && regionRect.top <= cardRect.top && regionRect.right >= cardRect.right && regionRect.bottom >= cardRect.bottom),
       topHitIsCard,
+      regionInHitStack,
     }
   })()`)
   assert(layer.label.includes('SQUAD ·'), `${viewport.label}: rótulo de squad ausente (${layer.label})`)
@@ -443,6 +441,7 @@ async function verifySquadLayer(window, viewport) {
   assert(layer.meta.includes('Coordenador'), `${viewport.label}: papel do coordenador ilegível (${layer.meta})`)
   assert(layer.commandMark, `${viewport.label}: coordenador sem indicador de comando`)
   assert(layer.containsCoordinator, `${viewport.label}: região de squad não cobre o coordenador`)
+  assert(!layer.regionInHitStack, `${viewport.label}: região de squad aparece no hit testing (${JSON.stringify(layer)})`)
   assert(layer.topHitIsCard, `${viewport.label}: hit testing do nó afetado pela região de squad (${JSON.stringify(layer)})`)
   recordPass(viewport.label, 'squad em região sutil atrás dos nós com coordenador identificável')
 }
@@ -899,7 +898,7 @@ async function inspectProjectInteractions(window, viewport) {
     return cards.length === 3 && cards.every((card) => card.right > canvas.left && card.bottom > canvas.top && card.left < canvas.right && card.top < canvas.bottom)
   })()`)
   assert(zoomedVisibility, `${viewport.label}: zoom deixou quadros fora do canvas`)
-  await clickButtonByText(window, (node) => (node.getAttribute('aria-label') || '').includes('Restaurar zoom'), `${viewport.label} zoom reset`)
+  await clickButtonByText(window, (node) => { const a = (node.getAttribute('aria-label') || '').toLowerCase(); return a.includes('restaurar zoom') || a.includes('restaurar para 100%') }, `${viewport.label} zoom reset`)
   await waitFor(window, `JSON.parse(window.localStorage.getItem('devorbit:workspace-canvas:${toolbarZoom.id}')).viewport.zoom === 1`, `${viewport.label} toolbar zoom reset`)
   recordPass(viewport.label, 'zoom por botões mantém os quadros visíveis e volta a 100%')
 
@@ -922,7 +921,7 @@ async function inspectProjectInteractions(window, viewport) {
   await waitFor(window, `!document.querySelector('.workspace-canvas-connection-status')`, `${viewport.label} duplicate connection complete`)
   const duplicateLinks = await evaluate(window, `JSON.parse(window.localStorage.getItem('devorbit:workspace-canvas:${manualLink.id}')).connections.length`)
   assert(duplicateLinks === 1, `${viewport.label}: conexão duplicada foi criada (${duplicateLinks})`)
-  await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Encaixar conteúdo no canvas', `${viewport.label} canvas fit before cancel`)
+  await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Encaixar todo o conteúdo na tela', `${viewport.label} canvas fit before cancel`)
   const cancelSetup = await evaluate(window, `(function () {
     const source = document.querySelector('[data-canvas-card="note"] [data-canvas-port="source"]')
     const target = document.querySelector('[data-canvas-card="workbench"] [data-canvas-port="target"]')
@@ -951,7 +950,7 @@ async function inspectProjectInteractions(window, viewport) {
   await new Promise((resolve) => setTimeout(resolve, 0))
   await evaluate(window, `(() => { window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 78, clientX: 10000, clientY: 10000 })); window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 78, clientX: 10000, clientY: 10000 })); return true })()`)
   await waitFor(window, `(() => { const browser = document.querySelector('[data-canvas-card="browser"]'); return Number.parseFloat(browser.style.left) > 4000 && Number.parseFloat(browser.style.top) > 2500 })()`, `${viewport.label} canvas extreme placement`)
-  await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Encaixar conteúdo no canvas', `${viewport.label} canvas fit`)
+  await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Encaixar todo o conteúdo na tela', `${viewport.label} canvas fit`)
   await waitFor(window, `(() => { const viewport = JSON.parse(window.localStorage.getItem('devorbit:workspace-canvas:${manualLink.id}')).viewport; const canvas = document.querySelector('.workspace-canvas').getBoundingClientRect(); const cards = Array.from(document.querySelectorAll('.workspace-canvas-card')).map((card) => card.getBoundingClientRect()); return viewport.zoom >= .08 && viewport.zoom <= 1.6 && cards.every((card) => card.left >= canvas.left - 1 && card.top >= canvas.top - 1 && card.right <= canvas.right + 1 && card.bottom <= canvas.bottom + 1) })()`, `${viewport.label} canvas fit bounds`)
   recordPass(viewport.label, 'portas ligam quadros sem duplicar e Escape cancela a ligação')
   await evaluate(window, `(function () {
@@ -971,7 +970,7 @@ async function inspectProjectInteractions(window, viewport) {
     if (!canvas || !raw) return false
     const saved = JSON.parse(raw)
     const card = saved.nodes?.find((item) => item.id === 'workbench')
-    return (saved.version === 4 || saved.version === 3) && Array.isArray(saved.squads) && card && Number(card.width) === Number.parseFloat(canvas.querySelector('[data-canvas-card="workbench"]').style.width)
+    return saved.version === 5 && Array.isArray(saved.squads) && card && Number(card.width) === Number.parseFloat(canvas.querySelector('[data-canvas-card="workbench"]').style.width)
   })()`, `${viewport.label} canvas geometry persistence`)
   await evaluate(window, `(function () {
     const note = document.querySelector('[data-canvas-note-editor]')
@@ -989,8 +988,8 @@ async function inspectProjectInteractions(window, viewport) {
   await waitFor(window, `document.querySelector('[data-canvas-radial][data-open="true"]')`, `${viewport.label} radial menu open state`)
   await clickButtonByText(window, (node) => node.matches?.('[data-canvas-radial-item="agent"]'), `${viewport.label} agent node creation`)
   await waitFor(window, `Boolean(document.querySelector('[role="dialog"] #agent-creation-dialog-title'))`, `${viewport.label} agent creation dialog`)
-  await selectCreationProvider(window, 'Implementação', 'codex', viewport.label)
-  await selectCreationAccount(window, 'Implementação', 'account1', viewport.label)
+  await selectDialogProvider(window, 'Provedor do agente', 'codex', `${viewport.label} agent provider`)
+  await selectDialogAccount(window, 'codex-acc-Implementação', 'account1', `${viewport.label} agent account`)
   await confirmCreationDialog(window, `${viewport.label} agent creation`)
   await waitFor(window, `document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]').length === 1`, `${viewport.label} agent canvas node`)
   await waitFor(window, `Array.from(window.__devorbitVerifyFixture.getCalls()).some((call) => call.name === 'startTerminal' && String(call.args[0]).startsWith('agent-'))`, `${viewport.label} agent terminal`)
@@ -1005,16 +1004,63 @@ async function inspectProjectInteractions(window, viewport) {
   await waitFor(window, `document.querySelector('[data-canvas-radial][data-open="true"]')`, `${viewport.label} radial menu open state`)
   await clickButtonByText(window, (node) => node.matches?.('[data-canvas-radial-item="squad"]'), `${viewport.label} squad template`)
   await waitFor(window, `Boolean(document.querySelector('[role="dialog"] #agent-creation-dialog-title'))`, `${viewport.label} squad creation dialog`)
-  for (const role of ['Implementação', 'Revisão', 'Testes']) await enableSquadRole(window, role, viewport.label)
-  await waitFor(window, `document.querySelectorAll('[role="dialog"] [aria-label^="Provider do agente"]').length === 4`, `${viewport.label} squad participants`)
-  for (const role of ['Coordenador', 'Implementação', 'Revisão', 'Testes']) {
-    await selectCreationProvider(window, role, 'codex', viewport.label)
-    await selectCreationAccount(window, role, 'account1', viewport.label)
+  await clickButtonByText(window, (node) => Boolean(node.closest('[role="dialog"]')) && /Full Squad/.test(node.innerText), `${viewport.label} squad full template`)
+  await waitFor(window, `Boolean(document.querySelector('[role="dialog"] textarea'))`, `${viewport.label} squad objective field`)
+  const objectiveSet = await evaluate(window, `(() => {
+    const textarea = document.querySelector('[role="dialog"] textarea')
+    if (!textarea) return false
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set
+    setter.call(textarea, ${JSON.stringify(SQUAD_OBJECTIVE)})
+    textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    textarea.dispatchEvent(new Event('change', { bubbles: true }))
+    return textarea.value === ${JSON.stringify(SQUAD_OBJECTIVE)}
+  })()`)
+  assert(objectiveSet, `${viewport.label}: objetivo da squad não pôde ser definido`)
+  await waitFor(window, `document.querySelectorAll('[role="dialog"] [aria-label^="Provedor do membro"]').length === 4`, `${viewport.label} squad participants`)
+  const squadMembers = [
+    { position: 1, role: 'Coordenador' },
+    { position: 2, role: 'Implementação' },
+    { position: 3, role: 'Revisão' },
+    { position: 4, role: 'Testes' },
+  ]
+  for (const member of squadMembers) {
+    await selectDialogProvider(window, `Provedor do membro ${member.position}`, 'codex', `${viewport.label} squad provider ${member.position}`)
+    await selectDialogAccount(window, `codex-acc-Membro ${member.position} (${member.role})`, 'account1', `${viewport.label} squad account ${member.position}`)
   }
   await confirmCreationDialog(window, `${viewport.label} squad creation`)
-  await waitFor(window, `document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]').length === 4 && document.querySelectorAll('.workspace-canvas [data-canvas-card="note"]').length >= 2`, `${viewport.label} squad canvas nodes`)
+  await waitFor(window, `document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]').length === 4`, `${viewport.label} squad canvas nodes`)
+  // Squad independente: nenhuma Nota nova é criada por padrão (só a Handoff).
+  const squadNoteCount = await evaluate(window, `document.querySelectorAll('.workspace-canvas [data-canvas-card="note"]').length`)
+  assert(squadNoteCount === 1, `${viewport.label}: squad criou Nota obrigatória indevida (${squadNoteCount})`)
   await waitFor(window, `document.querySelectorAll('.workspace-canvas-connections path').length >= 4`, `${viewport.label} squad task connections`)
-  recordPass(viewport.label, 'template cria squad conectado a uma nota de tarefa')
+  recordPass(viewport.label, 'template cria squad de agentes sem Nota obrigatória')
+  // Nota existente → âncora do squad: alvo discreto no header da região, sem
+  // bloquear seleção do header nem drag dos membros.
+  await evaluate(window, `document.querySelector('[data-canvas-card="note"] [data-canvas-port="source"]')?.click()`)
+  await waitFor(window, `!document.querySelector('[data-canvas-port="target"][data-canvas-node-id^="squad:"]')?.disabled`, `${viewport.label} alvo da âncora de squad disponível`)
+  await evaluate(window, `document.querySelector('[data-canvas-port="target"][data-canvas-node-id^="squad:"]')?.click()`)
+  await waitFor(window, `(() => {
+    const canvas = document.querySelector('.workspace-canvas')
+    const id = canvas?.getAttribute('data-canvas-project-id')
+    const raw = id ? window.localStorage.getItem('devorbit:workspace-canvas:' + id) : null
+    if (!raw) return false
+    const saved = JSON.parse(raw)
+    const note = saved.nodes?.find((node) => node.kind === 'note')
+    const squad = saved.squads?.[0]
+    return Boolean(note && squad && saved.connections.some((connection) => connection.from === note.id && connection.to === 'squad:' + squad.id && connection.kind === 'context'))
+  })()`, `${viewport.label} nota vinculada à âncora do squad`)
+  const squadSelected = await evaluate(window, `Boolean(document.querySelector('.canvas-squad-region[data-selected="true"]'))`)
+  assert(squadSelected, `${viewport.label}: concluir na âncora não selecionou o squad`)
+  recordPass(viewport.label, 'nota existente conecta à âncora do squad (context) e seleciona o squad')
+  // O squad nasce à direita do conteúdo existente; enquadrar tudo antes de
+  // validar a camada garante que o hit testing ocorra sobre o nó visível.
+  await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Encaixar todo o conteúdo na tela', `${viewport.label} canvas fit before squad layer`)
+  await waitFor(window, `(() => {
+    const canvas = document.querySelector('.workspace-canvas')?.getBoundingClientRect()
+    const region = document.querySelector('.canvas-squad-region')?.getBoundingClientRect()
+    if (!canvas || !region) return false
+    return region.left >= canvas.left - 1 && region.right <= canvas.right + 1 && region.top >= canvas.top - 1 && region.bottom <= canvas.bottom + 1
+  })()`, `${viewport.label} squad region within canvas`)
   await verifySquadLayer(window, viewport)
   await screenshot(window, `desktop-${viewport.label}-canvas-squad`)
   const implicitStreaming = await evaluate(window, `window.__devorbitVerifyFixture.getCalls().filter((call) => call.name === 'pipeTerminals').length`)

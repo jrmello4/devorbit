@@ -3,12 +3,17 @@ import type { AgentProvider } from '../src/renderer/src/types'
 import {
   agentNodeBlockers,
   agentNodeSetupMessage,
+  BUILT_IN_AGENT_ROLES,
   canSubmitAgentCreation,
   canSubmitSquadCreation,
   isAgentNodeConfigured,
+  isBuiltInAgentRole,
+  isCoordinatorRole,
   isReadyProvider,
   requiresCodexAccount,
   resolveAgentProvider,
+  resolveSquadCoordinator,
+  sanitizeAgentRole,
   type AgentCreationSpec,
 } from '../src/renderer/src/components/agent-creation-helpers'
 
@@ -44,6 +49,44 @@ describe('explicit squad creation', () => {
     expect(canSubmitSquadCreation({ title: ' ', participants: [spec('codex', 'account1')] }, providers)).toBe(false)
     expect(canSubmitSquadCreation({ title: 'Squad', participants: [spec('codex')] }, providers)).toBe(false)
     expect(canSubmitSquadCreation({ title: 'Squad', participants: [spec('codex', 'account1'), spec('claude')] }, providers)).toBe(false)
+  })
+
+  it('aceita 2, 3, 5+ membros sem cap artificial e papéis custom', () => {
+    const ready = spec('codex', 'account1')
+    expect(canSubmitSquadCreation({ title: 'Squad', participants: [ready, ready] }, providers)).toBe(true)
+    expect(
+      canSubmitSquadCreation({ title: 'Squad', participants: [ready, ready, { ...ready, role: 'Backend' }] }, providers),
+    ).toBe(true)
+    expect(
+      canSubmitSquadCreation({ title: 'Squad', participants: Array.from({ length: 5 }, () => ready) }, providers),
+    ).toBe(true)
+  })
+
+  it('coordenador explícito: default legado 0, índice válido, null = sem coordenador', () => {
+    const ready = spec('codex', 'account1')
+    const two = [ready, ready]
+    expect(canSubmitSquadCreation({ title: 'Squad', participants: two }, providers)).toBe(true)
+    expect(canSubmitSquadCreation({ title: 'Squad', participants: two, coordinatorIndex: 1 }, providers)).toBe(true)
+    expect(canSubmitSquadCreation({ title: 'Squad', participants: two, coordinatorIndex: null }, providers)).toBe(true)
+    expect(canSubmitSquadCreation({ title: 'Squad', participants: two, coordinatorIndex: 2 }, providers)).toBe(false)
+    expect(canSubmitSquadCreation({ title: 'Squad', participants: two, coordinatorIndex: -1 }, providers)).toBe(false)
+    expect(resolveSquadCoordinator({ title: 'Squad', participants: two })).toEqual({ valid: true, index: 0 })
+    expect(resolveSquadCoordinator({ title: 'Squad', participants: two, coordinatorIndex: null })).toEqual({
+      valid: true,
+      index: null,
+    })
+    expect(resolveSquadCoordinator({ title: 'Squad', participants: [] })).toEqual({ valid: false })
+  })
+
+  it('rejeita papel vazio e preserva papel custom sem reescrever', () => {
+    expect(canSubmitAgentCreation({ ...spec('codex', 'account1'), role: '   ' }, providers)).toBe(false)
+    expect(canSubmitAgentCreation({ ...spec('codex', 'account1'), role: 'Especialista em UX' }, providers)).toBe(true)
+    expect(sanitizeAgentRole('  Especialista em UX  ')).toBe('Especialista em UX')
+    expect(sanitizeAgentRole('')).toBe('Implementação')
+    expect(isBuiltInAgentRole('Coordenador')).toBe(true)
+    expect(isBuiltInAgentRole('Especialista em UX')).toBe(false)
+    expect(isCoordinatorRole('Especialista em UX')).toBe(false)
+    expect([...BUILT_IN_AGENT_ROLES]).toEqual(['Coordenador', 'Implementação', 'Revisão', 'Testes'])
   })
 })
 

@@ -1,4 +1,5 @@
 import type { PendingCreationPayload, PendingCreationKind } from '../types'
+import { defaultCanvasEdgeKind, isOrderingEdgeKind, type CanvasEdgeKind } from './terminal-node-helpers'
 
 export type PendingCanvasNodeKind = 'note' | PendingCreationKind
 
@@ -109,18 +110,20 @@ export interface SquadNodeLike {
 export interface SquadLike {
   id: string
   title: string
-  coordinatorNodeId: string
+  coordinatorNodeId?: string
   memberNodeIds: readonly string[]
+  collapsed?: boolean
 }
 
 export interface SquadRegion {
   id: string
   title: string
-  coordinatorNodeId: string
+  coordinatorNodeId?: string
   x: number
   y: number
   width: number
   height: number
+  collapsed: boolean
 }
 
 export function computeSquadRegions(
@@ -147,9 +150,197 @@ export function computeSquadRegions(
       y: minY - padding,
       width: maxX - minX + padding * 2,
       height: maxY - minY + padding * 2,
+      collapsed: squad.collapsed === true,
     })
   }
   return regions.sort((left, right) => left.y - right.y || left.x - right.x || left.id.localeCompare(right.id))
+}
+
+/**
+ * Forma editável de squad. Deliberadamente idêntica à `CanvasSquad` do canvas
+ * (mesmos campos e mutabilidade), para os helpers serem assignáveis nos dois
+ * sentidos sem casts genéricos.
+ */
+export interface EditableSquad {
+  id: string
+  title: string
+  objective?: string
+  /** Ausente = squad sem coordenador; nunca promovido automaticamente. */
+  coordinatorNodeId?: string
+  memberNodeIds: string[]
+  collapsed?: boolean
+}
+
+/** Adiciona um membro sem duplicar e sem mover nenhum nó existente. */
+export function addSquadMember(squad: EditableSquad, nodeId: string): EditableSquad {
+  if (!nodeId || squad.memberNodeIds.includes(nodeId)) return squad
+  return { ...squad, memberNodeIds: [...squad.memberNodeIds, nodeId] }
+}
+
+/**
+ * Remove um membro. Se o coordenador sair, o squad continua existindo sem
+ * coordenador (a orquestração fica indisponível até a escolha explícita de
+ * outro membro) — nunca promove substituto automaticamente.
+ */
+export function removeSquadMember(squad: EditableSquad, nodeId: string): EditableSquad {
+  if (!squad.memberNodeIds.includes(nodeId)) return squad
+  const { coordinatorNodeId, ...rest } = squad
+  return {
+    ...rest,
+    memberNodeIds: squad.memberNodeIds.filter((id) => id !== nodeId),
+    ...(coordinatorNodeId && coordinatorNodeId !== nodeId ? { coordinatorNodeId } : {}),
+  }
+}
+
+/** Coordenador só pode ser um membro; `null` limpa a função explicitamente. */
+export function setSquadCoordinator(squad: EditableSquad, nodeId: string | null): EditableSquad {
+  if (nodeId === null) {
+    const { coordinatorNodeId: _removed, ...rest } = squad
+    return rest
+  }
+  if (!squad.memberNodeIds.includes(nodeId)) return squad
+  return { ...squad, coordinatorNodeId: nodeId }
+}
+
+export function renameSquad(squad: EditableSquad, title: string): EditableSquad {
+  const next = title.trim().slice(0, 80)
+  return next ? { ...squad, title: next } : squad
+}
+
+export function setSquadObjective(squad: EditableSquad, objective: string): EditableSquad {
+  return { ...squad, objective: objective.slice(0, 2000) }
+}
+
+export function toggleSquadCollapsed(squad: EditableSquad): EditableSquad {
+  return { ...squad, collapsed: !squad.collapsed }
+}
+
+export function squadForNode(
+  squads: readonly EditableSquad[],
+  nodeId: string,
+): EditableSquad | undefined {
+  return squads.find((squad) => squad.memberNodeIds.includes(nodeId))
+}
+
+export function squadCoordinatedBy(
+  squads: readonly EditableSquad[],
+  nodeId: string,
+): EditableSquad | undefined {
+  return squads.find((squad) => squad.coordinatorNodeId === nodeId)
+}
+
+export interface CanvasFocusState {
+  active: boolean
+  selectedIds: readonly string[]
+  relatedIds: ReadonlySet<string>
+}
+
+/**
+ * Focus de múltipla seleção: com 2+ nós selecionados, a seleção e seus
+ * relacionados diretos (1 salto por qualquer aresta) permanecem visíveis; o
+ * resto é atenuado. A saída é simples: qualquer seleção com menos de 2 nós
+ * desliga o focus.
+ */
+export function computeCanvasFocus(
+  selected: readonly string[],
+  connections: readonly GraphLink[],
+): CanvasFocusState {
+  const active = selected.length > 1
+  const relatedIds = new Set<string>(selected)
+  if (active) {
+    const selectedSet = new Set(selected)
+    for (const connection of connections) {
+      if (selectedSet.has(connection.from)) relatedIds.add(connection.to)
+      if (selectedSet.has(connection.to)) relatedIds.add(connection.from)
+    }
+  }
+  return { active, selectedIds: selected, relatedIds }
+}
+
+export function isCanvasNodeDimmed(nodeId: string, focus: CanvasFocusState): boolean {
+  return focus.active && !focus.relatedIds.has(nodeId)
+}
+
+export interface CanvasNodeSlotState {
+  /** Colapsado = oculto, porém SEMPRE montado (sessão de terminal preservada). */
+  hidden: boolean
+  dimmed: boolean
+  mounted: true
+}
+
+/**
+ * Estado de apresentação de um cartão: squad recolhido apenas oculta o cartão
+ * (nunca desmonta), e o focus de múltipla seleção apenas atenua os não
+ * relacionados. `mounted` é invariante — o terminal/agente dentro do cartão
+ * continua vivo durante collapse e Inspector.
+ */
+export function resolveCanvasNodeSlot(
+  nodeId: string,
+  collapsedMemberIds: ReadonlySet<string>,
+  focus: CanvasFocusState,
+): CanvasNodeSlotState {
+  const hidden = collapsedMemberIds.has(nodeId)
+  return {
+    hidden,
+    dimmed: !hidden && isCanvasNodeDimmed(nodeId, focus),
+    mounted: true,
+  }
+}
+
+export interface CanvasViewportSize {
+  width: number
+  height: number
+}
+
+/**
+ * Viewport que centraliza um conjunto de nós com padding, respeitando os
+ * limites de zoom do canvas. Usado pelo botão Foco do toolbar.
+ */
+export function computeFocusViewport(
+  nodes: readonly SquadNodeLike[],
+  viewport: CanvasViewportSize,
+  options: { padding?: number; minZoom?: number; maxZoom?: number } = {},
+): { x: number; y: number; zoom: number } | null {
+  if (nodes.length === 0 || viewport.width <= 0 || viewport.height <= 0) return null
+  const padding = options.padding ?? 120
+  const minZoom = options.minZoom ?? 0.08
+  const maxZoom = options.maxZoom ?? 1.6
+  const minX = Math.min(...nodes.map((node) => node.x))
+  const minY = Math.min(...nodes.map((node) => node.y))
+  const maxX = Math.max(...nodes.map((node) => node.x + node.width))
+  const maxY = Math.max(...nodes.map((node) => node.y + node.height))
+  const zoom = Math.min(
+    maxZoom,
+    Math.max(
+      minZoom,
+      Math.min(
+        viewport.width / Math.max(1, maxX - minX + padding * 2),
+        viewport.height / Math.max(1, maxY - minY + padding * 2),
+      ),
+    ),
+  )
+  return {
+    zoom,
+    x: viewport.width / 2 - ((minX + maxX) / 2) * zoom,
+    y: viewport.height / 2 - ((minY + maxY) / 2) * zoom,
+  }
+}
+
+/** Níveis discretos de zoom do canvas (roda/atalhos/botões passam por eles). */
+export const CANVAS_ZOOM_LEVELS = [0.25, 0.5, 0.75, 1, 1.25, 1.5] as const
+
+export function stepZoomLevel(current: number, direction: 1 | -1): number {
+  const levels = CANVAS_ZOOM_LEVELS
+  if (direction > 0) {
+    for (const level of levels) {
+      if (level > current + 1e-6) return level
+    }
+    return levels[levels.length - 1]
+  }
+  for (let index = levels.length - 1; index >= 0; index -= 1) {
+    if (levels[index] < current - 1e-6) return levels[index]
+  }
+  return levels[0]
 }
 
 function sameStringSet(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
@@ -235,6 +426,64 @@ export function sanitizeAgentCycles<T extends GraphLink>(
   for (const connection of connections) {
     if (createsAgentCycle(kept, agentIds, connection.from, connection.to)) continue
     kept.push(connection)
+  }
+  return kept
+}
+
+export interface TypedGraphLink extends GraphLink {
+  kind?: CanvasEdgeKind
+  label?: string
+}
+
+/** Prefixo do endpoint-âncora de squad (a aresta não aponta para um nó). */
+export const SQUAD_ANCHOR_PREFIX = 'squad:'
+
+export function squadAnchorId(squadId: string): string {
+  return SQUAD_ANCHOR_PREFIX + squadId
+}
+
+export function parseSquadAnchorId(id: string): string | null {
+  return id.startsWith(SQUAD_ANCHOR_PREFIX) ? id.slice(SQUAD_ANCHOR_PREFIX.length) : null
+}
+
+export function collectSquadAnchorIds(squads: readonly { id: string }[]): Set<string> {
+  return new Set(squads.map((squad) => squadAnchorId(squad.id)))
+}
+
+/**
+ * Aresta criada pela UI: agente→agente nasce 'delegation' (ordenação/guarda
+ * de ciclo); qualquer outra combinação nasce 'context' (relação semântica).
+ * Arestas antigas sem tipo continuam 'flow' via defaultCanvasEdgeKind.
+ */
+export function inferCanvasEdgeKind(fromKind: string, toKind: string): CanvasEdgeKind {
+  return fromKind === 'agent' && toKind === 'agent' ? 'delegation' : 'context'
+}
+
+/**
+ * Saneia arestas persistidas/carregadas: descarta pontas inexistentes e
+ * self-loops; aceita endpoints que são nós OU âncoras de squad
+ * (`squad:<id>`), preservando o vínculo Nota→Squad; tipo ausente/inválido
+ * vira 'flow' (comportamento v2–v4); o guarda de ciclo vale apenas para
+ * arestas de ordenação agente→agente, sem bloquear arestas semânticas.
+ */
+export function sanitizeCanvasEdges<T extends TypedGraphLink>(
+  connections: readonly T[],
+  nodeIds: ReadonlySet<string>,
+  agentIds: ReadonlySet<string>,
+  squadAnchorIds: ReadonlySet<string> = new Set<string>(),
+): T[] {
+  const kept: T[] = []
+  const orderingLinks: T[] = []
+  for (const connection of connections) {
+    if (!connection || connection.from === connection.to) continue
+    const fromOk = nodeIds.has(connection.from) || squadAnchorIds.has(connection.from)
+    const toOk = nodeIds.has(connection.to) || squadAnchorIds.has(connection.to)
+    if (!fromOk || !toOk) continue
+    const kind = defaultCanvasEdgeKind(connection.kind)
+    if (isOrderingEdgeKind(kind) && createsAgentCycle(orderingLinks, agentIds, connection.from, connection.to)) continue
+    const next = { ...connection, kind } as T
+    kept.push(next)
+    if (isOrderingEdgeKind(kind)) orderingLinks.push(next)
   }
   return kept
 }

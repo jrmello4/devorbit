@@ -20,10 +20,65 @@ import {
 export { CUSTOM_TERMINAL_PRESET_LIMIT }
 
 /** Versão atual do esquema do canvas no localStorage. */
-export const CANVAS_STATE_VERSION = 4
+export const CANVAS_STATE_VERSION = 5
 
-/** Versões legíveis pela migração: v2/v3 (sem terminal) e v4 (com terminal). */
-export const READABLE_CANVAS_VERSIONS = [2, 3, 4] as const
+/**
+ * Versões legíveis pela migração: v2/v3 (sem terminal), v4 (com terminal) e
+ * v5 (squads independentes com membros livres, papéis string, coordenador
+ * opcional, objetivo e collapse persistido; arestas tipadas).
+ */
+export const READABLE_CANVAS_VERSIONS = [2, 3, 4, 5] as const
+
+/**
+ * Tipos semânticos de aresta do canvas. `flow` é o tipo legado (v2–v4) e
+ * continua sendo o default para arestas sem tipo; os demais expressam a
+ * relação real (coordenação, vínculo de squad, delegação, dependência,
+ * contexto, resultado e vínculo puramente visual). O tipo não inventa status:
+ * é só a semântica declarada da aresta.
+ */
+export const CANVAS_EDGE_KINDS = [
+  'flow',
+  'coordination',
+  'membership',
+  'delegation',
+  'dependency',
+  'context',
+  'result',
+  'visual',
+] as const
+
+export type CanvasEdgeKind = (typeof CANVAS_EDGE_KINDS)[number]
+
+export const LEGACY_CANVAS_EDGE_KIND: CanvasEdgeKind = 'flow'
+
+export function defaultCanvasEdgeKind(value: unknown): CanvasEdgeKind {
+  return typeof value === 'string' && (CANVAS_EDGE_KINDS as readonly string[]).includes(value)
+    ? (value as CanvasEdgeKind)
+    : LEGACY_CANVAS_EDGE_KIND
+}
+
+/** Arestas que impõem ordem de execução (e portanto guarda de ciclo). */
+export const ORDERING_EDGE_KINDS = ['flow', 'delegation', 'dependency'] as const
+
+export function isOrderingEdgeKind(kind: unknown): boolean {
+  return typeof kind === 'string' && (ORDERING_EDGE_KINDS as readonly string[]).includes(kind)
+}
+
+export const CANVAS_EDGE_KIND_LABELS: Record<CanvasEdgeKind, string> = {
+  flow: 'Fluxo',
+  coordination: 'Coordenação',
+  membership: 'Vínculo do squad',
+  delegation: 'Delegação',
+  dependency: 'Dependência',
+  context: 'Contexto',
+  result: 'Resultado',
+  visual: 'Visual',
+}
+
+export function canvasEdgeLabel(kind: CanvasEdgeKind, label?: string): string {
+  const trimmed = typeof label === 'string' ? label.trim() : ''
+  return trimmed || CANVAS_EDGE_KIND_LABELS[kind]
+}
 
 export interface RawCanvasNodeLike {
   kind?: unknown
@@ -64,6 +119,49 @@ export function migrateCanvasNodesForTerminals(
     else delete migrated.terminal
     return migrated
   })
+}
+
+export interface RawCanvasStateLike {
+  version?: unknown
+  connections?: unknown
+  squads?: unknown
+}
+
+export interface MigratedCanvasStateLike {
+  connections: unknown[]
+  squads: unknown[]
+}
+
+/**
+ * Passo de migração v4 → v5, NÃO-DESTRUTIVO: cada aresta antiga recebe o tipo
+ * default ('flow') sem perder id/from/to; cada squad ganha objetivo vazio,
+ * coordenador nulo, membros normalizados e collapse desligado. Nós, posições,
+ * viewport e campos desconhecidos atravessam intactos — a sanitização final
+ * continua sendo a autoridade de validação no canvas. Idempotente: um estado
+ * já v5 passa inalterado.
+ */
+export function migrateCanvasStateV5(raw: RawCanvasStateLike): MigratedCanvasStateLike {
+  const connections = Array.isArray(raw.connections)
+    ? raw.connections.map((connection) => {
+        if (!connection || typeof connection !== 'object') return connection
+        const source = connection as Record<string, unknown>
+        return { ...source, kind: defaultCanvasEdgeKind(source.kind) }
+      })
+    : []
+  const squads = Array.isArray(raw.squads)
+    ? raw.squads.map((squad) => {
+        if (!squad || typeof squad !== 'object') return squad
+        const source = squad as Record<string, unknown>
+        return {
+          ...source,
+          objective: typeof source.objective === 'string' ? source.objective : '',
+          coordinatorNodeId: typeof source.coordinatorNodeId === 'string' ? source.coordinatorNodeId : null,
+          memberNodeIds: Array.isArray(source.memberNodeIds) ? source.memberNodeIds : [],
+          collapsed: source.collapsed === true,
+        }
+      })
+    : []
+  return { connections, squads }
 }
 
 export interface QuickDeployChip {

@@ -1,11 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import {
+  CANVAS_EDGE_KINDS,
   CANVAS_STATE_VERSION,
+  LEGACY_CANVAS_EDGE_KIND,
+  READABLE_CANVAS_VERSIONS,
   TERMINAL_COMMAND_INVALID_HINT,
   buildQuickDeployChips,
+  canvasEdgeLabel,
+  defaultCanvasEdgeKind,
   formatArgsInput,
+  isOrderingEdgeKind,
   isTerminalCommandTextRejected,
   migrateCanvasNodesForTerminals,
+  migrateCanvasStateV5,
   parseArgsInput,
   selectTerminalCommand,
   slugifyCustomPresetId,
@@ -125,8 +132,108 @@ describe('migração do canvas para terminais (v3 → v4)', () => {
     })
   })
 
-  it('versão do esquema é 4', () => {
-    expect(CANVAS_STATE_VERSION).toBe(4)
+  it('versão do esquema é 5 com leitura de v2–v5', () => {
+    expect(CANVAS_STATE_VERSION).toBe(5)
+    expect([...READABLE_CANVAS_VERSIONS]).toEqual([2, 3, 4, 5])
+  })
+})
+
+describe('migração do canvas v4 → v5 (squads independentes e arestas tipadas)', () => {
+  it('aresta antiga sem tipo recebe o default legado sem perder id/from/to', () => {
+    const state = migrateCanvasStateV5({
+      connections: [{ id: 'l1', from: 'note-a', to: 'agent-b' }],
+      squads: [],
+    })
+    expect(state.connections).toEqual([
+      { id: 'l1', from: 'note-a', to: 'agent-b', kind: 'flow' },
+    ])
+  })
+
+  it('aresta v5 com tipo semântico atravessa intacta (idempotente)', () => {
+    const state = migrateCanvasStateV5({
+      connections: [{ id: 'l1', from: 'note-a', to: 'squad:s1', kind: 'membership', label: 'objetivo' }],
+      squads: [],
+    })
+    expect(state.connections).toEqual([
+      { id: 'l1', from: 'note-a', to: 'squad:s1', kind: 'membership', label: 'objetivo' },
+    ])
+  })
+
+  it('squad v4 ganha objetivo vazio, coordenador ausente, membros e collapse sem perder campos', () => {
+    const state = migrateCanvasStateV5({
+      connections: [],
+      squads: [{ id: 's1', title: 'Antigo', coordinatorNodeId: 'a', memberNodeIds: ['a', 'b'] }],
+    })
+    expect(state.squads).toEqual([
+      {
+        id: 's1',
+        title: 'Antigo',
+        objective: '',
+        coordinatorNodeId: 'a',
+        memberNodeIds: ['a', 'b'],
+        collapsed: false,
+      },
+    ])
+  })
+
+  it('squad sem coordenador migra sem inventar promoção e não descarta layout', () => {
+    const state = migrateCanvasStateV5({
+      version: 5,
+      connections: [],
+      squads: [{ id: 's1', title: 'Livre', memberNodeIds: ['a', 'b', 'c'], objective: 'meta', collapsed: true }],
+    })
+    expect(state.squads).toEqual([
+      {
+        id: 's1',
+        title: 'Livre',
+        objective: 'meta',
+        coordinatorNodeId: null,
+        memberNodeIds: ['a', 'b', 'c'],
+        collapsed: true,
+      },
+    ])
+  })
+
+  it('payload não-array vira lista vazia sem lançar', () => {
+    expect(migrateCanvasStateV5({ connections: 'lixo', squads: null })).toEqual({
+      connections: [],
+      squads: [],
+    })
+  })
+})
+
+describe('tipos semânticos de aresta', () => {
+  it('tipo ausente ou inválido cai no default legado flow', () => {
+    expect(defaultCanvasEdgeKind(undefined)).toBe(LEGACY_CANVAS_EDGE_KIND)
+    expect(defaultCanvasEdgeKind('inventado')).toBe('flow')
+    expect(defaultCanvasEdgeKind('membership')).toBe('membership')
+  })
+
+  it('somente flow/delegation/dependency impõem ordenação', () => {
+    expect(isOrderingEdgeKind('flow')).toBe(true)
+    expect(isOrderingEdgeKind('delegation')).toBe(true)
+    expect(isOrderingEdgeKind('dependency')).toBe(true)
+    expect(isOrderingEdgeKind('coordination')).toBe(false)
+    expect(isOrderingEdgeKind('membership')).toBe(false)
+    expect(isOrderingEdgeKind('context')).toBe(false)
+    expect(isOrderingEdgeKind('result')).toBe(false)
+    expect(isOrderingEdgeKind('visual')).toBe(false)
+  })
+
+  it('catálogo cobre coordenação, vínculo, delegação, dependência, contexto e resultado', () => {
+    expect([...CANVAS_EDGE_KINDS]).toEqual([
+      'flow',
+      'coordination',
+      'membership',
+      'delegation',
+      'dependency',
+      'context',
+      'result',
+      'visual',
+    ])
+    expect(canvasEdgeLabel('membership')).toBe('Vínculo do squad')
+    expect(canvasEdgeLabel('coordination', '  ')).toBe('Coordenação')
+    expect(canvasEdgeLabel('delegation', 'fazer X')).toBe('fazer X')
   })
 })
 

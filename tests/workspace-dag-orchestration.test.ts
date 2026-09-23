@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest'
 import {
   orderSpecialistsByGraph,
   discoverSpecialists,
+  orchestrationContextNotes,
+  memberContextNotes,
   type CanvasNode,
   type CanvasConnection,
   type OrchestrationNote,
 } from '../src/renderer/src/components/WorkspaceCanvas'
+import { squadAnchorId } from '../src/renderer/src/components/workspace-request-helpers'
 
 type CanvasConn = { id: string; from: string; to: string }
 type SpecAgent = {
@@ -23,7 +26,7 @@ function makeNode(
   id: string,
   kind: 'agent' | 'note' | 'workbench' | 'browser',
   title: string,
-  role?: 'Coordenador' | 'Implementação' | 'Revisão' | 'Testes',
+  role?: string,
   content?: string,
 ): CanvasNode {
   return {
@@ -257,5 +260,178 @@ describe('WorkspaceCanvas discoverSpecialists directed reachability & full flow'
     expect(specialists[0].notes).toEqual([
       { id: 'note-a', title: 'Spec for A', content: 'Implementation details for A' },
     ])
+  })
+})
+
+describe('WorkspaceCanvas squad-first discovery (TASK-02B)', () => {
+  const coord = makeNode('coord', 'agent', 'Tech Lead', 'Tech Lead')
+  const memberA = makeNode('a', 'agent', 'Backend', 'Backend')
+  const memberB = makeNode('b', 'agent', 'UX', 'Especialista em UX')
+  const island = makeNode('island', 'agent', 'Island', 'Implementação')
+
+  it('usa os membros explícitos do squad (menos o coordenador) e ignora ilhas', () => {
+    const nodes: CanvasNode[] = [coord, memberA, memberB, island]
+    const connections: CanvasConnection[] = [{ id: 'c1', from: 'coord', to: 'island' }]
+    const specialists = discoverSpecialists({ nodes, connections }, coord, [], {
+      memberNodeIds: ['coord', 'a', 'b'],
+    })
+    expect(specialists.map((s) => s.id).sort()).toEqual(['a', 'b'])
+  })
+
+  it('papel custom nunca vira Coordenador nem é reescrito para Implementação', () => {
+    const nodes: CanvasNode[] = [coord, memberA, memberB]
+    const specialists = discoverSpecialists({ nodes, connections: [] }, coord, [], {
+      memberNodeIds: ['coord', 'a', 'b'],
+    })
+    expect(specialists.map((s) => s.id).sort()).toEqual(['a', 'b'])
+    expect(specialists.find((s) => s.id === 'b')?.role).toBe('Especialista em UX')
+    expect(specialists.some((s) => s.role === 'Coordenador')).toBe(false)
+  })
+
+  it('ordenação interna usa só arestas de ordenação (delegation) e ignora coordenação', () => {
+    const nodes: CanvasNode[] = [coord, memberA, memberB]
+    const connections: CanvasConnection[] = [
+      { id: 'c1', from: 'a', to: 'b', kind: 'delegation' },
+      { id: 'c2', from: 'coord', to: 'b', kind: 'coordination' },
+    ]
+    const specialists = discoverSpecialists({ nodes, connections }, coord, [], {
+      memberNodeIds: ['coord', 'a', 'b'],
+    })
+    expect(specialists.map((s) => s.id)).toEqual(['a', 'b'])
+  })
+
+  it('squad sem membros além do coordenador não inventa especialistas', () => {
+    const nodes: CanvasNode[] = [coord, memberA]
+    const specialists = discoverSpecialists({ nodes, connections: [] }, coord, [], {
+      memberNodeIds: ['coord'],
+    })
+    expect(specialists).toEqual([])
+  })
+})
+
+describe('WorkspaceCanvas orchestration context origin (Note→Squad + objective)', () => {
+  const coord = makeNode('coord', 'agent', 'Tech Lead', 'Coordenador')
+  const memberA = makeNode('a', 'agent', 'Backend', 'Implementação')
+  const squad = { id: 's1', objective: '' }
+
+  it('Note conectada à âncora do squad alimenta o contexto da equipe', () => {
+    const note = makeNode('note-squad', 'note', 'Plano da tarefa', undefined, 'Entregar o módulo X')
+    const nodes: CanvasNode[] = [coord, memberA, note]
+    const connections: CanvasConnection[] = [
+      { id: 'c-anchor', from: 'note-squad', to: squadAnchorId('s1'), kind: 'membership' },
+    ]
+    const notes = orchestrationContextNotes({ nodes, connections }, 'coord', squad)
+    expect(notes).toEqual([
+      { id: 'note-squad', title: 'Plano da tarefa', content: 'Entregar o módulo X' },
+    ])
+  })
+
+  it('Squad com objective e sem Note usa o objetivo como contexto explícito', () => {
+    const nodes: CanvasNode[] = [coord, memberA]
+    const notes = orchestrationContextNotes({ nodes, connections: [] }, 'coord', {
+      id: 's1',
+      objective: 'Reduzir latência do checkout',
+    })
+    expect(notes).toEqual([
+      {
+        id: 'squad-objective-s1',
+        title: 'Objetivo da squad',
+        content: 'Reduzir latência do checkout',
+      },
+    ])
+  })
+
+  it('Squad sem Note e sem objective não fornece contexto (orquestração não inicia)', () => {
+    const nodes: CanvasNode[] = [coord, memberA]
+    expect(orchestrationContextNotes({ nodes, connections: [] }, 'coord', squad)).toEqual([])
+  })
+
+  it('preserva notas ligadas diretamente ao coordenador (legado) e não duplica o objetivo', () => {
+    const direct = makeNode('note-direct', 'note', 'Handoff', undefined, 'Contexto legado direto')
+    const squadNote = makeNode(
+      'note-squad',
+      'note',
+      'Plano da tarefa',
+      undefined,
+      '# Objetivo\n\nReduzir latência do checkout',
+    )
+    const nodes: CanvasNode[] = [coord, memberA, direct, squadNote]
+    const connections: CanvasConnection[] = [
+      { id: 'c-direct', from: 'coord', to: 'note-direct', kind: 'context' },
+      { id: 'c-anchor', from: squadNote.id, to: squadAnchorId('s1'), kind: 'membership' },
+    ]
+    const notes = orchestrationContextNotes({ nodes, connections }, 'coord', {
+      id: 's1',
+      objective: 'Reduzir latência do checkout',
+    })
+    expect(notes.map((note) => note.id).sort()).toEqual(['note-direct', 'note-squad'])
+    expect(notes.some((note) => note.id.startsWith('squad-objective-'))).toBe(false)
+  })
+
+  it('notas de squad e diretas vazias não disparam contexto', () => {
+    const emptyNote = makeNode('note-empty', 'note', 'Rascunho', undefined, '   ')
+    const nodes: CanvasNode[] = [coord, memberA, emptyNote]
+    const connections: CanvasConnection[] = [
+      { id: 'c-anchor', from: emptyNote.id, to: squadAnchorId('s1'), kind: 'membership' },
+    ]
+    expect(orchestrationContextNotes({ nodes, connections }, 'coord', squad)).toEqual([])
+  })
+})
+
+describe('WorkspaceCanvas memberContextNotes — envio manual herda contexto da squad', () => {
+  const coord = makeNode('coord', 'agent', 'Tech Lead', 'Coordenador')
+  const memberA = makeNode('a', 'agent', 'Backend', 'Implementação')
+  const squad = {
+    id: 's1',
+    title: 'Squad',
+    objective: '',
+    memberNodeIds: ['coord', 'a'],
+    collapsed: false,
+  }
+
+  it('membro não-coordenador sem nota direta usa a nota ligada à âncora do squad', () => {
+    const note = makeNode('note-squad', 'note', 'Plano da tarefa', undefined, 'Entregar X')
+    const nodes: CanvasNode[] = [coord, memberA, note]
+    const connections: CanvasConnection[] = [
+      { id: 'c-anchor', from: note.id, to: squadAnchorId('s1'), kind: 'membership' },
+    ]
+    expect(memberContextNotes({ nodes, connections, squads: [squad] }, 'a')).toEqual([
+      { id: 'note-squad', title: 'Plano da tarefa', content: 'Entregar X' },
+    ])
+  })
+
+  it('membro sem nota direta usa o objetivo da squad', () => {
+    const nodes: CanvasNode[] = [coord, memberA]
+    const notes = memberContextNotes(
+      { nodes, connections: [], squads: [{ ...squad, objective: 'Reduzir latência' }] },
+      'a',
+    )
+    expect(notes).toEqual([
+      { id: 'squad-objective-s1', title: 'Objetivo da squad', content: 'Reduzir latência' },
+    ])
+  })
+
+  it('agente avulso mantém apenas notas diretas (não herda squad alheio)', () => {
+    const free = makeNode('free', 'agent', 'Avulso', 'Implementação')
+    const direct = makeNode('note-direct', 'note', 'Handoff', undefined, 'Contexto direto')
+    const squadNote = makeNode('note-squad', 'note', 'Plano', undefined, 'Contexto da squad')
+    const nodes: CanvasNode[] = [coord, memberA, free, direct, squadNote]
+    const connections: CanvasConnection[] = [
+      { id: 'c-direct', from: 'free', to: direct.id, kind: 'context' },
+      { id: 'c-anchor', from: squadNote.id, to: squadAnchorId('s1'), kind: 'membership' },
+    ]
+    expect(memberContextNotes({ nodes, connections, squads: [squad] }, 'free')).toEqual([
+      { id: 'note-direct', title: 'Handoff', content: 'Contexto direto' },
+    ])
+  })
+
+  it('agente avulso sem nota direta não recebe contexto (bloqueio mantido)', () => {
+    const free = makeNode('free', 'agent', 'Avulso', 'Implementação')
+    const squadNote = makeNode('note-squad', 'note', 'Plano', undefined, 'Contexto da squad')
+    const nodes: CanvasNode[] = [coord, memberA, free, squadNote]
+    const connections: CanvasConnection[] = [
+      { id: 'c-anchor', from: squadNote.id, to: squadAnchorId('s1'), kind: 'membership' },
+    ]
+    expect(memberContextNotes({ nodes, connections, squads: [squad] }, 'free')).toEqual([])
   })
 })
