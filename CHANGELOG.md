@@ -2,6 +2,25 @@
 
 All notable changes to DevOrbit are documented here.
 
+## [1.0.37] - 2026-09-23
+
+### Added
+
+- Workspace Canvas as a command center: compact agent/terminal/note cards show identity, role, current task, provider and real status, with a contextual Inspector for nodes and squads.
+- Simplified canvas toolbar with focus mode, zoom presets and grouped creation/selection actions.
+- Squads as first-class entities independent of notes: free member count (2, 3, 5+), custom roles, optional/configurable coordinator, collapse/expand, automatic layout and coordinator-to-specialist connections.
+- Squad creation dialog with quick templates, a dynamic participant list and explicit coordinator selection.
+
+### Changed
+
+- Canvas edges carry semantic kinds and labels (delegation, context, dependency, membership); focus mode dims unrelated nodes without changing the structure.
+- Canvas state v5 with migration from v2-v4, preserving existing nodes, edges and squads.
+
+### Fixed
+
+- Removing the last member of a squad is blocked with a clear hint.
+- UI verification follows the new zoom control label.
+
 ## [1.0.36] - 2026-09-22
 
 ### Added
