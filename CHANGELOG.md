@@ -2,6 +2,20 @@
 
 All notable changes to DevOrbit are documented here.
 
+## [1.0.41] - 2026-09-23
+
+### Added
+
+- "Grafite + Oliva" design system: dark-first elevation ladder (page/panel/raised/inset), olive accent, and shared Git-semantic colors (clean/pending/ahead/conflict/none) used across library, canvas and workspace.
+- Project library: Git situation spine and branch pill (with ↑/↓ sync counts) on every card, compact card layout, and situation filters with real counts (Pendentes/Limpos/Sem Git) replacing the redundant lifecycle tabs.
+- Canvas: single pill toolbar with the zoom presets in a dropdown, type spines on cards (agent olive, note amber, terminal raised), orchestration edges highlighted in animated amber, toast moved to the top center and contextual help behind a "?" button.
+- Workspace: segmented Canvas·Código·Web view switcher, unified 32px panel headers (Arquivos/Editor/Terminal/Pesquisa web), an oriented empty state for the web panel and a single-line command palette footer.
+
+### Changed
+
+- Light theme aligned to the olive accent; runtime theme tokens (theme.ts) now mirror the stylesheet values.
+- Command palette footer no longer lists every G/C binding as chips; the shortcuts keep working.
+
 ## [1.0.40] - 2026-09-23
 
 ### Added
