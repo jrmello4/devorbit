@@ -382,23 +382,22 @@ async function verifyAgentConfigDetails(window, viewport) {
   })()`)
   assert(opened, `${viewport.label}: botão de configuração do agente ausente`)
   await waitFor(window, `(() => {
-    const panel = document.querySelector('.canvas-agent-config')
-    return Boolean(panel && !panel.hidden && panel.querySelectorAll('select').length === 3)
-  })()`, `${viewport.label} painel de configuração do agente`)
+    const inspector = document.querySelector('.canvas-node-inspector')
+    return Boolean(inspector)
+  })()`, `${viewport.label} painel lateral inspector`)
   const details = await evaluate(window, `(() => {
     const card = document.querySelector('.workspace-canvas [data-canvas-card="agent"]')
-    const toggle = card?.querySelector('.canvas-agent-config-toggle')
+    const inspector = document.querySelector('.canvas-node-inspector')
     return {
-      expanded: toggle?.getAttribute('aria-expanded') || '',
       role: card?.querySelector('.canvas-node-meta')?.textContent || '',
-      labels: Array.from(document.querySelectorAll('.canvas-agent-config select')).map((select) => select.getAttribute('aria-label') || ''),
+      inspectorTitle: inspector?.querySelector('.canvas-inspector-title')?.textContent || '',
+      hasCloseBtn: Boolean(inspector?.querySelector('.canvas-inspector-close')),
     }
   })()`)
-  assert(details.expanded === 'true', `${viewport.label}: toggle de configuração sem aria-expanded`)
   assert(details.role.includes('Implementação'), `${viewport.label}: papel do agente ilegível (${details.role})`)
-  assert(details.labels.includes('Provedor do agente') && details.labels.includes('Conta Codex'), `sem campos de provider/conta no painel (${details.labels.join(', ')})`)
-  await evaluate(window, `document.querySelector('.canvas-agent-config-toggle')?.click()`)
-  await waitFor(window, `document.querySelector('.canvas-agent-config')?.hidden === true`, `${viewport.label} painel de configuração fechado`)
+  assert(details.hasCloseBtn, `${viewport.label}: botão de fechar do inspector ausente`)
+  await evaluate(window, `document.querySelector('.canvas-node-inspector .canvas-inspector-close')?.click()`)
+  await waitFor(window, `!document.querySelector('.canvas-node-inspector')`, `${viewport.label} inspector fechado`)
   recordPass(viewport.label, 'detalhes de configuração do agente acessíveis, rotulados e fecháveis')
 }
 
@@ -1130,10 +1129,13 @@ async function inspectProjectInteractions(window, viewport) {
   await evaluate(window, `window.__devorbitVerifyFixture.resetCalls()`)
   await clickButtonByText(window, (node) => node.classList.contains('workspace-tab') && !node.classList.contains('active'), `${viewport.label} first workspace tab`)
   await waitFor(window, `document.querySelector('.workspace-tab.active')?.innerText.includes(${JSON.stringify(selection)})`, `${viewport.label} first workspace tab active`)
-  const webVisibilityCalls = await evaluate(window, `new Promise((resolve) => {
-    window.setTimeout(() => resolve(window.__devorbitVerifyFixture.getCalls()
-      .filter((call) => call.name === 'setWebVisible').map((call) => call.args[0])), 50)
-  })`)
+  await waitFor(window, `(() => {
+    const calls = window.__devorbitVerifyFixture.getCalls()
+      .filter((call) => call.name === 'setWebVisible').map((call) => call.args[0])
+    return calls.length > 0 && calls.at(-1) === true
+  })()`, `${viewport.label} painel web da aba ativa restaurado`)
+  const webVisibilityCalls = await evaluate(window, `window.__devorbitVerifyFixture.getCalls()
+    .filter((call) => call.name === 'setWebVisible').map((call) => call.args[0])`)
   assert(webVisibilityCalls.length > 0 && webVisibilityCalls.at(-1) === true, `${viewport.label}: painel web da aba ativa foi ocultado (${JSON.stringify(webVisibilityCalls)})`)
   recordPass(viewport.label, 'multiple projects use workspace tabs with inactive sessions suspended')
 

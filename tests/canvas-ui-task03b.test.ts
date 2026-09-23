@@ -742,6 +742,140 @@ describe('TASK-03B — CanvasNodeCard UI Component & Keep-Alive', () => {
     expect(html).toContain('id="live-pty-never-unmount"')
     expect(html).toContain('PTY_DATA_STREAMING')
   })
+
+  it('engrenagem abre Inspector (com onOpenInspector) e NÃO renderiza overlay inline de agente', () => {
+    const onOpenInspector = vi.fn()
+    const onToggleConfig = vi.fn()
+    const agentNode: CanvasNode = {
+      id: 'agent-gear-test',
+      kind: 'agent',
+      title: 'Agente Engrenagem',
+      x: 100,
+      y: 100,
+      width: 400,
+      height: 300,
+      z: 1,
+      role: 'Implementação',
+    }
+
+    const html = renderToStaticMarkup(
+      createElement(CanvasNodeCard, {
+        ...baseCardProps,
+        node: agentNode,
+        isConfigOpen: true,
+        onOpenInspector,
+        onToggleConfig,
+      }),
+    )
+
+    // A engrenagem está presente
+    expect(html).toContain('canvas-agent-config-toggle')
+    // NÃO renderiza o overlay inline legado de configuração de agente
+    expect(html).not.toContain('class="canvas-agent-config"')
+    expect(html).not.toContain('id="agent-config-agent-gear-test"')
+  })
+
+  it('portas de conexão possuem classes corretas para visibilidade em repouso, seleção e conexão', () => {
+    const agentNode: CanvasNode = {
+      id: 'agent-ports-test',
+      kind: 'agent',
+      title: 'Agente Portas',
+      x: 100,
+      y: 100,
+      width: 400,
+      height: 300,
+      z: 1,
+      role: 'Implementação',
+    }
+
+    // 1. Estado de repouso: portas renderizadas, card sem is-selected nem is-connecting, porta alvo sem is-available
+    const htmlDefault = renderToStaticMarkup(
+      createElement(CanvasNodeCard, {
+        ...baseCardProps,
+        node: agentNode,
+        isSelected: false,
+        isConnecting: false,
+        isConnectionTargetAvailable: false,
+      }),
+    )
+    expect(htmlDefault).toContain('canvas-port canvas-port-source')
+    expect(htmlDefault).toContain('canvas-port canvas-port-target')
+    expect(htmlDefault).not.toContain('workspace-canvas-card is-selected')
+    expect(htmlDefault).not.toContain('workspace-canvas-card is-connecting')
+    expect(htmlDefault).not.toContain('canvas-port-target is-available')
+
+    // 2. Quando selecionado: card recebe classe is-selected (ativa visibilidade via CSS)
+    const htmlSelected = renderToStaticMarkup(
+      createElement(CanvasNodeCard, {
+        ...baseCardProps,
+        node: agentNode,
+        isSelected: true,
+      }),
+    )
+    expect(htmlSelected).toContain('is-selected')
+
+    // 3. Quando conectando: card recebe classe is-connecting
+    const htmlConnecting = renderToStaticMarkup(
+      createElement(CanvasNodeCard, {
+        ...baseCardProps,
+        node: agentNode,
+        isConnecting: true,
+      }),
+    )
+    expect(htmlConnecting).toContain('is-connecting')
+
+    // 4. Quando destino de conexão disponível: porta alvo recebe is-available
+    const htmlTargetAvailable = renderToStaticMarkup(
+      createElement(CanvasNodeCard, {
+        ...baseCardProps,
+        node: agentNode,
+        isConnectionTargetAvailable: true,
+      }),
+    )
+    expect(htmlTargetAvailable).toContain('canvas-port canvas-port-target is-available')
+  })
+
+  it('toggle compacto funciona para expandir e recolher independente de isConfigOpen', () => {
+    const agentNode: CanvasNode = {
+      id: 'agent-compact-test',
+      kind: 'agent',
+      title: 'Agente Compacto Teste',
+      x: 100,
+      y: 100,
+      width: 500,
+      height: 360,
+      z: 1,
+      role: 'Implementação',
+    }
+
+    // Mesmo com isConfigOpen: true, se isCompact é true, o card permanece compacto
+    const htmlCompact = renderToStaticMarkup(
+      createElement(CanvasNodeCard, {
+        ...baseCardProps,
+        node: agentNode,
+        isCompact: true,
+        isConfigOpen: true,
+      }),
+    )
+    expect(htmlCompact).toContain('is-compact')
+    expect(htmlCompact).toContain('data-is-compact="true"')
+    expect(htmlCompact).toContain('width:320px')
+    expect(htmlCompact).toContain('height:130px')
+
+    // E quando isCompact é false, expande mesmo com isConfigOpen: true
+    const htmlExpanded = renderToStaticMarkup(
+      createElement(CanvasNodeCard, {
+        ...baseCardProps,
+        node: agentNode,
+        isCompact: false,
+        isConfigOpen: true,
+      }),
+    )
+    expect(htmlExpanded).toContain('data-is-compact="false"')
+    expect(htmlExpanded).not.toContain('is-compact-hidden')
+    expect(htmlExpanded).toContain('width:500px')
+    expect(htmlExpanded).toContain('height:360px')
+  })
 })
 
 describe('TASK-03B — AgentCreationDialog UI Component', () => {

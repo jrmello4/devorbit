@@ -1,6 +1,7 @@
 import React, {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -26,7 +27,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import type { AgentProvider, AgentProviderId, Project } from "../types";
+import type { AgentProvider, AgentProviderId, CodexAccountId, Project } from "../types";
 import type { AgentResult } from "../../../shared/agent-result";
 import type {
   ContinuityEvent,
@@ -166,6 +167,8 @@ interface CanvasGesture {
   viewport?: CanvasState["viewport"];
   id?: string;
   pointerId: number;
+  /** z-top calculado UMA vez ao iniciar o drag (evita O(n) por nó por frame). */
+  zTop?: number;
 }
 type OrchestrationPhase =
   | "planning"
@@ -1111,6 +1114,9 @@ export const WorkspaceCanvas: React.FC<{
   const canvasRef = useRef(canvas);
   const orchestrationRef = useRef<OrchestrationRun | null>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
+  // Dimensões do viewport medidas pelo ResizeObserver (sem getBoundingClientRect
+  // no corpo do render, que forçaria reflow por frame).
+  const viewportSizeRef = useRef({ width: 900, height: 650 });
   const persistTimerRef = useRef<number | null>(null);
   const gestureCaptureRef = useRef<HTMLElement | null>(null);
   const connectionDraftRef = useRef<ConnectionDraft | null>(null);
@@ -1196,12 +1202,36 @@ export const WorkspaceCanvas: React.FC<{
       flush();
     };
   }, [flush]);
+  // Notificação ao App apenas quando a seleção muda de verdade (id|kind|title):
+  // um move de gesto cria objetos de nó novos e, sem a assinatura, cada frame
+  // re-renderizaria o App inteiro.
+  const lastSelectionSignatureRef = useRef<string | null>(null);
   useEffect(() => {
     const lastId = selected[selected.length - 1];
     const node = lastId ? canvas.nodes.find((item) => item.id === lastId) : undefined;
+    const signature = node ? `${node.id}|${node.kind}|${node.title}` : null;
+    if (signature === lastSelectionSignatureRef.current) return;
+    lastSelectionSignatureRef.current = signature;
     onSelectionChange?.(node ? { id: node.id, title: node.title, kind: node.kind } : null);
   }, [canvas.nodes, onSelectionChange, selected]);
+  // Topologia (conexões por identidade + nós id:kind) só notifica quando muda;
+  // o spread do update preserva a identidade das conexões durante gestos.
+  const lastTopologyRef = useRef<{
+    connections: CanvasConnection[];
+    nodesSignature: string;
+  } | null>(null);
   useEffect(() => {
+    const nodesSignature = canvas.nodes
+      .map((node) => node.id + ':' + node.kind)
+      .join('|');
+    const last = lastTopologyRef.current;
+    if (
+      last &&
+      last.connections === canvas.connections &&
+      last.nodesSignature === nodesSignature
+    )
+      return;
+    lastTopologyRef.current = { connections: canvas.connections, nodesSignature };
     onConnectionsChange?.(
       canvas.connections,
       canvas.nodes.map((node) => ({ id: node.id, kind: node.kind })),
@@ -1760,7 +1790,8 @@ export const WorkspaceCanvas: React.FC<{
             },
           };
         },
-        true,
+        // Persistência via debounce (160ms): gravar em localStorage a cada
+        // evento de zoom custaria I/O síncrono por roda do mouse.
       ),
     [update],
   );
@@ -1861,6 +1892,8 @@ export const WorkspaceCanvas: React.FC<{
     if (!host || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => {
       const rect = host.getBoundingClientRect();
+      // Espelha as dimensões para o minimap ler de ref (sem reflow no render).
+      viewportSizeRef.current = { width: rect.width || 900, height: rect.height || 650 };
       if (rect.width < 50 || rect.height < 50) return;
       const view = canvasRef.current.viewport;
       const nodes = displayNodesRef.current.filter(
@@ -1879,6 +1912,14 @@ export const WorkspaceCanvas: React.FC<{
     observer.observe(host);
     return () => observer.disconnect();
   }, [browser, fitCanvas]);
+  // Medição inicial antes do primeiro disparo do ResizeObserver.
+  useLayoutEffect(() => {
+    const host = viewportRef.current;
+    if (!host) return;
+    const rect = host.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0)
+      viewportSizeRef.current = { width: rect.width, height: rect.height };
+  }, []);
   const beginGesture = useCallback(
     (
       event: React.PointerEvent<HTMLElement>,
@@ -1931,6 +1972,9 @@ export const WorkspaceCanvas: React.FC<{
         sx: event.clientX,
         sy: event.clientY,
         nodes,
+        // "Trazer para frente" decidido uma vez por gesto: recalcular o máximo
+        // por nó em cada move era O(nós) por nó arrastado por frame.
+        zTop: Math.max(0, ...canvasRef.current.nodes.map((item) => item.z)) + 1,
       });
     },
     [beginGesture, selectNode, selected, startPan],
@@ -1951,8 +1995,13 @@ export const WorkspaceCanvas: React.FC<{
   );
   useEffect(() => {
     if (!gesture) return;
-    const move = (event: PointerEvent) => {
-      if (event.pointerId !== gesture.pointerId) return;
+    // Coalescing por rAF: cada pointermove só guarda as coords mais recentes;
+    // a lógica de pan/drag/resize roda uma vez por frame com o último evento.
+    let frame: number | null = null;
+    let lastEvent: PointerEvent | null = null;
+    let appliedEvent: PointerEvent | null = null;
+    const applyMove = (event: PointerEvent) => {
+      appliedEvent = event;
       const dx = event.clientX - gesture.sx;
       const dy = event.clientY - gesture.sy;
       if (gesture.type === "pan" && gesture.viewport)
@@ -1987,6 +2036,9 @@ export const WorkspaceCanvas: React.FC<{
             },
           ]),
         );
+        // zTop fixo do gesto preserva o "trazer para frente" sem recalcular
+        // o máximo de z por nó em cada frame.
+        const zTop = gesture.zTop ?? Math.max(...gesture.nodes.map((item) => item.z)) + 1;
         update((current) => ({
           ...current,
           nodes: current.nodes.map((node) =>
@@ -1994,7 +2046,7 @@ export const WorkspaceCanvas: React.FC<{
               ? {
                   ...node,
                   ...moved.get(node.id)!,
-                  z: Math.max(...current.nodes.map((item) => item.z)) + 1,
+                  z: zTop,
                 }
               : node,
           ),
@@ -2028,8 +2080,26 @@ export const WorkspaceCanvas: React.FC<{
         }));
       }
     };
+    const move = (event: PointerEvent) => {
+      if (event.pointerId !== gesture.pointerId) return;
+      lastEvent = event;
+      if (frame !== null) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = null;
+        if (lastEvent) applyMove(lastEvent);
+      });
+    };
     const finish = (event: PointerEvent) => {
       if (event.pointerId !== gesture.pointerId) return;
+      if (frame !== null) {
+        window.cancelAnimationFrame(frame);
+        frame = null;
+      }
+      // Aplica o movimento final com as últimas coords (o rAF pendente pode
+      // não ter rodado; sem isso o último delta do gesto se perderia).
+      if (lastEvent && lastEvent !== appliedEvent) applyMove(lastEvent);
+      lastEvent = null;
+      appliedEvent = null;
       try {
         gestureCaptureRef.current?.releasePointerCapture(event.pointerId);
       } catch {
@@ -2043,23 +2113,35 @@ export const WorkspaceCanvas: React.FC<{
     window.addEventListener("pointerup", finish);
     window.addEventListener("pointercancel", finish);
     return () => {
+      if (frame !== null) window.cancelAnimationFrame(frame);
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", finish);
       window.removeEventListener("pointercancel", finish);
     };
   }, [flush, gesture, update]);
   useEffect(() => {
+    // Rascunho de conexão também coalesce por rAF: o ref guarda o ponto mais
+    // recente (o finish lê sincronamente); o setState só acontece por frame.
+    let frame: number | null = null;
     const move = (event: PointerEvent) => {
       const draft = connectionDraftRef.current;
       if (!draft || event.pointerId !== draft.pointerId) return;
       const point = pointerToWorld(event.clientX, event.clientY);
-      const next = { ...draft, x: point.x, y: point.y };
-      connectionDraftRef.current = next;
-      setConnectionDraft(next);
+      connectionDraftRef.current = { ...draft, x: point.x, y: point.y };
+      if (frame !== null) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = null;
+        const latest = connectionDraftRef.current;
+        if (latest) setConnectionDraft(latest);
+      });
     };
     const finish = (event: PointerEvent) => {
       const draft = connectionDraftRef.current;
       if (!draft || event.pointerId !== draft.pointerId) return;
+      if (frame !== null) {
+        window.cancelAnimationFrame(frame);
+        frame = null;
+      }
       const target = document
         .elementFromPoint?.(event.clientX, event.clientY)
         ?.closest<HTMLElement>('[data-canvas-port="target"]');
@@ -2071,6 +2153,10 @@ export const WorkspaceCanvas: React.FC<{
     const cancel = (event: PointerEvent) => {
       const draft = connectionDraftRef.current;
       if (!draft || event.pointerId !== draft.pointerId) return;
+      if (frame !== null) {
+        window.cancelAnimationFrame(frame);
+        frame = null;
+      }
       connectionDraftRef.current = null;
       setConnectionDraft(null);
       setConnectFrom(null);
@@ -2079,6 +2165,7 @@ export const WorkspaceCanvas: React.FC<{
     window.addEventListener("pointerup", finish);
     window.addEventListener("pointercancel", cancel);
     return () => {
+      if (frame !== null) window.cancelAnimationFrame(frame);
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", finish);
       window.removeEventListener("pointercancel", cancel);
@@ -2151,15 +2238,14 @@ export const WorkspaceCanvas: React.FC<{
     () => new Map(canvas.nodes.map((node) => [node.id, node])),
     [canvas.nodes],
   );
-  // Compactação é estado de UI: o nó cujo painel de configuração está aberto
-  // renderiza expandido mesmo que seu override seja compacto.
+  // Compactação é estado de UI: expandir mostra o terminal, recolher minimiza;
+  // funciona em qualquer estado sem depender de configNodeId.
   const isNodeCompact = useCallback(
     (node: CanvasNode) =>
-      node.id !== configNodeId &&
-      (typeof compactOverrides[node.id] === "boolean"
+      typeof compactOverrides[node.id] === "boolean"
         ? compactOverrides[node.id]
-        : isCompactByDefault(node)),
-    [compactOverrides, configNodeId],
+        : isCompactByDefault(node),
+    [compactOverrides],
   );
   const toggleNodeCompact = useCallback((nodeIdValue: string) => {
     setCompactOverrides((current) => {
@@ -2520,20 +2606,51 @@ export const WorkspaceCanvas: React.FC<{
     return node && !fixedKinds.has(node.kind);
   });
   const canDelete = deletableSelection.length > 0;
-  const sendPolicyFor = (node: CanvasNode) =>
-    agentSendPolicy({
-      configured: isAgentNodeConfigured(node, agentProviders),
-      configuredMessage: agentNodeSetupMessage(node, agentProviders),
-      orchestrationActive,
-      noteCount: memberContextNotes(canvas, node.id).length,
-      progressState: agentProgress[node.id]?.state ?? null,
-    });
-  // Nota ausente é o único bloqueio que mantém o botão clicável: o clique
-  // precisa acontecer para avisar o usuário. Os demais bloqueios desativam.
-  const sendDisabledFor = (node: CanvasNode) => {
-    const policy = sendPolicyFor(node);
-    return policy.disabled && policy.blocker !== "note";
-  };
+  // Derivados por nó memoizados: sendPolicy (O(nós+arestas) por agente via
+  // memberContextNotes) e coordenação eram recalculados 3x por cartão a cada
+  // render do loop. O Map é consultado com custo O(1) por nó.
+  const agentSendInfoByNode = useMemo(() => {
+    const info = new Map<
+      string,
+      { sendDisabled: boolean; sendTitle: string; isCoordinator: boolean }
+    >();
+    for (const node of canvas.nodes) {
+      if (node.kind !== "agent") continue;
+      const policy = agentSendPolicy({
+        configured: isAgentNodeConfigured(node, agentProviders),
+        configuredMessage: agentNodeSetupMessage(node, agentProviders),
+        orchestrationActive,
+        noteCount: memberContextNotes(
+          {
+            nodes: canvas.nodes,
+            connections: canvas.connections,
+            squads: canvas.squads,
+          },
+          node.id,
+        ).length,
+        progressState: agentProgress[node.id]?.state ?? null,
+      });
+      const isCoordinator = isOrchestrationCoordinatorNode(node);
+      info.set(node.id, {
+        sendDisabled: policy.disabled && policy.blocker !== "note",
+        sendTitle: policy.disabled
+          ? policy.reason
+          : isCoordinator
+            ? 'Iniciar orquestração com as notas conectadas'
+            : 'Enviar as notas conectadas ao agente',
+        isCoordinator,
+      });
+    }
+    return info;
+  }, [
+    agentProgress,
+    agentProviders,
+    canvas.connections,
+    canvas.nodes,
+    canvas.squads,
+    isOrchestrationCoordinatorNode,
+    orchestrationActive,
+  ]);
   const removeLinks = () => {
     const ids = new Set(selected);
     update(
@@ -3105,7 +3222,9 @@ export const WorkspaceCanvas: React.FC<{
           y: host.height / 2 - worldY * current.viewport.zoom,
         },
       }),
-      true,
+      // Debounce de 160ms: navegação no minimap dispara por pointermove e
+      // gravar sincronamente por evento custaria I/O por frame. O flush do
+      // estado final acontece em finishMinimapNavigation.
     );
   }, [update]);
   const startMinimapNavigation = useCallback(
@@ -3139,8 +3258,10 @@ export const WorkspaceCanvas: React.FC<{
       } catch {
         /* The pointer may already have been released by the browser. */
       }
+      // Grava o estado final da navegação (o move entra no debounce).
+      flush();
     },
-    [],
+    [flush],
   );
 
   // Assinatura estável dos assentos elegíveis do canvas; evita loop de sync.
@@ -3391,6 +3512,78 @@ export const WorkspaceCanvas: React.FC<{
       resetCanvas,
       selected,
     ],
+  );
+
+  // ---- Handlers estáveis do CanvasNodeCard ----
+  // Closures inline no loop de nós recriavam a identidade das props a cada
+  // render e derrotavam o React.memo do cartão; aqui cada handler nasce uma
+  // única vez com deps estáveis.
+  const connectFromRef = useRef(connectFrom);
+  useEffect(() => {
+    connectFromRef.current = connectFrom;
+  }, [connectFrom]);
+  const handleConnectFromCurrent = useCallback(
+    (targetId: string) => connectNodes(connectFromRef.current, targetId),
+    [connectNodes],
+  );
+  const handleDeleteNode = useCallback(
+    (id: string) => deleteNodes([id]),
+    [deleteNodes],
+  );
+  const handleToggleConfig = useCallback((id: string) => {
+    setConfigNodeId((curr) => (curr === id ? null : id));
+  }, []);
+  const handleOpenInspector = useCallback(
+    (targetNode: CanvasNode) => {
+      selectNode(targetNode.id, false);
+      setInspectorOpen(true);
+    },
+    [selectNode],
+  );
+  const handleUpdateGeometry = useCallback(
+    (id: string, geom: Partial<CanvasNode>) => {
+      update((current) => ({
+        ...current,
+        nodes: current.nodes.map((n) => (n.id === id ? { ...n, ...geom } : n)),
+      }));
+    },
+    [update],
+  );
+  const handleUpdateContent = useCallback((id: string, content: string) => {
+    update((current) => ({
+      ...current,
+      nodes: current.nodes.map((n) => (n.id === id ? { ...n, content } : n)),
+    }));
+  }, [update]);
+  const handleUpdateTitle = useCallback(
+    (id: string, title: string) => renameTerminalNode(id, title),
+    [renameTerminalNode],
+  );
+  const handleUpdateRole = useCallback(
+    (id: string, role: AgentRole) => updateNode(id, { role }),
+    [updateNode],
+  );
+  const handleUpdateProvider = useCallback(
+    (id: string, provider: AgentProviderId) => updateNode(id, { provider }),
+    [updateNode],
+  );
+  const handleUpdateAccount = useCallback(
+    (id: string, account: CodexAccountId) => updateNode(id, { account }),
+    [updateNode],
+  );
+  // Wrapper estável do renderAgent: reportAgentResult/reportAgentTaskFailure
+  // são useCallback com deps estáveis (update, projeto, providers), então o
+  // wrapper só muda quando o renderAgent recebido muda.
+  const renderAgentForCard = useCallback(
+    (node: CanvasNode) =>
+      renderAgent
+        ? renderAgent(
+            node,
+            (result, taskId) => reportAgentResult(node.id, result, taskId),
+            (taskId, message) => reportAgentTaskFailure(node.id, taskId, message),
+          )
+        : null,
+    [renderAgent, reportAgentResult, reportAgentTaskFailure],
   );
 
   return (
@@ -3737,44 +3930,27 @@ export const WorkspaceCanvas: React.FC<{
               presetSaveStatus={presetSaveStatus}
               nodeMeta={nodeMeta}
               spaceHeld={spaceHeldRef.current}
-              isSendDisabled={node.kind === 'agent' ? sendDisabledFor(node) : false}
-              sendTitle={
-                node.kind === 'agent'
-                  ? sendPolicyFor(node).disabled
-                    ? sendPolicyFor(node).reason
-                    : isOrchestrationCoordinatorNode(node)
-                      ? 'Iniciar orquestração com as notas conectadas'
-                      : 'Enviar as notas conectadas ao agente'
-                  : undefined
-              }
-              isSquadCoordinator={node.kind === 'agent' ? isOrchestrationCoordinatorNode(node) : undefined}
+              isSendDisabled={node.kind === 'agent' ? (agentSendInfoByNode.get(node.id)?.sendDisabled ?? false) : false}
+              sendTitle={node.kind === 'agent' ? agentSendInfoByNode.get(node.id)?.sendTitle : undefined}
+              isSquadCoordinator={node.kind === 'agent' ? agentSendInfoByNode.get(node.id)?.isCoordinator : undefined}
               onSelect={selectNode}
               onStartPan={startPan}
               onStartNodeDrag={startNodeDrag}
               onStartResize={startResize}
               onStartConnection={startConnection}
               onChooseConnectionSource={chooseConnectionSource}
-              onConnectNodes={(targetId) => connectNodes(connectFrom, targetId)}
-              onDeleteNode={(id) => deleteNodes([id])}
-              onToggleConfig={(id) => setConfigNodeId((curr) => (curr === id ? null : id))}
+              onConnectNodes={handleConnectFromCurrent}
+              onDeleteNode={handleDeleteNode}
+              onToggleConfig={handleToggleConfig}
+              onOpenInspector={handleOpenInspector}
               onDisconnectLinks={disconnectNodeLinks}
               onFocusNode={focusNode}
-              onUpdateGeometry={(id, geom) =>
-                update((current) => ({
-                  ...current,
-                  nodes: current.nodes.map((n) => (n.id === id ? { ...n, ...geom } : n)),
-                }))
-              }
-              onUpdateTitle={(id, title) => renameTerminalNode(id, title)}
-              onUpdateRole={(id, role) => updateNode(id, { role })}
-              onUpdateProvider={(id, provider) => updateNode(id, { provider })}
-              onUpdateAccount={(id, account) => updateNode(id, { account })}
-              onUpdateContent={(id, content) =>
-                update((current) => ({
-                  ...current,
-                  nodes: current.nodes.map((n) => (n.id === id ? { ...n, content } : n)),
-                }))
-              }
+              onUpdateGeometry={handleUpdateGeometry}
+              onUpdateTitle={handleUpdateTitle}
+              onUpdateRole={handleUpdateRole}
+              onUpdateProvider={handleUpdateProvider}
+              onUpdateAccount={handleUpdateAccount}
+              onUpdateContent={handleUpdateContent}
               onSendTask={sendAgentTask}
               onIsolateWorktree={onCreateAgentWorktree}
               onUpdateTerminalNode={updateTerminalNode}
@@ -3789,16 +3965,7 @@ export const WorkspaceCanvas: React.FC<{
               onDeleteCustomPreset={deleteCustomPresetAction}
               workbench={workbench}
               browser={browser}
-              renderAgent={
-                renderAgent
-                  ? (n) =>
-                      renderAgent(
-                        n,
-                        (res, taskId) => reportAgentResult(n.id, res, taskId),
-                        (taskId, msg) => reportAgentTaskFailure(n.id, taskId, msg),
-                      )
-                  : undefined
-              }
+              renderAgent={renderAgent ? renderAgentForCard : undefined}
               renderTerminal={renderTerminal}
             />
               </div>
@@ -3810,8 +3977,10 @@ export const WorkspaceCanvas: React.FC<{
         nodes={displayNodes}
         worldWidth={WORLD_WIDTH}
         worldHeight={WORLD_HEIGHT}
-        viewportWidth={viewportRef.current?.getBoundingClientRect()?.width || 900}
-        viewportHeight={viewportRef.current?.getBoundingClientRect()?.height || 650}
+        // Dimensões espelhadas pelo ResizeObserver: ler getBoundingClientRect()
+        // aqui forçava reflow a cada render (um por frame durante gestos).
+        viewportWidth={viewportSizeRef.current.width}
+        viewportHeight={viewportSizeRef.current.height}
         onPointerDown={startMinimapNavigation}
         onPointerMove={continueMinimapNavigation}
         onPointerUp={finishMinimapNavigation}

@@ -83,9 +83,9 @@ export interface CanvasNodeCardProps {
   onFocusNode: (id: string) => void
   onUpdateGeometry: (id: string, geometry: Partial<CanvasNode>) => void
   onUpdateTitle: (id: string, title: string) => void
-  onUpdateRole: (id: string, role: AgentRole) => void
-  onUpdateProvider: (id: string, provider: AgentProviderId) => void
-  onUpdateAccount: (id: string, account: CodexAccountId) => void
+  onUpdateRole?: (id: string, role: AgentRole) => void
+  onUpdateProvider?: (id: string, provider: AgentProviderId) => void
+  onUpdateAccount?: (id: string, account: CodexAccountId) => void
   onUpdateContent: (id: string, content: string) => void
   onSendTask: (node: CanvasNode) => void
   onIsolateWorktree?: (node: CanvasNode) => void
@@ -163,9 +163,9 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
     onFocusNode,
     onUpdateGeometry,
     onUpdateTitle,
-    onUpdateRole,
-    onUpdateProvider,
-    onUpdateAccount,
+    onUpdateRole: _onUpdateRole,
+    onUpdateProvider: _onUpdateProvider,
+    onUpdateAccount: _onUpdateAccount,
     onUpdateContent,
     onSendTask,
     onIsolateWorktree,
@@ -200,8 +200,7 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
     const effectiveCompact = typeof isCompact === 'boolean' ? isCompact : localCompact
     const isCompactCard =
       effectiveCompact &&
-      (node.kind === 'agent' || node.kind === 'terminal' || node.kind === 'note') &&
-      !isConfigOpen
+      (node.kind === 'agent' || node.kind === 'terminal' || node.kind === 'note')
 
     // Tarefa real do agente: prioriza progress.label (estado ativo/etapa atual),
     // seguido por node.content quando confiável, ou fallback amigável.
@@ -512,7 +511,6 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
               className={'canvas-card-action-btn canvas-agent-config-toggle' + (isConfigOpen ? ' is-active' : '')}
               aria-label={'Configurações de ' + node.title}
               aria-expanded={isConfigOpen}
-              aria-controls={'agent-config-' + node.id}
               title="Abrir configurações e inspeção detalhada"
               onClick={(event) => {
                 event.stopPropagation()
@@ -543,65 +541,6 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
             )}
           </div>
         </header>
-
-        {/* Painel Inline de Configuração de Agente (fallback acessível e automação) */}
-        {node.kind === 'agent' && (
-          <div
-            className="canvas-agent-config"
-            id={'agent-config-' + node.id}
-            role="group"
-            aria-label={'Configuração de ' + node.title}
-            hidden={!isConfigOpen}
-            onPointerDown={(event) => event.stopPropagation()}
-          >
-            <label className="canvas-agent-config-field">
-              <span>Papel</span>
-              <select
-                aria-label="Papel do agente"
-                value={node.role || 'Implementação'}
-                onChange={(event) => onUpdateRole(node.id, event.target.value as AgentRole)}
-              >
-                <option>Coordenador</option>
-                <option>Implementação</option>
-                <option>Revisão</option>
-                <option>Testes</option>
-              </select>
-            </label>
-            <label className="canvas-agent-config-field">
-              <span>Provider</span>
-              <select
-                value={node.provider || ''}
-                aria-label="Provedor do agente"
-                onChange={(event) => onUpdateProvider(node.id, event.target.value as AgentProviderId)}
-              >
-                <option value="">—</option>
-                {agentProviders?.map((p) => (
-                  <option key={p.id} value={p.id} disabled={p.state !== 'ready'}>
-                    {p.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="canvas-agent-config-field">
-              <span>Conta Codex</span>
-              <select
-                value={node.provider === 'codex' ? node.account || '' : ''}
-                aria-label="Conta Codex"
-                title={
-                  node.provider === 'codex'
-                    ? 'Conta para chamadas CLI do Codex'
-                    : 'A conta só se aplica ao provider Codex'
-                }
-                disabled={node.provider !== 'codex'}
-                onChange={(event) => onUpdateAccount(node.id, event.target.value as CodexAccountId)}
-              >
-                <option value="">—</option>
-                <option value="account1">C1</option>
-                <option value="account2">C2</option>
-              </select>
-            </label>
-          </div>
-        )}
 
         {/* Painel Inline de Configuração de Terminal (fallback) */}
         {isConfigOpen && node.kind === 'terminal' && node.terminal && (

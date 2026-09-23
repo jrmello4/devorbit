@@ -59,6 +59,20 @@
     stroke-dashoffset: -24px;
   }
 }
+/* Gesto em curso (pan/drag): pausar a animação de fluxo das arestas evita
+   repaint de stroke por frame; em repouso a estética é preservada. */
+.workspace-canvas.is-panning .workspace-canvas-connections path,
+.workspace-canvas.is-dragging .workspace-canvas-connections path {
+  animation-play-state: paused;
+}
+/* Durante o gesto, o blur de fundo seria recomputado a cada frame; desligá-lo
+   só no gesto mantém a estética em repouso intacta. */
+.workspace-canvas.is-panning .workspace-canvas-radial-option,
+.workspace-canvas.is-panning .workspace-canvas-view-hud,
+.workspace-canvas.is-dragging .workspace-canvas-radial-option,
+.workspace-canvas.is-dragging .workspace-canvas-view-hud {
+  backdrop-filter: none;
+}
 .canvas-squad-region {
   position: absolute;
   z-index: 0;
@@ -295,6 +309,19 @@
   transform: translateY(-50%);
   cursor: crosshair;
   touch-action: none;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .15s ease;
+}
+.workspace-canvas-card:hover .canvas-port,
+.workspace-canvas-card:focus-within .canvas-port,
+.workspace-canvas-card.is-selected .canvas-port,
+.workspace-canvas-card.is-connecting .canvas-port,
+.canvas-port:focus-visible,
+.canvas-port.is-active,
+.canvas-port.is-available {
+  opacity: 1;
+  pointer-events: auto;
 }
 .canvas-port span {
   width: 6px;
