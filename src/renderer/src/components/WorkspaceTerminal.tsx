@@ -5,7 +5,7 @@ import '@xterm/xterm/css/xterm.css'
 import { Code2, Eraser, Globe, RefreshCw, Terminal as TerminalIcon } from 'lucide-react'
 import type { AgentProviderId, TerminalEvent } from '../types'
 import type { CustomTerminalPreset, ResolvedTerminalLaunch, TerminalNodeRuntimeConfig } from '../../../shared/terminal-presets'
-import { resolveTerminalLaunch } from '../../../shared/terminal-presets'
+import { resolveTerminalLaunch, resolveTerminalTheme } from '../../../shared/terminal-presets'
 import { createAgentResultScanner, createLegacyAgentResult, type AgentResult } from '../../../shared/agent-result'
 import { canReuseCodexSession } from '../../../shared/codex-session'
 import {
@@ -482,6 +482,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
     const container = containerRef.current
     if (!container) return
 
+    const terminalTheme = resolveTerminalTheme(runtimeConfig?.theme)
     const terminal = new XTerm({
       cursorBlink: true,
       convertEol: true,
@@ -489,28 +490,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
       fontFamily: 'Consolas, "Cascadia Code", monospace',
       fontSize: 12,
       lineHeight: 1.2,
-      theme: {
-        background: '#0d0f14',
-        foreground: '#f5f7fa',
-        cursor: '#8797b4',
-        selectionBackground: '#232b39',
-        black: '#0d0f14',
-        brightBlack: '#7e8491',
-        red: '#d27564',
-        brightRed: '#ef907a',
-        green: '#9bbd88',
-        brightGreen: '#b7d7a3',
-        yellow: '#d5b06c',
-        brightYellow: '#ebcf8d',
-        blue: '#87a7c5',
-        brightBlue: '#aac4e0',
-        magenta: '#b49ac4',
-        brightMagenta: '#d4b7e8',
-        cyan: '#7db9b1',
-        brightCyan: '#a5ded5',
-        white: '#f5f7fa',
-        brightWhite: '#ffffff',
-      },
+      theme: terminalTheme.xterm,
     })
     const fitAddon = new FitAddon()
     terminal.loadAddon(fitAddon)
@@ -688,6 +668,13 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
       void window.devorbit.stopTerminal(terminalId)
     }
   }, [projectPath, pushActivity, reportTaskFailure, scheduleFitFrame, scheduleFitTimeout, sendResize, terminalId])
+
+  // Atualiza o tema de cores do xterm dinamicamente sem reiniciar a sessão PTY
+  useEffect(() => {
+    if (!terminalRef.current) return
+    const themeDef = resolveTerminalTheme(runtimeConfig?.theme)
+    terminalRef.current.options.theme = themeDef.xterm
+  }, [runtimeConfig?.theme])
 
   // Smart Terminal com auto-start: o lançamento resolvido acontece uma vez por
   // mount (restauração do canvas conta como um mount novo). Sem auto-start, o

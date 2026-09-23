@@ -118,6 +118,219 @@ export const CUSTOM_TERMINAL_PRESET_PREFIX = 'custom:'
 export const CUSTOM_TERMINAL_PRESET_LIMIT = 24
 const CUSTOM_PRESET_ID_PATTERN = /^custom:[a-z0-9][a-z0-9-]{0,48}$/
 
+export type TerminalThemeId = 'carbon' | 'amber' | 'emerald' | 'ocean' | 'violet' | 'rose'
+
+export interface TerminalThemeDefinition {
+  id: TerminalThemeId
+  label: string
+  accent: string
+  xterm: {
+    background: string
+    foreground: string
+    cursor: string
+    selectionBackground: string
+    black?: string
+    brightBlack?: string
+    red?: string
+    brightRed?: string
+    green?: string
+    brightGreen?: string
+    yellow?: string
+    brightYellow?: string
+    blue?: string
+    brightBlue?: string
+    magenta?: string
+    brightMagenta?: string
+    cyan?: string
+    brightCyan?: string
+    white?: string
+    brightWhite?: string
+  }
+}
+
+export const TERMINAL_THEMES: readonly TerminalThemeDefinition[] = [
+  {
+    id: 'carbon',
+    label: 'Carbon',
+    accent: '#8797b4',
+    xterm: {
+      background: '#0d0f14',
+      foreground: '#f5f7fa',
+      cursor: '#8797b4',
+      selectionBackground: '#232b39',
+      black: '#0d0f14',
+      brightBlack: '#7e8491',
+      red: '#d27564',
+      brightRed: '#ef907a',
+      green: '#9bbd88',
+      brightGreen: '#b7d7a3',
+      yellow: '#d5b06c',
+      brightYellow: '#ebcf8d',
+      blue: '#87a7c5',
+      brightBlue: '#aac4e0',
+      magenta: '#b49ac4',
+      brightMagenta: '#d4b7e8',
+      cyan: '#7db9b1',
+      brightCyan: '#a5ded5',
+      white: '#f5f7fa',
+      brightWhite: '#ffffff',
+    },
+  },
+  {
+    id: 'amber',
+    label: 'Âmbar',
+    accent: '#d97706',
+    xterm: {
+      background: '#120f09',
+      foreground: '#fbf3e4',
+      cursor: '#f59e0b',
+      selectionBackground: '#382914',
+      black: '#120f09',
+      brightBlack: '#786b59',
+      red: '#d97764',
+      brightRed: '#f0907a',
+      green: '#9bbd88',
+      brightGreen: '#b7d7a3',
+      yellow: '#f59e0b',
+      brightYellow: '#fbbf24',
+      blue: '#87a7c5',
+      brightBlue: '#aac4e0',
+      magenta: '#b49ac4',
+      brightMagenta: '#d4b7e8',
+      cyan: '#7db9b1',
+      brightCyan: '#a5ded5',
+      white: '#fbf3e4',
+      brightWhite: '#ffffff',
+    },
+  },
+  {
+    id: 'emerald',
+    label: 'Esmeralda',
+    accent: '#059669',
+    xterm: {
+      background: '#0a130f',
+      foreground: '#eafbf3',
+      cursor: '#10b981',
+      selectionBackground: '#143a29',
+      black: '#0a130f',
+      brightBlack: '#597368',
+      red: '#d27564',
+      brightRed: '#ef907a',
+      green: '#10b981',
+      brightGreen: '#34d399',
+      yellow: '#d5b06c',
+      brightYellow: '#ebcf8d',
+      blue: '#87a7c5',
+      brightBlue: '#aac4e0',
+      magenta: '#b49ac4',
+      brightMagenta: '#d4b7e8',
+      cyan: '#5eead4',
+      brightCyan: '#99f6e4',
+      white: '#eafbf3',
+      brightWhite: '#ffffff',
+    },
+  },
+  {
+    id: 'ocean',
+    label: 'Oceano',
+    accent: '#0284c7',
+    xterm: {
+      background: '#0a1017',
+      foreground: '#eef6fc',
+      cursor: '#38bdf8',
+      selectionBackground: '#163148',
+      black: '#0a1017',
+      brightBlack: '#566c82',
+      red: '#d27564',
+      brightRed: '#ef907a',
+      green: '#9bbd88',
+      brightGreen: '#b7d7a3',
+      yellow: '#d5b06c',
+      brightYellow: '#ebcf8d',
+      blue: '#38bdf8',
+      brightBlue: '#7dd3fc',
+      magenta: '#b49ac4',
+      brightMagenta: '#d4b7e8',
+      cyan: '#7db9b1',
+      brightCyan: '#a5ded5',
+      white: '#eef6fc',
+      brightWhite: '#ffffff',
+    },
+  },
+  {
+    id: 'violet',
+    label: 'Violeta',
+    accent: '#7c3aed',
+    xterm: {
+      background: '#110c19',
+      foreground: '#f8f4fc',
+      cursor: '#a855f7',
+      selectionBackground: '#35204c',
+      black: '#110c19',
+      brightBlack: '#6e5b82',
+      red: '#d27564',
+      brightRed: '#ef907a',
+      green: '#9bbd88',
+      brightGreen: '#b7d7a3',
+      yellow: '#d5b06c',
+      brightYellow: '#ebcf8d',
+      blue: '#87a7c5',
+      brightBlue: '#aac4e0',
+      magenta: '#a855f7',
+      brightMagenta: '#c084fc',
+      cyan: '#7db9b1',
+      brightCyan: '#a5ded5',
+      white: '#f8f4fc',
+      brightWhite: '#ffffff',
+    },
+  },
+  {
+    id: 'rose',
+    label: 'Rosa',
+    accent: '#e11d48',
+    xterm: {
+      background: '#160c11',
+      foreground: '#fdf2f4',
+      cursor: '#fb7185',
+      selectionBackground: '#4a1c28',
+      black: '#160c11',
+      brightBlack: '#7f5d68',
+      red: '#fb7185',
+      brightRed: '#fda4af',
+      green: '#9bbd88',
+      brightGreen: '#b7d7a3',
+      yellow: '#d5b06c',
+      brightYellow: '#ebcf8d',
+      blue: '#87a7c5',
+      brightBlue: '#aac4e0',
+      magenta: '#b49ac4',
+      brightMagenta: '#d4b7e8',
+      cyan: '#7db9b1',
+      brightCyan: '#a5ded5',
+      white: '#fdf2f4',
+      brightWhite: '#ffffff',
+    },
+  },
+]
+
+export const TERMINAL_THEME_MAP: Record<TerminalThemeId, TerminalThemeDefinition> = Object.fromEntries(
+  TERMINAL_THEMES.map((theme) => [theme.id, theme]),
+) as Record<TerminalThemeId, TerminalThemeDefinition>
+
+export function resolveTerminalTheme(themeId?: unknown): TerminalThemeDefinition {
+  if (typeof themeId === 'string' && themeId in TERMINAL_THEME_MAP) {
+    return TERMINAL_THEME_MAP[themeId as TerminalThemeId]
+  }
+  return TERMINAL_THEME_MAP.carbon
+}
+
+export function sanitizeTerminalThemeId(value: unknown): TerminalThemeId {
+  if (typeof value === 'string' && value in TERMINAL_THEME_MAP) {
+    return value as TerminalThemeId
+  }
+  return 'carbon'
+}
+
 /**
  * Preset de terminal criado pelo usuário e persistido no config.json.
  * Segredos NÃO pertencem aqui: ambiente sensível continua fora do preset.
@@ -139,6 +352,8 @@ export interface CustomTerminalPreset {
 /** Configuração de runtime persistida junto com o nó do canvas. */
 export interface TerminalNodeRuntimeConfig {
   presetId: TerminalPresetId | string
+  /** Tema de cor do terminal (borda, header e xterm). */
+  theme?: TerminalThemeId
   /** Override do comando por terminal; vence o comando do preset. */
   command?: string
   args?: string[]
@@ -235,6 +450,7 @@ export function sanitizeTerminalNodeConfig(value: unknown): TerminalNodeRuntimeC
   const cwdMode = source.cwdMode === 'custom' ? 'custom' : 'workspace'
   const config: TerminalNodeRuntimeConfig = {
     presetId,
+    theme: sanitizeTerminalThemeId(source.theme),
     cwdMode,
     autoStart: source.autoStart === true,
     restartBehavior: sanitizeRestartBehavior(source.restartBehavior) ?? 'restart',
@@ -262,6 +478,7 @@ export function createTerminalNodeConfig(
 ): TerminalNodeRuntimeConfig {
   const config: TerminalNodeRuntimeConfig = {
     presetId: preset.id,
+    theme: 'carbon',
     cwdMode: 'workspace',
     autoStart: preset.defaultAutoStart === true,
     restartBehavior: preset.defaultRestartBehavior ?? 'restart',

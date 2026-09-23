@@ -26,6 +26,8 @@ import {
   createTerminalNodeConfig,
   type CustomTerminalPreset,
   type TerminalNodeRuntimeConfig,
+  type TerminalThemeId,
+  TERMINAL_THEMES,
 } from '../../../shared/terminal-presets'
 import type { QuickDeployChip } from './terminal-node-helpers'
 import { formatArgsInput, parseArgsInput } from './terminal-node-helpers'
@@ -851,6 +853,60 @@ export const CanvasNodeInspector: React.FC<CanvasNodeInspectorProps> = ({
                     </select>
                   </div>
                 )}
+
+                {/* Tema de Cores */}
+                <div className="canvas-inspector-field">
+                  <label htmlFor="terminal-theme-select">Tema de cores</label>
+                  <select
+                    id="terminal-theme-select"
+                    aria-label="Tema de cores do terminal"
+                    value={node.terminal.theme || 'carbon'}
+                    onChange={(e) => {
+                      const nextTheme = e.target.value as TerminalThemeId
+                      onUpdateTerminalNode(node.id, () => ({ theme: nextTheme }))
+                    }}
+                    className="canvas-inspector-select"
+                  >
+                    {TERMINAL_THEMES.map((theme) => (
+                      <option key={theme.id} value={theme.id}>
+                        {theme.label}
+                      </option>
+                    ))}
+                  </select>
+                  <div
+                    className="canvas-inspector-theme-swatches"
+                    role="radiogroup"
+                    aria-label="Paleta do tema do terminal"
+                  >
+                    {TERMINAL_THEMES.map((theme) => {
+                      const isSelected = (node.terminal?.theme || 'carbon') === theme.id
+                      return (
+                        <button
+                          key={theme.id}
+                          type="button"
+                          role="radio"
+                          aria-checked={isSelected}
+                          aria-label={`Tema ${theme.label}`}
+                          title={`Tema ${theme.label}`}
+                          className={`canvas-inspector-theme-swatch${isSelected ? ' is-selected' : ''}`}
+                          style={{
+                            backgroundColor: theme.xterm.background,
+                            borderColor: theme.accent,
+                          }}
+                          onClick={() => {
+                            onUpdateTerminalNode(node.id, () => ({ theme: theme.id }))
+                          }}
+                        >
+                          <span
+                            className="canvas-inspector-theme-swatch-dot"
+                            style={{ backgroundColor: theme.accent }}
+                            aria-hidden="true"
+                          />
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
 
                 {/* Comando */}
                 <div className="canvas-inspector-field">

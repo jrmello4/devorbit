@@ -221,6 +221,12 @@ describe('TASK-03B — CanvasNodeInspector UI Component', () => {
     expect(html).toContain('npm run dev')
     expect(html).toContain('--port 3000')
     expect(html).toContain('Relançar processo')
+    expect(html).toContain('Tema de cores')
+    expect(html).toContain('id="terminal-theme-select"')
+    expect(html).toContain('aria-label="Tema de cores do terminal"')
+    expect(html).toContain('canvas-inspector-theme-swatches')
+    expect(html).toContain('aria-label="Tema Carbon"')
+    expect(html).toContain('aria-label="Tema Esmeralda"')
   })
 
   it('renderiza inspeção para nó do tipo Note com estatísticas de texto', () => {
@@ -1198,5 +1204,72 @@ describe('TASK-03D — Resumo Conciso de Cards (~320x130) e Keep-Alive Operacion
     // A geometria original do objeto do nó não sofreu mutação
     expect(agentNode.width).toBe(500)
     expect(agentNode.height).toBe(360)
+  })
+
+  it('aplica atributos data-terminal-theme e variáveis de estilo para nó de terminal', () => {
+    const terminalNode: CanvasNode = {
+      id: 'term-theme-test',
+      kind: 'terminal',
+      title: 'Terminal Esmeralda',
+      x: 100,
+      y: 100,
+      width: 400,
+      height: 300,
+      z: 1,
+      terminal: {
+        presetId: 'shell',
+        theme: 'emerald',
+        cwdMode: 'workspace',
+        autoStart: false,
+        restartBehavior: 'restart',
+        monitorActivity: false,
+      },
+    }
+
+    const html = renderToStaticMarkup(
+      createElement(CanvasNodeCard, {
+        ...baseCardProps,
+        node: terminalNode,
+        isCompact: false,
+        renderTerminal: () => createElement('div', null, 'TERM'),
+      }),
+    )
+
+    expect(html).toContain('data-terminal-theme="emerald"')
+    expect(html).toContain('--term-accent:#059669')
+    expect(html).toContain('--term-bg:#0a130f')
+  })
+
+  it('renderiza o tema carbon como padrão no card de terminal quando theme não está definido', () => {
+    const terminalNode: CanvasNode = {
+      id: 'term-theme-default',
+      kind: 'terminal',
+      title: 'Terminal Padrão',
+      x: 100,
+      y: 100,
+      width: 400,
+      height: 300,
+      z: 1,
+      terminal: {
+        presetId: 'shell',
+        cwdMode: 'workspace',
+        autoStart: false,
+        restartBehavior: 'restart',
+        monitorActivity: false,
+      },
+    }
+
+    const html = renderToStaticMarkup(
+      createElement(CanvasNodeCard, {
+        ...baseCardProps,
+        node: terminalNode,
+        isCompact: false,
+        renderTerminal: () => createElement('div', null, 'TERM'),
+      }),
+    )
+
+    expect(html).toContain('data-terminal-theme="carbon"')
+    expect(html).toContain('--term-accent:#8797b4')
+    expect(html).toContain('--term-bg:#0d0f14')
   })
 })

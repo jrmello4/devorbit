@@ -164,6 +164,7 @@ describe('sanitizeTerminalNodeConfig', () => {
       autoStart: false,
       restartBehavior: 'restart',
       monitorActivity: true,
+      theme: 'carbon',
     })
   })
 
@@ -190,6 +191,7 @@ describe('createTerminalNodeConfig', () => {
       autoStart: true,
       restartBehavior: 'restart',
       monitorActivity: true,
+      theme: 'carbon',
     })
     expect(codex.command).toBeUndefined()
 
@@ -211,6 +213,7 @@ describe('createTerminalNodeConfig', () => {
       args: ['run', 'dev'],
       resumeCommand: 'npm',
       resumeArgs: ['run', 'dev'],
+      theme: 'carbon',
     })
   })
 

@@ -127,6 +127,28 @@
   border-bottom-color: var(--ops-border-subtle);
   background: var(--ops-surface-3);
 }
+.workspace-canvas-card.canvas-terminal {
+  border-top: 2px solid var(--term-accent, var(--ops-border-subtle));
+  background: var(--ops-surface-2);
+}
+.workspace-canvas-card.canvas-terminal[data-terminal-theme="carbon"] { --term-accent: #8797b4; }
+.workspace-canvas-card.canvas-terminal[data-terminal-theme="amber"] { --term-accent: #d97706; }
+.workspace-canvas-card.canvas-terminal[data-terminal-theme="emerald"] { --term-accent: #059669; }
+.workspace-canvas-card.canvas-terminal[data-terminal-theme="ocean"] { --term-accent: #0284c7; }
+.workspace-canvas-card.canvas-terminal[data-terminal-theme="violet"] { --term-accent: #7c3aed; }
+.workspace-canvas-card.canvas-terminal[data-terminal-theme="rose"] { --term-accent: #e11d48; }
+.workspace-canvas-card.canvas-terminal > header {
+  border-bottom-color: var(--ops-border-subtle);
+  background: var(--ops-surface-3);
+}
+.workspace-canvas-card.canvas-terminal > header .canvas-card-title svg {
+  color: var(--term-accent, var(--ops-text-muted));
+}
+.workspace-canvas-card.canvas-terminal .canvas-terminal-pill {
+  border-color: color-mix(in srgb, var(--term-accent, var(--ops-success)) 40%, transparent);
+  color: var(--term-accent, var(--ops-success));
+  background: color-mix(in srgb, var(--term-accent, var(--ops-success)) 12%, transparent);
+}
 .workspace-canvas-card.canvas-note > header,
 .workspace-canvas-card.canvas-browser > header {
   background: var(--ops-surface-3);
@@ -1932,4 +1954,43 @@
   margin: 0;
   font: 500 11px/1.4 var(--font-ui);
   color: var(--ops-text-muted);
+}
+
+/* Swatches de tema do terminal no Inspector */
+.canvas-inspector-theme-swatches {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 4px 0;
+}
+
+.canvas-inspector-theme-swatch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1.5px solid transparent;
+  background: var(--ops-surface-3);
+  cursor: pointer;
+  transition: transform 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.canvas-inspector-theme-swatch:hover {
+  transform: scale(1.1);
+}
+
+.canvas-inspector-theme-swatch.is-selected {
+  outline: 2px solid var(--ops-focus);
+  outline-offset: 2px;
+  box-shadow: 0 0 8px rgba(0, 0, 0, 0.4);
+}
+
+.canvas-inspector-theme-swatch-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
 }

@@ -101,7 +101,7 @@ describe('migração do canvas para terminais (v3 → v4)', () => {
     expect(migrated?.width).toBe(520)
     expect(migrated?.height).toBe(340)
     expect(migrated?.z).toBe(9)
-    expect(migrated?.terminal).toEqual(terminalNode.terminal)
+    expect(migrated?.terminal).toEqual({ ...terminalNode.terminal, theme: 'carbon' })
   })
 
   it('nó terminal com campo terminal não-objeto sai sem terminal, sem perder o nó', () => {
@@ -129,6 +129,7 @@ describe('migração do canvas para terminais (v3 → v4)', () => {
       autoStart: false,
       restartBehavior: 'restart',
       monitorActivity: true,
+      theme: 'carbon',
     })
   })
 

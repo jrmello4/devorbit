@@ -29,6 +29,9 @@ import type {
 import {
   CUSTOM_TERMINAL_PRESET_LIMIT,
   createTerminalNodeConfig,
+  resolveTerminalTheme,
+  TERMINAL_THEMES,
+  type TerminalThemeId,
 } from '../../../shared/terminal-presets'
 import {
   formatArgsInput,
@@ -257,6 +260,8 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
       [node, onChooseConnectionSource, onSelect, onUpdateGeometry],
     )
 
+    const terminalTheme = node.kind === 'terminal' ? resolveTerminalTheme(node.terminal?.theme) : undefined
+
     const cardClasses = [
       'workspace-canvas-card',
       'canvas-' + node.kind,
@@ -283,12 +288,19 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
         data-canvas-card={node.kind}
         data-canvas-node-id={node.id}
         data-is-compact={effectiveCompact ? 'true' : 'false'}
+        data-terminal-theme={node.kind === 'terminal' ? (terminalTheme?.id || 'carbon') : undefined}
         style={{
           left: node.x,
           top: node.y,
           width: isCompactCard ? 320 : node.width,
           height: isCompactCard ? 130 : node.height,
           zIndex: node.z,
+          ...(terminalTheme
+            ? ({
+                '--term-accent': terminalTheme.accent,
+                '--term-bg': terminalTheme.xterm.background,
+              } as React.CSSProperties)
+            : {}),
         }}
         onPointerDown={(event) => {
           if (event.button === 1 || spaceHeld) {
@@ -583,6 +595,24 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
                 {!quickDeployChips.some((chip) => chip.id === node.terminal!.presetId) && (
                   <option value={node.terminal.presetId}>{node.terminal.presetId} (ausente)</option>
                 )}
+              </select>
+            </label>
+
+            <label className="canvas-agent-config-field">
+              <span>Tema de cores</span>
+              <select
+                aria-label="Tema de cores do terminal"
+                value={node.terminal.theme || 'carbon'}
+                onChange={(event) => {
+                  const theme = event.target.value as TerminalThemeId
+                  onUpdateTerminalNode(node.id, () => ({ theme }))
+                }}
+              >
+                {TERMINAL_THEMES.map((theme) => (
+                  <option key={theme.id} value={theme.id}>
+                    {theme.label}
+                  </option>
+                ))}
               </select>
             </label>
 
