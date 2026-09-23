@@ -17,3 +17,6 @@ artifacts/ui/
 /.zcodeignore
 /artifacts/
 /.impeccable/review/
+
+# Local agent tool state
+/.commandcode/
