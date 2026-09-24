@@ -335,8 +335,8 @@ describe('setup por provider — matriz v2.4.0 (MCP+hooks vs MCP-only)', () => {
   it('codex: env do subprocesso contém SOMENTE o CAMINHO do CODEX_HOME (sem tokens) e receipt é por conta', async () => {
     const { runner, calls } = createRunner()
     const memory = createMemoryFs()
-    const conta1 = 'C:\\perfis\\.codex-conta1'
-    const conta2 = 'C:\\perfis\\.codex-conta2'
+    const conta1 = path.resolve('perfis', '.codex-conta1')
+    const conta2 = path.resolve('perfis', '.codex-conta2')
 
     const first = await setupAgentIntegrations(
       baseRequest({ provider: 'codex', codexHome: conta1, dataDir: 'C:\\data\\ai-memory' }),

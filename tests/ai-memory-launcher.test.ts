@@ -57,9 +57,14 @@ describe('ai-memory-launcher', () => {
     it('retorna .exe irmão quando existe ao lado do script .cmd', () => {
       const statSpy = vi.spyOn(fsSync, 'statSync').mockReturnValue({ isFile: () => true } as any)
       try {
-        // Sempre win32 explícito: o comportamento sob teste é Windows e o
-        // default (`process.platform`) é linux no CI.
-        const result = resolveExecutableForRust('C:\\cli\\opencode.cmd', { platform: 'win32' })
+        // Simulação win32 completa em qualquer host: o seam de isAbsolute
+        // existe justamente para essa semântica — path.isAbsolute do HOST
+        // (POSIX no CI) trata 'C:\cli\...' como relativo e desviaria cedo.
+        // statSync segue mockado; o resultado é o literal Windows.
+        const result = resolveExecutableForRust('C:\\cli\\opencode.cmd', {
+          platform: 'win32',
+          isAbsolute: path.win32.isAbsolute,
+        })
         expect(result).toBe('C:\\cli\\opencode.exe')
       } finally {
         statSpy.mockRestore()
