@@ -143,6 +143,19 @@ const EXPECTED_METHODS = [
   'onOrchestrationEvent',
   'getUsageShare',
   'refreshUsage',
+  // Superfície ai-memory (12 canais) — deve espelhar src/preload/index.ts.
+  'aiMemoryStatus',
+  'aiMemoryDoctor',
+  'aiMemoryQuery',
+  'aiMemoryBriefing',
+  'aiMemoryRecent',
+  'aiMemoryHandoffs',
+  'aiMemoryEnableProject',
+  'aiMemoryMigrateLegacy',
+  'aiMemoryMigrationStatus',
+  'getProjectStatus',
+  'aiMemoryTakeover',
+  'aiMemoryPublishSquadState',
 ]
 
 const checks = []
@@ -369,6 +382,10 @@ app.whenReady().then(async () => {
         console.error('Falha ao limpar o contrato emitido do smoke:', error.message)
       }
     }
-    app.quit()
+    // Encerramento explícito com o código real do gate DEPOIS de toda a
+    // limpeza. O quit nativo do Electron encerra com 0 SEM consultar
+    // process.exitCode, por isso o app.exit(code) é quem decide o resultado
+    // (termina imediatamente, já que a limpeza síncrona acima terminou).
+    app.exit(process.exitCode ?? 0)
   }
 })
