@@ -190,6 +190,10 @@ const syncResult = (message = 'Fixture operation completed') => ({
   output: 'verify-ui fixture',
 })
 
+// Estado mockado persistente para ai-memory toggle/migration entre chamadas.
+let _aiMemoryEnabled = false
+let _aiMemoryMigrated = false
+
 const api = {
   getProjects: async () => {
     record('getProjects')
@@ -502,6 +506,64 @@ const api = {
     record('generateMemoryFromGit', projectPath)
     return 'Fixture generated memory'
   },
+  // --- Shared AI Memory (FASE 3) ---
+  // Estado mockado persistente para toggle e migration entre chamadas.
+  getProjectStatus: async (req) => {
+    record('getProjectStatus', req)
+    return {
+      ok: true,
+      data: {
+        isProjectEnabled: _aiMemoryEnabled,
+        status: { state: 'running', owned: true, version: '2.4.0', message: 'ai-memory em execução.' },
+        migration: { receipt: _aiMemoryMigrated ? 'present' : 'absent', ...( _aiMemoryMigrated ? { concludedAt: new Date(baseTime).toISOString(), paths: ['.devorbit/memory.md'] } : {}) },
+      },
+    }
+  },
+  aiMemoryStatus: async () => ({ ok: true, data: { state: 'running', owned: true, version: '2.4.0' } }),
+  aiMemoryDoctor: async () => ({ ok: true, data: { ok: true } }),
+  aiMemoryEnableProject: async (req) => {
+    record('aiMemoryEnableProject', req)
+    _aiMemoryEnabled = !!(req && req.enabled)
+    return {
+      ok: true,
+      data: {
+        config: { enabled: _aiMemoryEnabled, projects: {} },
+        status: { state: 'running', owned: true },
+      },
+    }
+  },
+  aiMemoryMigrateLegacy: async () => {
+    record('aiMemoryMigrateLegacy')
+    _aiMemoryMigrated = true
+    return { ok: true, data: { status: 'migrated', paths: ['.devorbit/memory.md'], message: '1 arquivo migrado.' } }
+  },
+  aiMemoryMigrationStatus: async () => ({ ok: true, data: { receipt: _aiMemoryMigrated ? 'present' : 'absent' } }),
+  aiMemoryRecent: async () => {
+    const pages = [
+      { path: 'state/current.md', title: 'Estado atual', body: '# Estado\ndescrição do estado', updatedAt: new Date(baseTime).toISOString() },
+      { path: 'decisions/api.md', title: 'Decisão API', body: '# API\nusar REST', updatedAt: new Date(baseTime).toISOString() },
+    ]
+    return { ok: true, data: { text: JSON.stringify({ pages }), isError: false, json: { pages } } }
+  },
+  aiMemoryBriefing: async () => ({ ok: true, data: { text: 'Fixture briefing: project is healthy.', isError: false, json: 'Fixture briefing: project is healthy.' } }),
+  aiMemoryHandoffs: async () => {
+    const handoffs = [
+      { id: 'h-1', agent: 'codex', summary: 'Implement auth module', status: 'pending' },
+      { id: 'h-2', agent: 'agy', summary: 'Review database schema', status: 'completed' },
+    ]
+    return { ok: true, data: { text: JSON.stringify({ handoffs }), isError: false, json: { handoffs } } }
+  },
+  aiMemoryQuery: async (req) => {
+    record('aiMemoryQuery', req)
+    const query = req && req.query ? req.query : ''
+    const hits = [
+      { path: 'decisions/auth.md', title: 'Auth Decision', snippet: 'Implement JWT auth for: ' + query, score: 0.92 },
+      { path: 'state/current.md', title: 'Current State', snippet: 'Last session focused on: ' + query, score: 0.78 },
+    ]
+    return { ok: true, data: { text: JSON.stringify({ hits }), isError: false, json: { hits } } }
+  },
+  aiMemoryTakeover: async () => ({ ok: true, data: null }),
+  aiMemoryPublishSquadState: async () => ({ ok: true, data: { path: 'fixture', published: true } }),
   getRealUsage: async () => {
     record('getRealUsage')
     return copy(realUsage)

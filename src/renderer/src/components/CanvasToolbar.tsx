@@ -209,9 +209,9 @@ export const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
       data-canvas-toolbar=""
       onPointerDown={(e) => e.stopPropagation()}
     >
-      {/* Grupo de Criação: botões de texto compactos */}
+      {/* Grupo de Criação: únicos com texto curto (descoberta de novos nós);
+          demais grupos são ícone + tooltip com aria-label preservado. */}
       <div className="canvas-toolbar-group" role="group" aria-label="Criar nós">
-        <Plus size={13} aria-hidden="true" className="canvas-toolbar-lead-icon" />
         {triggerCreateAgent && (
           <button
             type="button"
@@ -270,7 +270,7 @@ export const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
         {onStartConnection && (
           <button
             type="button"
-            className={`canvas-toolbar-btn ${isConnecting ? 'is-active' : ''}`}
+            className={`canvas-toolbar-btn canvas-toolbar-btn-icon ${isConnecting ? 'is-active' : ''}`}
             onClick={onStartConnection}
             disabled={effectiveSelectionCount === 0}
             aria-label="Conectar nós selecionados"
@@ -281,32 +281,29 @@ export const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
                 : 'Selecione um nó para conectar'
             }
           >
-            <Link2 size={13} aria-hidden="true" />
-            <span className="canvas-toolbar-btn-text">Conectar</span>
+            <Link2 size={14} aria-hidden="true" />
           </button>
         )}
         {effectiveSelectionCount > 0 && onRemoveLinks && (
           <button
             type="button"
-            className="canvas-toolbar-btn"
+            className="canvas-toolbar-btn canvas-toolbar-btn-icon"
             onClick={onRemoveLinks}
             aria-label="Desvincular nós"
             title="Desconectar conexões do nó selecionado"
           >
-            <Unlink size={13} aria-hidden="true" />
-            <span className="canvas-toolbar-btn-text">Desvincular</span>
+            <Unlink size={14} aria-hidden="true" />
           </button>
         )}
         {effectiveSelectionCount > 0 && onDeleteSelected && effectiveCanDelete && (
           <button
             type="button"
-            className="canvas-toolbar-btn canvas-toolbar-btn-danger"
+            className="canvas-toolbar-btn canvas-toolbar-btn-icon canvas-toolbar-btn-danger"
             onClick={onDeleteSelected}
             aria-label={`Excluir ${effectiveSelectionCount} nó(s) selecionado(s)`}
             title="Excluir selecionados"
           >
-            <Trash2 size={13} aria-hidden="true" />
-            <span className="canvas-toolbar-btn-text">Excluir</span>
+            <Trash2 size={14} aria-hidden="true" />
           </button>
         )}
       </div>
@@ -411,7 +408,7 @@ export const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
         {onFocusSelected && (
           <button
             type="button"
-            className={`canvas-toolbar-btn ${isFocusModeActive ? 'is-active' : ''}`}
+            className={`canvas-toolbar-btn canvas-toolbar-btn-icon ${isFocusModeActive ? 'is-active' : ''}`}
             disabled={effectiveSelectionCount === 0}
             onClick={onFocusSelected}
             aria-label={
@@ -426,8 +423,7 @@ export const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
                 : 'Selecione nós para focar'
             }
           >
-            <Crosshair size={13} aria-hidden="true" />
-            <span className="canvas-toolbar-btn-text">Foco</span>
+            <Crosshair size={14} aria-hidden="true" />
           </button>
         )}
       </div>
@@ -440,14 +436,13 @@ export const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
             {onToggleInspector && (
               <button
                 type="button"
-                className={`canvas-toolbar-btn ${isInspectorOpen ? 'is-active' : ''}`}
+                className={`canvas-toolbar-btn canvas-toolbar-btn-icon ${isInspectorOpen ? 'is-active' : ''}`}
                 onClick={onToggleInspector}
                 aria-label="Alternar painel de inspeção"
                 aria-expanded={isInspectorOpen}
                 title="Abrir/fechar Inspector lateral"
               >
-                <SlidersHorizontal size={13} aria-hidden="true" />
-                <span className="canvas-toolbar-btn-text">Inspector</span>
+                <SlidersHorizontal size={14} aria-hidden="true" />
               </button>
             )}
 

@@ -1,5 +1,6 @@
 import React from 'react'
 import type { CanvasNode } from './WorkspaceCanvas'
+import './CanvasMinimap.css'
 
 export interface CanvasMinimapProps {
   viewport: { x: number; y: number; zoom: number }
@@ -46,7 +47,7 @@ export const CanvasMinimap: React.FC<CanvasMinimapProps> = React.memo(
               y={node.y}
               width={node.width}
               height={node.height}
-              className={'minimap-node ' + node.kind}
+              className="minimap-node"
             />
           ))}
           <rect

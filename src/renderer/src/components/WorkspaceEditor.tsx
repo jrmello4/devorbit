@@ -807,7 +807,10 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
             </div>
           )}
           <div className="editor-actions">
-            {activeIsDirty && <span className="editor-dirty" title="Alterações não salvas">Não salvo</span>}
+            {/* Estado "Não salvo" como ponto âmbar com tooltip: mantém a
+                informação (harness consulta .editor-dirty) sem texto competindo
+                com os ícones da linha de 32px. */}
+            {activeIsDirty && <span className="editor-dirty" role="status" aria-label="Não salvo" title="Não salvo"><i aria-hidden="true" /></span>}
             <button
               type="button"
               className={'workspace-icon-button' + (isSearchOpen ? ' active' : '')}

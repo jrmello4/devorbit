@@ -1,0 +1,213 @@
+/* CanvasInspector.css — Clean pass do Inspector do canvas.
+ * Regras em escopo duplo (.canvas-node-inspector ...) para vencer os estilos
+ * legados de WorkspaceCanvas.css independente da ordem de importação.
+ * Usa o contrato var(--color-*) e respeita prefers-reduced-motion. */
+
+.canvas-node-inspector {
+  border-color: var(--color-border-subtle);
+}
+
+/* Densidade: paddings 8/12 e títulos de seção 10.5px caixa-alta */
+.canvas-node-inspector .canvas-inspector-body {
+  gap: 12px;
+  padding: 12px;
+}
+
+.canvas-node-inspector .canvas-inspector-section {
+  gap: 8px;
+}
+
+.canvas-node-inspector .canvas-inspector-section-title {
+  font: 700 10.5px/1.2 var(--font-ui);
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+}
+
+/* Tipo do nó/squad: texto discreto, sem caixa (pills só quando mudam decisão) */
+.canvas-node-inspector .canvas-inspector-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  font: 650 10px/1 var(--font-ui);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  flex-shrink: 0;
+}
+
+.canvas-node-inspector .canvas-inspector-kind.is-squad {
+  color: var(--color-orchestrating);
+}
+
+/* Linha de contexto da squad (membros + recolher) sem caixa */
+.canvas-node-inspector .canvas-inspector-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font: 500 11px/1.4 var(--font-ui);
+  color: var(--color-text-muted);
+}
+
+/* Botão fantasma (recolher, criar agente): ação discreta sem borda */
+.canvas-node-inspector .canvas-inspector-ghost-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font: 600 11px var(--font-ui);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.canvas-node-inspector .canvas-inspector-ghost-btn:hover {
+  background: var(--surface-hover);
+  color: var(--color-text-secondary);
+}
+
+/* Aviso de sessão PTY viva: linha discreta com ponto, sem caixa verde */
+.canvas-node-inspector .canvas-inspector-live-notice {
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  font: 500 11px var(--font-ui);
+}
+
+.canvas-node-inspector .canvas-inspector-live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-success);
+  flex-shrink: 0;
+}
+
+/* Status de execução: ponto + rótulo (detalhe no tooltip), sem caixa */
+.canvas-node-inspector .canvas-inspector-status-box {
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.canvas-node-inspector .canvas-inspector-status-label {
+  font: 600 11.5px var(--font-ui);
+  color: var(--color-text-secondary);
+}
+
+/* Papel do membro: texto colorido discreto em vez de pill */
+.canvas-node-inspector .canvas-inspector-member-icon {
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+.canvas-node-inspector .canvas-inspector-member-role-text {
+  font: 500 10.5px var(--font-ui);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.canvas-node-inspector .canvas-inspector-coordinator-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--color-orchestrating);
+  font: 600 10.5px var(--font-ui);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Membros: espaço em vez de caixa — linhas sem borda, ações reveladas no hover */
+.canvas-node-inspector .canvas-inspector-squad-member-item {
+  gap: 6px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  transition: background 0.15s ease;
+}
+
+.canvas-node-inspector .canvas-inspector-squad-member-item:hover,
+.canvas-node-inspector .canvas-inspector-squad-member-item:focus-within {
+  background: var(--surface-hover);
+}
+
+.canvas-node-inspector .canvas-inspector-squad-member-item.is-coordinator {
+  border: 0;
+  background: transparent;
+}
+
+/* Ações por membro (coroa/focar/remover) só aparecem no hover/foco da linha */
+.canvas-node-inspector .canvas-inspector-squad-member-actions {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.canvas-node-inspector .canvas-inspector-squad-member-item:hover .canvas-inspector-squad-member-actions,
+.canvas-node-inspector .canvas-inspector-squad-member-item:focus-within .canvas-inspector-squad-member-actions {
+  opacity: 1;
+}
+
+.canvas-node-inspector .canvas-inspector-restriction-hint {
+  margin: 0;
+}
+
+/* Rodapé mais leve */
+.canvas-node-inspector .canvas-inspector-footer {
+  padding: 8px 12px;
+}
+
+.canvas-node-inspector .canvas-inspector-footer-btn {
+  height: 26px;
+  border-color: transparent;
+  background: transparent;
+}
+
+.canvas-node-inspector .canvas-inspector-footer-btn:hover {
+  background: var(--surface-hover);
+}
+
+/* Botão "Salvar objetivo": link discreto no rodapé do campo */
+.canvas-node-inspector .canvas-inspector-save-objective {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-accent-strong);
+  font: 600 11px var(--font-ui);
+  cursor: pointer;
+}
+
+.canvas-node-inspector .canvas-inspector-save-objective:hover {
+  text-decoration: underline;
+}
+
+/* Pontinho da família do tema de terminal selecionado, ao lado do rótulo
+   "Tema de cores": preview barato da cor (as opções nativas do <select> não
+   aceitam cor; os swatches abaixo mostram o ponto de cada família). */
+.canvas-node-inspector .canvas-inspector-theme-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-left: 6px;
+  border-radius: 50%;
+  vertical-align: middle;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 25%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .canvas-node-inspector .canvas-inspector-ghost-btn,
+  .canvas-node-inspector .canvas-inspector-squad-member-item,
+  .canvas-node-inspector .canvas-inspector-squad-member-actions {
+    transition: none;
+  }
+}

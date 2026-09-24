@@ -115,10 +115,7 @@ export const HitlApprovalDialog: React.FC<HitlApprovalDialogProps> = ({
 
         <section className="hitl-evidence" aria-labelledby={titleId + '-evidence'}>
           <div className="evolution-section-heading">
-            <div>
-              <h3 id={titleId + '-evidence'}>Evidência redigida</h3>
-              <p>Os dados abaixo foram preparados para revisão sem expor conteúdo sensível.</p>
-            </div>
+            <h3 id={titleId + '-evidence'}>Evidência redigida</h3>
           </div>
           {request.evidence.length > 0 ? (
             <dl className="hitl-evidence__list">

@@ -67,12 +67,6 @@
   stroke-dasharray: 7 5;
   animation: canvas-link-flow 1.5s linear infinite;
 }
-.workspace-canvas-connections .workspace-canvas-connection-preview {
-  stroke: var(--ops-warning);
-  stroke-width: 2.5;
-  stroke-dasharray: 8 6;
-  animation: none;
-}
 /* Pontas de seta acompanham o estado da aresta. */
 .canvas-edge-arrowhead {
   fill: var(--color-border-strong, var(--ops-connection));
@@ -128,37 +122,36 @@
   position: absolute;
   display: flex;
   flex-direction: column;
-  min-width: 220px;
-  min-height: 150px;
+  /* Mínimos do resize livre (200×140) — mesmos clamps do gesto e do sanitize. */
+  min-width: 200px;
+  min-height: 140px;
   overflow: hidden;
   border: 1px solid var(--ops-border-subtle);
   border-radius: var(--radius-node);
   background: var(--ops-surface-2);
-  box-shadow: 0 10px 26px var(--ops-shadow-node);
+  /* Sombra única e sutil: a hierarquia vem do espaço, não de caixas empilhadas. */
+  box-shadow: 0 4px 14px var(--ops-shadow-node);
   transition:
     border-color 0.12s,
     box-shadow 0.12s;
 }
+.workspace-canvas-card:focus-visible {
+  outline: 2px solid var(--ops-focus);
+  outline-offset: 2px;
+}
 .workspace-canvas-card.canvas-workbench,
 .workspace-canvas-card.canvas-browser {
-  border-top: 1px solid var(--ops-border-subtle);
   background: var(--ops-surface-2);
 }
 /* Espinha de tipo — Agente: borda esquerda oliva (3px). */
 .workspace-canvas-card.canvas-agent {
-  border-top: 1px solid var(--ops-border-subtle);
   border-left: 3px solid var(--color-accent, var(--ops-focus));
   background: var(--ops-surface-2);
 }
 /* Espinha de tipo — Nota: borda âmbar; fundo permanece na família neutra
    (asserção do harness: 1 único fundo entre cards do canvas). */
 .workspace-canvas-card.canvas-note {
-  border-top: 1px solid var(--ops-border-subtle);
   border-left: 3px solid var(--color-orchestrating, var(--ops-warning));
-}
-.workspace-canvas-card.canvas-agent > header {
-  border-bottom-color: var(--ops-border-subtle);
-  background: var(--ops-surface-3);
 }
 .workspace-canvas-card.canvas-terminal {
   border-top: 2px solid var(--term-accent, var(--ops-border-subtle));
@@ -170,77 +163,52 @@
 .workspace-canvas-card.canvas-terminal[data-terminal-theme="ocean"] { --term-accent: #0284c7; }
 .workspace-canvas-card.canvas-terminal[data-terminal-theme="violet"] { --term-accent: #7c3aed; }
 .workspace-canvas-card.canvas-terminal[data-terminal-theme="rose"] { --term-accent: #e11d48; }
-.workspace-canvas-card.canvas-terminal > header {
-  border-bottom-color: var(--ops-border-subtle);
-  /* Cabeçalho levemente elevado (superfície raised do contrato de tokens). */
-  background: var(--color-bg-raised, var(--ops-surface-3));
-}
-/* Badge de estado do terminal (pronto/executando) restilizado como pílula
-   dentro do nó do canvas — o markup vive no WorkspaceTerminal (keep-alive). */
-.workspace-canvas-card.canvas-terminal .terminal-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  flex: 0 0 auto;
-  height: 18px;
-  padding: 0 7px;
-  border: 1px solid var(--color-border-subtle, var(--ops-border-subtle));
-  border-radius: 999px;
-  background: var(--color-bg-raised, var(--ops-surface-4));
-  color: var(--ops-text-muted);
-  font: 650 9px/1 var(--font-ui);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-.workspace-canvas-card.canvas-terminal .terminal-status i {
-  width: 6px;
-  height: 6px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--ops-text-muted);
-}
-.workspace-canvas-card.canvas-terminal .terminal-status.ready i {
-  background: var(--color-success, var(--ops-success));
-}
-.workspace-canvas-card.canvas-terminal .terminal-status.starting i {
-  background: var(--color-orchestrating, var(--ops-warning));
-}
-.workspace-canvas-card.canvas-terminal .terminal-status.error i,
-.workspace-canvas-card.canvas-terminal .terminal-status.missing i {
-  background: var(--ops-danger);
-}
 .workspace-canvas-card.canvas-terminal > header .canvas-card-title svg {
   color: var(--term-accent, var(--ops-text-muted));
 }
-.workspace-canvas-card.canvas-terminal .canvas-terminal-pill {
-  border-color: color-mix(in srgb, var(--term-accent, var(--ops-success)) 40%, transparent);
-  color: var(--term-accent, var(--ops-success));
-  background: color-mix(in srgb, var(--term-accent, var(--ops-success)) 12%, transparent);
-}
-.workspace-canvas-card.canvas-note > header,
-.workspace-canvas-card.canvas-browser > header {
-  background: var(--ops-surface-3);
+/* Status do terminal embutido: ponto único com tooltip — a base (layout e
+   cores ready/error/missing) vive no IntegratedWorkspace.css; aqui apenas o
+   estado "starting" ganha o âmbar padrão do canvas. */
+.workspace-canvas-card .terminal-status.starting i {
+  background: var(--color-orchestrating, var(--ops-warning));
 }
 .workspace-canvas-card.is-selected {
   border-color: var(--ops-focus);
   box-shadow:
     0 0 0 2px var(--ops-selection),
-    0 12px 30px var(--ops-shadow-node);
+    0 4px 14px var(--ops-shadow-node);
 }
-.workspace-canvas-card.is-connecting {
-  border-color: var(--ops-warning);
-  box-shadow: 0 0 0 2px rgba(199, 154, 89, 0.28);
+/* Modo conectar EXPLÍCITO (sem portas/bolinhas): cards elegíveis ganham
+   contorno tracejado sutil no acento; o card de ORIGEM ganha contorno firme.
+   O foco por teclado continua vencendo (regra dedicada logo abaixo). */
+.workspace-canvas-card.is-connect-mode {
+  border-color: var(--color-accent, var(--ops-focus));
+  outline: 2px dashed var(--color-accent, var(--ops-focus));
+  outline-offset: 2px;
 }
+.workspace-canvas-card.is-connect-source {
+  border-color: var(--color-accent, var(--ops-focus));
+  outline: 2px solid var(--color-accent, var(--ops-focus));
+  outline-offset: 2px;
+  box-shadow: 0 0 0 3px var(--ops-selection, rgba(59, 130, 246, 0.28));
+}
+.workspace-canvas-card.is-connect-mode:focus-visible,
+.workspace-canvas-card.is-connect-source:focus-visible {
+  outline: 2px solid var(--ops-focus);
+  outline-offset: 2px;
+}
+/* Cabeçalho único do card: 28px, título à esquerda, um indicador de status,
+   ações em cluster revelado no hover/foco/seleção. */
 .workspace-canvas-card > header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  min-height: 36px;
+  flex: 0 0 auto;
+  height: 28px;
+  min-height: 28px;
   gap: var(--space-1);
   padding: 0 var(--space-2);
   border-bottom: 1px solid var(--ops-border-subtle);
-  background: var(--ops-surface-3);
+  background: transparent;
   cursor: grab;
   touch-action: none;
 }
@@ -264,8 +232,8 @@
 .workspace-canvas-card header button {
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   border: 0;
   border-radius: var(--radius-icon);
   color: var(--ops-text-muted);
@@ -276,10 +244,29 @@
   background: var(--ops-surface-4);
   color: var(--ops-text-primary);
 }
+/* Cluster de ações do cabeçalho: invisível em repouso, revelado em
+   hover/foco (inclusive teclado, via :focus-within) e seleção. */
+.canvas-card-actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 2px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+.workspace-canvas-card:hover .canvas-card-actions,
+.workspace-canvas-card:focus-within .canvas-card-actions,
+.workspace-canvas-card.is-selected .canvas-card-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+/* Destrutiva separada do cluster; vermelho só no hover do ícone. */
+.canvas-card-actions .canvas-delete-node {
+  margin-left: 4px;
+}
 .workspace-canvas-card button:focus-visible,
-.workspace-canvas-delete:focus-visible,
-.workspace-canvas-resize:focus-visible,
-.canvas-port:focus-visible {
+.workspace-canvas-delete:focus-visible {
   outline: 2px solid var(--ops-focus);
   outline-offset: 2px;
 }
@@ -312,7 +299,7 @@
 }
 .canvas-agent-config {
   position: absolute;
-  top: 36px;
+  top: 28px;
   left: var(--space-2);
   right: var(--space-2);
   z-index: 4;
@@ -353,95 +340,29 @@
 .workspace-canvas-card header button.canvas-send-task { cursor: pointer; color: var(--ops-focus); }
 .workspace-canvas-card header button.canvas-send-task:hover { color: var(--ops-text-primary); }
 .workspace-canvas-card header button.canvas-send-task:disabled { opacity: .38; cursor: not-allowed; }
+/* Status do agente: apenas um ponto colorido; o rótulo vive no title
+   (tooltip) e no aria-label — um único indicador por cabeçalho. */
 .canvas-agent-progress {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   flex: 0 0 auto;
-  gap: var(--space-1);
-  max-width: 118px;
-  overflow: hidden;
-  color: var(--ops-text-muted);
-  font: 650 9px/1 var(--font-ui);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  width: 14px;
+  height: 14px;
 }
 .canvas-agent-progress i {
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
   flex: 0 0 auto;
   border-radius: 50%;
   background: var(--ops-text-muted);
 }
 .canvas-agent-progress.progress-running { color: var(--ops-warning); }
 .canvas-agent-progress.progress-running i { background: var(--ops-warning); animation: canvas-agent-pulse 1.2s ease-in-out infinite; }
-.canvas-agent-progress.progress-completed { color: var(--ops-success); }
 .canvas-agent-progress.progress-completed i { background: var(--ops-success); }
-.canvas-agent-progress.progress-blocked { color: var(--ops-danger); }
 .canvas-agent-progress.progress-blocked i { background: var(--ops-danger); }
-.canvas-agent-progress.progress-queued { color: var(--ops-text-muted); }
 @keyframes canvas-agent-pulse {
   50% { opacity: .35; transform: scale(.72); }
-}
-.canvas-port {
-  position: absolute;
-  top: 50%;
-  z-index: 5;
-  display: grid;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  place-items: center;
-  border: 1px solid var(--ops-border-strong);
-  border-radius: 50%;
-  background: var(--ops-surface-3);
-  box-shadow: 0 1px 4px var(--ops-shadow-node);
-  transform: translateY(-50%);
-  cursor: crosshair;
-  touch-action: none;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity .15s ease;
-}
-.workspace-canvas-card:hover .canvas-port,
-.workspace-canvas-card:focus-within .canvas-port,
-.workspace-canvas-card.is-selected .canvas-port,
-.workspace-canvas-card.is-connecting .canvas-port,
-.canvas-port:focus-visible,
-.canvas-port.is-active,
-.canvas-port.is-available {
-  opacity: 1;
-  pointer-events: auto;
-}
-.canvas-port span {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--ops-connection);
-}
-.canvas-port-source { right: 6px; }
-.canvas-port-target { left: 6px; }
-.canvas-port:hover,
-.canvas-port:focus-visible,
-.canvas-port.is-active,
-.canvas-port.is-available {
-  border-color: var(--ops-warning);
-  background: var(--ops-surface-4);
-  box-shadow: 0 0 0 3px rgba(199, 154, 89, .22);
-}
-.canvas-port:hover span,
-.canvas-port:focus-visible span,
-.canvas-port.is-active span,
-.canvas-port.is-available span {
-  background: var(--ops-warning);
-}
-.canvas-port:disabled {
-  opacity: .45;
-  cursor: default;
-}
-.workspace-canvas-card.is-connecting .canvas-port-source {
-  border-color: var(--ops-warning);
 }
 .canvas-agent-result {
   position: absolute;
@@ -522,23 +443,40 @@
   font: 12px/1.55 var(--font-mono);
 }
 .workspace-canvas-card textarea::placeholder { color: var(--ops-text-muted); }
-.workspace-canvas-resize {
+/* Grip de redimensionamento: o card é position:absolute, então o canto
+   inferior direito do section âncora o grip. Área generosa (18px), cursor
+   de resize SEMPRE que o ponteiro passa por ele — é a affordance única de
+   esticar. O tracinho diagonal só aparece no hover/foco (clean pass). */
+.workspace-canvas-resize-handle {
   position: absolute;
-  right: 3px;
-  bottom: 3px;
-  display: grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  border: 0;
-  border-radius: var(--radius-icon);
-  color: var(--ops-text-muted);
-  background: var(--ops-surface-3);
+  right: 0;
+  bottom: 0;
+  z-index: 6;
+  width: 18px;
+  height: 18px;
+  border-bottom-right-radius: var(--radius-node, 10px);
   cursor: nwse-resize;
+  touch-action: none;
 }
-.workspace-canvas-resize:hover {
-  color: var(--ops-text-primary);
-  background: var(--ops-surface-4);
+.workspace-canvas-resize-handle::after {
+  content: "";
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid var(--ops-text-muted);
+  border-bottom: 2px solid var(--ops-text-muted);
+  border-bottom-right-radius: 2px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.workspace-canvas-card:hover .workspace-canvas-resize-handle::after,
+.workspace-canvas-resize-handle:hover::after {
+  opacity: 0.9;
+}
+.workspace-canvas-resize-handle:hover::after {
+  border-color: var(--ops-focus);
 }
 .workspace-canvas-radial {
   position: absolute;
@@ -1072,13 +1010,20 @@ body:has(.workspace-canvas) .app-toast {
      senão reiniciaria a animação para quem precisa de menos movimento. */
   .workspace-canvas-connections path,
   .workspace-canvas-connections .canvas-edge-path.is-orchestrating,
-  .canvas-agent-progress.progress-running i {
+  .canvas-agent-progress.progress-running i,
+  .canvas-node-orchestrating-badge {
     animation: none !important;
   }
   .workspace-canvas-radial-option,
   .workspace-canvas-radial-core {
     transition-duration: 0.01ms;
     transition-delay: 0ms !important;
+  }
+  /* Revelação de clusters sem transição (aparece imediato, sem fade). */
+  .canvas-card-actions,
+  .canvas-card-actions button,
+  [data-terminal-variant="embedded"] .terminal-actions > button {
+    transition: none;
   }
 }
 
@@ -1122,7 +1067,7 @@ body:has(.workspace-canvas) .app-toast {
   border-color: var(--ops-focus);
   box-shadow:
     0 0 0 2px var(--ops-focus),
-    0 16px 36px var(--ops-shadow-node);
+    0 4px 14px var(--ops-shadow-node);
   z-index: 10 !important;
 }
 
@@ -1130,14 +1075,13 @@ body:has(.workspace-canvas) .app-toast {
 .workspace-canvas-card.is-compact:not(.has-config-open) {
   height: 130px !important;
   min-height: 130px !important;
-  box-shadow: 0 4px 12px var(--ops-shadow-node);
   overflow: hidden;
 }
 
 .workspace-canvas-card.is-compact .canvas-card-header,
 .workspace-canvas-card.is-compact > header {
-  min-height: 36px;
-  height: 36px;
+  height: 28px;
+  min-height: 28px;
   border-bottom: 1px solid var(--ops-border-subtle);
 }
 
@@ -1159,7 +1103,7 @@ body:has(.workspace-canvas) .app-toast {
   flex-direction: column;
   justify-content: space-between;
   padding: 8px 10px;
-  height: calc(130px - 36px);
+  height: calc(130px - 28px);
   box-sizing: border-box;
   background: var(--ops-surface-2);
   gap: 6px;
@@ -1296,28 +1240,10 @@ body:has(.workspace-canvas) .app-toast {
   outline-offset: 1px;
 }
 
-.canvas-summary-btn-terminal {
-  color: var(--ops-accent-light, #93c5fd);
-  border-color: rgba(59, 130, 246, 0.35);
-  background: rgba(59, 130, 246, 0.08);
-}
-
-.canvas-summary-btn-terminal:hover {
-  background: rgba(59, 130, 246, 0.18);
-  border-color: var(--ops-accent, #3b82f6);
-}
-
+/* Ações do resumo compacto: estilo único neutro (sem tintas decorativas). */
 .canvas-summary-btn-send {
   margin-left: auto;
   padding: 3px 7px;
-  color: var(--ops-success-light, #a7f3d0);
-  border-color: rgba(16, 185, 129, 0.35);
-  background: rgba(16, 185, 129, 0.08);
-}
-
-.canvas-summary-btn-send:hover:not(:disabled) {
-  background: rgba(16, 185, 129, 0.2);
-  border-color: var(--ops-success, #10b981);
 }
 
 .canvas-summary-btn-send:disabled {
@@ -1325,65 +1251,32 @@ body:has(.workspace-canvas) .app-toast {
   cursor: not-allowed;
 }
 
-/* Pills no cabeçalho dos cards */
+/* Identidade no cabeçalho: sem caixas — texto meta herdado de
+   .canvas-node-meta; o padrão (papel Implementação) fica oculto e vira
+   tooltip no título (o span segue no DOM para leitura estrutural). */
 .canvas-card-title-text {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-.canvas-role-pill,
-.canvas-provider-pill,
-.canvas-terminal-pill,
-.canvas-note-pill {
-  padding: 1px 6px;
-  border-radius: var(--radius-icon, 4px);
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
+.canvas-role-pill.is-default-role {
+  display: none;
 }
 
-.canvas-role-pill {
-  color: var(--ops-text-secondary);
-  background: var(--ops-surface-4);
-  border: 1px solid var(--ops-border-subtle);
-}
-
-.canvas-provider-pill {
-  color: var(--ops-focus);
-  background: rgba(59, 130, 246, 0.12);
-  border: 1px solid rgba(59, 130, 246, 0.25);
-}
-
-.canvas-terminal-pill {
-  color: var(--ops-success);
-  background: rgba(34, 197, 94, 0.1);
-  border: 1px solid rgba(34, 197, 94, 0.25);
-}
-
-.canvas-note-pill {
-  color: var(--ops-text-muted);
-  background: var(--ops-surface-2);
-}
-
-/* Badge âmbar do coordenador liderando orquestração ativa. */
+/* Badge do coordenador liderando orquestração ativa: ponto âmbar pulsante
+   com tooltip (o texto vive no aria-label/title). */
 .canvas-node-orchestrating-badge {
-  display: inline-flex;
-  align-items: center;
   flex: 0 0 auto;
-  padding: 2px 7px;
-  border: 1px solid color-mix(in srgb, var(--color-orchestrating, #d9a441) 45%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--color-orchestrating, #d9a441) 14%, transparent);
-  color: var(--color-orchestrating, #d9a441);
-  font: 700 9px/1.2 var(--font-ui);
-  letter-spacing: 0.05em;
-  text-transform: lowercase;
-  white-space: nowrap;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-orchestrating, #d9a441);
+  animation: canvas-agent-pulse 1.2s ease-in-out infinite;
 }
 
 /* ==========================================================================
    Canvas Toolbar — pílula flutuante única (criação ▸ conexão ▸ zoom ▸ foco)
+   38px de altura: criação com texto curto; resto é ícone + tooltip.
    ========================================================================== */
 .canvas-toolbar {
   position: absolute;
@@ -1393,12 +1286,12 @@ body:has(.workspace-canvas) .app-toast {
   z-index: 120;
   display: flex;
   align-items: center;
-  gap: 3px;
-  padding: 4px 6px;
+  gap: 2px;
+  padding: 5px 6px;
   border: 1px solid var(--color-border-strong, var(--ops-border-strong));
-  border-radius: 11px;
+  border-radius: 8px;
   background: var(--color-bg-raised, var(--ops-surface-1));
-  box-shadow: 0 12px 28px var(--ops-shadow-node);
+  box-shadow: 0 4px 14px var(--ops-shadow-node);
   user-select: none;
 }
 
@@ -1408,18 +1301,12 @@ body:has(.workspace-canvas) .app-toast {
   gap: 2px;
 }
 
-/* Glifo "＋" que abre o grupo de criação (decorativo). */
-.canvas-toolbar-lead-icon {
-  flex: 0 0 auto;
-  margin-right: 2px;
-  color: var(--ops-text-muted);
-}
-
 .canvas-toolbar-separator {
   width: 1px;
-  height: 20px;
-  margin: 0 3px;
+  height: 16px;
+  margin: 0 2px;
   background: var(--color-border-subtle, var(--ops-border-subtle));
+  opacity: 0.7;
 }
 
 .canvas-toolbar-btn {
@@ -1429,7 +1316,7 @@ body:has(.workspace-canvas) .app-toast {
   height: 28px;
   padding: 0 8px;
   border: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: 6px;
   color: var(--ops-text-secondary);
   background: transparent;
   font: 600 11px var(--font-ui);
@@ -2199,4 +2086,23 @@ body:has(.workspace-canvas) .app-toast {
   width: 10px;
   height: 10px;
   border-radius: 50%;
+}
+
+/* ==========================================================================
+   Terminal embutido no card do canvas (WorkspaceTerminal variant="embedded")
+   O terminal embutido NÃO renderiza cabeçalho: o cabeçalho único é do card.
+   O layout do overlay fino (ponto de status + cluster de ações revelado no
+   hover/foco) é definido no IntegratedWorkspace.css, junto das classes
+   .terminal-embedded-overlay / .terminal-status / .terminal-actions. Aqui
+   ficam só os ajustes de integração com o card do canvas.
+   ========================================================================== */
+.workspace-canvas-card [data-terminal-variant="embedded"] {
+  border-top: 0;
+}
+/* Cluster de ações do overlay: mesmo padrão de revelação do cabeçalho do
+   card (opacity 0 → 1 em ~120ms; foco por teclado deixa sempre visível). */
+.workspace-canvas-card [data-terminal-variant="embedded"]:hover .terminal-actions > button,
+.workspace-canvas-card [data-terminal-variant="embedded"]:focus-within .terminal-actions > button {
+  opacity: 1;
+  pointer-events: auto;
 }

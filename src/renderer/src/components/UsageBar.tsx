@@ -1,11 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import {
-  AlertTriangle,
-  ArrowRightLeft,
-  CheckCircle2,
-  Clock,
-  RefreshCw,
-} from 'lucide-react'
+import { AlertTriangle, ArrowRightLeft, RefreshCw } from 'lucide-react'
 import type {
   AppConfig,
   RealAccountUsage,
@@ -40,15 +34,11 @@ const getAccountName = (config: AppConfig | null, accountKey: AccountKey) =>
     ? config?.chatGptAccount1Name || 'Conta 1'
     : config?.chatGptAccount2Name || 'Conta 2'
 
+// Estado em texto curto: vira tooltip do ponto de status (um indicador por conta).
 const getProviderStatusLabel = (account: RealAccountUsage) => {
   if (account.status === 'ready') return account.plan ? `Pronta · ${account.plan}` : 'Pronta'
   if (account.status === 'not_configured') return 'Não autenticada'
   return 'Indisponível'
-}
-
-const getProviderStatusIcon = (status: RealAccountUsage['status']) => {
-  if (status === 'ready') return <CheckCircle2 aria-hidden="true" />
-  return <AlertTriangle aria-hidden="true" />
 }
 
 export const UsageBar: React.FC<UsageBarProps> = ({
@@ -62,6 +52,7 @@ export const UsageBar: React.FC<UsageBarProps> = ({
   const [now, setNow] = useState(Date.now())
 
   useEffect(() => {
+    // Tick de 10s mantido: atualiza as contagens regressivas das janelas.
     const timer = setInterval(() => setNow(Date.now()), 10000)
     return () => clearInterval(timer)
   }, [])
@@ -123,10 +114,12 @@ export const UsageBar: React.FC<UsageBarProps> = ({
           </div>
         )}
 
-        <div className="usage-provider-metric-meta">
-          {metric.detail && <span>{metric.detail}</span>}
-          {resetLabel && <span className="usage-reset-label"><Clock aria-hidden="true" />{resetLabel}</span>}
-        </div>
+        {(metric.detail || resetLabel) && (
+          <div className="usage-provider-metric-meta">
+            {metric.detail && <span>{metric.detail}</span>}
+            {resetLabel && <span className="usage-reset-label tabular-nums">{resetLabel}</span>}
+          </div>
+        )}
       </div>
     )
   }
@@ -135,8 +128,8 @@ export const UsageBar: React.FC<UsageBarProps> = ({
     if (!realUsage) return null
     const account = realUsage.accounts[accountKey]
     const accountName = getAccountName(config, accountKey)
-    const fetchedLabel = formatTimestamp(account.fetchedAt)
     const isActive = activeAccount === accountKey
+    const statusLabel = getProviderStatusLabel(account)
 
     return (
       <article
@@ -146,17 +139,17 @@ export const UsageBar: React.FC<UsageBarProps> = ({
       >
         <div className="usage-account-heading">
           <div className="usage-account-name-wrap">
-            <span className={`usage-status-dot usage-status-dot--${account.status}`} aria-hidden="true" />
+            {/* Ponto + tooltip substitui a pill de status */}
+            <span
+              className={`usage-status-dot usage-status-dot--${account.status}`}
+              title={statusLabel}
+              aria-label={statusLabel}
+              role="img"
+            />
             <h3>{accountName}</h3>
-            {isActive && <span className="usage-active-label">Conta ativa</span>}
+            {isActive && <span className="usage-active-label">Ativa</span>}
           </div>
-          <span className={`usage-status usage-status--${account.status}`}>
-            {getProviderStatusIcon(account.status)}
-            {getProviderStatusLabel(account)}
-          </span>
         </div>
-
-        {fetchedLabel && <p className="usage-account-meta">Consultada em {fetchedLabel}</p>}
 
         {account.metrics.length > 0 ? (
           <div className="usage-provider-metrics">
@@ -181,15 +174,14 @@ export const UsageBar: React.FC<UsageBarProps> = ({
       <div className="usage-scroll">
         <div className="usage-shell">
           <header className="usage-header">
-            <div className="usage-heading-copy">
-              <h1 id="usage-heading">Uso e quotas</h1>
-              <p>Fonte única: percentuais publicados pelo provedor via OAuth do Codex.</p>
-            </div>
+            <h1 id="usage-heading">Uso e quotas</h1>
             <div className="usage-header-actions">
-              <div className="usage-source-meta" aria-live="polite">
-                <span>{providerSourceLabel}</span>
-                {realFetchedLabel && <span>Atualizado em {realFetchedLabel}</span>}
-              </div>
+              {/* Fonte vira tooltip no carimbo de atualização */}
+              {realFetchedLabel && (
+                <span className="usage-source-meta" title={`Fonte: ${providerSourceLabel}`} aria-live="polite">
+                  Atualizado em {realFetchedLabel}
+                </span>
+              )}
               <button
                 type="button"
                 className="usage-button usage-button--primary"
@@ -228,11 +220,7 @@ export const UsageBar: React.FC<UsageBarProps> = ({
 
           <section className="usage-section usage-provider-section" aria-labelledby="usage-provider-heading">
             <div className="usage-section-heading">
-              <div>
-                <h2 id="usage-provider-heading">Quotas do provedor</h2>
-                <p>Percentuais, janelas e estados retornados na última consulta.</p>
-              </div>
-              <span className="usage-section-note">Fonte única</span>
+              <h2 id="usage-provider-heading">Quotas do provedor</h2>
             </div>
 
             {realUsage ? (
@@ -242,10 +230,7 @@ export const UsageBar: React.FC<UsageBarProps> = ({
             ) : (
               <div className="usage-loading" role="status" aria-live="polite">
                 <RefreshCw className="usage-loading-icon usage-spin" aria-hidden="true" />
-                <div>
-                  <strong>Consultando quotas do provedor…</strong>
-                  <span>Os dados aparecerão quando a primeira consulta terminar.</span>
-                </div>
+                <span>Consultando quotas do provedor…</span>
               </div>
             )}
           </section>

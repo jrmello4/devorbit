@@ -90,25 +90,13 @@
   gap: 18px;
   grid-column: 1 / -1;
   min-width: 0;
-  padding: 10px 16px;
+  padding: 8px 12px;
   background: var(--color-bg-toolbar);
   border-bottom: 1px solid var(--workspace-border);
 }
 .integrated-heading,
 .integrated-toolbar-actions,
 .editor-actions { display: flex; align-items: center; min-width: 0; }
-.integrated-heading { gap: 10px; }
-.integrated-heading-icon {
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  flex-shrink: 0;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-md, 8px);
-  background: var(--surface-selected);
-  color: var(--color-accent-strong);
-}
 .integrated-heading div { display: flex; flex-direction: column; min-width: 0; }
 .integrated-heading strong { font-size: var(--text-size-body, 13px); font-weight: 650; }
 .integrated-heading div > span { overflow: hidden; color: var(--color-text-muted); font: 10px Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
@@ -131,7 +119,7 @@
 }
 .workspace-tool-button:hover,
 .workspace-tool-button.active { background: var(--surface-selected); border-color: var(--color-border-strong); color: var(--color-accent-strong); }
-.workspace-close-button { border-color: var(--workspace-border); background: var(--color-bg-panel); }
+/* Fechar segue o mesmo tratamento flat dos demais botões (sem caixa própria). */
 .workspace-close-button:hover { background: var(--surface-hover); color: var(--text-primary); }
 /* Seletor segmentado de visão (Canvas · Código · Web): trilho em superfície
    muted e item ativo com fundo raised + contorno border-strong. Substitui os
@@ -223,6 +211,7 @@
 }
 .workspace-editor-panel { position: relative; display: flex; flex-direction: column; background: var(--color-bg-panel); }
 .workspace-terminal-panel {
+  position: relative;
   display: flex;
   flex-direction: column;
   border-top: 1px solid var(--workspace-border);
@@ -230,6 +219,8 @@
   background: var(--color-bg-inset, var(--color-bg-page));
   color: var(--text-primary);
 }
+/* Card do canvas (embedded): sem borda própria — o card já é o container. */
+.workspace-terminal-panel[data-terminal-variant='embedded'] { border-top: 0; }
 .workspace-browser-panel {
   display: flex;
   flex-direction: column;
@@ -249,7 +240,7 @@
   min-width: 0;
   height: 32px;
   flex-shrink: 0;
-  padding: 0 10px;
+  padding: 0 12px;
   border-bottom: 1px solid var(--workspace-border);
 }
 .workspace-panel-heading > div { display: flex; align-items: center; gap: 7px; min-width: 0; }
@@ -324,7 +315,9 @@
 .editor-tab-close { width: 22px; height: 22px; }
 .editor-actions { gap: 4px; }
 .editor-save-button { color: var(--color-accent-strong); }
-.editor-dirty { color: var(--color-warning) !important; font-size: 10px !important; }
+/* "Não salvo" virou ponto âmbar com tooltip (menos ruído na linha de 32px). */
+.editor-dirty { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; flex-shrink: 0; }
+.editor-dirty i { width: 6px; height: 6px; border-radius: 50%; background: var(--color-warning); }
 .workspace-editor-shell { position: relative; flex: 1; min-height: 0; overflow: hidden; background: var(--color-bg-panel); }
 .workspace-editor-highlight,
 .workspace-editor-input {
@@ -422,17 +415,73 @@
   overflow-wrap: anywhere;
 }
 .terminal-heading { border-bottom-color: var(--color-border-subtle); }
-.terminal-actions { display: flex; align-items: center; gap: 4px; }
-.terminal-codex-button { min-height: 28px; padding-block: 3px; color: var(--color-accent-strong); }
+.terminal-actions { display: flex; align-items: center; gap: 3px; }
+/* Clean pass: ações do terminal viram ícones 26px revelados no hover do
+   cabeçalho; com o foco no cluster (teclado) ficam sempre visíveis — 120ms,
+   pointer-events none em repouso. */
+.terminal-actions > button {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+.terminal-heading:hover .terminal-actions > button,
+.terminal-embedded-overlay:hover .terminal-actions > button,
+.terminal-actions:focus-within > button { opacity: 1; pointer-events: auto; }
+.terminal-actions .workspace-icon-button { width: 26px; height: 26px; }
+.terminal-codex-button { color: var(--color-accent-strong); }
 .terminal-codex-button:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--color-border-strong); color: var(--text-primary); }
-.workspace-terminal-xterm { flex: 1; min-height: 0; padding: 8px 10px 10px; overflow: hidden; }
-.workspace-terminal-xterm .xterm { width: 100%; height: 100%; border: 1px solid color-mix(in srgb, var(--color-border-strong) 35%, transparent); border-radius: var(--radius-sm, 5px); }
+.terminal-actions .terminal-codex-button { height: 26px; min-height: 26px; padding-inline: 7px; }
+/* Card do canvas (embedded): overlay fino no topo do viewport — ponto de
+   status sempre visível, ações em ícones 22px reveladas no hover/foco. */
+.terminal-embedded-overlay {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px;
+  border-radius: var(--radius-sm, 5px);
+  transition: background 120ms ease;
+}
+.terminal-embedded-overlay:hover,
+.terminal-embedded-overlay:focus-within { background: color-mix(in srgb, var(--color-bg-panel) 88%, transparent); }
+.terminal-embedded-overlay .workspace-icon-button,
+.terminal-embedded-overlay .terminal-codex-button {
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+  min-height: 22px;
+  padding: 0;
+}
+/* Viewport do terminal: o fio de 2px no topo INTERNO usa o accent do tema
+   (--term-accent vem da raiz do painel, setada no WorkspaceTerminal.tsx) —
+   vale para docked e embedded; sem tema, fica transparente. */
+.workspace-terminal-xterm { position: relative; flex: 1; min-height: 0; padding: 8px 10px 10px; overflow: hidden; }
+.workspace-terminal-xterm::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--term-accent, transparent);
+  opacity: .85;
+  pointer-events: none;
+  z-index: 4;
+}
+.workspace-terminal-xterm .xterm { width: 100%; height: 100%; border-radius: var(--radius-sm, 5px); }
 .workspace-terminal-xterm .xterm-screen { width: 100%; }
 .workspace-terminal-xterm .xterm-viewport { border-radius: var(--radius-sm, 5px); }
 .terminal-heading > div { gap: 8px; }
-.terminal-status { display: inline-flex; align-items: center; gap: 5px; }
+.terminal-status { display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; cursor: default; }
 .terminal-status i { width: 6px; height: 6px; border-radius: 50%; background: var(--color-text-muted); }
-.terminal-status.ready i { background: var(--color-success); }
+/* Ponto de status na cor da família do tema (--term-accent da raiz do painel,
+   docked e embedded); ready/starting sem tema caem nos tokens neutros de
+   sempre. error/missing permanecem vermelhos: estado é semântico. */
+.terminal-status.ready i { background: var(--term-accent, var(--color-success)); }
+.terminal-status.starting i { background: var(--term-accent, var(--color-text-muted)); }
 .terminal-status.error i { background: var(--color-danger); }
 .terminal-status.missing { color: var(--color-danger); }
 .terminal-status.missing i { background: var(--color-danger); }
@@ -549,4 +598,6 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .browser-loading-dot.loading { animation: none; }
+  .terminal-actions > button,
+  .terminal-embedded-overlay { transition: none; }
 }

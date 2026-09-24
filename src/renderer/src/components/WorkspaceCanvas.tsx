@@ -27,6 +27,7 @@ import {
   X,
 } from "lucide-react";
 import type { AgentProvider, AgentProviderId, CodexAccountId, Project } from "../types";
+import type { AiMemorySquadSnapshotView } from "../../../shared/ai-memory-ipc-contract";
 import type { AgentResult } from "../../../shared/agent-result";
 import type {
   ContinuityEvent,
@@ -75,6 +76,7 @@ import { CanvasNodeInspector } from "./CanvasNodeInspector";
 import {
   agentNodeBlockedLabel,
   agentNodeSetupMessage,
+  injectAgentTerminalLaunch,
   isAgentNodeConfigured,
   isCoordinatorRole,
   requiresCodexAccount,
@@ -152,12 +154,6 @@ interface CanvasState {
   squads: CanvasSquad[];
   viewport: { x: number; y: number; zoom: number };
 }
-interface ConnectionDraft {
-  from: string;
-  x: number;
-  y: number;
-  pointerId: number;
-}
 interface CanvasGesture {
   type: "drag" | "resize" | "pan";
   sx: number;
@@ -197,7 +193,7 @@ interface OrchestrationResult {
   role: string;
   content: string;
 }
-interface OrchestrationRun {
+export interface OrchestrationRun {
   id: string;
   projectId: string;
   coordinatorId: string;
@@ -376,11 +372,13 @@ function sanitizeNode(
   fallback: CanvasNode,
   defaultProvider: AgentProviderId | null = null,
 ): CanvasNode {
+  // Contrato do resize livre: mínimo legível 200×140 e teto = limite do mundo
+  // (o clamp de x/y abaixo garante que o nó continue dentro do mundo).
   const width = Number.isFinite(value.width)
-    ? clamp(value.width as number, 220, 1100)
+    ? clamp(value.width as number, 200, WORLD_WIDTH)
     : fallback.width;
   const height = Number.isFinite(value.height)
-    ? clamp(value.height as number, 150, 850)
+    ? clamp(value.height as number, 140, WORLD_HEIGHT)
     : fallback.height;
   const kind =
     value.kind === "workbench" ||
@@ -393,10 +391,13 @@ function sanitizeNode(
   // Escolha explícita do nó sempre vence; o executor padrão só preenche nó de
   // agente sem provider (nós antigos), nunca sobrescreve um provider válido.
   const provider = resolveAgentProvider(value.provider, fallback.provider, kind, defaultProvider);
-  // Config de Smart Terminal: só existe em nó terminal e sempre sai saneada
+  // Config de Smart Terminal: existe em nó terminal E em nó agente (o agente
+  // expõe os mesmos campos comando/argumentos/diretório) e sempre sai saneada
   // (lixo de versões antigas vira undefined).
   const terminal =
-    kind === "terminal" ? sanitizeTerminalNodeConfig(value.terminal) : undefined;
+    kind === "terminal" || kind === "agent"
+      ? sanitizeTerminalNodeConfig(value.terminal)
+      : undefined;
   return {
     id: typeof value.id === "string" ? value.id : fallback.id,
     kind,
@@ -827,6 +828,101 @@ export function memberContextNotes(
 }
 
 /**
+ * Constrói o snapshot durável consolidado de um squad para publicação no ai-memory.
+ * Publica apenas campos reais disponíveis; tarefas vêm estritamente da orquestração ativa.
+ */
+export function buildSquadSnapshot(
+  squad: CanvasSquad,
+  nodes: CanvasNode[],
+  agentProgress: Record<string, AgentProgress | undefined> = {},
+  orchestration?: OrchestrationRun | null,
+): AiMemorySquadSnapshotView {
+  const nodeMap = new Map(nodes.map((n) => [n.id, n]));
+  const members = squad.memberNodeIds
+    .map((id) => nodeMap.get(id))
+    .filter((n): n is CanvasNode => n !== undefined && n.kind === "agent")
+    .map((member) => {
+      const prog = agentProgress[member.id];
+      let status: "done" | "in-progress" | "pending" | "blocked" = "pending";
+      if (prog?.state === "running") status = "in-progress";
+      else if (prog?.state === "completed") status = "done";
+      else if (prog?.state === "blocked") status = "blocked";
+
+      return {
+        id: member.id,
+        title: member.title,
+        role: member.role || "Implementação",
+        status,
+        terminalId: member.id,
+        provider: member.provider,
+      };
+    });
+
+  let tasks:
+    | Array<{
+        id: string;
+        title: string;
+        status: "done" | "in-progress" | "pending" | "blocked";
+        memberId?: string;
+        description?: string;
+      }>
+    | undefined;
+
+  if (orchestration && (orchestration.results.length > 0 || orchestration.specialists.length > 0)) {
+    const taskList: Array<{
+      id: string;
+      title: string;
+      status: "done" | "in-progress" | "pending" | "blocked";
+      memberId?: string;
+      description?: string;
+    }> = [];
+
+    for (let i = 0; i < orchestration.results.length; i++) {
+      const r = orchestration.results[i];
+      taskList.push({
+        id: `task-res-${r.agentId}-${i}`,
+        title: `${r.role}: ${r.title}`,
+        status: "done",
+        memberId: r.agentId,
+        description: r.content.slice(0, 300),
+      });
+    }
+
+    for (const specialist of orchestration.specialists) {
+      const alreadyHasResult = orchestration.results.some((r) => r.agentId === specialist.id);
+      if (!alreadyHasResult) {
+        const isCurrent = specialist.id === orchestration.expectedAgentId;
+        const isBlocked = orchestration.phase === "blocked" && isCurrent;
+        taskList.push({
+          id: `task-spec-${specialist.id}`,
+          title: `${specialist.role}: ${specialist.title}`,
+          status: isBlocked ? "blocked" : isCurrent ? "in-progress" : "pending",
+          memberId: specialist.id,
+        });
+      }
+    }
+
+    if (taskList.length > 0) {
+      tasks = taskList;
+    }
+  }
+
+  const snapshot: AiMemorySquadSnapshotView = {
+    id: squad.id,
+    objective: (squad.objective ?? "").trim() || squad.title,
+    plan: orchestration?.plan ? orchestration.plan.slice(0, 2000) : undefined,
+    members,
+    ...(tasks ? { tasks } : {}),
+    ...(orchestration?.phase === "blocked"
+      ? { blockers: [`Orquestração bloqueada na etapa: ${orchestration.phase}`] }
+      : {}),
+    updatedAt: new Date().toISOString(),
+  };
+
+  return snapshot;
+}
+
+/**
  * Papel efetivo na orquestração. Papel custom NUNCA é reescrito para
  * "Implementação": ele mantém o texto do usuário e fica neutro na ordenação
  * (prioridade 999, tie-break por título), sem virar Coordenador.
@@ -1084,9 +1180,12 @@ export const WorkspaceCanvas: React.FC<{
 }) => {
   const [canvas, setCanvas] = useState<CanvasState>(() => read(project.id, defaultExecutor));
   const [selected, setSelected] = useState<string[]>([]);
-  const [connectFrom, setConnectFrom] = useState<string | null>(null);
+  // Modo conectar EXPLÍCITO (sem portas/bolinhas): o botão "Conectar" entra no
+  // modo; o primeiro clique num card define a ORIGEM, o clique noutro card
+  // define o DESTINO e conclui. Esc ou clique no fundo cancela.
+  const [connectMode, setConnectMode] = useState(false);
+  const [connectSource, setConnectSource] = useState<string | null>(null);
   const [gesture, setGesture] = useState<CanvasGesture | null>(null);
-  const [connectionDraft, setConnectionDraft] = useState<ConnectionDraft | null>(null);
   const [creationMode, setCreationMode] = useState<"agent" | "squad" | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   // Ajuda de navegação ("?"): substitui o hint permanente do rodapé; o mesmo
@@ -1122,7 +1221,6 @@ export const WorkspaceCanvas: React.FC<{
   const viewportSizeRef = useRef({ width: 900, height: 650 });
   const persistTimerRef = useRef<number | null>(null);
   const gestureCaptureRef = useRef<HTMLElement | null>(null);
-  const connectionDraftRef = useRef<ConnectionDraft | null>(null);
   const minimapPointerRef = useRef<number | null>(null);
   const consumedPendingRef = useRef<Set<number>>(new Set());
   const spaceHeldRef = useRef(false);
@@ -1186,9 +1284,8 @@ export const WorkspaceCanvas: React.FC<{
     canvasRef.current = next;
     setCanvas(next);
     setSelected([]);
-    setConnectFrom(null);
-    connectionDraftRef.current = null;
-    setConnectionDraft(null);
+    setConnectMode(false);
+    setConnectSource(null);
     setGesture(null);
     orchestrationRef.current = null;
     setOrchestration(null);
@@ -1240,14 +1337,15 @@ export const WorkspaceCanvas: React.FC<{
       canvas.nodes.map((node) => ({ id: node.id, kind: node.kind })),
     );
   }, [canvas.connections, canvas.nodes, onConnectionsChange]);
+  // Sai do modo conectar limpando também a origem escolhida.
+  const exitConnectMode = useCallback(() => {
+    setConnectMode(false);
+    setConnectSource(null);
+  }, []);
   const connectNodes = useCallback(
     (from: string | null, to: string) => {
       if (!from || from === to) {
-        if (from === to) {
-          setConnectFrom(null);
-          connectionDraftRef.current = null;
-          setConnectionDraft(null);
-        }
+        if (from === to) setConnectSource(null);
         return;
       }
       const nodes = canvasRef.current.nodes;
@@ -1259,7 +1357,7 @@ export const WorkspaceCanvas: React.FC<{
       );
       // Recusa determinística de ciclo apenas em arestas de ordenação
       // agente-agente (flow legado/delegação/dependência): o main rejeitaria
-      // o setPipe e o cabo ficaria desenhado sem piping. Cancela o gesto.
+      // o setPipe e o cabo ficaria desenhado sem piping. Cancela o modo.
       if (
         isOrderingEdgeKind(kind) &&
         createsAgentCycle(
@@ -1271,9 +1369,7 @@ export const WorkspaceCanvas: React.FC<{
           to,
         )
       ) {
-        setConnectFrom(null);
-        connectionDraftRef.current = null;
-        setConnectionDraft(null);
+        exitConnectMode();
         return;
       }
       update(
@@ -1299,9 +1395,8 @@ export const WorkspaceCanvas: React.FC<{
               },
         true,
       );
-      connectionDraftRef.current = null;
-      setConnectionDraft(null);
-      setConnectFrom(null);
+      // Conexão concluída (ou já existente): sai do modo conectar.
+      exitConnectMode();
       // Concluir numa âncora de squad seleciona o squad (não um id virtual).
       const anchoredSquadId = parseSquadAnchorId(to);
       if (anchoredSquadId) {
@@ -1312,12 +1407,22 @@ export const WorkspaceCanvas: React.FC<{
         setSelected([to]);
       }
     },
-    [update],
+    [exitConnectMode, update],
   );
   const selectNode = useCallback(
     (id: string, additive = false) => {
-      if (connectFrom) {
-        connectNodes(connectFrom, id);
+      // Modo conectar: o clique NO CARD define origem/destino em vez de
+      // selecionar. Mesmo card da origem = cancela a origem (segue no modo).
+      if (connectMode) {
+        if (!connectSource) {
+          setConnectSource(id);
+          return;
+        }
+        if (connectSource === id) {
+          setConnectSource(null);
+          return;
+        }
+        connectNodes(connectSource, id);
         return;
       }
       setSelectedSquadId(null);
@@ -1329,7 +1434,7 @@ export const WorkspaceCanvas: React.FC<{
           : [id],
       );
     },
-    [connectFrom, connectNodes],
+    [connectMode, connectNodes, connectSource],
   );
   // Selecionar o squad (header da região) mostra o Inspector do squad com
   // node=null; membros continuam arrastáveis porque o header fica na faixa de
@@ -1533,7 +1638,8 @@ export const WorkspaceCanvas: React.FC<{
       true,
     );
     setSelected([]);
-    setConnectFrom((current) => current && removable.has(current) ? null : current);
+    // Origem removida volta o modo para "clique na origem" (sem sair do modo).
+    setConnectSource((current) => (current && removable.has(current) ? null : current));
   }, [update]);
   const deleteSelected = useCallback(() => {
     deleteNodes(selected);
@@ -1751,18 +1857,9 @@ export const WorkspaceCanvas: React.FC<{
     const fresh = defaults();
     update(() => fresh, true);
     setSelected([]);
-    setConnectFrom(null);
-    connectionDraftRef.current = null;
-    setConnectionDraft(null);
+    setConnectMode(false);
+    setConnectSource(null);
   }, [update]);
-  const pointerToWorld = useCallback((clientX: number, clientY: number) => {
-    const host = viewportRef.current?.getBoundingClientRect();
-    const view = canvasRef.current.viewport;
-    return {
-      x: (clientX - (host?.left || 0) - view.x) / view.zoom,
-      y: (clientY - (host?.top || 0) - view.y) / view.zoom,
-    };
-  }, []);
   const zoomAt = useCallback(
     (amount: number, clientX?: number, clientY?: number) =>
       update(
@@ -1823,12 +1920,29 @@ export const WorkspaceCanvas: React.FC<{
   useEffect(() => {
     const host = viewportRef.current;
     if (!host) return;
+    // A roda só move o FUNDO quando o ponteiro está sobre o canvas/chrome do
+    // card. Sobre qualquer região rolável (terminal, nota, config de agente,
+    // squads, o que vier), a roda rola o CONTEÚDO — subindo dos ancestrais
+    // até o host, pega overflow-y/x real com conteúdo excedente.
+    const insideScrollableRegion = (target: EventTarget | null): boolean => {
+      if (!(target instanceof HTMLElement)) return false;
+      for (let el: HTMLElement | null = target; el && el !== host; el = el.parentElement) {
+        const style = window.getComputedStyle(el);
+        const overflowY = style.overflowY;
+        const overflowX = style.overflowX;
+        const scrollableY = (overflowY === "auto" || overflowY === "scroll") && el.scrollHeight > el.clientHeight;
+        const scrollableX = (overflowX === "auto" || overflowX === "scroll") && el.scrollWidth > el.clientWidth;
+        if (scrollableY || scrollableX) return true;
+      }
+      return false;
+    };
     const onWheel = (event: WheelEvent) => {
       const target = event.target;
       if (
         !event.ctrlKey &&
         !event.metaKey &&
-        closestElement(target, ".workspace-canvas-card-content")
+        (closestElement(target, ".workspace-canvas-card-content") ||
+          insideScrollableRegion(target))
       )
         return;
       event.preventDefault();
@@ -1959,6 +2073,9 @@ export const WorkspaceCanvas: React.FC<{
         if (event.button === 1 || spaceHeldRef.current) startPan(event);
         return;
       }
+      // No modo conectar o gesto é só clique (origem/destino via onSelect,
+      // que chega pelo pointerdown do cartão): arrastar fica desabilitado.
+      if (connectModeRef.current) return;
       event.preventDefault();
       event.stopPropagation();
       if (event.ctrlKey || event.metaKey) {
@@ -2057,6 +2174,9 @@ export const WorkspaceCanvas: React.FC<{
       }
       if (gesture.type === "resize" && gesture.id && gesture.nodes?.[0]) {
         const initial = gesture.nodes[0];
+        // Resize LIVRE: sem snap em width/height (a posição mantém o snap no
+        // drag). Mínimos legíveis 200×140; máximos = limite do mundo menos a
+        // posição do nó (sem tetos artificiais de 1100/850).
         update((current) => ({
           ...current,
           nodes: current.nodes.map((node) =>
@@ -2064,19 +2184,15 @@ export const WorkspaceCanvas: React.FC<{
               ? node
               : {
                   ...node,
-                  width: snap(
-                    clamp(
-                      initial.width + dx / (gesture.viewport?.zoom || current.viewport.zoom),
-                      220,
-                      Math.min(1100, WORLD_WIDTH - initial.x),
-                    ),
+                  width: clamp(
+                    initial.width + dx / (gesture.viewport?.zoom || current.viewport.zoom),
+                    200,
+                    Math.max(200, WORLD_WIDTH - initial.x),
                   ),
-                  height: snap(
-                    clamp(
-                      initial.height + dy / (gesture.viewport?.zoom || current.viewport.zoom),
-                      150,
-                      Math.min(850, WORLD_HEIGHT - initial.y),
-                    ),
+                  height: clamp(
+                    initial.height + dy / (gesture.viewport?.zoom || current.viewport.zoom),
+                    140,
+                    Math.max(140, WORLD_HEIGHT - initial.y),
                   ),
                 },
           ),
@@ -2123,58 +2239,6 @@ export const WorkspaceCanvas: React.FC<{
     };
   }, [flush, gesture, update]);
   useEffect(() => {
-    // Rascunho de conexão também coalesce por rAF: o ref guarda o ponto mais
-    // recente (o finish lê sincronamente); o setState só acontece por frame.
-    let frame: number | null = null;
-    const move = (event: PointerEvent) => {
-      const draft = connectionDraftRef.current;
-      if (!draft || event.pointerId !== draft.pointerId) return;
-      const point = pointerToWorld(event.clientX, event.clientY);
-      connectionDraftRef.current = { ...draft, x: point.x, y: point.y };
-      if (frame !== null) return;
-      frame = window.requestAnimationFrame(() => {
-        frame = null;
-        const latest = connectionDraftRef.current;
-        if (latest) setConnectionDraft(latest);
-      });
-    };
-    const finish = (event: PointerEvent) => {
-      const draft = connectionDraftRef.current;
-      if (!draft || event.pointerId !== draft.pointerId) return;
-      if (frame !== null) {
-        window.cancelAnimationFrame(frame);
-        frame = null;
-      }
-      const target = document
-        .elementFromPoint?.(event.clientX, event.clientY)
-        ?.closest<HTMLElement>('[data-canvas-port="target"]');
-      const to = target?.dataset.canvasNodeId || null;
-      connectionDraftRef.current = null;
-      setConnectionDraft(null);
-      if (to) connectNodes(draft.from, to);
-    };
-    const cancel = (event: PointerEvent) => {
-      const draft = connectionDraftRef.current;
-      if (!draft || event.pointerId !== draft.pointerId) return;
-      if (frame !== null) {
-        window.cancelAnimationFrame(frame);
-        frame = null;
-      }
-      connectionDraftRef.current = null;
-      setConnectionDraft(null);
-      setConnectFrom(null);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", finish);
-    window.addEventListener("pointercancel", cancel);
-    return () => {
-      if (frame !== null) window.cancelAnimationFrame(frame);
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", finish);
-      window.removeEventListener("pointercancel", cancel);
-    };
-  }, [connectNodes, pointerToWorld]);
-  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target;
       const isEditable = Boolean(
@@ -2212,9 +2276,9 @@ export const WorkspaceCanvas: React.FC<{
       if (event.key === "Escape") {
         setSelected([]);
         setSelectedSquadId(null);
-        setConnectFrom(null);
-        connectionDraftRef.current = null;
-        setConnectionDraft(null);
+        // Esc cancela o modo conectar (e a origem junto, quando houver).
+        setConnectMode(false);
+        setConnectSource(null);
         setGesture(null);
         setQuickDeployOpen(false);
       }
@@ -2224,8 +2288,6 @@ export const WorkspaceCanvas: React.FC<{
     };
     const onWindowBlur = () => {
       spaceHeldRef.current = false;
-      connectionDraftRef.current = null;
-      setConnectionDraft(null);
       setGesture(null);
     };
     window.addEventListener("keydown", onKeyDown);
@@ -2327,6 +2389,38 @@ export const WorkspaceCanvas: React.FC<{
     },
     [update],
   );
+  // Patch do terminal de um nó AGENTE: mesmos campos e sanitize do Smart
+  // Terminal. Sem config prévia, o primeiro patch cria a config base —
+  // o comportamento de lançamento continua o do provider até haver comando.
+  const updateAgentTerminalNode = useCallback(
+    (
+      id: string,
+      patch: (current: TerminalNodeRuntimeConfig | undefined) => Partial<TerminalNodeRuntimeConfig>,
+    ) => {
+      update(
+        (current) => ({
+          ...current,
+          nodes: current.nodes.map((item) => {
+            if (item.id !== id || item.kind !== "agent") return item;
+            const next = sanitizeTerminalNodeConfig({
+              // Base sintetizada para o agente: preset "command" e auto-start
+              // (o card do agente nasce rodando o CLI/comando configurado).
+              presetId: "custom",
+              cwdMode: "workspace",
+              autoStart: true,
+              restartBehavior: "restart",
+              monitorActivity: false,
+              ...item.terminal,
+              ...patch(item.terminal),
+            });
+            return next ? { ...item, terminal: next } : item;
+          }),
+        }),
+        true,
+      );
+    },
+    [update],
+  );
   const updateNode = useCallback(
     (id: string, patch: Partial<CanvasNode>) => {
       update(
@@ -2395,7 +2489,10 @@ export const WorkspaceCanvas: React.FC<{
           return next;
         }
         const node = canvasRef.current.nodes.find((item) => item.id === nodeId);
-        const terminal = node && node.kind === "terminal" ? node.terminal : undefined;
+        const terminal =
+          node && (node.kind === "terminal" || node.kind === "agent")
+            ? node.terminal
+            : undefined;
         const seeded: TerminalFieldDraft = {
           nodeId,
           command: terminal?.command ?? "",
@@ -2410,12 +2507,14 @@ export const WorkspaceCanvas: React.FC<{
   );
   // Commit do rascunho do painel: valida o comando (aviso pt-BR em vez de
   // descartar), envia comando/argumentos e — quando o modo é "Diretório
-  // próprio" — o cwd, tudo pelo sanitize compartilhado.
+  // próprio" — o cwd, tudo pelo sanitize compartilhado. Nós de agente sem
+  // config ainda ganham a config no primeiro commit (bootstrap).
   const commitTerminalFields = useCallback(
     (node: CanvasNode) => {
-      const config = node.terminal;
       const draft = terminalDraft && terminalDraft.nodeId === node.id ? terminalDraft : null;
-      if (!config || !draft) return;
+      if (!draft) return;
+      const isAgentNode = node.kind === "agent";
+      if (!isAgentNode && !node.terminal) return;
       const command = draft.command.trim();
       if (isTerminalCommandTextRejected(command)) {
         setTerminalCommandHint(TERMINAL_COMMAND_INVALID_HINT);
@@ -2423,14 +2522,18 @@ export const WorkspaceCanvas: React.FC<{
       }
       const cwd = draft.cwd.trim();
       setTerminalCommandHint("");
-      updateTerminalNode(node.id, () => ({
+      const patch = () => ({
         command: command || undefined,
         args: parseArgsInput(draft.args),
-        ...(config.cwdMode === "custom" ? { cwd: cwd || undefined } : {}),
-      }));
+        ...((node.terminal?.cwdMode ?? "workspace") === "custom"
+          ? { cwd: cwd || undefined }
+          : {}),
+      });
+      if (isAgentNode) updateAgentTerminalNode(node.id, patch);
+      else updateTerminalNode(node.id, patch);
       setTerminalDraft(null);
     },
-    [terminalDraft, updateTerminalNode],
+    [terminalDraft, updateAgentTerminalNode, updateTerminalNode],
   );
   const saveTerminalPreset = useCallback(
     async (node: CanvasNode) => {
@@ -2739,6 +2842,136 @@ export const WorkspaceCanvas: React.FC<{
     },
     [agentProviders, onSendAgentTask, update],
   );
+
+  const [isTakingOver, setIsTakingOver] = useState(false);
+
+  // Takeover do agente sobrevivente: solicita plano consolidado via aiMemoryTakeover
+  // (briefing + squads/<id>/state + handoffs + evidências Git atuais) e encaminha
+  // ao sobrevivente pelo callback/bridge existente onSendAgentTask (sem novo PTY).
+  const handleSurvivorTakeover = useCallback(
+    async (squadId: string, memberId: string) => {
+      const squad = squadById.get(squadId);
+      if (!squad) {
+        onNotify?.("Squad não encontrado para execução do takeover.", "error");
+        return;
+      }
+      const survivorNode = nodeMap.get(memberId);
+      if (!survivorNode || survivorNode.kind !== "agent") {
+        onNotify?.("Agente sobrevivente não encontrado no canvas.", "error");
+        return;
+      }
+
+      if (!window.devorbit?.aiMemoryTakeover) {
+        onNotify?.(
+          "Serviço ai-memory indisponível ou IPC não registrado.",
+          "error",
+        );
+        return;
+      }
+
+      setIsTakingOver(true);
+      try {
+        const response = await window.devorbit.aiMemoryTakeover({
+          projectPath: project.path,
+          squadId: squad.id,
+          survivingAgent: survivorNode.title || survivorNode.role || survivorNode.id,
+        });
+
+        if (!response || !response.ok || !response.data) {
+          const errorMsg =
+            response?.message ||
+            (response?.reason === "disabled"
+              ? "ai-memory desabilitado para este projeto."
+              : response?.reason === "unavailable"
+              ? "Serviço ai-memory degradado ou indisponível."
+              : "Falha ao sincronizar estado da squad via ai-memory.");
+          onNotify?.(errorMsg, "error");
+          return;
+        }
+
+        const plan = response.data;
+        if (!plan.instruction) {
+          onNotify?.("Nenhum plano de takeover retornado pela memória.", "error");
+          return;
+        }
+
+        const dispatched = dispatchAgentTask(
+          survivorNode,
+          plan.instruction,
+          {
+            state: "running",
+            label: `Takeover (${plan.pendingTasks.length} pendências)`,
+          },
+        );
+
+        if (dispatched) {
+          onNotify?.(
+            `Takeover enviado para ${survivorNode.title}: ${plan.pendingTasks.length} tarefa(s) pendente(s).`,
+            "success",
+          );
+        } else if (!onSendAgentTask) {
+          onNotify?.("Callback onSendAgentTask não configurado no Workspace.", "error");
+        } else {
+          onNotify?.(
+            `Falha ao despachar tarefa de takeover para ${survivorNode.title}. Verifique a configuração do agente.`,
+            "error",
+          );
+        }
+      } catch (error) {
+        console.warn("[WorkspaceCanvas] Erro no takeover do squad:", error);
+        onNotify?.(
+          `Erro ao executar takeover: ${error instanceof Error ? error.message : String(error)}`,
+          "error",
+        );
+      } finally {
+        setIsTakingOver(false);
+      }
+    },
+    [dispatchAgentTask, nodeMap, onNotify, onSendAgentTask, project.path, squadById],
+  );
+
+  // Publicação de snapshot consolidado do squad:
+  // Disparada SOMENTE em mudanças relevantes da squad (debounce 1200ms, nunca por output/token).
+  const lastPublishedSnapshotsRef = useRef<Map<string, string>>(new Map());
+
+  useEffect(() => {
+    if (
+      !window.devorbit?.aiMemoryPublishSquadState ||
+      !project?.path ||
+      canvas.squads.length === 0
+    ) {
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      for (const squad of canvas.squads) {
+        try {
+          const snapshot = buildSquadSnapshot(
+            squad,
+            canvas.nodes,
+            agentProgress,
+            orchestration?.projectId === project.id ? orchestration : null,
+          );
+          const { updatedAt: _, ...contentOnly } = snapshot;
+          const key = JSON.stringify(contentOnly);
+          if (lastPublishedSnapshotsRef.current.get(squad.id) === key) {
+            continue;
+          }
+          const res = await window.devorbit.aiMemoryPublishSquadState({
+            projectPath: project.path,
+            snapshot,
+          });
+          if (res?.ok) {
+            lastPublishedSnapshotsRef.current.set(squad.id, key);
+          }
+        } catch (error) {
+          console.warn("[WorkspaceCanvas] Falha ao publicar snapshot da squad:", error);
+        }
+      }
+    }, 1200);
+
+    return () => clearTimeout(timer);
+  }, [agentProgress, canvas.nodes, canvas.squads, orchestration, project.path]);
   const markOrchestrationBlocked = useCallback(
     (run: OrchestrationRun, agentId: string) => {
       const next = { ...run, phase: "blocked" as const, expectedAgentId: agentId };
@@ -3228,22 +3461,11 @@ export const WorkspaceCanvas: React.FC<{
       update,
     ],
   );
-  const startConnection = useCallback(
-    (event: React.PointerEvent<HTMLButtonElement>, node: CanvasNode) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const point = pointerToWorld(event.clientX, event.clientY);
-      const draft = { from: node.id, x: point.x, y: point.y, pointerId: event.pointerId };
-      connectionDraftRef.current = draft;
-      setConnectionDraft(draft);
-      setConnectFrom(node.id);
-    },
-    [pointerToWorld],
-  );
+  // Tecla "C" num card focado: entra no modo conectar já com o card como
+  // origem (cobre o fluxo por teclado junto de Enter nos cards).
   const chooseConnectionSource = useCallback((id: string) => {
-    connectionDraftRef.current = null;
-    setConnectionDraft(null);
-    setConnectFrom(id);
+    setConnectMode(true);
+    setConnectSource(id);
   }, []);
   const moveFromMinimap = useCallback((event: React.PointerEvent<SVGSVGElement>) => {
     const map = event.currentTarget.getBoundingClientRect();
@@ -3503,13 +3725,18 @@ export const WorkspaceCanvas: React.FC<{
         id: "connect",
         label: "Conectar",
         icon: Link2,
-        disabled: !selected.length || Boolean(connectFrom),
-        disabledReason: connectFrom
-          ? "Escolha o destino do nó atual"
+        disabled: !selected.length || connectMode,
+        disabledReason: connectMode
+          ? "O modo conectar já está ativo"
           : "Selecione um nó do canvas para conectar",
         onSelect: () => {
+          // Mesmo modo explícito do botão da toolbar, com a origem já
+          // preenchida pela seleção atual.
           const source = selected[selected.length - 1];
-          if (source) setConnectFrom(source);
+          if (source) {
+            setConnectMode(true);
+            setConnectSource(source);
+          }
         },
       },
       {
@@ -3540,7 +3767,7 @@ export const WorkspaceCanvas: React.FC<{
     [
       addNote,
       canvas.connections,
-      connectFrom,
+      connectMode,
       duplicateSelected,
       nodeMap,
       openAgentCreation,
@@ -3556,14 +3783,24 @@ export const WorkspaceCanvas: React.FC<{
   // Closures inline no loop de nós recriavam a identidade das props a cada
   // render e derrotavam o React.memo do cartão; aqui cada handler nasce uma
   // única vez com deps estáveis.
-  const connectFromRef = useRef(connectFrom);
+  const connectModeRef = useRef(connectMode);
   useEffect(() => {
-    connectFromRef.current = connectFrom;
-  }, [connectFrom]);
-  const handleConnectFromCurrent = useCallback(
-    (targetId: string) => connectNodes(connectFromRef.current, targetId),
-    [connectNodes],
-  );
+    connectModeRef.current = connectMode;
+  }, [connectMode]);
+  const connectSourceRef = useRef(connectSource);
+  useEffect(() => {
+    connectSourceRef.current = connectSource;
+  }, [connectSource]);
+  // Botão "Conectar" da toolbar: liga/desliga o modo explícito. Sem seleção
+  // prévia exigida pelo fluxo — a origem é definida pelo clique no card.
+  const toggleConnectMode = useCallback(() => {
+    if (connectModeRef.current) {
+      exitConnectMode();
+      return;
+    }
+    setConnectMode(true);
+    setConnectSource(null);
+  }, [exitConnectMode]);
   const handleDeleteNode = useCallback(
     (id: string) => deleteNodes([id]),
     [deleteNodes],
@@ -3611,16 +3848,19 @@ export const WorkspaceCanvas: React.FC<{
   );
   // Wrapper estável do renderAgent: reportAgentResult/reportAgentTaskFailure
   // são useCallback com deps estáveis (update, projeto, providers), então o
-  // wrapper só muda quando o renderAgent recebido muda.
+  // wrapper só muda quando o renderAgent recebido muda. A injeção dá ao
+  // terminal do agente o comportamento dos Smart Terminals: CLI do provider
+  // rodando ao abrir (autoStart) ou comando próprio do nó (runtimeConfig).
   const renderAgentForCard = useCallback(
-    (node: CanvasNode) =>
-      renderAgent
-        ? renderAgent(
-            node,
-            (result, taskId) => reportAgentResult(node.id, result, taskId),
-            (taskId, message) => reportAgentTaskFailure(node.id, taskId, message),
-          )
-        : null,
+    (node: CanvasNode) => {
+      if (!renderAgent) return null;
+      const content = renderAgent(
+        node,
+        (result, taskId) => reportAgentResult(node.id, result, taskId),
+        (taskId, message) => reportAgentTaskFailure(node.id, taskId, message),
+      );
+      return injectAgentTerminalLaunch(content, node);
+    },
     [renderAgent, reportAgentResult, reportAgentTaskFailure],
   );
 
@@ -3631,7 +3871,7 @@ export const WorkspaceCanvas: React.FC<{
         "workspace-canvas v2" +
         (gesture?.type === "pan" ? " is-panning" : "") +
         (gesture?.type === "drag" ? " is-dragging" : "") +
-        (connectFrom ? " is-connection-pending" : "")
+        (connectMode ? " is-connection-pending" : "")
       }
       data-canvas-project-id={project.id}
       tabIndex={0}
@@ -3656,9 +3896,8 @@ export const WorkspaceCanvas: React.FC<{
         if (event.button === 0) {
           setSelected([]);
           setSelectedSquadId(null);
-          setConnectFrom(null);
-          connectionDraftRef.current = null;
-          setConnectionDraft(null);
+          // Clique no fundo sai do modo conectar (além de Esc/Cancelar).
+          exitConnectMode();
         }
         startPan(event);
       }}
@@ -3688,11 +3927,8 @@ export const WorkspaceCanvas: React.FC<{
         isFocusModeActive={canvasFocus.active}
         isInspectorOpen={inspectorOpen}
         onToggleInspector={() => setInspectorOpen((current) => !current)}
-        isConnecting={Boolean(connectFrom)}
-        onStartConnection={() => {
-          const source = selected[selected.length - 1];
-          if (source) setConnectFrom(source);
-        }}
+        isConnecting={connectMode}
+        onStartConnection={toggleConnectMode}
         onRemoveLinks={removeLinks}
       />
       <div
@@ -3706,9 +3942,7 @@ export const WorkspaceCanvas: React.FC<{
           if (event.target !== event.currentTarget) return;
           if (event.button === 0) {
             setSelected([]);
-            setConnectFrom(null);
-            connectionDraftRef.current = null;
-            setConnectionDraft(null);
+            exitConnectMode();
           }
           startPan(event);
         }}
@@ -3789,22 +4023,28 @@ export const WorkspaceCanvas: React.FC<{
                   pointerEvents: "auto",
                 }}
               >
-                {/* Alvo discreto: liga uma Nota existente à âncora squad:<id>
-                    sem bloquear a seleção do header nem o drag dos membros. */}
+                {/* Alvo explícito do modo conectar: com origem definida, liga
+                    a nota à âncora squad:<id> por clique (sem porta/bolinha).
+                    Sem bloquear a seleção do header nem o drag dos membros. */}
                 <button
                   type="button"
-                  className={"canvas-squad-anchor-port" + (connectFrom ? " is-available" : "")}
-                  data-canvas-port="target"
+                  className={"canvas-squad-anchor-port" + (connectMode && connectSource ? " is-available" : "")}
                   data-canvas-node-id={squadAnchorId(region.id)}
                   aria-label={"Conectar nota ao squad " + region.title}
-                  title="Arraste uma conexão até aqui para vincular a nota ao squad"
-                  disabled={!connectFrom}
+                  title={
+                    connectMode && connectSource
+                      ? "Clique para vincular a nota de origem ao squad"
+                      : "Entre no modo conectar e escolha uma nota de origem para vincular ao squad"
+                  }
+                  disabled={!(connectMode && connectSource)}
                   onPointerDown={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
                   }}
-                  onClick={() => connectNodes(connectFrom, squadAnchorId(region.id))}
-                  style={{ fontSize: 10, padding: "1px 6px", cursor: connectFrom ? "crosshair" : "default" }}
+                  onClick={() => {
+                    if (connectSource) connectNodes(connectSource, squadAnchorId(region.id));
+                  }}
+                  style={{ fontSize: 10, padding: "1px 6px", cursor: connectMode && connectSource ? "pointer" : "default" }}
                 >
                   Nota
                 </button>
@@ -3928,16 +4168,6 @@ export const WorkspaceCanvas: React.FC<{
               </g>
             );
           })}
-          {connectionDraft && displayNodeMap.get(connectionDraft.from) && (
-            <path
-              className="workspace-canvas-connection-preview"
-              d={connectionPath(
-                displayNodeMap.get(connectionDraft.from)!,
-                connectionDraft.x,
-                connectionDraft.y,
-              )}
-            />
-          )}
         </svg>
         {canvas.nodes
           .filter((node) => node.kind !== "browser" || browser)
@@ -3973,8 +4203,8 @@ export const WorkspaceCanvas: React.FC<{
             <CanvasNodeCard
               node={node}
               isSelected={selected.includes(node.id)}
-              isConnecting={connectFrom === node.id}
-              isConnectionTargetAvailable={Boolean(connectFrom && connectFrom !== node.id)}
+              isConnectMode={connectMode}
+              isConnectSource={connectSource === node.id}
               isConfigOpen={configNodeId === node.id}
               isCompact={isNodeCompact(node)}
               onToggleCompact={toggleNodeCompact}
@@ -3996,9 +4226,7 @@ export const WorkspaceCanvas: React.FC<{
               onStartPan={startPan}
               onStartNodeDrag={startNodeDrag}
               onStartResize={startResize}
-              onStartConnection={startConnection}
               onChooseConnectionSource={chooseConnectionSource}
-              onConnectNodes={handleConnectFromCurrent}
               onDeleteNode={handleDeleteNode}
               onToggleConfig={handleToggleConfig}
               onOpenInspector={handleOpenInspector}
@@ -4044,7 +4272,7 @@ export const WorkspaceCanvas: React.FC<{
         onPointerMove={continueMinimapNavigation}
         onPointerUp={finishMinimapNavigation}
       />
-      {connectFrom && (
+      {connectMode && (
         <div
           className="workspace-canvas-connection-status"
           role="status"
@@ -4052,44 +4280,14 @@ export const WorkspaceCanvas: React.FC<{
           style={{ pointerEvents: 'auto' }}
         >
           <Link2 size={13} aria-hidden="true" />
-          <span>Conexão iniciada. Arraste até uma porta ou escolha o destino. Esc cancela.</span>
-          <select
-            aria-label="Selecionar nó de destino para conexão"
-            defaultValue=""
-            onChange={(event) => {
-              const targetId = event.target.value;
-              if (targetId) {
-                connectNodes(connectFrom, targetId);
-              }
-            }}
-            style={{
-              pointerEvents: 'auto',
-              fontSize: '11px',
-              padding: '2px 6px',
-              borderRadius: '4px',
-              border: '1px solid var(--ops-border-strong, #555)',
-              background: 'var(--ops-bg-panel, #222)',
-              color: 'var(--text-primary, #fff)',
-              cursor: 'pointer',
-            }}
-          >
-            <option value="" disabled>
-              Destino por teclado...
-            </option>
-            {canvas.nodes
-              .filter((targetNode) => targetNode.id !== connectFrom)
-              .map((targetNode) => (
-                <option key={targetNode.id} value={targetNode.id}>
-                  {targetNode.title} ({targetNode.kind === 'agent' ? targetNode.role : targetNode.kind})
-                </option>
-              ))}
-          </select>
+          <span>
+            {connectSource
+              ? `Origem: ${nodeMap.get(connectSource)?.title ?? connectSource} — clique no destino · Esc cancela`
+              : "Modo conectar: clique na origem, depois no destino · Esc cancela"}
+          </span>
           <button
             type="button"
-            onClick={() => {
-              setConnectFrom(null);
-              setConnectionDraft(null);
-            }}
+            onClick={exitConnectMode}
             style={{
               pointerEvents: 'auto',
               fontSize: '11px',
@@ -4297,7 +4495,10 @@ export const WorkspaceCanvas: React.FC<{
         terminalPresets={terminalPresets}
         quickDeployChips={quickDeployChips}
         onUpdateTerminalNode={updateTerminalNode}
+        onUpdateAgentTerminalNode={updateAgentTerminalNode}
         progress={inspectorNode ? agentProgress[inspectorNode.id] : undefined}
+        onSurvivorTakeover={handleSurvivorTakeover}
+        isTakingOver={isTakingOver}
       />
     </div>
   );

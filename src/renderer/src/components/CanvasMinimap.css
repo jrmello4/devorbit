@@ -1,0 +1,23 @@
+/* CanvasMinimap.css — Clean pass do minimapa do canvas.
+ * Escopo duplo (.workspace-canvas-minimap ...) para vencer WorkspaceCanvas.css
+ * independente da ordem de importação. Chrome mínimo: borda sutil, sem sombra
+ * pesada; nós como blocos uniformes neutros e viewport no acento oliva. */
+
+.workspace-canvas-minimap {
+  border-color: var(--color-border-subtle);
+  box-shadow: 0 2px 8px var(--color-bg-inset);
+}
+
+/* Blocos uniformes: uma cor neutra para qualquer tipo de nó */
+.workspace-canvas-minimap svg .minimap-node {
+  fill: var(--color-border-strong);
+  stroke: none;
+}
+
+/* Viewport em acento oliva, preenchimento quase transparente */
+.workspace-canvas-minimap .minimap-viewport {
+  fill: var(--color-accent);
+  fill-opacity: 0.12;
+  stroke: var(--color-accent);
+  stroke-width: 20px;
+}

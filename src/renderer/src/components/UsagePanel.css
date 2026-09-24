@@ -63,22 +63,9 @@
 }
 
 .usage-source-meta {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  font-size: 11px;
-  line-height: 1.4;
-}
-
-.usage-source-tag {
-  color: var(--color-accent-strong);
-  font-weight: 650;
-  font-size: 11px;
-}
-
-.usage-source-time {
   color: var(--color-text-muted);
-  font-size: 10.5px;
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 /* Buttons */
@@ -253,45 +240,15 @@
   white-space: nowrap;
 }
 
-.usage-active-badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 1px 6px;
-  border-radius: var(--radius-sm, 5px);
-  border: 1px solid var(--color-border-strong);
-  background: var(--surface-selected);
+/* Rótulo discreto da conta ativa (sem caixa) */
+.usage-active-label {
+  flex-shrink: 0;
   color: var(--color-accent-strong);
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: 0.03em;
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   white-space: nowrap;
-}
-
-.usage-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
-  font-size: 10.5px;
-  font-weight: 600;
-}
-
-.usage-status svg {
-  width: 13px;
-  height: 13px;
-}
-
-.usage-status--ready {
-  color: var(--color-accent-strong);
-}
-
-.usage-status--not_configured {
-  color: var(--color-warning);
-}
-
-.usage-status--error {
-  color: var(--color-danger);
 }
 
 .usage-status-dot {
@@ -313,24 +270,6 @@
 
 .usage-status-dot--error {
   background: var(--color-danger);
-}
-
-.usage-account-subbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 5px;
-  margin-bottom: 14px;
-  font-size: 10.5px;
-  color: var(--color-text-muted);
-  border-bottom: 1px solid var(--color-border-subtle);
-  padding-bottom: 6px;
-}
-
-.usage-account-source {
-  font-weight: 600;
-  color: var(--color-accent-strong);
 }
 
 .usage-account-meta {
@@ -401,12 +340,14 @@
 }
 
 .usage-provider-metric--warning .usage-progress-fill,
-.usage-manual-account--warning .usage-progress-fill {
+.usage-manual-account--warning .usage-progress-fill,
+.usage-progress-fill--warning {
   background: var(--color-warning);
 }
 
 .usage-provider-metric--critical .usage-progress-fill,
-.usage-manual-account--critical .usage-progress-fill {
+.usage-manual-account--critical .usage-progress-fill,
+.usage-progress-fill--critical {
   background: var(--color-danger);
 }
 
@@ -427,12 +368,6 @@
   gap: 3px;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
-}
-
-.usage-reset-label svg {
-  width: 11px;
-  height: 11px;
-  color: var(--color-text-secondary);
 }
 
 .usage-provider-message {
@@ -1040,20 +975,6 @@
   white-space: nowrap;
 }
 
-.usage-share-provider {
-  flex-shrink: 0;
-  padding: 1px 5px;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-sm, 5px);
-  background: var(--surface-selected);
-  color: var(--color-accent-strong);
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
 .usage-share-tokens {
   flex: 1;
   text-align: right;
@@ -1100,42 +1021,86 @@
 
 .usage-share-quota h3 {
   margin: 0 0 8px;
+  color: var(--color-text-muted);
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+/* Cards de quota: ponto de status + % + barra, sem caixas aninhadas */
+.usage-share-quota-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.usage-share-quota-card {
+  min-width: 0;
+}
+
+.usage-share-quota-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.usage-share-quota-dot {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--color-text-muted);
+}
+
+.usage-share-quota-dot--ok {
+  background: var(--color-accent);
+}
+
+.usage-share-quota-dot--warning {
+  background: var(--color-warning);
+}
+
+.usage-share-quota-dot--critical {
+  background: var(--color-danger);
+}
+
+.usage-share-quota-account {
+  overflow: hidden;
+  flex: 1;
   color: var(--text-primary);
   font-size: 12px;
   font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.usage-share-chips {
+.usage-share-quota-percent {
+  flex-shrink: 0;
+  color: var(--color-accent-strong);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.usage-share-quota-bar {
+  margin-top: 5px;
+}
+
+.usage-share-quota-windows {
   display: grid;
-  gap: 6px;
+  gap: 2px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
 }
 
-.usage-share-chip {
+.usage-share-quota-windows li {
   display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 4px 8px;
-  min-width: 0;
-  padding: 8px 10px;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-sm, 5px);
-  background: var(--color-bg-panel);
+  justify-content: space-between;
+  gap: 12px;
   color: var(--color-text-muted);
-  font-size: 11px;
-}
-
-.usage-share-chip-account {
-  color: var(--text-primary);
-  font-weight: 650;
-}
-
-.usage-share-chip-windows {
-  min-width: 0;
-}
-
-.usage-share-chip-reset {
-  margin-left: auto;
-  color: var(--color-text-secondary);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
 }
 
 .usage-share-footer {
@@ -1195,10 +1160,6 @@
     justify-content: space-between;
   }
 
-  .usage-share-chip-reset {
-    margin-left: 0;
-  }
-
   .usage-button--primary {
     width: 100%;
   }
@@ -1236,7 +1197,8 @@
   .usage-provider-account,
   .usage-manual-account,
   .usage-antigravity,
-  .usage-handoff-adjacent {
+  .usage-handoff-adjacent,
+  .usage-share-quota-card {
     outline: 1px solid ButtonText;
   }
 }

@@ -18,21 +18,17 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ state, isOpen, onClose
 
   return (
     <AccessibleDialog isOpen={isOpen} titleId="update-title" onClose={downloading ? () => undefined : onClose} className="w-full max-w-md rounded-xl border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] p-6 shadow-2xl">
-      <div className="flex items-start gap-3">
-        <div className="rounded-lg bg-[var(--surface-selected)] p-2 text-[var(--color-accent-strong)]"><RefreshCw size={20} aria-hidden="true" /></div>
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--color-text-muted)]">Atualizações do DevOrbit</p>
-          <h2 id="update-title" className="mt-1 text-lg font-semibold text-[var(--text-primary)]">
-            {downloaded ? 'Atualização pronta' : downloading ? 'Baixando atualização automaticamente' : 'Nova versão disponível'}
-          </h2>
-          <p className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">
-            {downloaded
-              ? `A versão ${state.version ?? 'nova'} foi baixada. Reinicie o app para concluir a atualização.`
-              : downloading
-                ? `Baixando a versão ${state.version ?? 'nova'}${state.progress === undefined ? '…' : `: ${state.progress}%`}`
-                : `A versão ${state.version ?? 'nova'} está disponível. O download começará automaticamente.`}
-          </p>
-        </div>
+      <div>
+        <h2 id="update-title" className="text-lg font-semibold text-[var(--text-primary)]">
+          {downloaded ? 'Atualização pronta' : downloading ? 'Baixando atualização automaticamente' : 'Nova versão disponível'}
+        </h2>
+        <p className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">
+          {downloaded
+            ? `A versão ${state.version ?? 'nova'} foi baixada. Reinicie o app para concluir a atualização.`
+            : downloading
+              ? `Baixando a versão ${state.version ?? 'nova'}${state.progress === undefined ? '…' : `: ${state.progress}%`}`
+              : `A versão ${state.version ?? 'nova'} está disponível. O download começará automaticamente.`}
+        </p>
       </div>
       {downloading && <div className="mt-5 h-2 overflow-hidden rounded-full bg-[var(--surface-selected)]" aria-label={`Download ${state.progress ?? 0}%`}><div className="h-full bg-[var(--color-accent-strong)] transition-[width]" style={{ width: `${state.progress ?? 0}%` }} /></div>}
       <div className="mt-6 flex justify-end gap-3">

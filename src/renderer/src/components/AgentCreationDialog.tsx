@@ -246,16 +246,9 @@ export const AgentCreationDialog: React.FC<AgentCreationDialogProps> = ({
       <div className="flex items-center justify-between border-b border-[var(--color-border-subtle)] bg-[var(--surface-muted)] px-5 py-4">
         <div className="flex items-center gap-2">
           {mode === 'squad' ? <Users size={18} aria-hidden="true" /> : <Bot size={18} aria-hidden="true" />}
-          <div>
-            <h2 id="agent-creation-dialog-title" className="text-base font-bold text-[var(--text-primary)]">
-              {mode === 'agent' ? 'Configurar Agente' : 'Configurar Squad de Agentes'}
-            </h2>
-            <p className="mt-0.5 text-xs text-[var(--color-text-secondary)]">
-              {mode === 'agent'
-                ? 'Defina o papel (preset ou customizado) e o provedor do agente.'
-                : 'Adicione membros, papéis customizados e escolha o coordenador explicitamente.'}
-            </p>
-          </div>
+          <h2 id="agent-creation-dialog-title" className="text-base font-bold text-[var(--text-primary)]">
+            {mode === 'agent' ? 'Configurar Agente' : 'Configurar Squad de Agentes'}
+          </h2>
         </div>
         <button
           type="button"
@@ -372,9 +365,6 @@ export const AgentCreationDialog: React.FC<AgentCreationDialogProps> = ({
               <span className="block text-xs font-semibold text-[var(--color-text-secondary)]">
                 Coordenação da Squad
               </span>
-              <p className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">
-                O coordenador é independente do papel textual e dispara a orquestração do squad.
-              </p>
               <div className="mt-2 flex flex-wrap gap-2">
                 <label className="flex cursor-pointer items-center gap-1.5 rounded-md border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-2.5 py-1.5 text-xs text-[var(--text-primary)]">
                   <input
@@ -513,10 +503,6 @@ export const AgentCreationDialog: React.FC<AgentCreationDialogProps> = ({
             </div>
           </div>
         )}
-
-        <p className="text-[11px] text-[var(--color-text-muted)]">
-          Provedores indisponíveis permanecem desabilitados. Cada agente precisa de um provedor válido configurado.
-        </p>
       </div>
 
       {/* Footer */}

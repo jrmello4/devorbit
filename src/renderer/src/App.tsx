@@ -1194,7 +1194,8 @@ export const App: React.FC = () => {
         />
       )}
       </div>
-      <footer className="app-statusbar"><span><span className={`status-dot ${isLoading ? 'loading' : ''}`}/>{isLoading ? 'Carregando workspace' : `${projects.length} projetos · ${gitProjectsCount} repositórios`}{updateState?.distribution === 'portable' ? ' · portable · atualização automática' : ''}</span><span>Dados locais <span aria-hidden="true">·</span> <kbd>Ctrl K</kbd> Ações rápidas <span aria-hidden="true">·</span> <kbd>Ctrl R</kbd> Atualizar</span></footer>
+      {/* Statusbar mínima: fatos à esquerda, um único hint de atalho à direita. */}
+      <footer className="app-statusbar"><span><span className={`status-dot ${isLoading ? 'loading' : ''}`}/>{isLoading ? 'Carregando workspace' : `${projects.length} projetos · ${gitProjectsCount} repositórios`}{updateState?.distribution === 'portable' ? ' · portable' : ''}</span><span><kbd>Ctrl K</kbd> Ações rápidas</span></footer>
       <CommandPalette
         isOpen={isCommandPaletteOpen}
         onClose={closeCommandPalette}

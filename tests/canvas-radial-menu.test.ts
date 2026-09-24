@@ -187,6 +187,9 @@ describe('CanvasRadialMenu — estrutura renderizada', () => {
     expect(html.indexOf('aria-disabled="true"')).toBeGreaterThan(
       html.indexOf('data-canvas-radial-item="agent"'),
     )
+    // Clean pass: itens são só ícone — nome vai em aria-label/title, sem rótulo de texto
+    expect(html).toContain('aria-label="Agente"')
+    expect(html).not.toContain('workspace-canvas-radial-label')
     expect(html).not.toContain('data-open="true"')
     expect(html).toContain('inert=""')
     expect(html.match(/translate\(0px, 0px\) scale\(0\.4\)/g)).toHaveLength(3)

@@ -1,16 +1,10 @@
 import React, { useState, useCallback } from 'react'
 import {
   Crown,
-  Settings,
-  Settings2,
-  ChevronDown,
-  ChevronRight,
-  X,
   Unlink,
   Terminal,
   Trash2,
   Edit2,
-  Check,
   GripVertical,
   Send,
   Crosshair,
@@ -18,7 +12,6 @@ import {
   Maximize2,
   SlidersHorizontal,
   Bot,
-  NotebookPen,
 } from 'lucide-react'
 import type { AgentRole, CanvasNode, NodeKind, AgentProgress } from './WorkspaceCanvas'
 import type { AgentProvider, AgentProviderId, CodexAccountId } from '../types'
@@ -27,8 +20,8 @@ import type {
   TerminalNodeRuntimeConfig,
 } from '../../../shared/terminal-presets'
 import {
-  CUSTOM_TERMINAL_PRESET_LIMIT,
   createTerminalNodeConfig,
+  getTerminalPreset,
   resolveTerminalTheme,
   TERMINAL_THEMES,
   type TerminalThemeId,
@@ -49,8 +42,10 @@ import { handleCanvasCardKeyboardAction } from './canvas-keyboard-helpers'
 export interface CanvasNodeCardProps {
   node: CanvasNode
   isSelected: boolean
-  isConnecting: boolean
-  isConnectionTargetAvailable: boolean
+  /** Modo conectar ativo: card elegível ganha contorno tracejado (sem portas). */
+  isConnectMode?: boolean
+  /** Este card é a ORIGEM do modo conectar: destaque firme. */
+  isConnectSource?: boolean
   isConfigOpen: boolean
   progress?: AgentProgress
   agentProviders?: readonly AgentProvider[]
@@ -80,9 +75,8 @@ export interface CanvasNodeCardProps {
   onStartPan: (event: React.PointerEvent<HTMLElement>) => void
   onStartNodeDrag: (event: React.PointerEvent<HTMLElement>, node: CanvasNode) => void
   onStartResize: (event: React.PointerEvent<HTMLElement>, node: CanvasNode) => void
-  onStartConnection: (event: React.PointerEvent<HTMLButtonElement>, node: CanvasNode) => void
+  /** Tecla "C"/atalho: entra no modo conectar com este card como origem. */
   onChooseConnectionSource: (id: string) => void
-  onConnectNodes: (to: string) => void
   onDeleteNode: (id: string) => void
   onToggleConfig: (id: string) => void
   onDisconnectLinks: (id: string) => void
@@ -124,18 +118,20 @@ function closestElement(element: EventTarget | null, selector: string): Element 
   return element.closest(selector)
 }
 
-function terminalMetaLabel(node: CanvasNode): string {
+// Rótulo legível do preset do terminal: usado só no tooltip do título
+// (clean pass: a pill de preset saiu do repouso do cabeçalho).
+function terminalPresetLabel(node: CanvasNode, customName?: string): string {
   const presetId = node.terminal?.presetId
-  if (!presetId) return 'TERMINAL'
-  return isCustomTerminalPresetId(presetId) ? 'SMART · CUSTOM' : `SMART · ${presetId.toUpperCase()}`
+  if (!presetId) return 'Shell'
+  return customName || getTerminalPreset(presetId)?.label || presetId
 }
 
 export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
   function CanvasNodeCard({
     node,
     isSelected,
-    isConnecting,
-    isConnectionTargetAvailable,
+    isConnectMode = false,
+    isConnectSource = false,
     isConfigOpen,
     progress,
     agentProviders,
@@ -161,9 +157,7 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
     onStartPan,
     onStartNodeDrag,
     onStartResize,
-    onStartConnection,
     onChooseConnectionSource,
-    onConnectNodes,
     onDeleteNode,
     onToggleConfig,
     onDisconnectLinks,
@@ -244,6 +238,26 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
       ? terminalPresets.find((p) => p.id === currentPresetId)
       : undefined
 
+    // ---- Clean pass do cabeçalho (uma linha, 28px) -------------------------
+    // Papel/provedor/preset viram tooltip no título quando não mudam decisão;
+    // o que resta visível no repouso é o título e no máximo um ponto de status.
+    const isDefaultRole = node.kind === 'agent' && (!node.role || node.role === 'Implementação')
+    const providerLabel = node.provider
+      ? `${node.provider.toUpperCase()}${node.account ? ` (${node.account === 'account1' ? 'C1' : 'C2'})` : ''}`
+      : ''
+    // Pill de provedor só quando muda decisão: executor não-codex ou conta
+    // explícita; codex sem conta é o padrão e vira tooltip.
+    const showProviderPill = Boolean(node.provider && (node.provider !== 'codex' || node.account))
+
+    const headerMeta: string[] = []
+    if (node.kind === 'agent') headerMeta.push(`Papel: ${node.role || 'Implementação'}`)
+    if (providerLabel) headerMeta.push(`Provedor: ${providerLabel}`)
+    if (node.kind === 'terminal') {
+      headerMeta.push(`Preset: ${terminalPresetLabel(node, customPresetObj?.name)}`)
+    }
+    if (node.kind === 'note') headerMeta.push(`${(node.content || '').length} caracteres`)
+    const headerTitle = headerMeta.length > 0 ? `${node.title} · ${headerMeta.join(' · ')}` : node.title
+
     const handleKeyDown = useCallback(
       (event: React.KeyboardEvent<HTMLElement>) => {
         if (event.target === event.currentTarget) {
@@ -270,7 +284,8 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
       'workspace-canvas-card',
       'canvas-' + node.kind,
       isSelected ? 'is-selected' : '',
-      isConnecting ? 'is-connecting' : '',
+      isConnectMode && !isConnectSource ? 'is-connect-mode' : '',
+      isConnectSource ? 'is-connect-source' : '',
       isCompactCard ? 'is-compact' : '',
       isConfigOpen ? 'has-config-open' : '',
       isFocused ? 'is-focused-node' : '',
@@ -312,54 +327,31 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
             return
           }
           event.stopPropagation()
+          // No modo conectar, o clique no corpo do card define origem/destino
+          // (roteado pelo onSelect no canvas). Controles interativos (botões,
+          // campos) NÃO devem disparar conexão acidental.
+          if (isConnectMode) {
+            if (
+              closestElement(
+                event.target,
+                'button, input, select, textarea, a, [contenteditable=true]',
+              )
+            ) {
+              return
+            }
+            onSelect(node.id, event.ctrlKey || event.metaKey)
+            return
+          }
           onSelect(node.id, event.ctrlKey || event.metaKey)
         }}
         onKeyDown={handleKeyDown}
       >
-        {/* Porta de Conexão de Saída (Source) */}
-        <button
-          type="button"
-          className={'canvas-port canvas-port-source' + (isConnecting ? ' is-active' : '')}
-          data-canvas-port="source"
-          data-canvas-node-id={node.id}
-          aria-label={'Iniciar conexão a partir de ' + node.title}
-          aria-pressed={isConnecting}
-          onPointerDown={(event) => onStartConnection(event, node)}
-          onClick={() => onChooseConnectionSource(node.id)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' || event.key === ' ') {
-              event.preventDefault()
-              onChooseConnectionSource(node.id)
-            }
-          }}
-        >
-          <span aria-hidden="true" />
-        </button>
+        {/* Modo conectar SEM portas/bolinhas: a origem/destino é definida pelo
+            clique no corpo do card; o destaque visual vem das classes
+            is-connect-mode / is-connect-source no próprio cartão. */}
 
-        {/* Porta de Conexão de Entrada (Target) */}
-        <button
-          type="button"
-          className={'canvas-port canvas-port-target' + (isConnectionTargetAvailable ? ' is-available' : '')}
-          data-canvas-port="target"
-          data-canvas-node-id={node.id}
-          aria-label={'Conectar a ' + node.title}
-          disabled={!isConnectionTargetAvailable}
-          onPointerDown={(event) => {
-            event.preventDefault()
-            event.stopPropagation()
-          }}
-          onClick={() => onConnectNodes(node.id)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' || event.key === ' ') {
-              event.preventDefault()
-              onConnectNodes(node.id)
-            }
-          }}
-        >
-          <span aria-hidden="true" />
-        </button>
-
-        {/* Cabeçalho do Card */}
+        {/* Cabeçalho único do card (28px): título à esquerda; no máximo um
+            ponto de status; ações em cluster revelado em hover/foco/seleção. */}
         <header
           className="canvas-card-header"
           onPointerDown={(event) => {
@@ -368,67 +360,48 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
             onStartNodeDrag(event, node)
           }}
         >
-          <strong className="canvas-card-title">
+          <strong className="canvas-card-title" title={headerTitle}>
             {nodeMeta[node.kind]?.icon || (node.kind === 'agent' ? <Bot size={13} /> : <Terminal size={13} />)}
             <span className="canvas-card-title-text">{node.title}</span>
           </strong>
 
-          <button
-            data-canvas-drag-handle=""
-            type="button"
-            className="canvas-card-drag-handle"
-            aria-label={'Mover ' + node.title}
-            title="Arraste para mover o cartão"
-            onPointerDown={(event) => {
-              event.preventDefault()
-              event.stopPropagation()
-              onStartNodeDrag(event, node)
-            }}
-          >
-            <GripVertical size={13} aria-hidden="true" />
-          </button>
+          {/* Identidade do agente: coroa para o coordenador da squad. */}
+          {node.kind === 'agent' && isActualCoordinator && (
+            <span className="canvas-command-mark" role="img" aria-label="Coordenador" title="Coordenador da squad">
+              <Crown size={12} aria-hidden="true" className="canvas-icon-gold" />
+            </span>
+          )}
 
-          {/* Badges de Identificação por Tipo */}
+          {/* Papel: rótulo discreto só quando muda decisão (≠ Implementação);
+              no padrão, vira tooltip no título e o span segue no DOM apenas
+              para leitura estrutural (contrato do harness verify-ui). */}
           {node.kind === 'agent' && (
-            <>
-              <span className="canvas-node-meta canvas-role-pill">
-                {node.role || 'Implementação'}
-              </span>
-              {isActualCoordinator && (
-                <span className="canvas-command-mark" role="img" aria-label="Coordenador" title="Coordenador da squad">
-                  <Crown size={11} aria-hidden="true" className="canvas-icon-gold" />
-                </span>
-              )}
-              {node.provider && (
-                <span className="canvas-node-meta canvas-provider-pill" title={`Provedor: ${node.provider}`}>
-                  {node.provider.toUpperCase()}
-                  {node.account ? ` (${node.account === 'account1' ? 'C1' : 'C2'})` : ''}
-                </span>
-              )}
-            </>
-          )}
-
-          {/* Coordenador liderando orquestração ativa: badge âmbar (visual). */}
-          {isOrchestrating && (
-            <span className="canvas-node-orchestrating-badge" role="status" aria-label="Orquestrando">
-              orquestrando
+            <span
+              className={'canvas-node-meta canvas-role-pill' + (isDefaultRole ? ' is-default-role' : '')}
+              title={`Papel: ${node.role || 'Implementação'}`}
+            >
+              {node.role || 'Implementação'}
             </span>
           )}
 
-          {node.kind === 'terminal' && (
-            <span className="canvas-node-meta canvas-terminal-pill">
-              {terminalMetaLabel(node)}
+          {/* Provedor/conta: pill só quando muda decisão (não-codex ou conta). */}
+          {showProviderPill && (
+            <span className="canvas-node-meta canvas-provider-pill" title={`Provedor: ${providerLabel}`}>
+              {providerLabel}
             </span>
           )}
 
-          {node.kind === 'note' && (
-            <span className="canvas-node-meta canvas-note-pill">
-              {(node.content || '').length} car.
-            </span>
+          {/* Um único indicador de status: orquestração ativa (ponto âmbar)
+              vence o ponto de progresso do agente. */}
+          {node.kind === 'agent' && isOrchestrating && (
+            <span
+              className="canvas-node-orchestrating-badge"
+              role="status"
+              aria-label="Orquestrando"
+              title="Orquestração de squad ativa"
+            />
           )}
-
-          {/* Status real do agente (sem animação permanente pesada) */}
-          {node.kind === 'agent' && progress && (
+          {node.kind === 'agent' && !isOrchestrating && progress && (
             <span
               className={'canvas-agent-progress progress-' + progress.state}
               data-agent-progress={progress.state}
@@ -437,12 +410,27 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
               title={progress.label}
             >
               <i aria-hidden="true" />
-              <span>{progress.label}</span>
             </span>
           )}
 
-          {/* Ações do Cabeçalho */}
+          {/* Cluster de ações (linha única, hover/foco/seleção). */}
           <div className="canvas-card-actions">
+            {/* Mover (também arraste pelo cabeçalho inteiro) */}
+            <button
+              data-canvas-drag-handle=""
+              type="button"
+              className="canvas-card-action-btn canvas-card-drag-handle"
+              aria-label={'Mover ' + node.title}
+              title="Arraste para mover o cartão"
+              onPointerDown={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                onStartNodeDrag(event, node)
+              }}
+            >
+              <GripVertical size={12} aria-hidden="true" />
+            </button>
+
             {/* Executar Tarefa do Agente */}
             {node.kind === 'agent' && isAgentNodeConfigured(node, agentProviders ?? []) && (
               <button
@@ -462,7 +450,7 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
                   onSendTask(node)
                 }}
               >
-                <Send size={11} aria-hidden="true" />
+                <Send size={12} aria-hidden="true" />
               </button>
             )}
 
@@ -493,7 +481,7 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
                 onFocusNode(node.id)
               }}
             >
-              <Crosshair size={11} aria-hidden="true" />
+              <Crosshair size={12} aria-hidden="true" />
             </button>
 
             {/* Alternar Modo Compacto / Expandido */}
@@ -507,9 +495,9 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
                 title={effectiveCompact ? (node.kind === 'note' ? 'Expandir nota' : 'Expandir terminal') : 'Recolher cartão'}
               >
                 {effectiveCompact ? (
-                  <Maximize2 size={11} aria-hidden="true" />
+                  <Maximize2 size={12} aria-hidden="true" />
                 ) : (
-                  <Minimize2 size={11} aria-hidden="true" />
+                  <Minimize2 size={12} aria-hidden="true" />
                 )}
               </button>
             )}
@@ -525,7 +513,7 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
                 onDisconnectLinks(node.id)
               }}
             >
-              <Unlink size={11} aria-hidden="true" />
+              <Unlink size={12} aria-hidden="true" />
             </button>
 
             {/* Abrir no Inspector ou Alternar Configuração */}
@@ -544,10 +532,10 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
                 }
               }}
             >
-              <SlidersHorizontal size={11} aria-hidden="true" />
+              <SlidersHorizontal size={12} aria-hidden="true" />
             </button>
 
-            {/* Excluir Nó */}
+            {/* Excluir Nó (destrutiva: separada e vermelha só no hover) */}
             {node.kind !== 'workbench' && node.kind !== 'browser' && (
               <button
                 type="button"
@@ -559,7 +547,7 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = React.memo(
                   onDeleteNode(node.id)
                 }}
               >
-                <Trash2 size={11} aria-hidden="true" />
+                <Trash2 size={12} aria-hidden="true" />
               </button>
             )}
           </div>

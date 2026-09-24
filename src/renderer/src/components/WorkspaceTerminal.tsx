@@ -39,6 +39,12 @@ interface WorkspaceTerminalProps {
   agentTask?: { id: string; prompt: string }
   onAgentResult?: (result: AgentResult, taskId?: string) => void
   onAgentTaskFailure?: (taskId: string, message: string) => void
+  /**
+   * Superfície: 'docked' (painel do grid, cabeçalho de 32px) ou 'embedded'
+   * (cards do canvas: overlay fino de status/ações no topo do viewport).
+   * Contrato com o card: default 'docked'; os cards passam 'embedded'.
+   */
+  variant?: 'docked' | 'embedded'
 }
 
 type TerminalState = 'starting' | 'ready' | 'stopped' | 'error'
@@ -52,10 +58,12 @@ const MIN_PTY_ROWS = 5
 const providerLabels: Record<AgentProviderId, string> = {
   codex: 'Codex',
   opencode: 'OpenCode',
+  opencode2: 'OpenCode 2',
   claude: 'Claude Code',
   gemini: 'Gemini CLI',
   aider: 'Aider',
   agy: 'Antigravity',
+  'command-code': 'Command Code',
   custom: 'Agente local',
 }
 
@@ -78,6 +86,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
   agentTask,
   onAgentResult,
   onAgentTaskFailure,
+  variant = 'docked',
 }) => {
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<XTerm | null>(null)
@@ -669,7 +678,9 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
     }
   }, [projectPath, pushActivity, reportTaskFailure, scheduleFitFrame, scheduleFitTimeout, sendResize, terminalId])
 
-  // Atualiza o tema de cores do xterm dinamicamente sem reiniciar a sessão PTY
+  // Tema vivo: trocar o tema no Inspector re-tematiza o ITheme COMPLETO do
+  // xterm (fundo, ANSI, cursor, seleção) via updateTheme — sem recriar a
+  // sessão PTY nem perder o buffer do terminal.
   useEffect(() => {
     if (!terminalRef.current) return
     const themeDef = resolveTerminalTheme(runtimeConfig?.theme)
@@ -864,76 +875,135 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
 
   const headingLabel = launch ? launch.label : 'Terminal interno'
   const restartLabel = launch && launch.kind !== 'shell' ? 'Reiniciar ' + launch.label : 'Reiniciar terminal'
+  // Tema resolvido para o chrome (ponto de status, fio de 2px no topo do
+  // viewport): a var --term-accent vive AQUI na raiz do painel, valendo para
+  // as duas superfícies (docked e embedded) sem depender do CSS do canvas.
+  const themeDefinition = resolveTerminalTheme(runtimeConfig?.theme)
+  // Um indicador de status por superfície: ponto colorido + tooltip com o
+  // texto de estado (a pill "● PRONTO" saiu no clean pass).
+  const statusClass = missingPreset ? 'missing' : terminalState
+  const statusText = missingPreset
+    ? 'Preset não encontrado'
+    : terminalState === 'ready'
+      ? (terminalMode === 'codex' ? 'Codex ativo' : terminalMode === 'agent' ? providerLabels[provider] + ' ativo' : 'Pronto')
+      : terminalState === 'starting' ? 'Iniciando'
+        : terminalState === 'error' ? 'Erro' : 'Encerrado'
+  const statusDot = (
+    <span
+      className={'terminal-status ' + statusClass}
+      role="status"
+      aria-label={'Status do terminal: ' + statusText}
+      title={statusText}
+    >
+      <i aria-hidden="true" />
+    </span>
+  )
+  // Cluster de ações compartilhado: mesmos handlers e titles nos dois formatos.
+  // docked: Abrir Web · Codex (texto só enquanto conecta) · Limpar · Reiniciar.
+  // embedded (contrato do card): Codex · Reiniciar · Abrir Web, só ícones.
+  const renderActions = (embedded: boolean) => {
+    const iconSize = embedded ? 13 : 14
+    const webButton = lastDetectedUrl ? (
+      <button
+        type="button"
+        className="workspace-icon-button"
+        onClick={() => void openDetectedLink()}
+        aria-label="Abrir no painel Web"
+        title="Abrir o último link HTTPS impresso no terminal no painel Web"
+      >
+        <Globe size={iconSize} aria-hidden="true" />
+      </button>
+    ) : null
+    const codexButton = (
+      <button
+        type="button"
+        className="workspace-tool-button terminal-codex-button"
+        onClick={() => void startCodex()}
+        disabled={!codexAccount || isStartingCodex || terminalState === 'starting'}
+        aria-label={isStartingCodex ? 'Conectando ao Codex' : 'Iniciar Codex'}
+        title={codexAccount ? 'Iniciar Codex com a conta ' + (codexAccount === 'account2' ? '2' : '1') : 'Configure a conta Codex deste agente para iniciar'}
+      >
+        <Code2 size={13} aria-hidden="true" />
+        {!embedded && isStartingCodex && <span>Conectando…</span>}
+      </button>
+    )
+    const restartButton = (
+      <button
+        type="button"
+        className="workspace-icon-button"
+        onClick={() => void restartTerminal()}
+        aria-label={restartLabel}
+        title={restartLabel}
+      >
+        <RefreshCw size={iconSize} aria-hidden="true" />
+      </button>
+    )
+    if (embedded) {
+      return (
+        <>
+          {codexButton}
+          {restartButton}
+          {webButton}
+        </>
+      )
+    }
+    return (
+      <>
+        {webButton}
+        {(!launch || launch.kind !== 'command') && codexButton}
+        <button
+          type="button"
+          className="workspace-icon-button"
+          onClick={clearTerminal}
+          aria-label="Limpar terminal"
+          title="Limpar o conteúdo do terminal sem encerrar o processo"
+        >
+          <Eraser size={iconSize} aria-hidden="true" />
+        </button>
+        {restartButton}
+      </>
+    )
+  }
 
   return (
-    <section className="workspace-terminal-panel" aria-label="Terminal interno">
-      {/* Cabeçalho unificado de 32px: rótulo TERMINAL + ponto de status com o
-          executor ativo; o nome do preset (Smart Terminals) vira um rótulo ao
-          lado em vez de título do painel. A seção mantém aria-label "Terminal
-          interno", consultado pelo harness (scripts/verify-ui.cjs). */}
-      <div className="workspace-panel-heading terminal-heading">
-        <div>
-          <strong><TerminalIcon size={13} aria-hidden="true" /> Terminal</strong>
-          <span className={'terminal-status ' + (missingPreset ? 'missing' : terminalState)}>
-            <i />
-            {missingPreset ? 'Preset não encontrado'
-              : terminalState === 'ready' ? (terminalMode === 'codex' ? 'Codex ativo' : terminalMode === 'agent' ? providerLabels[provider] + ' ativo' : 'Pronto')
-              : terminalState === 'starting' ? 'Iniciando'
-              : terminalState === 'error' ? 'Erro' : 'Encerrado'}
-          </span>
-          {launch && <span className="terminal-heading-executor" title={headingLabel}>{headingLabel}</span>}
-          {/* Chip de atividade: oculto enquanto não há processo (parado sem
-              ter iniciado); após exit mostra Concluído/Falhou. O texto carrega
-              o estado — cor é só reforço (DESIGN.md). */}
-          {monitorActivity && (terminalState !== 'stopped' || activityState !== 'starting') && (
-            <span className={'terminal-activity activity-' + activityState} role="status" aria-label="Atividade do terminal">
-              <i aria-hidden="true" />
-              {TERMINAL_ACTIVITY_LABELS[activityState]}
-            </span>
-          )}
+    <section
+      className="workspace-terminal-panel"
+      data-terminal-variant={variant}
+      data-terminal-theme={themeDefinition.id}
+      style={{ '--term-accent': themeDefinition.accent } as React.CSSProperties}
+      aria-label="Terminal interno"
+    >
+      {variant === 'embedded' ? (
+        /* Card do canvas: sem linha de cabeçalho (sem rótulo, pill, executor
+           ou chip de atividade) — overlay fino no topo do viewport com o ponto
+           de status e as ações reveladas no hover/foco do cluster. */
+        <div className="terminal-embedded-overlay">
+          {statusDot}
+          <div className="terminal-actions">{renderActions(true)}</div>
         </div>
-        <div className="terminal-actions">
-          {lastDetectedUrl && (
-            <button
-              type="button"
-              className="workspace-tool-button terminal-codex-button"
-              onClick={() => void openDetectedLink()}
-              title="Abrir o último link HTTPS impresso no terminal no painel Web"
-            >
-              <Globe size={13} aria-hidden="true" /><span>Abrir Web</span>
-            </button>
-          )}
-          {(!launch || launch.kind !== 'command') && (
-            <button
-              type="button"
-              className="workspace-tool-button terminal-codex-button"
-              onClick={() => void startCodex()}
-              disabled={!codexAccount || isStartingCodex || terminalState === 'starting'}
-              title={codexAccount ? 'Iniciar Codex com a conta ' + (codexAccount === 'account2' ? '2' : '1') : 'Configure a conta Codex deste agente para iniciar'}
-            >
-              <Code2 size={13} aria-hidden="true" /><span>{isStartingCodex ? 'Conectando…' : 'Codex'}</span>
-            </button>
-          )}
-          <button
-            type="button"
-            className="workspace-icon-button"
-            onClick={clearTerminal}
-            aria-label="Limpar terminal"
-            title="Limpar o conteúdo do terminal sem encerrar o processo"
-          >
-            <Eraser size={14} aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            className="workspace-icon-button"
-            onClick={() => void restartTerminal()}
-            aria-label={restartLabel}
-            title={restartLabel}
-          >
-            <RefreshCw size={14} aria-hidden="true" />
-          </button>
+      ) : (
+        /* Cabeçalho unificado de 32px: rótulo TERMINAL + ponto de status com
+           tooltip; o executor só aparece quando não é o shell padrão e o chip
+           de atividade só quando há atividade ativa ou falha (em repouso,
+           nada). A seção mantém aria-label "Terminal interno", consultado pelo
+           harness (scripts/verify-ui.cjs). */
+        <div className="workspace-panel-heading terminal-heading">
+          <div>
+            <strong><TerminalIcon size={13} aria-hidden="true" /> Terminal</strong>
+            {statusDot}
+            {launch && launch.kind !== 'shell' && (
+              <span className="terminal-heading-executor" title={headingLabel}>{headingLabel}</span>
+            )}
+            {monitorActivity && (activityState === 'running' || activityState === 'failed') && (
+              <span className={'terminal-activity activity-' + activityState} role="status" aria-label="Atividade do terminal">
+                <i aria-hidden="true" />
+                {TERMINAL_ACTIVITY_LABELS[activityState]}
+              </span>
+            )}
+          </div>
+          <div className="terminal-actions">{renderActions(false)}</div>
         </div>
-      </div>
+      )}
       <div
         ref={containerRef}
         className="workspace-terminal-xterm"

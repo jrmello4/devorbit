@@ -11,7 +11,6 @@ import {
   Unlink,
   Send,
   GitBranch,
-  CheckCircle2,
   Edit2,
   Check,
   Users,
@@ -19,11 +18,14 @@ import {
   FolderMinus,
   FolderPlus,
   Plus,
+  RefreshCw,
 } from 'lucide-react'
+import './CanvasInspector.css'
 import type { CanvasNode, AgentProgress, NodeKind, CanvasSquad } from './WorkspaceCanvas'
 import type { AgentProvider, AgentProviderId, CodexAccountId, CodexAccountStatus } from '../types'
 import {
   createTerminalNodeConfig,
+  resolveTerminalTheme,
   type CustomTerminalPreset,
   type TerminalNodeRuntimeConfig,
   type TerminalThemeId,
@@ -31,7 +33,11 @@ import {
 } from '../../../shared/terminal-presets'
 import type { QuickDeployChip } from './terminal-node-helpers'
 import { formatArgsInput, parseArgsInput } from './terminal-node-helpers'
-import { BUILT_IN_AGENT_ROLES } from './agent-creation-helpers'
+import {
+  agentTerminalDefaultCommand,
+  BUILT_IN_AGENT_ROLES,
+  codexManagedTerminalLabel,
+} from './agent-creation-helpers'
 
 export interface CanvasNodeInspectorProps {
   isOpen: boolean
@@ -48,6 +54,8 @@ export interface CanvasNodeInspectorProps {
   onSetSquadObjective?: (squadId: string, objective: string) => void
   onToggleSquadCollapsed?: (squadId: string) => void
   onCreateAgentForSquad?: (squadId: string) => void
+  onSurvivorTakeover?: (squadId: string, memberId: string) => Promise<void> | void
+  isTakingOver?: boolean
 
   // Aliases compatíveis adicionais
   onRenameSquad?: (squadId: string, title: string) => void
@@ -77,6 +85,11 @@ export interface CanvasNodeInspectorProps {
     id: string,
     updater: (current: TerminalNodeRuntimeConfig) => Partial<TerminalNodeRuntimeConfig>,
   ) => void
+  /** Patch do terminal de um nó AGENTE (cria a config base quando ausente). */
+  onUpdateAgentTerminalNode?: (
+    id: string,
+    updater: (current: TerminalNodeRuntimeConfig | undefined) => Partial<TerminalNodeRuntimeConfig>,
+  ) => void
   progress?: AgentProgress
 }
 
@@ -87,6 +100,9 @@ const kindLabels: Record<NodeKind, { label: string; icon: React.ReactNode }> = {
   workbench: { label: 'Workbench', icon: <FileCode2 size={14} /> },
   browser: { label: 'Navegador', icon: <Globe2 size={14} /> },
 }
+
+// Clean pass: contador do objetivo fica visível perto do limite mesmo sem foco
+const OBJECTIVE_NEAR_LIMIT = 1800
 
 export const CanvasNodeInspector: React.FC<CanvasNodeInspectorProps> = ({
   isOpen,
@@ -105,6 +121,8 @@ export const CanvasNodeInspector: React.FC<CanvasNodeInspectorProps> = ({
   onToggleSquadCollapse,
   onToggleSquadCollapsed,
   onCreateAgentForSquad,
+  onSurvivorTakeover,
+  isTakingOver = false,
   providers,
   agentProviders,
   codexAuthStatus,
@@ -121,6 +139,7 @@ export const CanvasNodeInspector: React.FC<CanvasNodeInspectorProps> = ({
   onIsolateWorktree,
   quickDeployChips = [],
   onUpdateTerminalNode,
+  onUpdateAgentTerminalNode,
   progress,
 }) => {
   // Estado para Node
@@ -132,12 +151,17 @@ export const CanvasNodeInspector: React.FC<CanvasNodeInspectorProps> = ({
   const [editingSquadTitle, setEditingSquadTitle] = useState(false)
   const [draftSquadTitle, setDraftSquadTitle] = useState('')
   const [selectedAgentToAdd, setSelectedAgentToAdd] = useState('')
+  const [selectedSurvivorId, setSelectedSurvivorId] = useState('')
 
   // Rastreamento para sincronização de objetivo e squad sem sobrescrever digitação
   const [prevSquadId, setPrevSquadId] = useState<string | null>(squad?.id ?? null)
   const [prevObjective, setPrevObjective] = useState<string | null>(squad?.objective ?? '')
   const [draftObjective, setDraftObjective] = useState<string>(squad?.objective ?? '')
   const isObjectiveDirtyRef = useRef<boolean>(false)
+
+  // Clean pass: contadores de caracteres só aparecem com o campo em foco
+  const [objectiveFieldFocused, setObjectiveFieldFocused] = useState(false)
+  const [noteFieldFocused, setNoteFieldFocused] = useState(false)
 
   // Sincronização direta de estado quando squad.id ou squad.objective mudam:
   // Padrão canônico do React para ajuste de estado baseado em props sem esperar useEffect.
@@ -269,11 +293,8 @@ export const CanvasNodeInspector: React.FC<CanvasNodeInspectorProps> = ({
         {/* Cabeçalho da Squad */}
         <header className="canvas-inspector-header">
           <div className="canvas-inspector-title-area">
-            <span
-              className="canvas-inspector-kind-badge"
-              style={{ borderColor: 'rgba(234, 179, 8, 0.4)', color: '#facc15' }}
-            >
-              <Users size={14} aria-hidden="true" />
+            <span className="canvas-inspector-kind is-squad">
+              <Users size={13} aria-hidden="true" />
               <span>Squad</span>
             </span>
 
@@ -331,103 +352,98 @@ export const CanvasNodeInspector: React.FC<CanvasNodeInspectorProps> = ({
           </button>
         </header>
 
-        {/* Corpo da Squad */}
+        {/* Corpo da Squad — campos agrupados por espaço, sem caixas aninhadas */}
         <div className="canvas-inspector-body">
-          {/* Status e Recolhimento */}
-          <section className="canvas-inspector-section" aria-labelledby="inspector-squad-status">
-            <h4 id="inspector-squad-status" className="canvas-inspector-section-title">
-              Visão Geral da Squad
-            </h4>
-            <div className="canvas-inspector-squad-status-row">
-              <span>{squad.memberNodeIds.length} membro(s) vinculados</span>
-              {(onToggleSquadCollapse || onToggleSquadCollapsed) && (
-                <button
-                  type="button"
-                  className="canvas-inspector-toggle-btn"
-                  onClick={() => (onToggleSquadCollapse || onToggleSquadCollapsed)?.(squad.id)}
-                  title={squad.collapsed ? 'Expandir nós da squad no canvas' : 'Recolher nós da squad no canvas'}
-                >
-                  {squad.collapsed ? (
-                    <>
-                      <FolderPlus size={13} aria-hidden="true" />
-                      <span>Expandir</span>
-                    </>
-                  ) : (
-                    <>
-                      <FolderMinus size={13} aria-hidden="true" />
-                      <span>Recolher</span>
-                    </>
-                  )}
-                </button>
-              )}
-            </div>
-          </section>
+          {/* Linha de contexto: membros + recolhimento (sem título de seção) */}
+          <div className="canvas-inspector-meta-row">
+            <span>{squad.memberNodeIds.length} membro(s) vinculados</span>
+            {(onToggleSquadCollapse || onToggleSquadCollapsed) && (
+              <button
+                type="button"
+                className="canvas-inspector-ghost-btn"
+                onClick={() => (onToggleSquadCollapse || onToggleSquadCollapsed)?.(squad.id)}
+                title={squad.collapsed ? 'Expandir nós da squad no canvas' : 'Recolher nós da squad no canvas'}
+              >
+                {squad.collapsed ? (
+                  <>
+                    <FolderPlus size={12} aria-hidden="true" />
+                    <span>Expandir</span>
+                  </>
+                ) : (
+                  <>
+                    <FolderMinus size={12} aria-hidden="true" />
+                    <span>Recolher</span>
+                  </>
+                )}
+              </button>
+            )}
+          </div>
 
-          {/* Objetivo da Squad */}
-          <section className="canvas-inspector-section" aria-labelledby="inspector-squad-objective">
-            <h4 id="inspector-squad-objective" className="canvas-inspector-section-title">
-              Objetivo da Squad
-            </h4>
-            <div className="canvas-inspector-field">
-              <label htmlFor="squad-objective-textarea">Objetivo / Metas</label>
-              <textarea
-                id="squad-objective-textarea"
-                rows={3}
-                maxLength={2000}
-                value={draftObjective}
-                onChange={(e) => {
-                  isObjectiveDirtyRef.current = true
-                  setDraftObjective(e.target.value)
-                }}
-                onBlur={handleCommitSquadObjective}
-                placeholder="Descreva o objetivo, critérios e limites deste squad..."
-                className="canvas-inspector-textarea"
-              />
+          {/* Objetivo */}
+          <div className="canvas-inspector-field">
+            <label htmlFor="squad-objective-textarea">Objetivo</label>
+            <textarea
+              id="squad-objective-textarea"
+              rows={3}
+              maxLength={2000}
+              value={draftObjective}
+              onChange={(e) => {
+                isObjectiveDirtyRef.current = true
+                setDraftObjective(e.target.value)
+              }}
+              onFocus={() => setObjectiveFieldFocused(true)}
+              onBlur={() => {
+                setObjectiveFieldFocused(false)
+                handleCommitSquadObjective()
+              }}
+              placeholder="Descreva o objetivo, critérios e limites deste squad..."
+              className="canvas-inspector-textarea"
+            />
+            {(objectiveFieldFocused ||
+              isObjectiveDirtyRef.current ||
+              draftObjective.length >= OBJECTIVE_NEAR_LIMIT) && (
               <div className="canvas-inspector-char-count">
-                <span>{draftObjective.length}/2000 caracteres</span>
+                {(objectiveFieldFocused || draftObjective.length >= OBJECTIVE_NEAR_LIMIT) && (
+                  <span>{draftObjective.length}/2000 caracteres</span>
+                )}
                 {draftObjective !== (squad.objective ?? '') && (
                   <button
                     type="button"
-                    className="text-[11px] font-semibold text-[var(--ops-accent-strong)] hover:underline"
+                    className="canvas-inspector-save-objective"
+                    onMouseDown={(e) => e.preventDefault()}
                     onClick={handleCommitSquadObjective}
                   >
                     Salvar objetivo
                   </button>
                 )}
               </div>
-            </div>
-          </section>
+            )}
+          </div>
 
-          {/* Coordenador da Squad */}
-          <section className="canvas-inspector-section" aria-labelledby="inspector-squad-coord">
-            <h4 id="inspector-squad-coord" className="canvas-inspector-section-title">
-              Coordenação da Squad
-            </h4>
-            <div className="canvas-inspector-field">
-              <label htmlFor="squad-coordinator-select">Coordenador (Opcional)</label>
-              <p className="text-[11px] text-[var(--ops-text-muted)]">
-                O coordenador lidera e dispara a orquestração da squad. Se omitido, os agentes operam de forma avulsa.
-              </p>
-              <select
-                id="squad-coordinator-select"
-                className="canvas-inspector-select"
-                value={squad.coordinatorNodeId || ''}
-                onChange={(e) => {
-                  const val = e.target.value.trim()
-                  onSetSquadCoordinator?.(squad.id, val ? val : null)
-                }}
-              >
-                <option value="">— Sem coordenador (avulso) —</option>
-                {members.map((member) => (
-                  <option key={member.id} value={member.id}>
-                    {member.title} ({member.role || 'Especialista'})
-                  </option>
-                ))}
-              </select>
-            </div>
-          </section>
+          {/* Coordenador — ajuda longa virou tooltip no rótulo */}
+          <div className="canvas-inspector-field">
+            <label htmlFor="squad-coordinator-select" title="Lidera e dispara a orquestração; sem coordenador, os agentes operam de forma avulsa.">
+              Coordenador
+            </label>
+            <select
+              id="squad-coordinator-select"
+              className="canvas-inspector-select"
+              value={squad.coordinatorNodeId || ''}
+              onChange={(e) => {
+                const val = e.target.value.trim()
+                onSetSquadCoordinator?.(squad.id, val ? val : null)
+              }}
+            >
+              <option value="">— Sem coordenador (avulso) —</option>
+              {members.map((member) => (
+                <option key={member.id} value={member.id}>
+                  {member.title} ({member.role || 'Especialista'})
+                </option>
+              ))}
+            </select>
+          </div>
 
-          {/* Membros da Squad */}
+          {/* Membros + adicionar (uma única superfície, um título) */}
           <section className="canvas-inspector-section" aria-labelledby="inspector-squad-members">
             <h4 id="inspector-squad-members" className="canvas-inspector-section-title">
               Membros ({members.length})
@@ -445,15 +461,15 @@ export const CanvasNodeInspector: React.FC<CanvasNodeInspectorProps> = ({
                       className={`canvas-inspector-squad-member-item ${isCoord ? 'is-coordinator' : ''}`}
                     >
                       <div className="canvas-inspector-squad-member-info">
-                        <Bot size={13} className="text-[var(--ops-text-secondary)]" aria-hidden="true" />
+                        <Bot size={13} className="canvas-inspector-member-icon" aria-hidden="true" />
                         <span className="canvas-inspector-member-title" title={member.title}>
                           {member.title}
                         </span>
-                        <span className="canvas-inspector-role-badge">
+                        <span className="canvas-inspector-member-role-text">
                           {member.role || 'Implementação'}
                         </span>
                         {isCoord && (
-                          <span className="canvas-inspector-coordinator-badge">
+                          <span className="canvas-inspector-coordinator-text" title="Coordenador da squad">
                             <Crown size={10} aria-hidden="true" /> Coordenador
                           </span>
                         )}
@@ -480,6 +496,18 @@ export const CanvasNodeInspector: React.FC<CanvasNodeInspectorProps> = ({
                             aria-label={`Focar ${member.title}`}
                           >
                             <Crosshair size={11} aria-hidden="true" />
+                          </button>
+                        )}
+                        {onSurvivorTakeover && (
+                          <button
+                            type="button"
+                            className="canvas-inspector-btn-action"
+                            onClick={() => onSurvivorTakeover(squad.id, member.id)}
+                            title={`Sincronizar ${member.title} com o estado da squad (Takeover)`}
+                            aria-label={`Sincronizar ${member.title} como sobrevivente da squad`}
+                            disabled={isTakingOver}
+                          >
+                            <RefreshCw size={11} aria-hidden="true" className={isTakingOver ? 'animate-spin' : ''} />
                           </button>
                         )}
                         {onRemoveSquadMember && (
@@ -513,85 +541,110 @@ export const CanvasNodeInspector: React.FC<CanvasNodeInspectorProps> = ({
               )}
             </div>
             {members.length === 1 && (
-              <p
-                className="canvas-inspector-empty-hint canvas-inspector-restriction-hint"
-                style={{ marginTop: '8px' }}
-              >
+              <p className="canvas-inspector-empty-hint canvas-inspector-restriction-hint">
                 Squads exigem ao menos 1 membro ativo. O último membro não pode ser removido.
               </p>
             )}
-          </section>
+            {onAddSquadMember && (
+              <div id="inspector-add-member" className="canvas-inspector-add-member-row">
+                {candidateAgentsToAdd.length > 0 ? (
+                  <>
+                    <select
+                      aria-label="Selecionar agente para adicionar à squad"
+                      className="canvas-inspector-select"
+                      value={selectedAgentToAdd}
+                      onChange={(e) => setSelectedAgentToAdd(e.target.value)}
+                    >
+                      <option value="">Escolha um agente do canvas...</option>
+                      {candidateAgentsToAdd.map((agent) => (
+                        <option key={agent.id} value={agent.id}>
+                          {agent.title} ({agent.role || 'Agente'})
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      disabled={!selectedAgentToAdd}
+                      onClick={() => {
+                        if (selectedAgentToAdd) {
+                          onAddSquadMember(squad.id, selectedAgentToAdd)
+                          setSelectedAgentToAdd('')
+                        }
+                      }}
+                      className="canvas-inspector-btn-primary"
+                    >
+                      <Plus size={13} aria-hidden="true" />
+                      <span>Adicionar</span>
+                    </button>
+                  </>
+                ) : (
+                  <p className="canvas-inspector-empty-hint">
+                    Não há outros agentes avulsos no canvas para adicionar a esta squad.
+                  </p>
+                )}
+              </div>
+            )}
+            {onCreateAgentForSquad && (
+              <button
+                type="button"
+                onClick={() => onCreateAgentForSquad(squad.id)}
+                className="canvas-inspector-ghost-btn"
+                title="Criar novo agente e vincular a esta squad"
+                aria-label="Criar novo agente para a squad"
+              >
+                <Plus size={12} aria-hidden="true" />
+                <span>Criar novo agente</span>
+              </button>
+            )}
 
-          {/* Adicionar Membro */}
-          {onAddSquadMember && (
-            <section className="canvas-inspector-section" aria-labelledby="inspector-add-member">
-              <h4 id="inspector-add-member" className="canvas-inspector-section-title">
-                Adicionar Membro à Squad
-              </h4>
-              {candidateAgentsToAdd.length > 0 ? (
-                <div className="canvas-inspector-add-member-row">
+            {squad.memberNodeIds.length > 0 && onSurvivorTakeover && (
+              <div className="canvas-inspector-field" style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid var(--ops-border, #333)' }}>
+                <label htmlFor="squad-survivor-select">Sincronização de Sobrevivente (Takeover)</label>
+                <p className="canvas-inspector-empty-hint">
+                  Sincroniza um agente sobrevivente com o estado durável do squad, decisões e Git atual via ai-memory.
+                </p>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '6px' }}>
                   <select
-                    aria-label="Selecionar agente para adicionar à squad"
+                    id="squad-survivor-select"
+                    aria-label="Selecionar agente sobrevivente para takeover"
+                    value={
+                      selectedSurvivorId ||
+                      squad.memberNodeIds.find((id) => id !== squad.coordinatorNodeId) ||
+                      squad.memberNodeIds[0] ||
+                      ''
+                    }
+                    onChange={(e) => setSelectedSurvivorId(e.target.value)}
                     className="canvas-inspector-select"
-                    value={selectedAgentToAdd}
-                    onChange={(e) => setSelectedAgentToAdd(e.target.value)}
+                    style={{ flex: 1 }}
                   >
-                    <option value="">Escolha um agente do canvas...</option>
-                    {candidateAgentsToAdd.map((agent) => (
-                      <option key={agent.id} value={agent.id}>
-                        {agent.title} ({agent.role || 'Agente'})
+                    {members.map((member) => (
+                      <option key={member.id} value={member.id}>
+                        {member.title} ({member.role || 'Implementação'})
+                        {member.id === squad.coordinatorNodeId ? ' — Coordenador' : ''}
                       </option>
                     ))}
                   </select>
                   <button
                     type="button"
-                    disabled={!selectedAgentToAdd}
+                    className="canvas-inspector-btn canvas-inspector-btn-primary"
                     onClick={() => {
-                      if (selectedAgentToAdd) {
-                        onAddSquadMember(squad.id, selectedAgentToAdd)
-                        setSelectedAgentToAdd('')
-                      }
+                      const targetId =
+                        selectedSurvivorId ||
+                        squad.memberNodeIds.find((id) => id !== squad.coordinatorNodeId) ||
+                        squad.memberNodeIds[0]
+                      if (targetId) onSurvivorTakeover(squad.id, targetId)
                     }}
-                    className="canvas-inspector-btn-primary"
+                    disabled={isTakingOver}
+                    style={{ whiteSpace: 'nowrap' }}
                   >
-                    <Plus size={13} aria-hidden="true" />
-                    <span>Adicionar</span>
+                    <RefreshCw size={12} aria-hidden="true" className={isTakingOver ? 'animate-spin' : ''} />
+                    <span>{isTakingOver ? 'Sincronizando...' : 'Takeover'}</span>
                   </button>
                 </div>
-              ) : (
-                <p className="canvas-inspector-empty-hint">
-                  Não há outros agentes avulsos no canvas para adicionar a esta squad.
-                </p>
-              )}
-              {onCreateAgentForSquad && (
-                <div style={{ marginTop: 8 }}>
-                  <button
-                    type="button"
-                    onClick={() => onCreateAgentForSquad(squad.id)}
-                    className="canvas-inspector-btn-action"
-                    title="Criar novo agente e vincular a esta squad"
-                    aria-label="Criar novo agente para a squad"
-                  >
-                    <Plus size={12} aria-hidden="true" />
-                    <span>Criar novo agente para a squad</span>
-                  </button>
-                </div>
-              )}
-            </section>
-          )}
+              </div>
+            )}
+          </section>
         </div>
-
-        {/* Rodapé da Squad */}
-        <footer className="canvas-inspector-footer">
-          <button
-            type="button"
-            className="canvas-inspector-footer-btn"
-            onClick={onClose}
-            title="Fechar Inspector"
-          >
-            <span>Fechar</span>
-          </button>
-        </footer>
       </aside>
     )
   }
@@ -639,7 +692,7 @@ export const CanvasNodeInspector: React.FC<CanvasNodeInspectorProps> = ({
       {/* Cabeçalho do Inspector */}
       <header className="canvas-inspector-header">
         <div className="canvas-inspector-title-area">
-          <span className="canvas-inspector-kind-badge">
+          <span className="canvas-inspector-kind">
             {kindLabels[node.kind]?.icon}
             <span>{kindLabels[node.kind]?.label}</span>
           </span>
@@ -707,7 +760,9 @@ export const CanvasNodeInspector: React.FC<CanvasNodeInspectorProps> = ({
 
             {/* Papel Customizável */}
             <div className="canvas-inspector-field">
-              <label htmlFor="agent-role-input">Papel (preset ou customizado)</label>
+              <label htmlFor="agent-role-input" title="Preset ou customizado">
+                Papel
+              </label>
               <input
                 id="agent-role-input"
                 list="inspector-builtin-roles"
@@ -760,26 +815,122 @@ export const CanvasNodeInspector: React.FC<CanvasNodeInspectorProps> = ({
                     Conta 2 {codexAuthStatus?.account2?.connected ? '(pronta)' : '(desconectada)'}
                   </option>
                 </select>
-                {node.account && !codexAuthStatus?.[node.account]?.connected && onRequestCodexAuth && (
-                  <button
-                    type="button"
-                    className="canvas-inspector-auth-link"
-                    onClick={() => onRequestCodexAuth(node.account as CodexAccountId)}
-                  >
-                    Conectar conta agora
-                  </button>
-                )}
-              </div>
+            {node.account && !codexAuthStatus?.[node.account]?.connected && onRequestCodexAuth && (
+              <button
+                type="button"
+                className="canvas-inspector-auth-link"
+                onClick={() => onRequestCodexAuth(node.account as CodexAccountId)}
+              >
+                Conectar conta agora
+              </button>
             )}
+          </div>
+        )}
 
-            {/* Status Real de Execução */}
+        {/* Terminal do Agente — mesmos campos do Smart Terminal. O Codex não
+            os expõe: o terminal dele é gerenciado pela conta do DevOrbit. */}
+        {node.provider === 'codex' && (
+          <div className="canvas-inspector-field" data-agent-terminal="managed">
+            <label>Terminal</label>
+            <div className="canvas-inspector-live-notice" role="note">
+              <span className="canvas-inspector-live-dot" aria-hidden="true" />
+              <span>{codexManagedTerminalLabel(node.account)}</span>
+            </div>
+          </div>
+        )}
+        {node.provider && node.provider !== 'codex' && onUpdateAgentTerminalNode && (
+          <div className="canvas-inspector-field" data-agent-terminal="editable">
+            <label>Terminal do Agente</label>
+            <div className="canvas-inspector-field">
+              <label htmlFor="agent-terminal-command-input">Comando</label>
+              <input
+                id="agent-terminal-command-input"
+                type="text"
+                value={node.terminal?.command || ''}
+                placeholder={
+                  agentTerminalDefaultCommand(node.provider) || 'ex.: meu-cli'
+                }
+                onChange={(e) => {
+                  const val = e.target.value
+                  onUpdateAgentTerminalNode(node.id, () => ({ command: val }))
+                }}
+                className="canvas-inspector-input"
+              />
+              <p className="canvas-inspector-empty-hint">
+                {agentTerminalDefaultCommand(node.provider)
+                  ? `Vazio inicia o CLI padrão do provedor (${agentTerminalDefaultCommand(node.provider)}) ao abrir o agente.`
+                  : 'Defina o comando do CLI personalizado para iniciá-lo ao abrir o agente.'}
+              </p>
+            </div>
+            <div className="canvas-inspector-field">
+              <label htmlFor="agent-terminal-args-input">Argumentos</label>
+              <input
+                id="agent-terminal-args-input"
+                type="text"
+                value={formatArgsInput(node.terminal?.args)}
+                placeholder="ex.: --port 3000"
+                onChange={(e) => {
+                  const parsed = parseArgsInput(e.target.value)
+                  onUpdateAgentTerminalNode(node.id, () => ({ args: parsed }))
+                }}
+                className="canvas-inspector-input"
+              />
+            </div>
+            <div className="canvas-inspector-field">
+              <label>Executar em</label>
+              <div className="canvas-inspector-radio-row">
+                <label className="canvas-inspector-radio-label">
+                  <input
+                    type="radio"
+                    name="agent-terminal-cwd-mode"
+                    checked={(node.terminal?.cwdMode ?? 'workspace') === 'workspace'}
+                    onChange={() =>
+                      onUpdateAgentTerminalNode(node.id, () => ({
+                        cwdMode: 'workspace',
+                        cwd: undefined,
+                      }))
+                    }
+                  />
+                  <span>Workspace</span>
+                </label>
+                <label className="canvas-inspector-radio-label">
+                  <input
+                    type="radio"
+                    name="agent-terminal-cwd-mode"
+                    checked={node.terminal?.cwdMode === 'custom'}
+                    onChange={() =>
+                      onUpdateAgentTerminalNode(node.id, () => ({ cwdMode: 'custom' }))
+                    }
+                  />
+                  <span>Customizado</span>
+                </label>
+              </div>
+              {node.terminal?.cwdMode === 'custom' && (
+                <input
+                  type="text"
+                  value={node.terminal.cwd || ''}
+                  placeholder="C:\caminho\do\diretorio"
+                  onChange={(e) => {
+                    const val = e.target.value
+                    onUpdateAgentTerminalNode(node.id, () => ({ cwd: val }))
+                  }}
+                  className="canvas-inspector-input"
+                  aria-label="Caminho personalizado do agente"
+                />
+              )}
+            </div>
+          </div>
+        )}
+
+            {/* Status Real de Execução — ponto + rótulo; estado detalhado no tooltip */}
             {progress && (
-              <div className="canvas-inspector-status-box" data-status={progress.state}>
+              <div
+                className="canvas-inspector-status-box"
+                data-status={progress.state}
+                title={`Estado: ${progress.state}`}
+              >
                 <span className="canvas-inspector-status-dot" aria-hidden="true" />
-                <div className="canvas-inspector-status-meta">
-                  <span className="canvas-inspector-status-label">{progress.label}</span>
-                  <span className="canvas-inspector-status-sub">Estado: {progress.state}</span>
-                </div>
+                <span className="canvas-inspector-status-label">{progress.label}</span>
               </div>
             )}
 
@@ -806,6 +957,18 @@ export const CanvasNodeInspector: React.FC<CanvasNodeInspectorProps> = ({
                   <span>Isolar em Worktree Git</span>
                 </button>
               )}
+              {squad && onSurvivorTakeover && (
+                <button
+                  type="button"
+                  className="canvas-inspector-btn"
+                  onClick={() => onSurvivorTakeover(squad.id, node.id)}
+                  title={`Sincronizar ${node.title} com o estado da squad ${squad.title} (Takeover)`}
+                  disabled={isTakingOver}
+                >
+                  <RefreshCw size={13} aria-hidden="true" className={isTakingOver ? 'animate-spin' : ''} />
+                  <span>{isTakingOver ? 'Sincronizando...' : 'Sincronizar Sobrevivente (Takeover)'}</span>
+                </button>
+              )}
             </div>
           </section>
         )}
@@ -817,7 +980,7 @@ export const CanvasNodeInspector: React.FC<CanvasNodeInspectorProps> = ({
               Configuração do Terminal
             </h4>
             <div className="canvas-inspector-live-notice" role="status">
-              <CheckCircle2 size={13} aria-hidden="true" />
+              <span className="canvas-inspector-live-dot" aria-hidden="true" />
               <span>Sessão PTY permanece viva no card do canvas.</span>
             </div>
 
@@ -856,7 +1019,17 @@ export const CanvasNodeInspector: React.FC<CanvasNodeInspectorProps> = ({
 
                 {/* Tema de Cores */}
                 <div className="canvas-inspector-field">
-                  <label htmlFor="terminal-theme-select">Tema de cores</label>
+                  <label htmlFor="terminal-theme-select">
+                    Tema de cores
+                    {/* Pontinho da família do tema selecionado: preview
+                        imediato da cor ao lado do nome (o xterm completo muda
+                        no terminal vivo via updateTheme). */}
+                    <span
+                      className="canvas-inspector-theme-dot"
+                      style={{ backgroundColor: resolveTerminalTheme(node.terminal?.theme).accent }}
+                      aria-hidden="true"
+                    />
+                  </label>
                   <select
                     id="terminal-theme-select"
                     aria-label="Tema de cores do terminal"
@@ -1022,12 +1195,17 @@ export const CanvasNodeInspector: React.FC<CanvasNodeInspectorProps> = ({
                 rows={10}
                 placeholder="Escreva anotações ou plano para a squad..."
                 onChange={(e) => onUpdateContent?.(node.id, e.target.value)}
+                onFocus={() => setNoteFieldFocused(true)}
+                onBlur={() => setNoteFieldFocused(false)}
                 className="canvas-inspector-textarea"
               />
-              <div className="canvas-inspector-char-count">
-                <span>{(node.content || '').length} caracteres</span>
-                <span>{(node.content || '').split(/\s+/).filter(Boolean).length} palavras</span>
-              </div>
+              {/* Clean pass: estatísticas só durante a edição */}
+              {noteFieldFocused && (
+                <div className="canvas-inspector-char-count">
+                  <span>{(node.content || '').length} caracteres</span>
+                  <span>{(node.content || '').split(/\s+/).filter(Boolean).length} palavras</span>
+                </div>
+              )}
             </div>
           </section>
         )}

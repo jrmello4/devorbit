@@ -65,15 +65,17 @@ describe('canvas-keyboard-helpers — Operação por teclado no Canvas', () => {
       const shrunk = resizeNodeByKeyboard(baseNode, 'shrink-x', 40)
       expect(shrunk.width).toBe(260)
 
-      // Teste limite mínimo (220)
+      // Teste limite mínimo (200 — resize livre)
       const nearMin = { ...baseNode, width: 230 }
       const minReached = resizeNodeByKeyboard(nearMin, 'shrink-x', 40)
-      expect(minReached.width).toBe(220)
+      expect(minReached.width).toBe(200)
 
-      // Teste limite máximo (1100)
-      const nearMax = { ...baseNode, width: 1090 }
+      // Teste teto = limite do mundo menos a posição do nó (sem teto 1100)
+      const nearMax = { ...baseNode, width: 5150 }
       const maxReached = resizeNodeByKeyboard(nearMax, 'grow-x', 40)
-      expect(maxReached.width).toBe(1100)
+      expect(maxReached.width).toBe(
+        Math.min(DEFAULT_CANVAS_BOUNDS.maxWidth, DEFAULT_CANVAS_BOUNDS.worldWidth - baseNode.x),
+      )
     })
   })
 

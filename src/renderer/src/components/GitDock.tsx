@@ -1,9 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  AlertTriangle,
-  ArrowUpCircle,
   Check,
-  ChevronRight,
   FileCode,
   GitBranch,
   GitCommit,
@@ -501,20 +498,27 @@ export const GitDock: React.FC<GitDockProps> = ({
             {activeTab === 'push' && (
               <div id="gitdock-panel-push" className="space-y-4" role="tabpanel" tabIndex={0} aria-labelledby="gitdock-tab-push" aria-label="Enviar alterações">
                 {!project ? (
-                  <p className="text-xs text-[var(--color-text-muted)]">Selecione um projeto para enviar alterações. O painel permanece aberto sem bloquear o editor.</p>
+                  <p className="text-xs text-[var(--color-text-muted)]">Selecione um projeto para enviar alterações.</p>
                 ) : (
                   <>
-                    <div className="flex flex-wrap gap-2">
+                    {/* Estado git em pontos semânticos (nada de pills) */}
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[var(--color-text-secondary)]">
                       {project.git.ahead > 0 && (
-                        <span className="flex items-center gap-1.5 rounded-lg border border-[var(--color-success)] bg-[var(--surface-selected)] px-2.5 py-1 text-xs font-semibold text-[var(--color-success)]">
-                          <ArrowUpCircle size={14} aria-hidden="true" />
-                          {project.git.ahead} commit(s) pronto(s) para push
+                        <span className="inline-flex items-center gap-1.5" title="Commits locais aguardando push">
+                          <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full" style={{ background: 'var(--color-git-ahead)' }} />
+                          {project.git.ahead} para push
                         </span>
                       )}
                       {project.git.hasChanges && (
-                        <span className="flex items-center gap-1.5 rounded-lg border border-[var(--color-warning)] bg-[var(--surface-selected)] px-2.5 py-1 text-xs font-semibold text-[var(--color-warning)]">
-                          <AlertTriangle size={14} aria-hidden="true" />
-                          {project.git.modifiedCount + project.git.untrackedCount} arquivo(s) com alterações
+                        <span className="inline-flex items-center gap-1.5" title="Arquivos com alterações locais">
+                          <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full" style={{ background: 'var(--color-git-pending)' }} />
+                          {project.git.modifiedCount + project.git.untrackedCount} alterados
+                        </span>
+                      )}
+                      {project.git.ahead === 0 && !project.git.hasChanges && (
+                        <span className="inline-flex items-center gap-1.5" title="Sem commits pendentes nem alterações locais">
+                          <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full" style={{ background: 'var(--color-git-clean)' }} />
+                          Em dia com o remote
                         </span>
                       )}
                     </div>
@@ -668,7 +672,7 @@ export const GitDock: React.FC<GitDockProps> = ({
                         <RefreshCw size={13} className={isLoadingBranches ? 'animate-spin' : ''} aria-hidden="true" /> Atualizar
                       </button>
                     </div>
-                    <div className="max-h-64 space-y-1.5 overflow-y-auto rounded-lg border border-[var(--color-border-subtle)] bg-[var(--surface-muted)] p-2">
+                    <div className="max-h-64 space-y-0.5 overflow-y-auto rounded-lg border border-[var(--color-border-subtle)] bg-[var(--surface-muted)] p-1.5">
                       {isLoadingBranches && branches.length === 0 ? (
                         <p className="py-6 text-center text-xs text-[var(--color-text-muted)]">Lendo branches…</p>
                       ) : localBranches.length === 0 ? (
@@ -680,13 +684,13 @@ export const GitDock: React.FC<GitDockProps> = ({
                             type="button"
                             onClick={() => void handleSwitch(branch)}
                             disabled={branch.isCurrent || Boolean(switchingBranch)}
-                            className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm hover:bg-[var(--surface-hover)] disabled:opacity-70"
+                            className="group flex w-full items-center justify-between gap-3 rounded-md px-2 py-1.5 text-left hover:bg-[var(--surface-hover)] disabled:opacity-70"
                           >
                             <span className="flex min-w-0 items-center gap-2">
                               {branch.isCurrent ? <Check size={14} className="shrink-0 text-[var(--color-success)]" aria-hidden="true" /> : <GitBranch size={14} className="shrink-0 text-[var(--color-text-muted)]" aria-hidden="true" />}
                               <span className="truncate font-mono text-xs text-[var(--text-primary)]">{branch.name}</span>
                             </span>
-                            <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">
+                            <span className={`shrink-0 text-[10px] text-[var(--color-text-muted)] motion-safe:transition-opacity ${switchingBranch === branch.name ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100'}`}>
                               {switchingBranch === branch.name ? 'Trocando…' : branch.isCurrent ? 'atual' : 'trocar'}
                             </span>
                           </button>
@@ -694,7 +698,7 @@ export const GitDock: React.FC<GitDockProps> = ({
                       )}
                     </div>
                     {dirtyBranch && onStashSwitch && (
-                      <div className="flex items-center justify-between gap-3 rounded-lg border border-[var(--color-border-subtle)] bg-[var(--surface-selected)] px-3 py-2.5">
+                      <div className="flex items-center justify-between gap-3 rounded-lg border border-[var(--color-border-subtle)] bg-[var(--surface-selected)] px-3 py-2">
                         <p className="text-xs text-[var(--color-text-secondary)]">Há alterações locais. Guardar em stash e trocar?</p>
                         <button
                           type="button"
@@ -703,7 +707,7 @@ export const GitDock: React.FC<GitDockProps> = ({
                             if (target) void handleStashSwitch(target)
                           }}
                           disabled={Boolean(switchingBranch)}
-                          className="shrink-0 rounded-lg bg-[var(--color-accent-strong)] px-3 py-1.5 text-xs font-semibold text-[var(--color-accent-contrast)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60"
+                          className="shrink-0 rounded-md bg-[var(--color-accent-strong)] px-3 py-1.5 text-xs font-semibold text-[var(--color-accent-contrast)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60"
                         >
                           Stash + trocar
                         </button>
@@ -711,18 +715,20 @@ export const GitDock: React.FC<GitDockProps> = ({
                     )}
                     {remoteBranches.length > 0 && (
                       <div>
-                        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Remotas</p>
-                        <div className="max-h-32 space-y-1 overflow-y-auto rounded-lg border border-[var(--color-border-subtle)] bg-[var(--surface-muted)] p-2">
+                        <p className="mb-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Remotas</p>
+                        <div className="max-h-32 space-y-0.5 overflow-y-auto rounded-lg border border-[var(--color-border-subtle)] bg-[var(--surface-muted)] p-1.5">
                           {remoteBranches.map((branch) => (
                             <button
                               key={`remote-${branch.name}`}
                               type="button"
                               onClick={() => void handleSwitch(branch)}
                               disabled={Boolean(switchingBranch)}
-                              className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-1.5 text-left hover:bg-[var(--surface-hover)] disabled:opacity-60"
+                              className="group flex w-full items-center justify-between gap-3 rounded-md px-2 py-1 text-left hover:bg-[var(--surface-hover)] disabled:opacity-60"
                             >
-                              <span className="truncate font-mono text-xs text-[var(--color-accent-strong)]">{branch.name}</span>
-                              <span className="text-[10px] text-[var(--color-text-muted)]">{switchingBranch === branch.name ? 'Criando…' : 'usar'}</span>
+                              <span className="truncate font-mono text-xs text-[var(--color-text-secondary)]">{branch.name}</span>
+                              <span className={`shrink-0 text-[10px] text-[var(--color-text-muted)] motion-safe:transition-opacity ${switchingBranch === branch.name ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100'}`}>
+                                {switchingBranch === branch.name ? 'Criando…' : 'usar'}
+                              </span>
                             </button>
                           ))}
                         </div>
@@ -813,11 +819,6 @@ export const GitDock: React.FC<GitDockProps> = ({
                 </button>
               </form>
             )}
-          </div>
-
-          <div className="flex items-center justify-between border-t border-[var(--color-border-subtle)] bg-[var(--color-bg-toolbar)] px-3 py-2 text-[11px] text-[var(--color-text-muted)]">
-            <span className="inline-flex items-center gap-1"><ChevronRight size={12} aria-hidden="true" /> Não-bloqueante: o código continua visível</span>
-            <span>Dif lado a lado no editor</span>
           </div>
         </>
       )}

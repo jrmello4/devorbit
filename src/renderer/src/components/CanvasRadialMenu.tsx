@@ -10,6 +10,7 @@ import {
   resolveRadialRadius,
 } from './radial-menu-helpers'
 import type { RadialMenuTuning } from './radial-menu-helpers'
+import './CanvasRadialMenu.css'
 
 export interface CanvasRadialItem {
   id: string
@@ -193,7 +194,6 @@ export const CanvasRadialMenu: React.FC<CanvasRadialMenuProps> = ({
               }}
             >
               <Icon size={18} strokeWidth={1.8} aria-hidden />
-              <i className="workspace-canvas-radial-label">{item.label}</i>
             </button>
           )
         })}

@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import type { AgentBridgeEvent } from '../../../shared/agent-bridge-event'
 import type { AgentProvider, AgentProviderId, AutomationConfig, CodexAccountStatus, Project, ToolHealth, WebPanelEvent } from '../types'
+import { AGENT_PROVIDER_ID_LIST } from '../../../shared/agent-provider-contract'
 import type { CustomTerminalPreset } from '../../../shared/terminal-presets'
 import type { PendingCanvasNode, WorkspaceUiRequest } from './workspace-request-helpers'
 import { applyWorkspaceUiRequest, computePipeSync, computeStreamingPipeEdges, isPendingNodeForProject } from './workspace-request-helpers'
@@ -53,7 +54,10 @@ const MIN_RIGHT_WIDTH = 300
 const MAX_RIGHT_WIDTH = 680
 const MIN_TERMINAL_HEIGHT = 150
 const MAX_TERMINAL_HEIGHT = 420
-const AGENT_PROVIDER_IDS: AgentProviderId[] = ['codex', 'opencode', 'claude', 'gemini', 'aider', 'agy', 'custom']
+/** Recuo do view nativo no canto inferior direito: deixa o grip de resize do
+ * cartão do navegador em área DOM (o view nativo cobriria o pointerdown). */
+const WEB_GRIP_INSET = 20
+const AGENT_PROVIDER_IDS: AgentProviderId[] = [...AGENT_PROVIDER_ID_LIST]
 
 function layoutKey(id: string): string {
   return 'devorbit:workspace-layout:' + id
@@ -392,17 +396,27 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
       const bottom = Math.min(window.innerHeight, rect.bottom, clip?.bottom ?? window.innerHeight)
       const width = Math.max(0, right - left)
       const height = Math.max(0, bottom - top)
-      const visible = layout.webVisible && !suppressNativeWeb && width > 0 && height > 0
+      // O view nativo flutua acima de TODO o DOM do canvas: sem o recuo, ele
+      // come o pointerdown do grip de resize (canto inferior direito) e o
+      // cartão nunca é redimensionável. Durante pan/drag de qualquer card ele
+      // também cobre os vizinhos — cede (some) até o gesto acabar.
+      const yieldToGesture = Boolean(
+        canvas?.classList.contains('is-panning') || canvas?.classList.contains('is-dragging'),
+      )
+      const visible =
+        layout.webVisible && !suppressNativeWeb && !yieldToGesture && width > 0 && height > 0
       void window.devorbit.setWebBounds({
         x: Math.round(left), y: Math.round(top),
-        width: Math.round(width), height: Math.round(height),
+        width: Math.round(Math.max(0, width - WEB_GRIP_INSET)),
+        height: Math.round(Math.max(0, height - WEB_GRIP_INSET)),
         contentX: Math.round(rect.left), contentY: Math.round(rect.top),
-        contentWidth: Math.round(rect.width), contentHeight: Math.round(rect.height),
+        contentWidth: Math.round(Math.max(0, rect.width - WEB_GRIP_INSET)),
+        contentHeight: Math.round(Math.max(0, rect.height - WEB_GRIP_INSET)),
       })
       void window.devorbit.setWebVisible(visible)
     }
-    // Trailing rAF: MutationObserver dispara a cada mutação de style do canvas
-    // (um por frame durante gestos); medir/IPC uma vez por frame no máximo.
+    // Trailing rAF: MutationObserver dispara a cada mutação de style/class do
+    // canvas (um por frame durante gestos); medir/IPC uma vez por frame.
     let frame: number | null = null
     const updateBounds = () => {
       if (frame !== null) return
@@ -414,7 +428,7 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
     const observer = new ResizeObserver(updateBounds)
     observer.observe(viewport)
     const mutationObserver = canvas ? new MutationObserver(updateBounds) : null
-    if (canvas) mutationObserver?.observe(canvas, { attributes: true, subtree: true, attributeFilter: ['style'] })
+    if (canvas) mutationObserver?.observe(canvas, { attributes: true, subtree: true, attributeFilter: ['style', 'class'] })
     canvas?.addEventListener('scroll', updateBounds, { passive: true })
     updateBounds()
     window.addEventListener('resize', updateBounds)
@@ -602,7 +616,7 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
   )
   const canvasBrowser = (
     <aside className="workspace-browser-panel" aria-label="Pesquisa web">
-      <div className="workspace-panel-heading browser-heading"><div><strong><Globe size={14} aria-hidden="true" /> Pesquisa web</strong><span title={webTitle}>{webTitle}</span></div><div className="browser-actions"><button type="button" className="workspace-icon-button" onClick={() => void moveWebHistory(-1)} disabled={webHistory.index === 0} aria-label="Voltar na pesquisa web" title="Voltar"><ArrowLeft size={14} aria-hidden="true" /></button><button type="button" className="workspace-icon-button" onClick={() => void moveWebHistory(1)} disabled={webHistory.index >= webHistory.entries.length - 1} aria-label="Avançar na pesquisa web" title="Avançar"><ArrowRight size={14} aria-hidden="true" /></button><button type="button" className="workspace-icon-button" onClick={() => void window.devorbit.reloadWeb()} aria-label="Recarregar pesquisa web" title="Recarregar"><RefreshCw size={14} aria-hidden="true" /></button></div></div>
+      <div className="workspace-panel-heading browser-heading"><div><strong><Globe size={14} aria-hidden="true" /> Pesquisa web</strong><span title={webTitle}>{webTitle}</span></div><div className="browser-actions"><button type="button" className="workspace-icon-button" onClick={() => void moveWebHistory(-1)} disabled={webHistory.index === 0} aria-label="Voltar na pesquisa web" title="Voltar"><ArrowLeft size={14} aria-hidden="true" /></button><button type="button" className="workspace-icon-button" onClick={() => void moveWebHistory(1)} disabled={webHistory.index >= webHistory.entries.length - 1} aria-label="Avançar na pesquisa web" title="Avançar"><ArrowRight size={14} aria-hidden="true" /></button><button type="button" className="workspace-icon-button" onClick={() => void window.devorbit.reloadWeb()} aria-label="Recarregar pesquisa web" title="Recarregar"><RefreshCw size={14} aria-hidden="true" /></button><button type="button" className="workspace-icon-button" onClick={() => setLayout((current) => ({ ...current, webVisible: false }))} aria-label="Remover navegador do canvas" title="Remover navegador do canvas"><X size={14} aria-hidden="true" /></button></div></div>
       <form className="workspace-browser-form" onSubmit={(event) => void navigateBrowser(event)}><label className="sr-only" htmlFor="workspace-canvas-web-url">Endereço da página web</label><input id="workspace-canvas-web-url" value={webUrl} onChange={(event) => setWebUrl(event.target.value)} spellCheck={false} autoComplete="off" /><button type="submit" className="workspace-send-button" aria-label="Navegar" title="Navegar"><Check size={14} aria-hidden="true" /></button></form>
       <div ref={webViewportRef} className="workspace-web-viewport">{webError
         ? <div className="workspace-web-message"><AlertCircle size={18} aria-hidden="true" /><strong>Não foi possível carregar</strong><span>{webError}</span></div>
@@ -641,8 +655,9 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
         </div>
       ) : (
       <header className="integrated-toolbar">
+        {/* Cabeçalho do projeto: nome + caminho; sem ícone decorativo em caixa
+            (espaço vence caixa — clean pass). */}
         <div className="integrated-heading">
-          <span className="integrated-heading-icon"><Code2 size={16} aria-hidden="true" /></span>
           <div><strong>{project.name}</strong><span title={project.path}>{project.path}</span></div>
         </div>
         <div className="integrated-toolbar-actions">
@@ -694,7 +709,7 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
       </header>
       )}
 
-      {isCanvas ? <WorkspaceCanvas project={project} workbench={canvasWorkbench} browser={layout.webVisible ? canvasBrowser : undefined} codexAuthStatus={codexAuthStatus} onRequestCodexAuth={onRequestCodexAuth} agentProviders={agentProviders} defaultExecutor={automation?.defaultExecutor ?? null} onSendAgentTask={queueAgentTask} onCreateAgentWorktree={(node) => void isolateAgent(node)} onSelectionChange={onCanvasFocusChange} onConnectionsChange={syncCanvasPipes} pendingNodeRequest={pendingCanvasNode && isPendingNodeForProject(pendingCanvasNode, project.id) ? { kind: pendingCanvasNode.kind, nonce: pendingCanvasNode.nonce } : null} onPendingNodeConsumed={handlePendingCanvasNodeConsumed} onNotify={onNotify} renderAgent={(node: CanvasNode, onAgentResult, onAgentTaskFailure) => { const clearDeliveredTask = (taskId?: string) => { if (!taskId || agentTasks[node.id]?.id !== taskId) return; setAgentTasks((current) => { if (current[node.id]?.id !== taskId) return current; const next = { ...current }; delete next[node.id]; return next }) }; return node.provider ? (<div className="canvas-agent-terminal"><div className="canvas-agent-review"><span>Worktree</span><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void reviewAgent(node)}>Alterações</button><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void mergeAgent(node)}>Integrar</button></div><WorkspaceTerminal projectPath={agentWorktrees[node.id]?.path || project.path} terminalId={agentTerminalId(project.id, node.id)} codexAccount={node.account} provider={node.provider} agentTask={agentTasks[node.id]} onAgentResult={(result, taskId) => { clearDeliveredTask(taskId); onAgentResult(result, taskId) }} onAgentTaskFailure={(taskId, message) => { clearDeliveredTask(taskId); onAgentTaskFailure(taskId, message) }} onNotify={onNotify} onRequestCodexAuth={onRequestCodexAuth} /></div>) : null }} terminalPresets={customPresets} onTerminalPresetsSaved={setCustomPresets} renderTerminal={(node: CanvasNode) => (<div className="canvas-agent-terminal"><WorkspaceTerminal projectPath={project.path} terminalId={agentTerminalId(project.id, node.id)} codexAccount={codexAccount} provider={primaryProvider} runtimeConfig={node.terminal} customPresets={customPresets} onNotify={onNotify} onRequestCodexAuth={onRequestCodexAuth} /></div>)} /> : <>
+      {isCanvas ? <WorkspaceCanvas project={project} workbench={canvasWorkbench} browser={layout.webVisible ? canvasBrowser : undefined} codexAuthStatus={codexAuthStatus} onRequestCodexAuth={onRequestCodexAuth} agentProviders={agentProviders} defaultExecutor={automation?.defaultExecutor ?? null} onSendAgentTask={queueAgentTask} onCreateAgentWorktree={(node) => void isolateAgent(node)} onSelectionChange={onCanvasFocusChange} onConnectionsChange={syncCanvasPipes} pendingNodeRequest={pendingCanvasNode && isPendingNodeForProject(pendingCanvasNode, project.id) ? { kind: pendingCanvasNode.kind, nonce: pendingCanvasNode.nonce } : null} onPendingNodeConsumed={handlePendingCanvasNodeConsumed} onNotify={onNotify} renderAgent={(node: CanvasNode, onAgentResult, onAgentTaskFailure) => { const clearDeliveredTask = (taskId?: string) => { if (!taskId || agentTasks[node.id]?.id !== taskId) return; setAgentTasks((current) => { if (current[node.id]?.id !== taskId) return current; const next = { ...current }; delete next[node.id]; return next }) }; return node.provider ? (<div className="canvas-agent-terminal"><div className="canvas-agent-review"><span>Worktree</span><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void reviewAgent(node)}>Alterações</button><button type="button" disabled={!agentWorktrees[node.id]} onClick={() => void mergeAgent(node)}>Integrar</button></div><WorkspaceTerminal projectPath={agentWorktrees[node.id]?.path || project.path} terminalId={agentTerminalId(project.id, node.id)} codexAccount={node.account} provider={node.provider} agentTask={agentTasks[node.id]} onAgentResult={(result, taskId) => { clearDeliveredTask(taskId); onAgentResult(result, taskId) }} onAgentTaskFailure={(taskId, message) => { clearDeliveredTask(taskId); onAgentTaskFailure(taskId, message) }} onNotify={onNotify} onRequestCodexAuth={onRequestCodexAuth} variant="embedded" /></div>) : null }} terminalPresets={customPresets} onTerminalPresetsSaved={setCustomPresets} renderTerminal={(node: CanvasNode) => (<div className="canvas-agent-terminal"><WorkspaceTerminal projectPath={project.path} terminalId={agentTerminalId(project.id, node.id)} codexAccount={codexAccount} provider={primaryProvider} runtimeConfig={node.terminal} customPresets={customPresets} onNotify={onNotify} onRequestCodexAuth={onRequestCodexAuth} variant="embedded" /></div>)} /> : <>
       <div
         ref={setGridSlot}
         className="workspace-workbench-slot grid-workbench-slot"

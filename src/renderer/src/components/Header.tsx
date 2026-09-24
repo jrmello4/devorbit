@@ -10,8 +10,8 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({search, setSearch, onOpenCommandPalette, onRefresh, isRefreshing}) => (
   <header className="app-titlebar titlebar-drag">
     <a href="#main" className="skip-link">Ir para área de trabalho</a>
+    {/* Marca reduzida ao essencial: logo + nome (rótulos estáticos de local não informam nada). */}
     <div className="app-brand"><Orbit size={21} strokeWidth={1.7} aria-hidden="true"/><strong>DevOrbit</strong></div>
-    <span className="titlebar-location">Workspace local</span>
     <div className="global-search titlebar-no-drag">
       <Search size={15} aria-hidden="true"/>
       <label className="sr-only" htmlFor="project-search">Buscar projetos, pastas ou tecnologias</label>

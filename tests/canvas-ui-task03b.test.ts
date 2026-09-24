@@ -1,4 +1,7 @@
 import { createElement, useState } from 'react'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { CanvasToolbar } from '../src/renderer/src/components/CanvasToolbar'
@@ -46,6 +49,7 @@ describe('TASK-03B — CanvasToolbar UI Component', () => {
 
     expect(html).toContain('role="toolbar"')
     expect(html).toContain('aria-label="Barra de ferramentas do canvas"')
+    // Criação mantém texto curto; demais grupos são ícone + tooltip (clean pass)
     expect(html).toContain('Agente')
     expect(html).toContain('Terminal')
     expect(html).toContain('Nota')
@@ -54,8 +58,8 @@ describe('TASK-03B — CanvasToolbar UI Component', () => {
     expect(html).toContain('Perto')
     expect(html).toContain('Médio')
     expect(html).toContain('Longe')
-    expect(html).toContain('Foco')
-    expect(html).toContain('Inspector')
+    expect(html).toContain('aria-label="Focar nó selecionado"')
+    expect(html).toContain('aria-label="Alternar painel de inspeção"')
   })
 
   it('exibe ações de seleção e delete quando há nós selecionados', () => {
@@ -72,9 +76,10 @@ describe('TASK-03B — CanvasToolbar UI Component', () => {
       }),
     )
 
-    expect(html).toContain('Conectar')
-    expect(html).toContain('Desvincular')
-    expect(html).toContain('Excluir')
+    // Ícone + tooltip: quem identifica a ação é o aria-label preservado
+    expect(html).toContain('aria-label="Conectar nós selecionados"')
+    expect(html).toContain('aria-label="Desvincular nós"')
+    expect(html).toContain('aria-label="Excluir 2 nó(s) selecionado(s)"')
     expect(html).toContain('125%')
   })
 
@@ -218,6 +223,9 @@ describe('TASK-03B — CanvasNodeInspector UI Component', () => {
     expect(html).toContain('Codex CLI')
     expect(html).toContain('Conta 1')
     expect(html).toContain('Processando task')
+    // Clean pass: ponto + tooltip no lugar do texto de estado duplicado
+    expect(html).toContain('title="Estado: running"')
+    expect(html).not.toContain('canvas-inspector-status-sub')
     expect(html).toContain('Enviar Tarefa ao Agente')
     expect(html).toContain('Isolar em Worktree Git')
   })
@@ -282,7 +290,7 @@ describe('TASK-03B — CanvasNodeInspector UI Component', () => {
     expect(html).toContain('aria-label="Tema Esmeralda"')
   })
 
-  it('renderiza inspeção para nó do tipo Note com estatísticas de texto', () => {
+  it('renderiza inspeção para nó do tipo Note sem contadores fora de foco', () => {
     const noteNode: CanvasNode = {
       id: 'note-1',
       kind: 'note',
@@ -306,8 +314,9 @@ describe('TASK-03B — CanvasNodeInspector UI Component', () => {
 
     expect(html).toContain('Conteúdo da Nota')
     expect(html).toContain('Instruções para a equipe de QA')
-    expect(html).toContain('30 caracteres')
-    expect(html).toContain('6 palavras')
+    // Clean pass: contadores só aparecem com o campo em foco
+    expect(html).not.toContain('caracteres')
+    expect(html).not.toContain('palavras')
   })
 
   it('renderiza inspeção de Agente com papel customizado e lista de papéis sugeridos', () => {
@@ -338,7 +347,9 @@ describe('TASK-03B — CanvasNodeInspector UI Component', () => {
 
     expect(html).toContain('Especialista em UX')
     expect(html).toContain('UX Designer')
-    expect(html).toContain('Papel (preset ou customizado)')
+    expect(html).toContain('Papel</label>')
+    // Clean pass: ajuda longa virou tooltip no rótulo
+    expect(html).toContain('title="Preset ou customizado"')
     expect(html).toContain('id="inspector-builtin-roles"')
     expect(html).toContain('Coordenador')
     expect(html).toContain('Implementação')
@@ -413,10 +424,13 @@ describe('TASK-03B — CanvasNodeInspector UI Component', () => {
     // Cabeçalho e nome
     expect(html).toContain('Squad de Infraestrutura')
     expect(html).toContain('data-canvas-inspector=""')
+    // Clean pass: sem título redundante de visão geral e sem pills de papel
+    expect(html).not.toContain('Visão Geral da Squad')
+    expect(html).not.toContain('canvas-inspector-role-badge')
     // Objetivo
     expect(html).toContain('Configurar clusters e pipelines de CI/CD')
-    // Coordenador opcional
-    expect(html).toContain('Coordenação da Squad')
+    // Coordenador opcional (rótulo curto + select)
+    expect(html).toContain('id="squad-coordinator-select"')
     expect(html).toContain('Sem coordenador (avulso)')
     // Membros e papéis
     expect(html).toContain('Membros (2)')
@@ -426,9 +440,10 @@ describe('TASK-03B — CanvasNodeInspector UI Component', () => {
     expect(html).toContain('Coordenador')
     // Ações de membro
     expect(html).toContain('Remover da squad')
-    // Adicionar membro
-    expect(html).toContain('Adicionar Membro à Squad')
+    // Adicionar membro (linha dentro da seção de membros)
+    expect(html).toContain('aria-label="Selecionar agente para adicionar à squad"')
     expect(html).toContain('QA Tester (Testes)')
+    expect(html).toContain('>Adicionar</span>')
     expect(html).toContain('Criar novo agente para a squad')
     // Collapse toggle
     expect(html).toContain('Recolher')
@@ -648,8 +663,8 @@ describe('TASK-03B — CanvasNodeInspector UI Component', () => {
 describe('TASK-03B — CanvasNodeCard UI Component & Keep-Alive', () => {
   const baseCardProps = {
     isSelected: false,
-    isConnecting: false,
-    isConnectionTargetAvailable: false,
+    isConnectMode: false,
+    isConnectSource: false,
     isConfigOpen: false,
     quickDeployChips: [],
     terminalPresets: [],
@@ -662,9 +677,7 @@ describe('TASK-03B — CanvasNodeCard UI Component & Keep-Alive', () => {
     onStartPan: vi.fn(),
     onStartNodeDrag: vi.fn(),
     onStartResize: vi.fn(),
-    onStartConnection: vi.fn(),
     onChooseConnectionSource: vi.fn(),
-    onConnectNodes: vi.fn(),
     onDeleteNode: vi.fn(),
     onToggleConfig: vi.fn(),
     onDisconnectLinks: vi.fn(),
@@ -716,8 +729,13 @@ describe('TASK-03B — CanvasNodeCard UI Component & Keep-Alive', () => {
     expect(html).toContain('Dev Agent')
     expect(html).toContain('canvas-role-pill')
     expect(html).toContain('Coordenador')
+    // Clean pass: provedor com conta muda decisão — pill continua; papel e
+    // provedor também viram tooltip no título (cabeçalho único de 28px).
     expect(html).toContain('CODEX (C1)')
+    expect(html).toContain('title="Dev Agent · Papel: Coordenador · Provedor: CODEX (C1)"')
     expect(html).toContain('canvas-compact-toggle')
+    expect(html).toContain('canvas-card-actions')
+    expect(html).toContain('canvas-card-drag-handle')
     expect(html).toContain('XTERM_SESSION_ALIVE')
   })
 
@@ -800,7 +818,118 @@ describe('TASK-03B — CanvasNodeCard UI Component & Keep-Alive', () => {
     )
     expect(orchestratingHtml).toContain('canvas-node-orchestrating-badge')
     expect(orchestratingHtml).toContain('role="status"')
-    expect(orchestratingHtml).toContain('orquestrando')
+    // Clean pass: badge virou ponto âmbar + tooltip (sem texto no repouso)
+    expect(orchestratingHtml).toContain('aria-label="Orquestrando"')
+    expect(orchestratingHtml).toContain('title="Orquestração de squad ativa"')
+    // Um único indicador de status: ponto de progresso não aparece junto
+    expect(orchestratingHtml).not.toContain('canvas-agent-progress')
+  })
+
+  it('clean pass: papel padrão fica oculto (tooltip no título) e papel de especialista permanece visível', () => {
+    const defaultRoleAgent: CanvasNode = {
+      id: 'agent-role-default',
+      kind: 'agent',
+      title: 'Agente Padrão',
+      x: 0,
+      y: 0,
+      width: 400,
+      height: 300,
+      z: 1,
+      role: 'Implementação',
+    }
+    const specialistAgent: CanvasNode = {
+      ...defaultRoleAgent,
+      id: 'agent-role-specialist',
+      title: 'Agente Especialista',
+      role: 'Testes',
+    }
+
+    const defaultHtml = renderToStaticMarkup(
+      createElement(CanvasNodeCard, { ...baseCardProps, node: defaultRoleAgent }),
+    )
+    // O span segue no DOM (contrato do harness), mas oculto via classe
+    expect(defaultHtml).toContain('canvas-role-pill is-default-role')
+    expect(defaultHtml).toContain('title="Agente Padrão · Papel: Implementação"')
+
+    const specialistHtml = renderToStaticMarkup(
+      createElement(CanvasNodeCard, { ...baseCardProps, node: specialistAgent }),
+    )
+    expect(specialistHtml).not.toContain('is-default-role')
+    expect(specialistHtml).toContain('>Testes</span>')
+  })
+
+  it('clean pass: status do agente no cabeçalho é um ponto com tooltip, sem pill de texto', () => {
+    const agentNode: CanvasNode = {
+      id: 'agent-progress-dot',
+      kind: 'agent',
+      title: 'Agente com Progresso',
+      x: 0,
+      y: 0,
+      width: 400,
+      height: 300,
+      z: 1,
+      role: 'Implementação',
+    }
+
+    const html = renderToStaticMarkup(
+      createElement(CanvasNodeCard, {
+        ...baseCardProps,
+        node: agentNode,
+        progress: { state: 'running', label: 'Executando testes visuais' },
+      }),
+    )
+
+    expect(html).toMatch(/canvas-agent-progress progress-running/)
+    expect(html).toContain('data-agent-progress="running"')
+    expect(html).toContain('aria-label="Status: Executando testes visuais"')
+    expect(html).toContain('title="Executando testes visuais"')
+  })
+
+  it('clean pass: pill de preset do terminal sai do repouso e vira tooltip no título', () => {
+    const terminalNode: CanvasNode = {
+      id: 'term-clean-header',
+      kind: 'terminal',
+      title: 'Shell do Projeto',
+      x: 10,
+      y: 10,
+      width: 420,
+      height: 280,
+      z: 1,
+      terminal: { presetId: 'shell', cwdMode: 'workspace', autoStart: false, restartBehavior: 'restart', monitorActivity: false },
+    }
+
+    const html = renderToStaticMarkup(
+      createElement(CanvasNodeCard, {
+        ...baseCardProps,
+        node: terminalNode,
+        isCompact: false,
+        renderTerminal: () => createElement('div', null, 'TERM'),
+      }),
+    )
+
+    expect(html).not.toContain('canvas-terminal-pill')
+    expect(html).toContain('title="Shell do Projeto · Preset: Shell"')
+  })
+
+  it('clean pass: nota sem contador de caracteres em repouso (vira tooltip no título)', () => {
+    const noteNode: CanvasNode = {
+      id: 'note-clean-header',
+      kind: 'note',
+      title: 'Checklist',
+      content: 'Primeira linha da nota',
+      x: 0,
+      y: 0,
+      width: 300,
+      height: 200,
+      z: 1,
+    }
+
+    const html = renderToStaticMarkup(
+      createElement(CanvasNodeCard, { ...baseCardProps, node: noteNode }),
+    )
+
+    expect(html).not.toContain('canvas-note-pill')
+    expect(html).toContain('title="Checklist · 22 caracteres"')
   })
 
   it('preserva montagem do terminal no DOM quando o card está recolhido (isCompact)', () => {
@@ -866,11 +995,11 @@ describe('TASK-03B — CanvasNodeCard UI Component & Keep-Alive', () => {
     expect(html).not.toContain('id="agent-config-agent-gear-test"')
   })
 
-  it('portas de conexão possuem classes corretas para visibilidade em repouso, seleção e conexão', () => {
+  it('modo conectar: nenhuma porta/bolinha e classes de destaque corretas', () => {
     const agentNode: CanvasNode = {
-      id: 'agent-ports-test',
+      id: 'agent-connect-test',
       kind: 'agent',
-      title: 'Agente Portas',
+      title: 'Agente Conectar',
       x: 100,
       y: 100,
       width: 400,
@@ -879,51 +1008,47 @@ describe('TASK-03B — CanvasNodeCard UI Component & Keep-Alive', () => {
       role: 'Implementação',
     }
 
-    // 1. Estado de repouso: portas renderizadas, card sem is-selected nem is-connecting, porta alvo sem is-available
+    // 1. Estado de repouso: NENHUMA porta em nenhum estado; card sem classes
+    //    de conexão.
     const htmlDefault = renderToStaticMarkup(
       createElement(CanvasNodeCard, {
         ...baseCardProps,
         node: agentNode,
         isSelected: false,
-        isConnecting: false,
-        isConnectionTargetAvailable: false,
+        isConnectMode: false,
+        isConnectSource: false,
       }),
     )
-    expect(htmlDefault).toContain('canvas-port canvas-port-source')
-    expect(htmlDefault).toContain('canvas-port canvas-port-target')
-    expect(htmlDefault).not.toContain('workspace-canvas-card is-selected')
-    expect(htmlDefault).not.toContain('workspace-canvas-card is-connecting')
-    expect(htmlDefault).not.toContain('canvas-port-target is-available')
+    expect(htmlDefault).not.toContain('canvas-port')
+    expect(htmlDefault).not.toContain('data-canvas-port')
+    expect(htmlDefault).not.toContain('is-connect-mode')
+    expect(htmlDefault).not.toContain('is-connect-source')
+    expect(htmlDefault).not.toContain('is-selected')
 
-    // 2. Quando selecionado: card recebe classe is-selected (ativa visibilidade via CSS)
-    const htmlSelected = renderToStaticMarkup(
+    // 2. Modo conectar ativo: card elegível recebe is-connect-mode (contorno
+    //    tracejado via CSS), sem porta alguma no DOM.
+    const htmlConnectMode = renderToStaticMarkup(
       createElement(CanvasNodeCard, {
         ...baseCardProps,
         node: agentNode,
-        isSelected: true,
+        isConnectMode: true,
       }),
     )
-    expect(htmlSelected).toContain('is-selected')
+    expect(htmlConnectMode).toContain('is-connect-mode')
+    expect(htmlConnectMode).not.toContain('data-canvas-port')
 
-    // 3. Quando conectando: card recebe classe is-connecting
-    const htmlConnecting = renderToStaticMarkup(
+    // 3. Card de ORIGEM: destaque firme (is-connect-source) vence o tracejado.
+    const htmlSource = renderToStaticMarkup(
       createElement(CanvasNodeCard, {
         ...baseCardProps,
         node: agentNode,
-        isConnecting: true,
+        isConnectMode: true,
+        isConnectSource: true,
       }),
     )
-    expect(htmlConnecting).toContain('is-connecting')
-
-    // 4. Quando destino de conexão disponível: porta alvo recebe is-available
-    const htmlTargetAvailable = renderToStaticMarkup(
-      createElement(CanvasNodeCard, {
-        ...baseCardProps,
-        node: agentNode,
-        isConnectionTargetAvailable: true,
-      }),
-    )
-    expect(htmlTargetAvailable).toContain('canvas-port canvas-port-target is-available')
+    expect(htmlSource).toContain('is-connect-source')
+    expect(htmlSource).not.toContain('is-connect-mode')
+    expect(htmlSource).not.toContain('data-canvas-port')
   })
 
   it('toggle compacto funciona para expandir e recolher independente de isConfigOpen', () => {
@@ -1016,8 +1141,8 @@ describe('TASK-03B — AgentCreationDialog UI Component', () => {
 describe('TASK-03D — Resumo Conciso de Cards (~320x130) e Keep-Alive Operacional', () => {
   const baseCardProps = {
     isSelected: false,
-    isConnecting: false,
-    isConnectionTargetAvailable: false,
+    isConnectMode: false,
+    isConnectSource: false,
     isConfigOpen: false,
     quickDeployChips: [],
     terminalPresets: [],
@@ -1030,9 +1155,7 @@ describe('TASK-03D — Resumo Conciso de Cards (~320x130) e Keep-Alive Operacion
     onStartPan: vi.fn(),
     onStartNodeDrag: vi.fn(),
     onStartResize: vi.fn(),
-    onStartConnection: vi.fn(),
     onChooseConnectionSource: vi.fn(),
-    onConnectNodes: vi.fn(),
     onDeleteNode: vi.fn(),
     onToggleConfig: vi.fn(),
     onDisconnectLinks: vi.fn(),
@@ -1356,5 +1479,113 @@ describe('TASK-03D — Resumo Conciso de Cards (~320x130) e Keep-Alive Operacion
     expect(html).toContain('data-terminal-theme="carbon"')
     expect(html).toContain('--term-accent:#8797b4')
     expect(html).toContain('--term-bg:#0d0f14')
+  })
+})
+
+describe('Rodada 2 — grip de resize com CSS real e roda respeita conteúdo rolável', () => {
+  const here = dirname(fileURLToPath(import.meta.url))
+  const css = readFileSync(join(here, '../src/renderer/src/components/WorkspaceCanvas.css'), 'utf8')
+  const canvasSource = readFileSync(join(here, '../src/renderer/src/components/WorkspaceCanvas.tsx'), 'utf8')
+
+  it('o grip do markup (resize-handle) tem regra CSS própria com cursor de resize', () => {
+    // Regressão: o markup usa .workspace-canvas-resize-handle, mas só existia
+    // a regra órfã .workspace-canvas-resize — grip sem posição/cursor, e o
+    // usuário nunca conseguia esticar o card.
+    expect(css).toMatch(/\.workspace-canvas-resize-handle\s*{[^}]*cursor:\s*nwse-resize/s)
+    expect(css).not.toContain('.workspace-canvas-resize {')
+  })
+
+  it('a roda do mouse rola o conteúdo dos cards (guard genérico de scroll)', () => {
+    // Regressão: o guard antigo cobria só .workspace-canvas-card-content;
+    // painéis roláveis novos (config de agente, squads) recebiam pan do fundo.
+    expect(canvasSource).toContain('insideScrollableRegion')
+    expect(canvasSource).toContain('scrollHeight > el.clientHeight')
+  })
+})
+
+describe('Terminal do Agente no Inspector (mesmos campos do Smart Terminal)', () => {
+  const baseAgent = {
+    id: 'agent-term-1',
+    kind: 'agent' as const,
+    title: 'Dev OpenCode',
+    x: 10,
+    y: 10,
+    width: 500,
+    height: 360,
+    z: 1,
+    role: 'Implementação',
+  }
+
+  it('agente BYOK sem config mostra campos com placeholder do CLI padrão do provider', () => {
+    const html = renderToStaticMarkup(
+      createElement(CanvasNodeInspector, {
+        isOpen: true,
+        onClose: vi.fn(),
+        node: { ...baseAgent, provider: 'opencode' },
+        onUpdateAgentTerminalNode: vi.fn(),
+      }),
+    )
+
+    expect(html).toContain('Terminal do Agente')
+    expect(html).toContain('id="agent-terminal-command-input"')
+    expect(html).toContain('placeholder="opencode"')
+    expect(html).toContain('Vazio inicia o CLI padrão do provedor (opencode)')
+    expect(html).toContain('id="agent-terminal-args-input"')
+    expect(html).toContain('name="agent-terminal-cwd-mode"')
+  })
+
+  it('agente custom sem CLI padrão pede comando explícito', () => {
+    const html = renderToStaticMarkup(
+      createElement(CanvasNodeInspector, {
+        isOpen: true,
+        onClose: vi.fn(),
+        node: { ...baseAgent, provider: 'custom' },
+        onUpdateAgentTerminalNode: vi.fn(),
+      }),
+    )
+    expect(html).toContain('Defina o comando do CLI personalizado')
+  })
+
+  it('reflete comando/argumentos/diretório salvos no nó do agente', () => {
+    const html = renderToStaticMarkup(
+      createElement(CanvasNodeInspector, {
+        isOpen: true,
+        onClose: vi.fn(),
+        node: {
+          ...baseAgent,
+          provider: 'gemini',
+          terminal: {
+            presetId: 'custom',
+            command: 'gemini',
+            args: ['--sandbox'],
+            cwdMode: 'custom',
+            cwd: 'C:\\work\\repo',
+            autoStart: true,
+            restartBehavior: 'restart',
+            monitorActivity: false,
+          },
+        },
+        onUpdateAgentTerminalNode: vi.fn(),
+      }),
+    )
+    expect(html).toContain('value="gemini"')
+    expect(html).toContain('value="--sandbox"')
+    expect(html).toContain('value="C:\\work\\repo"')
+    expect(html).toMatch(/name="agent-terminal-cwd-mode"[^>]*checked/)
+  })
+
+  it('agente codex exibe aviso de terminal gerenciado e NÃO mostra campos', () => {
+    const html = renderToStaticMarkup(
+      createElement(CanvasNodeInspector, {
+        isOpen: true,
+        onClose: vi.fn(),
+        node: { ...baseAgent, provider: 'codex', account: 'account2' },
+        onUpdateAgentTerminalNode: vi.fn(),
+      }),
+    )
+    expect(html).toContain('Gerenciado pelo DevOrbit (conta C2).')
+    expect(html).toContain('data-agent-terminal="managed"')
+    expect(html).not.toContain('agent-terminal-command-input')
+    expect(html).not.toContain('Terminal do Agente')
   })
 })

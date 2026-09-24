@@ -147,7 +147,6 @@
 
 .evolution-metric-card {
   display: flex;
-  min-height: 148px;
   flex-direction: column;
   gap: 6px;
   padding: 14px 16px;
@@ -194,17 +193,9 @@
 }
 
 .evolution-metric-card__detail {
-  color: var(--evolution-text);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-
-.evolution-metric-card p {
-  max-width: 42ch;
-  margin: auto 0 0;
   color: var(--evolution-muted);
   font-size: 11px;
-  line-height: 1.45;
+  font-variant-numeric: tabular-nums;
 }
 
 .evolution-entry-grid {

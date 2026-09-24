@@ -49,8 +49,7 @@ const hasAnyEvent = (state: UsageShareState) =>
 const renderShareRow = (row: UsageShareRow) => (
   <li key={`${row.provider}-${row.model}`} className="usage-share-row">
     <div className="usage-share-row-head">
-      <span className="usage-share-model" title={row.model}>{row.model}</span>
-      <span className="usage-share-provider">{formatProviderLabel(row.provider)}</span>
+      <span className="usage-share-model" title={`${row.model} · ${formatProviderLabel(row.provider)}`}>{row.model}</span>
       <span className="usage-share-tokens tabular-nums">{formatTokenCount(row.totalTokens)} tokens</span>
       <span className="usage-share-percent tabular-nums">{formatPercentLabel(row.percent)}</span>
     </div>
@@ -67,36 +66,78 @@ const renderShareRow = (row: UsageShareRow) => (
     </div>
     <div className="usage-share-row-meta">
       <span>
-        Entrada {formatTokenCount(row.inputTokens)} · Saída {formatTokenCount(row.outputTokens)} · Cache {formatTokenCount(row.cacheTokens)}
+        {formatProviderLabel(row.provider)} · Entrada {formatTokenCount(row.inputTokens)} · Saída {formatTokenCount(row.outputTokens)} · Cache {formatTokenCount(row.cacheTokens)}
       </span>
       <span>{row.turns === 1 ? '1 turno' : `${row.turns} turnos`}</span>
     </div>
   </li>
 )
 
-const renderQuotaChip = (snapshot: UsageQuotaSnapshotView, now: number) => {
-  const windowParts = snapshot.windows.map((entry) => (
-    typeof entry.percent === 'number' && Number.isFinite(entry.percent)
-      ? `${entry.label}: ${formatPercentLabel(entry.percent)}`
-      : entry.label
-  ))
-  const nextResetAt = snapshot.windows
-    .map((entry) => entry.resetAt)
-    .filter((value): value is string => Boolean(value))
-    .sort((a, b) => Date.parse(a) - Date.parse(b))
-    .find((value) => Date.parse(value) > now)
-  const resetLabel = formatRelativeReset(nextResetAt, now)
+/** Percent principal do card: primeira janela com número publicado. */
+const getPrimaryQuotaPercent = (snapshot: UsageQuotaSnapshotView): number | undefined =>
+  snapshot.windows.find((entry) => typeof entry.percent === 'number' && Number.isFinite(entry.percent))?.percent
+
+const getQuotaTone = (percent: number | undefined) => {
+  if (percent === undefined) return 'usage-share-quota-dot--muted'
+  if (percent >= 90) return 'usage-share-quota-dot--critical'
+  if (percent >= 75) return 'usage-share-quota-dot--warning'
+  return 'usage-share-quota-dot--ok'
+}
+
+const renderQuotaCard = (snapshot: UsageQuotaSnapshotView, now: number) => {
+  const primaryPercent = getPrimaryQuotaPercent(snapshot)
+  const tone = getQuotaTone(primaryPercent)
 
   return (
     <div
       key={`${snapshot.provider}-${snapshot.accountId ?? 'default'}`}
-      className="usage-share-chip"
+      className="usage-share-quota-card"
     >
-      <span className="usage-share-chip-account">
-        {formatProviderLabel(snapshot.provider)} · {formatAccountLabel(snapshot.accountId)}
-      </span>
-      {windowParts.length > 0 && <span className="usage-share-chip-windows">{windowParts.join(' · ')}</span>}
-      {resetLabel && <span className="usage-share-chip-reset tabular-nums">{resetLabel}</span>}
+      <div className="usage-share-quota-head">
+        <span
+          className={`usage-share-quota-dot ${tone}`}
+          title={primaryPercent === undefined ? 'Sem quota publicada' : `${formatPercentLabel(primaryPercent)} na janela principal`}
+          aria-hidden="true"
+        />
+        <span className="usage-share-quota-account">
+          {formatProviderLabel(snapshot.provider)} · {formatAccountLabel(snapshot.accountId)}
+        </span>
+        {primaryPercent !== undefined && (
+          <span className="usage-share-quota-percent tabular-nums">{formatPercentLabel(primaryPercent)}</span>
+        )}
+      </div>
+
+      {primaryPercent !== undefined && (
+        <div
+          className="usage-progress usage-share-quota-bar"
+          role="progressbar"
+          aria-label={`Quota de ${formatProviderLabel(snapshot.provider)} ${formatAccountLabel(snapshot.accountId)}`}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(primaryPercent)}
+        >
+          <div
+            className={`usage-progress-fill ${primaryPercent >= 90 ? 'usage-progress-fill--critical' : primaryPercent >= 75 ? 'usage-progress-fill--warning' : ''}`}
+            style={{ width: `${Math.min(100, Math.max(0, primaryPercent))}%` }}
+          />
+        </div>
+      )}
+
+      {/* Janelas (5h/semanal) como linhas limpas: rótulo · % · renovação */}
+      <ul className="usage-share-quota-windows">
+        {snapshot.windows.map((entry, index) => {
+          const resetLabel = formatRelativeReset(entry.resetAt, now)
+          return (
+            <li key={entry.id || entry.label || index}>
+              <span>{entry.label}</span>
+              <span className="tabular-nums">
+                {typeof entry.percent === 'number' && Number.isFinite(entry.percent) ? formatPercentLabel(entry.percent) : '—'}
+                {resetLabel ? ` · ${resetLabel}` : ''}
+              </span>
+            </li>
+          )
+        })}
+      </ul>
     </div>
   )
 }
@@ -166,11 +207,9 @@ export const UsageSharePanel: React.FC<UsageSharePanelProps> = ({
 
   return (
     <section className="usage-share usage-section" aria-labelledby="usage-share-heading">
+      {/* Cabeçalho único: título + janela + atualizar */}
       <div className="usage-section-heading">
-        <div>
-          <h2 id="usage-share-heading">Uso por modelo</h2>
-          <p>Participação de cada modelo nos turnos e tokens registrados localmente.</p>
-        </div>
+        <h2 id="usage-share-heading">Uso por modelo</h2>
         <div className="usage-share-toolbar">
           <div className="usage-share-segmented" role="group" aria-label="Janela de uso">
             {windowOptions.map((option) => (
@@ -217,8 +256,8 @@ export const UsageSharePanel: React.FC<UsageSharePanelProps> = ({
           {state.quota.length > 0 && (
             <div className="usage-share-quota">
               <h3>Quota por conta</h3>
-              <div className="usage-share-chips">
-                {state.quota.map((snapshot) => renderQuotaChip(snapshot, now))}
+              <div className="usage-share-quota-grid">
+                {state.quota.map((snapshot) => renderQuotaCard(snapshot, now))}
               </div>
             </div>
           )}

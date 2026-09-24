@@ -1,5 +1,5 @@
 import React, { useId, useMemo } from 'react'
-import { Activity, ClipboardCheck, Clock3, FileCheck2, TrendingDown, TrendingUp } from 'lucide-react'
+import { Activity, ClipboardCheck, Clock3, TrendingDown, TrendingUp } from 'lucide-react'
 import './EvolutionPanels.css'
 
 export type AuditCategory = 'audit' | 'debt' | 'gain'
@@ -121,22 +121,18 @@ export function calculateAuditMetrics(entries: readonly AuditEntry[]): AuditDash
 
 const categoryDetails: Record<AuditCategory, {
   title: string
-  description: string
   Icon: typeof ClipboardCheck
 }> = {
   audit: {
     title: 'Revisões',
-    description: 'Revisões já registradas neste projeto.',
     Icon: ClipboardCheck,
   },
   debt: {
     title: 'Problemas encontrados',
-    description: 'Itens que ainda precisam de correção, do mais grave ao mais leve.',
     Icon: TrendingDown,
   },
   gain: {
     title: 'Melhorias registradas',
-    description: 'Resultados alcançados depois das correções.',
     Icon: TrendingUp,
   },
 }
@@ -171,12 +167,11 @@ interface MetricCardProps {
   label: string
   value: string
   detail: string
-  explanation: string
   tone: 'neutral' | 'warning' | 'positive'
   Icon: typeof ClipboardCheck
 }
 
-const MetricCard: React.FC<MetricCardProps> = ({ label, value, detail, explanation, tone, Icon }) => (
+const MetricCard: React.FC<MetricCardProps> = ({ label, value, detail, tone, Icon }) => (
   <article className="evolution-metric-card" data-tone={tone}>
     <div className="evolution-metric-card__header">
       <span>{label}</span>
@@ -184,7 +179,6 @@ const MetricCard: React.FC<MetricCardProps> = ({ label, value, detail, explanati
     </div>
     <strong className="evolution-metric-card__value">{value}</strong>
     <span className="evolution-metric-card__detail">{detail}</span>
-    <p>{explanation}</p>
   </article>
 )
 
@@ -197,7 +191,6 @@ interface EntryListProps {
 
 const EntryList: React.FC<EntryListProps> = ({ category, entries, severityFilter = 'all', onSeverityFilterChange }) => {
   const details = categoryDetails[category]
-  const Icon = details.Icon
   const categoryEntries = entries.filter((entry) => entry.category === category)
   const visibleEntries = filterAuditEntries(entries, category, category === 'debt' ? severityFilter : 'all')
   const severityCounts = countBySeverity(categoryEntries)
@@ -214,14 +207,7 @@ const EntryList: React.FC<EntryListProps> = ({ category, entries, severityFilter
   return (
     <section className="evolution-entry-section" aria-labelledby={'audit-section-' + category}>
       <header className="evolution-entry-section__header">
-        <div>
-          <span className="evolution-dialog__eyebrow">
-            <Icon aria-hidden="true" />
-            {details.title}
-          </span>
-          <h2 id={'audit-section-' + category}>{details.title}</h2>
-          <p>{details.description}</p>
-        </div>
+        <h2 id={'audit-section-' + category}>{details.title}</h2>
         <span className="evolution-count-badge" aria-label={categoryEntries.length + ' itens'}>{categoryEntries.length}</span>
       </header>
       {showFilter && (
@@ -251,16 +237,26 @@ const EntryList: React.FC<EntryListProps> = ({ category, entries, severityFilter
           <div className="evolution-entry-list">
             {visibleEntries.map((entry) => {
               const severity = entry.severity || 'info'
+              // Badges só quando mudam decisão: estado fechado/verificado e
+              // gravidade alta/crítica. O resto fica no atributo data-*.
+              const showStatus = isResolved(entry.status)
+              const showSeverity = severity === 'high' || severity === 'critical'
               return (
                 <article className="evolution-entry" data-severity={severity} key={entry.id}>
-                  <div className="evolution-entry__topline">
-                    <span className="evolution-status" data-status={entry.status}>
-                      {statusLabels[entry.status]}
-                    </span>
-                    <span className="evolution-severity" data-severity={severity}>
-                      {severityLabels[severity]}
-                    </span>
-                  </div>
+                  {(showStatus || showSeverity) && (
+                    <div className="evolution-entry__topline">
+                      {showStatus && (
+                        <span className="evolution-status" data-status={entry.status}>
+                          {statusLabels[entry.status]}
+                        </span>
+                      )}
+                      {showSeverity && (
+                        <span className="evolution-severity" data-severity={severity}>
+                          {severityLabels[severity]}
+                        </span>
+                      )}
+                    </div>
+                  )}
                   <h3>{entry.title}</h3>
                   <p>{entry.description}</p>
                   {entry.evidence && (
@@ -299,14 +295,7 @@ export const AuditDashboard: React.FC<AuditDashboardProps> = ({ data, className 
   return (
     <main className={'evolution-dashboard ' + className.trim()} aria-labelledby={headingId}>
       <header className="evolution-dashboard__header">
-        <div>
-          <span className="evolution-dialog__eyebrow">
-            <FileCheck2 aria-hidden="true" />
-            Revisão do projeto
-          </span>
-          <h1 id={headingId}>Auditoria</h1>
-          <p>Problemas encontrados e melhorias registradas neste projeto.</p>
-        </div>
+        <h1 id={headingId}>Auditoria</h1>
         <time className="evolution-dashboard__updated">{updatedLabel}</time>
       </header>
 
@@ -315,7 +304,6 @@ export const AuditDashboard: React.FC<AuditDashboardProps> = ({ data, className 
           label="Revisões"
           value={String(metrics.audit.total)}
           detail={metrics.audit.resolved + ' concluídas · ' + metrics.audit.open + ' em andamento'}
-          explanation="Revisões já feitas neste projeto."
           tone="neutral"
           Icon={ClipboardCheck}
         />
@@ -323,15 +311,15 @@ export const AuditDashboard: React.FC<AuditDashboardProps> = ({ data, className 
           label="Problemas em aberto"
           value={String(metrics.debt.open)}
           detail={metrics.debt.resolved + ' corrigidos de ' + metrics.debt.total}
-          explanation="Itens que ainda precisam de correção."
           tone="warning"
           Icon={Clock3}
         />
         <MetricCard
           label="Melhorias registradas"
           value={String(metrics.gain.total)}
-          detail={metrics.gain.confirmed + ' confirmadas · ' + metrics.gain.pending + ' pendentes'}
-          explanation={'Tempo economizado: ' + formatGainValues(metrics.gain.valueByUnit) + '.'}
+          detail={
+            metrics.gain.confirmed + ' confirmadas · ' + metrics.gain.pending + ' pendentes · ' + formatGainValues(metrics.gain.valueByUnit)
+          }
           tone="positive"
           Icon={TrendingUp}
         />
@@ -339,7 +327,6 @@ export const AuditDashboard: React.FC<AuditDashboardProps> = ({ data, className 
           label="Atividade"
           value={String(data.telemetry?.spans || 0)}
           detail={(data.telemetry?.errors || 0) + ' falhas · ' + Math.round(data.telemetry?.averageDurationMs || 0) + ' ms em média'}
-          explanation="Ações recentes do aplicativo neste projeto."
           tone={data.telemetry?.errors ? 'warning' : 'neutral'}
           Icon={Activity}
         />

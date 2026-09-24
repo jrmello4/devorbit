@@ -151,7 +151,8 @@ export const ProjectGrid: React.FC<ProjectGridProps> = (props) => {
     return <div className="project-groups" data-testid="project-collection">{groups.map((g) => <section key={g.key} className="project-group"><button type="button" className="project-group-heading" aria-expanded={!collapsedGroups[g.key]} onClick={() => setCollapsedGroups((c) => ({ ...c, [g.key]: !c[g.key] }))}><ChevronDown className={collapsedGroups[g.key] ? 'is-collapsed' : ''} aria-hidden="true" /><Folder aria-hidden="true" /><span>{g.label}</span><small>{g.summary.projectCount}</small></button>{!collapsedGroups[g.key] && <div className={view === 'grid' ? 'project-card-grid' : 'project-card-list project-list'}>{g.projects.map(renderProject)}</div>}</section>)}</div>
   }
   return <main className="project-workspace project-library" aria-busy={isLoading} onClick={() => { if (openMenu) setOpenMenu(null); if (showFilters) setShowFilters(false) }}><section className="project-master" aria-label="Biblioteca de projetos">
-    <header className="project-library-header"><div><h1>Projetos <span className="project-header-count">{projects.length}</span></h1><p>Seus projetos em um só lugar.</p></div><div className="project-header-actions">{onOpenClone && <button type="button" className="project-secondary-button" onClick={onOpenClone}><GitPullRequest aria-hidden="true" />Clonar</button>}{onOpenSettings && <button type="button" className="project-primary-button" onClick={onOpenSettings}><Plus aria-hidden="true" />Novo projeto</button>}</div></header>
+    {/* Cabeçalho mínimo: título + contagem bastam (o subtítulo descrevia a tela). */}
+    <header className="project-library-header"><h1>Projetos <span className="project-header-count">{projects.length}</span></h1><div className="project-header-actions">{onOpenClone && <button type="button" className="project-secondary-button" onClick={onOpenClone}><GitPullRequest aria-hidden="true" />Clonar</button>}{onOpenSettings && <button type="button" className="project-primary-button" onClick={onOpenSettings}><Plus aria-hidden="true" />Novo projeto</button>}</div></header>
     <div className="project-library-toolbar">
       {/* Segmentado por situação Git real (limpo/pendente/sem Git) + Arquivados quando existir. */}
       <div className="project-filter-pills" role="group" aria-label="Filtrar por situação do Git" data-testid="project-situation-filter">
@@ -203,6 +204,7 @@ export const ProjectGrid: React.FC<ProjectGridProps> = (props) => {
         </section>
       )}
     </div>
-    <footer className="project-library-footer"><span>{filtered.length} de {projects.length} projetos</span><span>{sort === 'name' ? 'Nome A–Z' : 'Mais recentes'}</span></footer>
+    {/* Rodapé: só a contagem filtrada (o seletor de ordenação já está visível na toolbar). */}
+    <footer className="project-library-footer"><span>{filtered.length} de {projects.length} projetos</span></footer>
   </section></main>
 }

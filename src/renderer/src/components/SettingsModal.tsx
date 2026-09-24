@@ -1,20 +1,5 @@
 import React, { useRef, useState } from 'react'
-import {
-  X,
-  FolderPlus,
-  Trash2,
-  Settings,
-  Folder,
-  Check,
-  Bot,
-  Globe,
-  Sparkles,
-  Terminal,
-  Code2,
-  Rocket,
-  LayoutDashboard,
-  Edit2,
-} from 'lucide-react'
+import { X, Trash2, Check, Edit2 } from 'lucide-react'
 import type {
   AgentProviderId,
   AppConfig,
@@ -46,21 +31,25 @@ interface SettingsModalProps {
   projects?: Array<{ id: string; name: string }>
 }
 
-const AGENT_PATH_FIELDS: Array<{ key: 'opencode' | 'claude' | 'gemini' | 'aider' | 'customAgent'; label: string; hint: string }> = [
+const AGENT_PATH_FIELDS: Array<{ key: 'opencode' | 'opencode2' | 'claude' | 'gemini' | 'aider' | 'commandCode' | 'customAgent'; label: string; hint: string }> = [
   { key: 'opencode', label: 'OpenCode', hint: 'opencode.cmd / opencode.exe' },
+  { key: 'opencode2', label: 'OpenCode 2', hint: 'opencode2.cmd / opencode2.exe' },
   { key: 'claude', label: 'Claude Code', hint: 'claude.cmd / claude.exe' },
   { key: 'gemini', label: 'Gemini CLI', hint: 'gemini.cmd / gemini.exe' },
   { key: 'aider', label: 'Aider', hint: 'aider.cmd / aider.exe' },
+  { key: 'commandCode', label: 'Command Code', hint: 'cmdc.cmd / command-code.exe' },
   { key: 'customAgent', label: 'Outro CLI', hint: 'Comando ou caminho do agente' },
 ]
 
 const EXECUTOR_OPTIONS: Array<{ value: AgentProviderId; label: string }> = [
   { value: 'codex', label: 'Codex' },
   { value: 'opencode', label: 'OpenCode' },
+  { value: 'opencode2', label: 'OpenCode 2' },
   { value: 'claude', label: 'Claude Code' },
   { value: 'gemini', label: 'Gemini CLI' },
   { value: 'aider', label: 'Aider' },
   { value: 'agy', label: 'Antigravity' },
+  { value: 'command-code', label: 'Command Code' },
   { value: 'custom', label: 'Agente local' },
 ]
 
@@ -235,12 +224,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   }
 
+  // Ação por linha revelada no hover (e no foco via teclado).
+  const rowActionClass = 'shrink-0 rounded-md px-2 py-1 text-xs font-semibold text-[var(--color-text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] disabled:opacity-50 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 motion-safe:transition-opacity cursor-pointer'
+
   const renderToolTestButton = (key: keyof AppConfig['customPaths']) => (
     <button
       type="button"
       onClick={() => void handleTestTool(key)}
       disabled={testingTool === key || !customPaths[key]?.trim()}
-      className="mt-1.5 shrink-0 rounded-[5px] border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-2.5 py-1.5 text-xs font-semibold text-[var(--color-text-secondary)] hover:border-[var(--color-border-strong)] hover:text-[var(--text-primary)] disabled:opacity-50"
+      className={rowActionClass}
     >
       {testingTool === key ? 'Testando…' : 'Testar'}
     </button>
@@ -349,6 +341,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   }
 
+  const inputClass = 'w-full rounded-lg border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-3 py-1.5 text-xs text-[var(--text-primary)] focus:border-[var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)]/30'
+  const monoInputClass = 'mt-1 w-full rounded-md border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-2.5 py-1.5 font-mono text-xs text-[var(--text-primary)] focus:border-[var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)]/30'
+
   return (
     <AccessibleDialog
       isOpen={isOpen && !suspended}
@@ -356,414 +351,282 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       onClose={handleClose}
       className="w-full max-w-2xl bg-[var(--color-bg-panel)] border border-[var(--color-border-subtle)] rounded-[10px] shadow-[0_18px_42px_rgba(28,25,23,0.14)] overflow-hidden flex flex-col max-h-[calc(100dvh-48px)]"
     >
-        {/* Modal Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border-subtle)] bg-[var(--surface-muted)]">
-          <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-[8px] bg-[var(--surface-selected)] text-[var(--color-accent-strong)] border border-[var(--color-border-subtle)]">
-              <Settings className="w-5 h-5" />
+      {/* Cabeçalho único */}
+      <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border-subtle)]">
+        <h2 id="settings-dialog-title" className="text-base font-bold text-[var(--text-primary)]">Configurações do DevOrbit</h2>
+        <button
+          onClick={handleClose}
+          aria-label="Fechar configurações"
+          className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-hover)] motion-safe:transition-colors"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* Corpo: seções separadas por espaço + divisória 1px */}
+      <div className="p-6 overflow-y-auto space-y-6 flex-1 text-sm text-[var(--text-primary)]">
+        {/* Pastas de projetos */}
+        <section>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="font-semibold">Pastas de projetos</h3>
+            <button
+              onClick={handleAddDirectory}
+              className="px-2.5 py-1 rounded-md text-xs font-semibold bg-[var(--surface-selected)] text-[var(--color-accent-strong)] border border-[var(--color-border-subtle)] hover:bg-[var(--surface-hover)] motion-safe:transition-colors cursor-pointer"
+            >
+              Adicionar pasta
+            </button>
+          </div>
+          <div className="space-y-1">
+            {projectDirs.map((dir) => (
+              <div key={dir} className="group flex items-center justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-[var(--surface-hover)]">
+                <span className="truncate font-mono text-xs text-[var(--color-text-secondary)]" title={dir}>{dir}</span>
+                <button
+                  onClick={() => handleRemoveDirectory(dir)}
+                  aria-label={`Remover pasta ${dir}`}
+                  title="Remover pasta"
+                  className="min-w-6 min-h-6 p-1 text-[var(--color-text-muted)] hover:text-[var(--color-danger)] hover:bg-[var(--surface-hover)] rounded opacity-0 group-hover:opacity-100 focus-visible:opacity-100 motion-safe:transition-opacity shrink-0 cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))}
+            {projectDirs.length === 0 && (
+              <p className="px-2 text-xs text-[var(--color-text-muted)]">Nenhuma pasta monitorada.</p>
+            )}
+          </div>
+        </section>
+
+        {/* Contas do ChatGPT Plus */}
+        <section className="pt-5 border-t border-[var(--color-border-subtle)]">
+          <h3 className="font-semibold mb-1">Contas do ChatGPT Plus</h3>
+          <p className="text-xs text-[var(--color-text-muted)] mb-3">Nomes exibidos nos atalhos de alternância do header.</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label htmlFor="chatgpt-account-1" className="text-xs text-[var(--color-text-secondary)] block mb-1">Conta 1:</label>
+              <input
+                id="chatgpt-account-1"
+                name="chatgpt-account-1"
+                type="text"
+                value={account1Name}
+                onChange={(e) => {
+                  setAccount1Name(e.target.value)
+                  setIsDirty(true)
+                }}
+                className={inputClass}
+              />
             </div>
             <div>
-              <h2 id="settings-dialog-title" className="text-base font-bold text-[var(--text-primary)]">Configurações do DevOrbit</h2>
-              <p className="text-xs text-[var(--color-text-secondary)]">Pastas monitoradas, contas e executáveis</p>
+              <label htmlFor="chatgpt-account-2" className="text-xs text-[var(--color-text-secondary)] block mb-1">Conta 2:</label>
+              <input
+                id="chatgpt-account-2"
+                name="chatgpt-account-2"
+                type="text"
+                value={account2Name}
+                onChange={(e) => {
+                  setAccount2Name(e.target.value)
+                  setIsDirty(true)
+                }}
+                className={inputClass}
+              />
             </div>
           </div>
-          <button
-            onClick={handleClose}
-            aria-label="Fechar configurações"
-            className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-hover)] transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
+        </section>
 
-        {/* Modal Body */}
-        <div className="p-6 overflow-y-auto space-y-6 flex-1 text-sm text-[var(--text-primary)]">
-          {/* Pastas de Projetos */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="font-semibold text-[var(--text-primary)] flex items-center gap-2">
-                <Folder className="w-4 h-4 text-[var(--color-accent-strong)]" />
-                Pastas de Projetos Monitoradas
-              </h3>
-              <button
-                onClick={handleAddDirectory}
-                className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold bg-[var(--surface-selected)] text-[var(--color-accent-strong)] border border-[var(--color-border-subtle)] hover:bg-[var(--surface-hover)] transition-[background-color,border-color,color] cursor-pointer"
-              >
-                <FolderPlus className="w-3.5 h-3.5" />
-                Adicionar Pasta
-              </button>
-            </div>
-            <p className="text-xs text-[var(--color-text-secondary)] mb-3">
-              O DevOrbit varrerá as pastas abaixo em busca de repositórios Git e projetos.
-            </p>
-
-            <div className="space-y-2">
-              {projectDirs.map((dir) => (
-                <div
-                  key={dir}
-                  className="flex items-center justify-between px-3.5 py-2.5 rounded-[8px] bg-[var(--surface-muted)] border border-[var(--color-border-subtle)] text-xs"
-                >
-                  <span className="font-mono text-[var(--color-text-secondary)] truncate me-2" title={dir}>{dir}</span>
+        {/* Contas OpenAI Codex */}
+        <section className="pt-5 border-t border-[var(--color-border-subtle)]">
+          <h3 className="font-semibold mb-3">OpenAI Codex</h3>
+          <div className="space-y-2">
+            {(['account1', 'account2'] as const).map((accountKey) => {
+              const status = authStatus?.[accountKey]
+              const name = accountKey === 'account1' ? (account1Name || 'Conta 1') : (account2Name || 'Conta 2')
+              const browserName = accountKey === 'account1' ? 'Chrome' : 'Brave'
+              return (
+                <div key={accountKey} className="flex items-center justify-between gap-3 py-1.5">
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <span
+                      title={status?.connected ? 'Autenticada e pronta para uso' : 'Não autenticada'}
+                      aria-label={status?.connected ? 'Autenticada e pronta para uso' : 'Não autenticada'}
+                      role="img"
+                      className={`w-2.5 h-2.5 rounded-full shrink-0 ${status?.connected ? 'bg-[var(--color-success)]' : 'bg-[var(--color-warning)] motion-safe:animate-pulse'}`}
+                    />
+                    <div className="min-w-0">
+                      <div className="text-xs font-semibold truncate">
+                        {name} ({browserName})
+                      </div>
+                      {status && !status.browserOk && (
+                        <div className="text-xs text-[var(--color-danger)] truncate" title={status.browserPath}>
+                          {browserName} não encontrado — ajuste o caminho abaixo
+                        </div>
+                      )}
+                    </div>
+                  </div>
                   <button
-                    onClick={() => handleRemoveDirectory(dir)}
-                    aria-label={`Remover pasta ${dir}`}
-                    className="min-w-6 min-h-6 p-1 text-[var(--color-text-muted)] hover:text-[var(--color-danger)] hover:bg-[var(--surface-hover)] rounded transition-colors shrink-0"
+                    type="button"
+                    onClick={() => onOpenAuthModal?.(accountKey)}
+                    className="shrink-0 px-3 py-1.5 rounded-md text-xs font-semibold bg-[var(--surface-muted)] hover:bg-[var(--surface-hover)] text-[var(--color-text-secondary)] border border-[var(--color-border-subtle)] motion-safe:transition-colors cursor-pointer"
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
+                    {status?.connected ? 'Reconectar' : 'Conectar'}
                   </button>
                 </div>
-              ))}
-            </div>
+              )
+            })}
           </div>
+        </section>
 
-          {/* Nomes das Contas ChatGPT */}
-          <div className="pt-4 border-t border-[var(--color-border-subtle)]">
-              <h3 className="font-semibold text-[var(--text-primary)] block mb-1">
-                Contas do ChatGPT Plus (Brave)
-              </h3>
-            <p className="text-xs text-[var(--color-text-secondary)] mb-3">
-              Personalize o nome dos dois atalhos para facilitar a alternância no header.
-            </p>
+        {/* Executáveis e ferramentas */}
+        <section className="pt-5 border-t border-[var(--color-border-subtle)]">
+          <h3 className="font-semibold mb-1">Executáveis</h3>
+          <p className="text-xs text-[var(--color-text-muted)] mb-3">Detectados no PATH; preencha só quando instalado fora do PATH.</p>
 
+          <div className="space-y-1.5">
+            {([
+              { key: 'codex' as const, label: 'Codex CLI' },
+              { key: 'agy' as const, label: 'Antigravity CLI' },
+              { key: 'wt' as const, label: 'Windows Terminal' },
+            ]).map((tool) => (
+              <div key={tool.key} className="group flex items-center gap-2">
+                <label htmlFor={'tool-path-' + tool.key} className="w-40 shrink-0 text-xs text-[var(--color-text-secondary)]">{tool.label}</label>
+                <input
+                  id={'tool-path-' + tool.key}
+                  value={customPaths[tool.key] || ''}
+                  onChange={(event) => updateCustomPath(tool.key, event.target.value)}
+                  className="flex-1 min-w-0 rounded-md border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-2.5 py-1.5 font-mono text-xs text-[var(--text-primary)] focus:border-[var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)]/30"
+                />
+                {renderToolTestButton(tool.key)}
+              </div>
+            ))}
+
+            {AGENT_PATH_FIELDS.map((field) => (
+              <div key={field.key} className="group flex items-center gap-2">
+                <label htmlFor={'tool-path-' + field.key} className="w-40 shrink-0 text-xs text-[var(--color-text-secondary)]">{field.label}</label>
+                <input
+                  id={'tool-path-' + field.key}
+                  value={customPaths[field.key] || ''}
+                  placeholder={field.hint}
+                  onChange={(event) => updateCustomPath(field.key, event.target.value)}
+                  className="flex-1 min-w-0 rounded-md border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-2.5 py-1.5 font-mono text-xs text-[var(--text-primary)] focus:border-[var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)]/30"
+                />
+                {renderToolTestButton(field.key)}
+              </div>
+            ))}
+
+            {([
+              { key: 'mimo' as const, label: 'Xiaomi MiMo AI' },
+              { key: 'brave' as const, label: 'Navegador Brave' },
+              { key: 'vscode' as const, label: 'Visual Studio Code' },
+            ]).map((tool) => (
+              <div key={tool.key} className="group flex items-center justify-between gap-3 py-1">
+                <span className="text-xs text-[var(--color-text-secondary)]">{tool.label}</span>
+                <span className="truncate font-mono text-xs text-[var(--color-text-muted)]" title={customPaths[tool.key] || 'Não detectado'}>
+                  {customPaths[tool.key] || 'Não detectado'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* Roteamento de modelos (BYOK) */}
+        <section className="pt-5 border-t border-[var(--color-border-subtle)]">
+          <h3 className="font-semibold mb-1">Roteamento de modelos (BYOK)</h3>
+          <p className="text-xs text-[var(--color-text-muted)] mb-3">Chaves criptografadas no sistema; deixe vazio para manter a credencial salva.</p>
+
+          <div className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label htmlFor="chatgpt-account-1" className="text-xs text-[var(--color-text-secondary)] block mb-1">Conta 1:</label>
+                <label htmlFor="routing-fast-model" className="text-xs text-[var(--color-text-secondary)] block mb-1">
+                  Modelo rápido (fast):
+                </label>
                 <input
-                  id="chatgpt-account-1"
-                  name="chatgpt-account-1"
-                  type="text"
-                  value={account1Name}
-                  onChange={(e) => {
-                    setAccount1Name(e.target.value)
-                    setIsDirty(true)
-                  }}
-                  className="w-full bg-[var(--color-bg-panel)] border border-[var(--color-border-subtle)] rounded-lg px-3 py-1.5 text-xs text-[var(--text-primary)] focus:border-[var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)]/30"
+                  id="routing-fast-model"
+                  name="routing-fast-model"
+                  value={modelRouting.fastModel || ''}
+                  placeholder="ex.: gpt-4o-mini"
+                  onChange={(event) => updateRoutingField({ fastModel: event.target.value })}
+                  className={inputClass}
                 />
               </div>
               <div>
-                <label htmlFor="chatgpt-account-2" className="text-xs text-[var(--color-text-secondary)] block mb-1">Conta 2:</label>
+                <label htmlFor="routing-deep-model" className="text-xs text-[var(--color-text-secondary)] block mb-1">
+                  Modelo profundo (deep):
+                </label>
                 <input
-                  id="chatgpt-account-2"
-                  name="chatgpt-account-2"
-                  type="text"
-                  value={account2Name}
-                  onChange={(e) => {
-                    setAccount2Name(e.target.value)
-                    setIsDirty(true)
-                  }}
-                  className="w-full bg-[var(--color-bg-panel)] border border-[var(--color-border-subtle)] rounded-lg px-3 py-1.5 text-xs text-[var(--text-primary)] focus:border-[var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)]/30"
+                  id="routing-deep-model"
+                  name="routing-deep-model"
+                  value={modelRouting.deepModel || ''}
+                  placeholder="ex.: claude-sonnet"
+                  onChange={(event) => updateRoutingField({ deepModel: event.target.value })}
+                  className={inputClass}
                 />
               </div>
             </div>
-            <div className="mt-3 rounded-[8px] border border-[var(--color-border-subtle)] bg-[var(--surface-selected)] px-3.5 py-3 text-xs text-[var(--color-text-secondary)]">
-              Cada conta abre o ChatGPT em um perfil persistente e isolado do navegador. Na primeira abertura,
-              faça login nessa janela; as próximas alternâncias reutilizarão a mesma sessão sem misturar cookies.
-            </div>
-          </div>
 
-          {/* Status e Conexão das Contas OpenAI Codex */}
-          <div className="pt-4 border-t border-[var(--color-border-subtle)]">
-              <h3 className="font-semibold text-[var(--text-primary)] block mb-1">
-                Status & Conexão do OpenAI Codex (Multi-Conta)
-              </h3>
-            <p className="text-xs text-[var(--color-text-secondary)] mb-3">
-              O Codex CLI isola credenciais por pasta sem exigir login/logout repetidos.
-            </p>
-
-            <div className="space-y-2.5">
-              {/* Conta 1 */}
-              <div className="flex items-center justify-between p-3 rounded-[8px] bg-[var(--surface-muted)] border border-[var(--color-border-subtle)]">
-                <div className="flex items-center gap-2.5">
-                  <div
-                    className={`w-2.5 h-2.5 rounded-full ${
-                      authStatus?.account1?.connected
-                        ? 'bg-[var(--color-success)]'
-                        : 'bg-[var(--color-warning)] motion-safe:animate-pulse'
-                    }`}
-                  />
-                  <div>
-                    <div className="text-xs font-semibold text-[var(--text-primary)]">
-                      {account1Name || 'Conta 1'} (Chrome)
-                    </div>
-                    <div className="text-xs text-[var(--color-text-secondary)] font-mono">
-                      {authStatus?.account1?.connected
-                        ? 'Autenticada e pronta para uso'
-                        : 'Não autenticada'}
-                    </div>
-                    {authStatus && (
-                      <div className={`text-xs font-mono ${authStatus.account1.browserOk ? 'text-[var(--color-text-muted)]' : 'text-[var(--color-danger)]'}`} title={authStatus.account1.browserPath}>
-                        {authStatus.account1.browserOk
-                          ? 'Chrome detectado'
-                          : 'Chrome não encontrado — ajuste o caminho abaixo'}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => onOpenAuthModal?.('account1')}
-                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-[var(--surface-muted)] hover:bg-[var(--surface-hover)] text-[var(--color-text-secondary)] border border-[var(--color-border-subtle)] transition-[background-color,border-color,color] cursor-pointer"
-                >
-                  {authStatus?.account1?.connected ? 'Reconectar' : 'Conectar Agora'}
-                </button>
-              </div>
-
-              {/* Conta 2 */}
-              <div className="flex items-center justify-between p-3 rounded-[8px] bg-[var(--surface-muted)] border border-[var(--color-border-subtle)]">
-                <div className="flex items-center gap-2.5">
-                  <div
-                    className={`w-2.5 h-2.5 rounded-full ${
-                      authStatus?.account2?.connected
-                        ? 'bg-[var(--color-success)]'
-                        : 'bg-[var(--color-warning)] motion-safe:animate-pulse'
-                    }`}
-                  />
-                  <div>
-                    <div className="text-xs font-semibold text-[var(--text-primary)]">
-                      {account2Name || 'Conta 2'} (Brave)
-                    </div>
-                    <div className="text-xs text-[var(--color-text-secondary)] font-mono">
-                      {authStatus?.account2?.connected
-                        ? 'Autenticada e pronta para uso'
-                        : 'Não autenticada (Requer login inicial)'}
-                    </div>
-                    {authStatus && (
-                      <div className={`text-xs font-mono ${authStatus.account2.browserOk ? 'text-[var(--color-text-muted)]' : 'text-[var(--color-danger)]'}`} title={authStatus.account2.browserPath}>
-                        {authStatus.account2.browserOk
-                          ? 'Brave detectado'
-                          : 'Brave não encontrado — ajuste o caminho abaixo'}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => onOpenAuthModal?.('account2')}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-[background-color,border-color,color,box-shadow] cursor-pointer ${
-                    authStatus?.account2?.connected
-                      ? 'bg-[var(--surface-muted)] hover:bg-[var(--surface-hover)] text-[var(--color-text-secondary)] border border-[var(--color-border-subtle)]'
-                      : 'bg-[var(--surface-selected)] text-[var(--color-accent-strong)] border border-[var(--color-border-subtle)] hover:bg-[var(--surface-hover)]'
-                  }`}
-                >
-                  {authStatus?.account2?.connected
-                    ? 'Reconectar'
-                    : 'Conectar no Brave Agora 🚀'}
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Caminhos Detectados das Ferramentas */}
-          <div className="pt-4 border-t border-[var(--color-border-subtle)]">
-              <h3 className="font-semibold text-[var(--text-primary)] block mb-1">
-                Executáveis e Ferramentas Detectadas
-              </h3>
-            <p className="text-xs text-[var(--color-text-secondary)] mb-3">
-              Os CLIs do canvas são detectados automaticamente no PATH e iniciados no terminal interno. O DevOrbit nunca copia credenciais entre provedores.
-            </p>
-
-            <div className="space-y-2 text-xs">
-              <div className="rounded-lg bg-[var(--surface-muted)] border border-[var(--color-border-subtle)] p-3">
-                <label htmlFor="tool-path-codex" className="flex items-center gap-2 text-[var(--color-text-secondary)] font-medium">
-                  <Bot className="w-3.5 h-3.5 text-[var(--color-accent-strong)]" /> Codex CLI
-                </label>
-                <div className="flex items-start gap-2">
-                  <input id="tool-path-codex" value={customPaths.codex || ''} onChange={(event) => updateCustomPath('codex', event.target.value)} className="mt-1.5 w-full rounded-[5px] border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-2.5 py-1.5 font-mono text-xs text-[var(--text-primary)] focus:border-[var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)]/30" />
-                  {renderToolTestButton('codex')}
-                </div>
-              </div>
-
-              <div className="rounded-lg bg-[var(--surface-muted)] border border-[var(--color-border-subtle)] p-3">
-                <label htmlFor="tool-path-agy" className="flex items-center gap-2 text-[var(--color-text-secondary)] font-medium">
-                  <Sparkles className="w-3.5 h-3.5 text-[var(--color-accent-strong)]" /> Antigravity CLI
-                </label>
-                <div className="flex items-start gap-2">
-                  <input id="tool-path-agy" value={customPaths.agy || ''} onChange={(event) => updateCustomPath('agy', event.target.value)} className="mt-1.5 w-full rounded-[5px] border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-2.5 py-1.5 font-mono text-xs text-[var(--text-primary)] focus:border-[var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)]/30" />
-                  {renderToolTestButton('agy')}
-                </div>
-              </div>
-
-              <div className="rounded-lg bg-[var(--surface-selected)] border border-[var(--color-border-subtle)] p-3">
-                <div className="flex items-center gap-2 text-[var(--color-text-secondary)] font-medium">
-                  <Bot className="w-3.5 h-3.5 text-[var(--color-accent-strong)]" /> Agentes locais do canvas
-                </div>
-                <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
-                  O DevOrbit procura automaticamente estes CLIs no PATH. Preencha um caminho apenas quando ele estiver instalado fora do PATH.
-                </p>
-                <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                  {AGENT_PATH_FIELDS.map((field) => (
-                    <div key={field.key}>
-                      <label htmlFor={'tool-path-' + field.key} className="text-[11px] font-semibold text-[var(--color-text-secondary)]">{field.label}</label>
-                      <div className="flex items-start gap-2">
-                        <input id={'tool-path-' + field.key} value={customPaths[field.key] || ''} placeholder={field.hint} onChange={(event) => updateCustomPath(field.key, event.target.value)} className="mt-1.5 w-full rounded-[5px] border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-2.5 py-1.5 font-mono text-xs text-[var(--text-primary)] focus:border-[var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)]/30" />
-                        {renderToolTestButton(field.key)}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between p-2 rounded-lg bg-[var(--surface-muted)] border border-[var(--color-border-subtle)]">
-                <span className="flex items-center gap-2 text-[var(--color-text-secondary)] font-medium">
-                  <Bot className="w-3.5 h-3.5 text-[var(--color-accent-strong)]" /> Xiaomi MiMo AI
-                </span>
-                <span className="font-mono text-[var(--color-text-secondary)] truncate max-w-xs" title={customPaths.mimo || 'Não detectado'}>{customPaths.mimo || 'Não detectado'}</span>
-              </div>
-
-              <div className="flex items-center justify-between p-2 rounded-lg bg-[var(--surface-muted)] border border-[var(--color-border-subtle)]">
-                <span className="flex items-center gap-2 text-[var(--color-text-secondary)] font-medium">
-                  <Globe className="w-3.5 h-3.5 text-[var(--color-accent-strong)]" /> Navegador Brave
-                </span>
-                <span className="font-mono text-[var(--color-text-secondary)] truncate max-w-xs" title={customPaths.brave || 'Não detectado'}>{customPaths.brave || 'Não detectado'}</span>
-              </div>
-
-              <div className="flex items-center justify-between p-2 rounded-lg bg-[var(--surface-muted)] border border-[var(--color-border-subtle)]">
-                <span className="flex items-center gap-2 text-[var(--color-text-secondary)] font-medium">
-                  <Code2 className="w-3.5 h-3.5 text-[var(--color-accent-strong)]" /> Visual Studio Code
-                </span>
-                <span className="font-mono text-[var(--color-text-secondary)] truncate max-w-xs" title={customPaths.vscode || 'Não detectado'}>{customPaths.vscode || 'Não detectado'}</span>
-              </div>
-
-              <div className="rounded-lg bg-[var(--surface-muted)] border border-[var(--color-border-subtle)] p-3">
-                <label htmlFor="tool-path-wt" className="flex items-center gap-2 text-[var(--color-text-secondary)] font-medium">
-                  <Terminal className="w-3.5 h-3.5 text-[var(--color-accent-strong)]" /> Windows Terminal
-                </label>
-                <div className="flex items-start gap-2">
-                  <input id="tool-path-wt" value={customPaths.wt || ''} onChange={(event) => updateCustomPath('wt', event.target.value)} className="mt-1.5 w-full rounded-[5px] border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-2.5 py-1.5 font-mono text-xs text-[var(--text-primary)] focus:border-[var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)]/30" />
-                  {renderToolTestButton('wt')}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Roteamento de modelos (BYOK) */}
-          <div className="pt-4 border-t border-[var(--color-border-subtle)]">
-            <h3 className="font-semibold text-[var(--text-primary)] flex items-center gap-2 mb-1">
-              <Sparkles className="w-4 h-4 text-[var(--color-accent-strong)]" />
-              Roteamento de modelos (BYOK)
-            </h3>
-            <p className="text-xs text-[var(--color-text-secondary)] mb-3">
-              As chaves são criptografadas no armazenamento do sistema e nunca são devolvidas à interface.
-              Preencha um campo apenas para cadastrar ou substituir a credencial.
-            </p>
-
-            <div className="space-y-3 text-xs">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label htmlFor="routing-fast-model" className="text-xs text-[var(--color-text-secondary)] block mb-1">
-                    Modelo rápido (fast):
-                  </label>
-                  <input
-                    id="routing-fast-model"
-                    name="routing-fast-model"
-                    value={modelRouting.fastModel || ''}
-                    placeholder="ex.: gpt-4o-mini"
-                    onChange={(event) => updateRoutingField({ fastModel: event.target.value })}
-                    className="w-full bg-[var(--color-bg-panel)] border border-[var(--color-border-subtle)] rounded-lg px-3 py-1.5 text-xs text-[var(--text-primary)] focus:border-[var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)]/30"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="routing-deep-model" className="text-xs text-[var(--color-text-secondary)] block mb-1">
-                    Modelo profundo (deep):
-                  </label>
-                  <input
-                    id="routing-deep-model"
-                    name="routing-deep-model"
-                    value={modelRouting.deepModel || ''}
-                    placeholder="ex.: claude-sonnet"
-                    onChange={(event) => updateRoutingField({ deepModel: event.target.value })}
-                    className="w-full bg-[var(--color-bg-panel)] border border-[var(--color-border-subtle)] rounded-lg px-3 py-1.5 text-xs text-[var(--text-primary)] focus:border-[var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)]/30"
-                  />
-                </div>
-              </div>
-
-              <div className="rounded-lg bg-[var(--surface-muted)] border border-[var(--color-border-subtle)] p-3">
-                <div className="flex items-center gap-2 text-[var(--color-text-secondary)] font-medium">
-                  <Sparkles className="w-3.5 h-3.5 text-[var(--color-accent-strong)]" /> Credenciais por provedor
-                </div>
-                <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
-                  Uma chave já salva aparece como “configurada”. Deixe o campo vazio para mantê-la.
-                </p>
-                <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                  {ROUTING_SECRET_FIELDS.map((field) => {
-                    const configured = Boolean(config.modelRouting?.[field.hasKey])
-                    const markedForRemoval = clearedApiKeys.includes(field.key)
-                    return (
-                      <div key={field.key}>
-                        <label htmlFor={'routing-key-' + field.key} className="text-[11px] font-semibold text-[var(--color-text-secondary)]">
-                          {field.label}
-                          {configured && !markedForRemoval && !apiKeyInputs[field.key] ? ' · configurada' : ''}
-                        </label>
-                        <div className="flex items-start gap-2">
-                          <input
-                            id={'routing-key-' + field.key}
-                            name={'routing-key-' + field.key}
-                            type="password"
-                            autoComplete="off"
-                            value={apiKeyInputs[field.key]}
-                            placeholder={configured && !markedForRemoval ? 'Preencha para substituir' : 'Não configurada'}
-                            onChange={(event) => updateApiKeyInput(field.key, event.target.value)}
-                            className="mt-1.5 w-full rounded-[5px] border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-2.5 py-1.5 font-mono text-xs text-[var(--text-primary)] focus:border-[var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)]/30"
-                          />
-                          {configured && !markedForRemoval && (
-                            <button
-                              type="button"
-                              onClick={() => clearApiKey(field.key)}
-                              className="mt-1.5 shrink-0 rounded-[5px] border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-2.5 py-1.5 text-xs font-semibold text-[var(--color-text-secondary)] hover:border-[var(--color-border-strong)] hover:text-[var(--color-danger)]"
-                            >
-                              Remover
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-
-              <div className="rounded-lg bg-[var(--surface-muted)] border border-[var(--color-border-subtle)] p-3">
-                <div className="flex items-center gap-2 text-[var(--color-text-secondary)] font-medium">
-                  <Globe className="w-3.5 h-3.5 text-[var(--color-accent-strong)]" /> URLs base opcionais
-                </div>
-                <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
-                  Informe apenas para gateways próprios; HTTPS é exigido fora de localhost.
-                </p>
-                <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                  {ROUTING_BASE_URL_FIELDS.map((field) => (
-                    <div key={field.key}>
-                      <label htmlFor={'routing-url-' + field.key} className="text-[11px] font-semibold text-[var(--color-text-secondary)]">
-                        {field.label}
-                      </label>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {ROUTING_SECRET_FIELDS.map((field) => {
+                const configured = Boolean(config.modelRouting?.[field.hasKey])
+                const markedForRemoval = clearedApiKeys.includes(field.key)
+                return (
+                  <div key={field.key}>
+                    <label htmlFor={'routing-key-' + field.key} className="text-xs text-[var(--color-text-secondary)]">
+                      {field.label}
+                      {configured && !markedForRemoval && !apiKeyInputs[field.key] ? ' · configurada' : ''}
+                    </label>
+                    <div className="flex items-start gap-2">
                       <input
-                        id={'routing-url-' + field.key}
-                        name={'routing-url-' + field.key}
-                        value={modelRouting[field.key] || ''}
-                        placeholder="URL padrão do provedor"
-                        onChange={(event) => updateRoutingField({ [field.key]: event.target.value } as Partial<ModelRoutingConfig>)}
-                        className="mt-1.5 w-full rounded-[5px] border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-2.5 py-1.5 font-mono text-xs text-[var(--text-primary)] focus:border-[var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)]/30"
+                        id={'routing-key-' + field.key}
+                        name={'routing-key-' + field.key}
+                        type="password"
+                        autoComplete="off"
+                        value={apiKeyInputs[field.key]}
+                        placeholder={configured && !markedForRemoval ? 'Preencha para substituir' : 'Não configurada'}
+                        onChange={(event) => updateApiKeyInput(field.key, event.target.value)}
+                        className={monoInputClass}
                       />
+                      {configured && !markedForRemoval && (
+                        <button
+                          type="button"
+                          onClick={() => clearApiKey(field.key)}
+                          className="mt-1 shrink-0 rounded-md px-2 py-1 text-xs font-semibold text-[var(--color-text-secondary)] hover:text-[var(--color-danger)] hover:bg-[var(--surface-hover)] motion-safe:transition-colors cursor-pointer"
+                        >
+                          Remover
+                        </button>
+                      )}
                     </div>
-                  ))}
-                </div>
+                  </div>
+                )
+              })}
+            </div>
+
+            <div>
+              <p className="text-xs font-semibold text-[var(--color-text-secondary)] mb-2">URLs base (gateways próprios)</p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {ROUTING_BASE_URL_FIELDS.map((field) => (
+                  <div key={field.key}>
+                    <label htmlFor={'routing-url-' + field.key} className="text-xs text-[var(--color-text-secondary)]">
+                      {field.label}
+                    </label>
+                    <input
+                      id={'routing-url-' + field.key}
+                      name={'routing-url-' + field.key}
+                      value={modelRouting[field.key] || ''}
+                      placeholder="URL padrão do provedor"
+                      onChange={(event) => updateRoutingField({ [field.key]: event.target.value } as Partial<ModelRoutingConfig>)}
+                      className={monoInputClass}
+                    />
+                  </div>
+                ))}
               </div>
             </div>
           </div>
+        </section>
 
-          {/* Automação */}
-          <div className="pt-4 border-t border-[var(--color-border-subtle)]">
-            <h3 className="font-semibold text-[var(--text-primary)] flex items-center gap-2 mb-1">
-              <Rocket className="w-4 h-4 text-[var(--color-accent-strong)]" />
-              Automação
-            </h3>
-            <p className="text-xs text-[var(--color-text-secondary)] mb-3">
-              Defina o executor padrão do canvas e o que restaurar ao abrir o DevOrbit.
-            </p>
+        {/* Automação */}
+        <section className="pt-5 border-t border-[var(--color-border-subtle)]">
+          <h3 className="font-semibold mb-3">Automação</h3>
 
-            <div className="space-y-3 text-xs">
-              <div className="rounded-lg bg-[var(--surface-muted)] border border-[var(--color-border-subtle)] p-3">
-                <label htmlFor="automation-default-executor" className="text-[var(--color-text-secondary)] font-medium block mb-1">
+          <div className="space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label htmlFor="automation-default-executor" className="text-xs text-[var(--color-text-secondary)] block mb-1">
                   Executor padrão:
                 </label>
                 <select
@@ -774,7 +637,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     const value = event.target.value
                     updateAutomation({ defaultExecutor: value ? (value as AgentProviderId) : undefined })
                   }}
-                  className="w-full rounded-[5px] border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-2.5 py-1.5 text-xs text-[var(--text-primary)] focus:border-[var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)]/30"
+                  className={inputClass}
                 >
                   <option value="">Nenhum</option>
                   {EXECUTOR_OPTIONS.map((option) => (
@@ -786,8 +649,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
 
               {automation.defaultExecutor === 'codex' && (
-                <div className="rounded-lg bg-[var(--surface-muted)] border border-[var(--color-border-subtle)] p-3">
-                  <label htmlFor="automation-default-codex-account" className="text-[var(--color-text-secondary)] font-medium block mb-1">
+                <div>
+                  <label htmlFor="automation-default-codex-account" className="text-xs text-[var(--color-text-secondary)] block mb-1">
                     Conta Codex padrão:
                   </label>
                   <select
@@ -798,7 +661,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       const value = event.target.value
                       updateAutomation({ defaultCodexAccount: value ? (value as 'account1' | 'account2') : undefined })
                     }}
-                    className="w-full rounded-[5px] border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-2.5 py-1.5 text-xs text-[var(--text-primary)] focus:border-[var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)]/30"
+                    className={inputClass}
                   >
                     <option value="">Nenhuma</option>
                     <option value="account1">{account1Name || 'Conta 1'}</option>
@@ -806,36 +669,37 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </select>
                 </div>
               )}
+            </div>
 
-              <div className="rounded-lg bg-[var(--surface-muted)] border border-[var(--color-border-subtle)] p-3 space-y-2">
-                <label htmlFor="automation-auto-start-executor" className="flex items-center gap-2 text-[var(--color-text-secondary)] font-medium cursor-pointer">
-                  <input
-                    id="automation-auto-start-executor"
-                    name="automation-auto-start-executor"
-                    type="checkbox"
-                    checked={Boolean(automation.autoStartExecutor)}
-                    onChange={(event) => updateAutomation({ autoStartExecutor: event.target.checked })}
-                    className="h-3.5 w-3.5 accent-[var(--color-accent-strong)]"
-                  />
-                  Iniciar executor automaticamente ao abrir o terminal
-                </label>
-                <label htmlFor="automation-restore-workspace" className="flex items-center gap-2 text-[var(--color-text-secondary)] font-medium cursor-pointer">
-                  <input
-                    id="automation-restore-workspace"
-                    name="automation-restore-workspace"
-                    type="checkbox"
-                    checked={Boolean(automation.restoreWorkspace)}
-                    onChange={(event) => updateAutomation({ restoreWorkspace: event.target.checked })}
-                    className="h-3.5 w-3.5 accent-[var(--color-accent-strong)]"
-                  />
-                  Restaurar workspace ao abrir o app
-                </label>
-              </div>
+            <div className="space-y-2">
+              <label htmlFor="automation-auto-start-executor" className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)] cursor-pointer">
+                <input
+                  id="automation-auto-start-executor"
+                  name="automation-auto-start-executor"
+                  type="checkbox"
+                  checked={Boolean(automation.autoStartExecutor)}
+                  onChange={(event) => updateAutomation({ autoStartExecutor: event.target.checked })}
+                  className="h-3.5 w-3.5 accent-[var(--color-accent-strong)]"
+                />
+                Iniciar executor automaticamente ao abrir o terminal
+              </label>
+              <label htmlFor="automation-restore-workspace" className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)] cursor-pointer">
+                <input
+                  id="automation-restore-workspace"
+                  name="automation-restore-workspace"
+                  type="checkbox"
+                  checked={Boolean(automation.restoreWorkspace)}
+                  onChange={(event) => updateAutomation({ restoreWorkspace: event.target.checked })}
+                  className="h-3.5 w-3.5 accent-[var(--color-accent-strong)]"
+                />
+                Restaurar workspace ao abrir o app
+              </label>
+            </div>
 
-              {automation.restoreWorkspace && (
-                <div className="rounded-lg bg-[var(--surface-muted)] border border-[var(--color-border-subtle)] p-3">
-                  <label htmlFor="automation-restore-project" className="flex items-center gap-2 text-[var(--color-text-secondary)] font-medium mb-1">
-                    <LayoutDashboard className="w-3.5 h-3.5 text-[var(--color-accent-strong)]" />
+            {automation.restoreWorkspace && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label htmlFor="automation-restore-project" className="text-xs text-[var(--color-text-secondary)] block mb-1">
                     Projeto a restaurar:
                   </label>
                   <select
@@ -846,7 +710,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       const value = event.target.value
                       updateAutomation({ restoreProjectId: value || undefined })
                     }}
-                    className="w-full rounded-[5px] border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-2.5 py-1.5 text-xs text-[var(--text-primary)] focus:border-[var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)]/30"
+                    className={inputClass}
                   >
                     <option value="">Nenhum</option>
                     {projects.map((project) => (
@@ -856,153 +720,136 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     ))}
                   </select>
                 </div>
-              )}
-            </div>
-          </div>
-
-          {/* Presets de Terminal Personalizados */}
-          <div className="pt-4 border-t border-[var(--color-border-subtle)]">
-            <div className="flex items-center justify-between mb-1">
-              <h3 className="font-semibold text-[var(--text-primary)] flex items-center gap-2">
-                <Terminal className="w-4 h-4 text-[var(--color-accent-strong)]" />
-                Presets de Terminal Personalizados
-              </h3>
-              <span className="text-xs font-mono text-[var(--color-text-secondary)]">
-                {terminalPresets.length} / {CUSTOM_TERMINAL_PRESET_LIMIT}
-              </span>
-            </div>
-            <p className="text-xs text-[var(--color-text-secondary)] mb-3">
-              Gerencie presets customizados criados no canvas. Presets nativos do sistema são protegidos contra alteração ou exclusão.
-            </p>
-
-            {terminalPresets.length === 0 ? (
-              <div className="rounded-lg bg-[var(--surface-muted)] border border-[var(--color-border-subtle)] p-3 text-xs text-[var(--color-text-muted)]">
-                Nenhum preset personalizado cadastrado. Salve configurações de nós de terminal diretamente nos cartões do Canvas para reutilizá-las aqui.
-              </div>
-            ) : (
-              <div className="space-y-2 text-xs">
-                {terminalPresets.map((preset) => {
-                  const isEditing = editingPresetId === preset.id
-                  return (
-                    <div
-                      key={preset.id}
-                      className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 rounded-lg bg-[var(--surface-muted)] border border-[var(--color-border-subtle)]"
-                    >
-                      <div className="flex-1 min-w-0">
-                        {isEditing ? (
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="text"
-                              value={editingPresetName}
-                              onChange={(e) => setEditingPresetName(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                  e.preventDefault()
-                                  handleCommitRenamePreset(preset.id)
-                                } else if (e.key === 'Escape') {
-                                  setEditingPresetId(null)
-                                  setEditingPresetName('')
-                                }
-                              }}
-                              className="w-full max-w-xs rounded border border-[var(--color-accent)] bg-[var(--color-bg-panel)] px-2 py-1 text-xs text-[var(--text-primary)] focus:outline-none"
-                              autoFocus
-                            />
-                            <button
-                              type="button"
-                              onClick={() => handleCommitRenamePreset(preset.id)}
-                              className="px-2 py-1 text-xs font-medium rounded bg-[var(--color-accent-strong)] text-[var(--color-accent-contrast)] hover:opacity-90 cursor-pointer"
-                            >
-                              Salvar
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setEditingPresetId(null)
-                                setEditingPresetName('')
-                              }}
-                              className="px-2 py-1 text-xs rounded border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] text-[var(--color-text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
-                            >
-                              Cancelar
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-2">
-                            <span className="font-semibold text-[var(--text-primary)] truncate" title={preset.name}>
-                              {preset.name}
-                            </span>
-                            <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-[var(--surface-selected)] text-[var(--color-accent-strong)] border border-[var(--color-border-subtle)]">
-                              Personalizado
-                            </span>
-                          </div>
-                        )}
-                        <div className="mt-1 flex flex-wrap items-center gap-x-3 text-[11px] text-[var(--color-text-secondary)] font-mono">
-                          <span>Comando: {preset.command || 'shell'}{preset.args && preset.args.length > 0 ? ` ${preset.args.join(' ')}` : ''}</span>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-1.5 self-end sm:self-auto shrink-0">
-                        {!isEditing && (
-                          <button
-                            type="button"
-                            onClick={() => handleStartRenamePreset(preset)}
-                            aria-label={`Renomear preset ${preset.name}`}
-                            className="flex items-center gap-1 px-2.5 py-1 text-xs rounded border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] text-[var(--color-text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--color-border-strong)] transition-colors cursor-pointer"
-                          >
-                            <Edit2 className="w-3 h-3" />
-                            <span>Renomear</span>
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => handleDeletePreset(preset)}
-                          aria-label={`Excluir preset ${preset.name}`}
-                          className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-danger)] hover:bg-[var(--surface-hover)] rounded transition-colors cursor-pointer"
-                          title="Excluir preset"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  )
-                })}
               </div>
             )}
           </div>
-        </div>
+        </section>
 
-        {/* Modal Footer */}
-        <div className="flex items-center justify-end gap-2 px-6 py-3 border-t border-[var(--color-border-subtle)] bg-[var(--surface-muted)]">
-          <span className="me-auto flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleExport}
-              className="px-3 py-1.5 rounded-lg text-xs font-semibold text-[var(--color-text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-hover)] transition-colors"
-            >
-              Exportar
-            </button>
-            <button
-              type="button"
-              onClick={handleImport}
-              className="px-3 py-1.5 rounded-lg text-xs font-semibold text-[var(--color-text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-hover)] transition-colors"
-            >
-              Importar
-            </button>
-          </span>
+        {/* Presets de terminal personalizados */}
+        <section className="pt-5 border-t border-[var(--color-border-subtle)]">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="font-semibold">Presets de terminal</h3>
+            <span className="text-xs font-mono text-[var(--color-text-muted)]">
+              {terminalPresets.length} / {CUSTOM_TERMINAL_PRESET_LIMIT}
+            </span>
+          </div>
+
+          {terminalPresets.length === 0 ? (
+            <p className="text-xs text-[var(--color-text-muted)]">
+              Nenhum preset personalizado. Salve configurações de nós de terminal no Canvas para reutilizá-las aqui.
+            </p>
+          ) : (
+            <div className="space-y-1">
+              {terminalPresets.map((preset) => {
+                const isEditing = editingPresetId === preset.id
+                if (isEditing) {
+                  return (
+                    <div key={preset.id} className="flex items-center gap-2 py-1.5">
+                      <input
+                        type="text"
+                        value={editingPresetName}
+                        onChange={(e) => setEditingPresetName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault()
+                            handleCommitRenamePreset(preset.id)
+                          } else if (e.key === 'Escape') {
+                            setEditingPresetId(null)
+                            setEditingPresetName('')
+                          }
+                        }}
+                        className="w-full max-w-xs rounded border border-[var(--color-accent)] bg-[var(--color-bg-panel)] px-2 py-1 text-xs text-[var(--text-primary)] focus:outline-none"
+                        autoFocus
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleCommitRenamePreset(preset.id)}
+                        className="px-2 py-1 text-xs font-medium rounded bg-[var(--color-accent-strong)] text-[var(--color-accent-contrast)] hover:opacity-90 cursor-pointer"
+                      >
+                        Salvar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingPresetId(null)
+                          setEditingPresetName('')
+                        }}
+                        className="px-2 py-1 text-xs rounded border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] text-[var(--color-text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  )
+                }
+                return (
+                  <div key={preset.id} className="group flex items-center justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-[var(--surface-hover)]">
+                    <div className="min-w-0">
+                      <span className="block truncate text-xs font-semibold" title={preset.name}>{preset.name}</span>
+                      <span className="block truncate font-mono text-[11px] text-[var(--color-text-muted)]">
+                        {preset.command || 'shell'}{preset.args && preset.args.length > 0 ? ` ${preset.args.join(' ')}` : ''}
+                      </span>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => handleStartRenamePreset(preset)}
+                        aria-label={`Renomear preset ${preset.name}`}
+                        title="Renomear preset"
+                        className={rowActionClass}
+                      >
+                        <Edit2 className="inline h-3 w-3" aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeletePreset(preset)}
+                        aria-label={`Excluir preset ${preset.name}`}
+                        title="Excluir preset"
+                        className="p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-danger)] hover:bg-[var(--surface-hover)] rounded opacity-0 group-hover:opacity-100 focus-visible:opacity-100 motion-safe:transition-opacity cursor-pointer"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </section>
+      </div>
+
+      {/* Rodapé */}
+      <div className="flex items-center justify-end gap-2 px-6 py-3 border-t border-[var(--color-border-subtle)]">
+        <span className="me-auto flex items-center gap-2">
           <button
-            onClick={handleClose}
-            className="px-4 py-1.5 rounded-lg text-xs font-semibold text-[var(--color-text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-hover)] transition-colors"
+            type="button"
+            onClick={handleExport}
+            className="px-3 py-1.5 rounded-md text-xs font-semibold text-[var(--color-text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-hover)] motion-safe:transition-colors"
           >
-            Cancelar
+            Exportar
           </button>
           <button
-            onClick={handleSave}
-            disabled={isSaving}
-            className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold bg-[var(--color-accent-strong)] text-[var(--color-accent-contrast)] hover:bg-[var(--color-accent-hover)] shadow-sm shadow-[var(--color-accent-strong)]/20 transition-[background-color,color,box-shadow,opacity] cursor-pointer"
+            type="button"
+            onClick={handleImport}
+            className="px-3 py-1.5 rounded-md text-xs font-semibold text-[var(--color-text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-hover)] motion-safe:transition-colors"
           >
-            <Check className="w-3.5 h-3.5" />
-            <span>{isSaving ? 'Salvando...' : 'Salvar Alterações'}</span>
+            Importar
           </button>
-        </div>
+        </span>
+        <button
+          onClick={handleClose}
+          className="px-4 py-1.5 rounded-md text-xs font-semibold text-[var(--color-text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-hover)] motion-safe:transition-colors"
+        >
+          Cancelar
+        </button>
+        <button
+          onClick={handleSave}
+          disabled={isSaving}
+          className="flex items-center gap-1.5 px-4 py-1.5 rounded-md text-xs font-semibold bg-[var(--color-accent-strong)] text-[var(--color-accent-contrast)] hover:bg-[var(--color-accent-hover)] motion-safe:transition-colors cursor-pointer"
+        >
+          <Check className="w-3.5 h-3.5" />
+          <span>{isSaving ? 'Salvando...' : 'Salvar Alterações'}</span>
+        </button>
+      </div>
     </AccessibleDialog>
   )
 }

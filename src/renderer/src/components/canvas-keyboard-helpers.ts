@@ -18,10 +18,12 @@ export const DEFAULT_CANVAS_BOUNDS: CanvasBoundsConfig = {
   worldWidth: 5200,
   worldHeight: 3400,
   grid: 20,
-  minWidth: 220,
-  maxWidth: 1100,
-  minHeight: 150,
-  maxHeight: 850,
+  // Contrato do resize livre: mínimo legível 200×140; teto = limite do mundo
+  // (maxWidth/maxHeight são cruzados com world - posição em resizeNodeByKeyboard).
+  minWidth: 200,
+  maxWidth: 5200,
+  minHeight: 140,
+  maxHeight: 3400,
 }
 
 export function snapToGrid(value: number, grid = DEFAULT_CANVAS_BOUNDS.grid): number {

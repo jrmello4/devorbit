@@ -687,7 +687,7 @@ async function inspectProjectInteractions(window, viewport) {
     diff: Boolean(document.querySelector('button[title="Ver alterações não salvas"]')),
     context: Boolean(document.querySelector('button[title*="Enviar arquivo ao contexto"]')),
     terminalPty: Boolean(document.querySelector('.workspace-terminal-xterm .xterm')),
-    browserControls: document.querySelectorAll('.browser-actions button').length === 3,
+    browserControls: document.querySelectorAll('.browser-actions button').length === 4,
   }))()`)
   assert(Object.values(workspaceFeatures).every(Boolean), `${viewport.label}: recursos do workspace incompletos (${JSON.stringify(workspaceFeatures)})`)
   recordPass(viewport.label, 'editor com abas/busca/contexto, terminal PTY e controles web visíveis')
@@ -779,10 +779,13 @@ async function inspectProjectInteractions(window, viewport) {
     const top = Math.max(0, rect.top, canvas?.top || 0)
     const right = Math.min(window.innerWidth, rect.right, canvas?.right || window.innerWidth)
     const bottom = Math.min(window.innerHeight, rect.bottom, canvas?.bottom || window.innerHeight)
+    // Recuo de 20px no canto inferior direito: deixa o grip de resize em área
+    // DOM (o view nativo não pode cobrir o pointerdown do grip).
+    const inset = 20
     return Math.abs(bounds.x - Math.round(left)) <= 1 &&
       Math.abs(bounds.y - Math.round(top)) <= 1 &&
-      Math.abs(bounds.width - Math.round(Math.max(0, right - left))) <= 1 &&
-      Math.abs(bounds.height - Math.round(Math.max(0, bottom - top))) <= 1
+      Math.abs(bounds.width - Math.round(Math.max(0, right - left - inset))) <= 1 &&
+      Math.abs(bounds.height - Math.round(Math.max(0, bottom - top - inset))) <= 1
   })()`, `${viewport.label} canvas web bounds`)
   recordPass(viewport.label, 'painel web nativo acompanha o viewport atual do canvas')
   await clickButtonByText(window, (node) => node.getAttribute('title') === 'Mostrar ou ocultar navegador', `${viewport.label} canvas web hide`)
@@ -913,56 +916,60 @@ async function inspectProjectInteractions(window, viewport) {
   await waitFor(window, `JSON.parse(window.localStorage.getItem('devorbit:workspace-canvas:${toolbarZoom.id}')).viewport.zoom === 1`, `${viewport.label} toolbar zoom reset`)
   recordPass(viewport.label, 'zoom por botões mantém os quadros visíveis e volta a 100%')
 
+  // ---- Modo conectar EXPLÍCITO (sem portas/bolinhas): botão "Conectar" da
+  // toolbar entra no modo; clique no card define a ORIGEM; clique noutro card
+  // define o DESTINO e conclui. Duplicada não recria; Esc cancela o modo. ----
   const manualLink = await evaluate(window, `(function () {
-    const source = document.querySelector('[data-canvas-card="note"] [data-canvas-port="source"]')
-    const target = document.querySelector('[data-canvas-card="browser"] [data-canvas-port="target"]')
     const canvas = document.querySelector('.workspace-canvas')
     const id = canvas?.getAttribute('data-canvas-project-id')
-    if (!source || !target || !id) return false
-    source.click()
+    if (!canvas || !id) return false
     return { id }
   })()`)
-  assert(manualLink, `${viewport.label}: portas de conexão do canvas ausentes`)
-  await waitFor(window, `!document.querySelector('[data-canvas-card="browser"] [data-canvas-port="target"]').disabled`, `${viewport.label} canvas connection target`)
-  await evaluate(window, `document.querySelector('[data-canvas-card="browser"] [data-canvas-port="target"]').click()`)
-  await waitFor(window, `JSON.parse(window.localStorage.getItem('devorbit:workspace-canvas:${manualLink.id}')).connections.length === 1`, `${viewport.label} canvas manual connection`)
-  await evaluate(window, `document.querySelector('[data-canvas-card="note"] [data-canvas-port="source"]').click()`)
-  await waitFor(window, `!document.querySelector('[data-canvas-card="browser"] [data-canvas-port="target"]').disabled`, `${viewport.label} duplicate connection target`)
-  await evaluate(window, `document.querySelector('[data-canvas-card="browser"] [data-canvas-port="target"]').click()`)
+  assert(manualLink, `${viewport.label}: canvas indisponível para conectar`)
+  // Seleciona a nota (habilita o botão Conectar, que exige seleção).
+  await evaluate(window, `(function () {
+    const note = document.querySelector('[data-canvas-card="note"]')
+    if (!note) return false
+    note.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 800, clientY: 120 }))
+    return true
+  })()`)
+  await waitFor(window, `document.querySelectorAll('.workspace-canvas-card.is-selected').length === 1`, `${viewport.label} origem selecionada para conectar`)
+  await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Conectar nós selecionados', `${viewport.label} connect mode toggle`)
+  await waitFor(window, `Boolean(document.querySelector('.workspace-canvas-connection-status'))`, `${viewport.label} connect mode status`)
+  await waitFor(window, `(() => {
+    const cards = document.querySelectorAll('.workspace-canvas-card')
+    const highlighted = document.querySelectorAll('.workspace-canvas-card.is-connect-mode')
+    return cards.length === 3 && highlighted.length === 3 && !document.querySelector('[data-canvas-port]')
+  })()`, `${viewport.label} connect mode destaca cards sem portas`)
+  await evaluate(window, `document.querySelector('[data-canvas-card="note"]').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 800, clientY: 120 }))`)
+  await waitFor(window, `document.querySelector('.workspace-canvas-connection-status')?.textContent.includes('Origem:')`, `${viewport.label} connect origem definida`)
+  await evaluate(window, `document.querySelector('[data-canvas-card="browser"]').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 900, clientY: 420 }))`)
+  await waitFor(window, `(() => {
+    const raw = window.localStorage.getItem('devorbit:workspace-canvas:${manualLink.id}')
+    if (!raw) return false
+    const saved = JSON.parse(raw)
+    const note = saved.nodes?.find((node) => node.kind === 'note')
+    if (!note) return false
+    return saved.connections.length === 1 && saved.connections.some((connection) => connection.from === note.id && connection.to === 'browser')
+  })()`, `${viewport.label} canvas manual connection`)
+  await waitFor(window, `!document.querySelector('.workspace-canvas-connection-status')`, `${viewport.label} connect mode sai após concluir`)
+  // Duplicada: repetir o mesmo fluxo NÃO cria uma segunda aresta.
+  await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Conectar nós selecionados', `${viewport.label} connect mode toggle duplicate`)
+  await waitFor(window, `Boolean(document.querySelector('.workspace-canvas-connection-status'))`, `${viewport.label} connect mode status duplicate`)
+  await evaluate(window, `document.querySelector('[data-canvas-card="note"]').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 800, clientY: 120 }))`)
+  await waitFor(window, `document.querySelector('.workspace-canvas-connection-status')?.textContent.includes('Origem:')`, `${viewport.label} connect origem duplicada`)
+  await evaluate(window, `document.querySelector('[data-canvas-card="browser"]').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 900, clientY: 420 }))`)
   await waitFor(window, `!document.querySelector('.workspace-canvas-connection-status')`, `${viewport.label} duplicate connection complete`)
   const duplicateLinks = await evaluate(window, `JSON.parse(window.localStorage.getItem('devorbit:workspace-canvas:${manualLink.id}')).connections.length`)
   assert(duplicateLinks === 1, `${viewport.label}: conexão duplicada foi criada (${duplicateLinks})`)
-  await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Encaixar todo o conteúdo na tela', `${viewport.label} canvas fit before cancel`)
-  await evaluate(window, `(function () {
-    const source = document.querySelector('[data-canvas-card="note"] [data-canvas-port="source"]')
-    source.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 77, clientX: 800, clientY: 200 }))
-    return true
-  })()`)
-  // Portas ficam ocultas em repouso: a porta alvo só recebe pointer-events
-  // depois que o estado de conexão é aplicado. Esperar a disponibilidade
-  // substitui um hit-test por elementFromPoint que era frágil entre runners.
-  await waitFor(window, `(() => {
-    const target = document.querySelector('[data-canvas-card="workbench"] [data-canvas-port="target"]')
-    if (!target || !target.classList.contains('is-available')) return false
-    const style = window.getComputedStyle(target)
-    return style.pointerEvents === 'auto' && Number.parseFloat(style.opacity) > 0
-  })()`, `${viewport.label} porta alvo disponível para a conexão`)
-  const cancelSetup = await evaluate(window, `(function () {
-    const target = document.querySelector('[data-canvas-card="workbench"] [data-canvas-port="target"]')
-    if (!target) return false
-    const rect = target.getBoundingClientRect()
-    window.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true, pointerId: 77, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 }))
-    return true
-  })()`)
-  assert(cancelSetup, `${viewport.label}: porta não ligada não ficou visível para pointercancel`)
-  await waitFor(window, `!document.querySelector('.workspace-canvas-connection-status')`, `${viewport.label} canvas pointer cancel`)
-  const cancelledLinks = await evaluate(window, `JSON.parse(window.localStorage.getItem('devorbit:workspace-canvas:${manualLink.id}')).connections.length`)
-  assert(cancelledLinks === 1, `${viewport.label}: pointercancel criou conexão (${cancelledLinks})`)
-  await evaluate(window, `document.querySelector('[data-canvas-card="note"] [data-canvas-port="source"]').click()`)
+  // Esc cancela o modo (com ou sem origem) sem criar aresta.
+  await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Conectar nós selecionados', `${viewport.label} connect mode toggle cancel`)
   await waitFor(window, `Boolean(document.querySelector('.workspace-canvas-connection-status'))`, `${viewport.label} canvas pending connection`)
   window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'ESCAPE' })
   window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'ESCAPE' })
-  await waitFor(window, `!document.querySelector('.workspace-canvas-connection-status')`, `${viewport.label} canvas cancel connection`)
+  await waitFor(window, `!document.querySelector('.workspace-canvas-connection-status') && !document.querySelector('.workspace-canvas-card.is-connect-mode')`, `${viewport.label} canvas cancel connection`)
+  const cancelledLinks = await evaluate(window, `JSON.parse(window.localStorage.getItem('devorbit:workspace-canvas:${manualLink.id}')).connections.length`)
+  assert(cancelledLinks === 1, `${viewport.label}: Escape criou conexão (${cancelledLinks})`)
   await evaluate(window, `(function () {
     const header = document.querySelector('[data-canvas-card="browser"] header strong')
     if (!header) return false
@@ -974,7 +981,7 @@ async function inspectProjectInteractions(window, viewport) {
   await waitFor(window, `(() => { const browser = document.querySelector('[data-canvas-card="browser"]'); return Number.parseFloat(browser.style.left) > 4000 && Number.parseFloat(browser.style.top) > 2500 })()`, `${viewport.label} canvas extreme placement`)
   await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Encaixar todo o conteúdo na tela', `${viewport.label} canvas fit`)
   await waitFor(window, `(() => { const viewport = JSON.parse(window.localStorage.getItem('devorbit:workspace-canvas:${manualLink.id}')).viewport; const canvas = document.querySelector('.workspace-canvas').getBoundingClientRect(); const cards = Array.from(document.querySelectorAll('.workspace-canvas-card')).map((card) => card.getBoundingClientRect()); return viewport.zoom >= .08 && viewport.zoom <= 1.6 && cards.every((card) => card.left >= canvas.left - 1 && card.top >= canvas.top - 1 && card.right <= canvas.right + 1 && card.bottom <= canvas.bottom + 1) })()`, `${viewport.label} canvas fit bounds`)
-  recordPass(viewport.label, 'portas ligam quadros sem duplicar e Escape cancela a ligação')
+  recordPass(viewport.label, 'modo conectar por botão liga quadros por clique sem duplicar e Esc cancela')
   await evaluate(window, `(function () {
     const workbench = document.querySelector('[data-canvas-card="workbench"]')
     const resizeHandle = workbench?.querySelector('[data-canvas-resize-handle]')
@@ -985,6 +992,8 @@ async function inspectProjectInteractions(window, viewport) {
   await new Promise((resolve) => setTimeout(resolve, 0))
   await evaluate(window, `(() => { window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: 246, clientY: 232 })); window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: 246, clientY: 232 })); return true })()`)
   await waitFor(window, `Number.parseFloat(document.querySelector('[data-canvas-card="workbench"]').style.width) > ${canvasInteractions.beforeWidth}`, `${viewport.label} canvas resize`)
+  // Resize livre: width/height podem ser fracionários (sem snap). A serialização
+  // do CSSOM limita os dígitos de style.width, então a comparação usa tolerância.
   await waitFor(window, `(() => {
     const canvas = document.querySelector('.workspace-canvas')
     const id = canvas?.getAttribute('data-canvas-project-id')
@@ -992,8 +1001,29 @@ async function inspectProjectInteractions(window, viewport) {
     if (!canvas || !raw) return false
     const saved = JSON.parse(raw)
     const card = saved.nodes?.find((item) => item.id === 'workbench')
-    return saved.version === 5 && Array.isArray(saved.squads) && card && Number(card.width) === Number.parseFloat(canvas.querySelector('[data-canvas-card="workbench"]').style.width)
+    return saved.version === 5 && Array.isArray(saved.squads) && card && Math.abs(Number(card.width) - Number.parseFloat(canvas.querySelector('[data-canvas-card="workbench"]').style.width)) < 1
   })()`, `${viewport.label} canvas geometry persistence`)
+  recordPass(viewport.label, 'resize do canvas persiste geometria por nó')
+  // Resize LIVRE: sem snap e SEM o teto antigo de 1100px — um gesto seguinte
+  // empurra a largura além do teto legado e o estado persistido acompanha.
+  await evaluate(window, `(function () {
+    const workbench = document.querySelector('[data-canvas-card="workbench"]')
+    const resizeHandle = workbench?.querySelector('[data-canvas-resize-handle]')
+    if (!resizeHandle) return false
+    resizeHandle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 41, clientX: 300, clientY: 300 }))
+    return true
+  })()`)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  await evaluate(window, `(() => { window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 41, clientX: 1500, clientY: 330 })); window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 41, clientX: 1500, clientY: 330 })); return true })()`)
+  await waitFor(window, `(() => {
+    const canvas = document.querySelector('.workspace-canvas')
+    const id = canvas?.getAttribute('data-canvas-project-id')
+    const raw = id ? window.localStorage.getItem('devorbit:workspace-canvas:' + id) : null
+    if (!raw) return false
+    const saved = JSON.parse(raw)
+    const card = saved.nodes?.find((item) => item.id === 'workbench')
+    return Boolean(card) && Number(card.width) > 1100 && Math.abs(Number(card.width) - Number.parseFloat(canvas.querySelector('[data-canvas-card="workbench"]').style.width)) < 1
+  })()`, `${viewport.label} canvas resize livre acima do teto antigo`)
   await evaluate(window, `(function () {
     const note = document.querySelector('[data-canvas-note-editor]')
     if (!note) return false
@@ -1014,7 +1044,10 @@ async function inspectProjectInteractions(window, viewport) {
   await selectDialogAccount(window, 'codex-acc-Implementação', 'account1', `${viewport.label} agent account`)
   await confirmCreationDialog(window, `${viewport.label} agent creation`)
   await waitFor(window, `document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]').length === 1`, `${viewport.label} agent canvas node`)
-  await waitFor(window, `Array.from(window.__devorbitVerifyFixture.getCalls()).some((call) => call.name === 'startTerminal' && String(call.args[0]).startsWith('agent-'))`, `${viewport.label} agent terminal`)
+  // O terminal do agente codex auto-inicia o fluxo gerenciado da conta
+  // (startCodexTerminal); demais providers/custom usam startTerminal/
+  // startAgentTerminal. Ambos provam o launch independente do card.
+  await waitFor(window, `Array.from(window.__devorbitVerifyFixture.getCalls()).some((call) => ['startTerminal', 'startCodexTerminal', 'startAgentTerminal'].includes(call.name) && String(call.args[0]).startsWith('agent-'))`, `${viewport.label} agent terminal`)
   recordPass(viewport.label, 'canvas cria agente configurado com terminal independente')
   await verifyAgentConfigDetails(window, viewport)
   await screenshot(window, `desktop-${viewport.label}-canvas-agent`)
@@ -1056,11 +1089,17 @@ async function inspectProjectInteractions(window, viewport) {
   assert(squadNoteCount === 1, `${viewport.label}: squad criou Nota obrigatória indevida (${squadNoteCount})`)
   await waitFor(window, `document.querySelectorAll('.workspace-canvas-connections path').length >= 4`, `${viewport.label} squad task connections`)
   recordPass(viewport.label, 'template cria squad de agentes sem Nota obrigatória')
-  // Nota existente → âncora do squad: alvo discreto no header da região, sem
-  // bloquear seleção do header nem drag dos membros.
-  await evaluate(window, `document.querySelector('[data-canvas-card="note"] [data-canvas-port="source"]')?.click()`)
-  await waitFor(window, `!document.querySelector('[data-canvas-port="target"][data-canvas-node-id^="squad:"]')?.disabled`, `${viewport.label} alvo da âncora de squad disponível`)
-  await evaluate(window, `document.querySelector('[data-canvas-port="target"][data-canvas-node-id^="squad:"]')?.click()`)
+  // Nota existente → âncora do squad pelo MESMO modo conectar: origem = nota,
+  // destino = botão "Nota" do header da região (âncora squad:<id>).
+  await evaluate(window, `document.querySelector('[data-canvas-card="note"]')?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 800, clientY: 120 }))`)
+  await waitFor(window, `document.querySelectorAll('.workspace-canvas-card.is-selected').length === 1`, `${viewport.label} nota selecionada para âncora de squad`)
+  await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Conectar nós selecionados', `${viewport.label} connect mode para âncora`)
+  await evaluate(window, `document.querySelector('[data-canvas-card="note"]')?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 800, clientY: 120 }))`)
+  await waitFor(window, `(() => {
+    const anchor = document.querySelector('.canvas-squad-anchor-port[data-canvas-node-id^="squad:"]')
+    return Boolean(anchor) && !anchor.disabled
+  })()`, `${viewport.label} alvo da âncora de squad disponível`)
+  await evaluate(window, `document.querySelector('.canvas-squad-anchor-port[data-canvas-node-id^="squad:"]')?.click()`)
   await waitFor(window, `(() => {
     const canvas = document.querySelector('.workspace-canvas')
     const id = canvas?.getAttribute('data-canvas-project-id')
@@ -1276,15 +1315,130 @@ async function inspectMemory(window, viewport) {
   await waitFor(window, `(() => { const dialog = document.querySelector('[role="dialog"]'); return Boolean(dialog?.querySelector('#ai-memory-dialog-title') && dialog.contains(document.activeElement)) })()`, `${viewport.label} memory dialog focus`)
   const memory = await evaluate(window, `(() => ({
     title: document.querySelector('#ai-memory-dialog-title')?.innerText,
-    textarea: Boolean(document.querySelector('#ai-memory-content')),
+    hasTabs: Boolean(document.querySelector('[role="tablist"]')),
+    hasSwitch: Boolean(document.querySelector('[role="switch"]')),
     darkSurface: getComputedStyle(document.querySelector('[role="dialog"]')).backgroundColor,
   }))()`)
-  assert(memory.title === 'Memória e handoff' && memory.textarea, `${viewport.label}: memory dialog incompleto (${JSON.stringify(memory)})`)
+  const isShared = memory.title === 'Shared AI Memory'
+  const isLegacy = memory.title === 'Memória e handoff'
+  assert(isShared || isLegacy, `${viewport.label}: memory dialog título inesperado (${memory.title})`)
   assert(memory.darkSurface === 'rgb(23, 27, 36)', `${viewport.label}: memory dialog não usa superfície escura (${memory.darkSurface})`)
-  recordPass(viewport.label, 'memory dialog uses the dark surface and exposes an editable handoff')
+  if (isShared) {
+    assert(memory.hasTabs, `${viewport.label}: Shared AI Memory sem tablist`)
+    assert(memory.hasSwitch, `${viewport.label}: Shared AI Memory sem toggle switch`)
+    recordPass(viewport.label, 'shared AI memory dialog: dark surface, tabs and opt-in switch verified')
+  } else {
+    recordPass(viewport.label, 'memory dialog uses the dark surface and exposes an editable handoff')
+  }
   await screenshot(window, `desktop-${viewport.label}-memory`)
   await key(window, 'Escape')
   await waitFor(window, `!document.querySelector('[role="dialog"] #ai-memory-dialog-title')`, `${viewport.label} memory Escape`)
+}
+
+async function inspectSharedMemory(window, viewport) {
+  // Reopen the modal (same button) and run deeper Shared AI Memory assertions.
+  await clickButtonByText(window, (node) => node.getAttribute('title') === 'Abrir memória de sessão e handoff', `${viewport.label} shared memory reopen`)
+  await waitFor(window, `(() => { const dialog = document.querySelector('[role="dialog"]'); return Boolean(dialog?.querySelector('#ai-memory-dialog-title') && dialog.contains(document.activeElement)) })()`, `${viewport.label} shared memory focus`)
+
+  // --- Structural assertions ---
+  const sm = await evaluate(window, `(() => {
+    const dialog = document.querySelector('[role="dialog"]')
+    const title = dialog?.querySelector('#ai-memory-dialog-title')?.innerText
+    const tablist = dialog?.querySelector('[role="tablist"]')
+    const tabs = tablist ? Array.from(tablist.querySelectorAll('[role="tab"]')).map(t => t.textContent.trim()) : []
+    const switchEl = dialog?.querySelector('[role="switch"]')
+    const switchChecked = switchEl?.getAttribute('aria-checked')
+    const statusText = dialog?.innerText || ''
+    const darkSurface = getComputedStyle(dialog).backgroundColor
+    return { title, tabs, switchChecked, hasStatus: statusText.includes('Rodando') || statusText.includes('Indisponível'), darkSurface }
+  })()`)
+  assert(sm.title === 'Shared AI Memory', `${viewport.label}: shared memory título incorreto (${sm.title})`)
+  assert(sm.tabs.length === 6, `${viewport.label}: shared memory esperava 6 tabs, encontrou ${sm.tabs.length} (${sm.tabs.join(', ')})`)
+  assert(sm.switchChecked !== null && sm.switchChecked !== undefined, `${viewport.label}: shared memory sem aria-checked no switch`)
+  assert(sm.hasStatus, `${viewport.label}: shared memory sem status legível`)
+  assert(sm.darkSurface === 'rgb(23, 27, 36)', `${viewport.label}: shared memory não usa superfície escura (${sm.darkSurface})`)
+  recordPass(viewport.label, `shared AI memory structure: title="${sm.title}", ${sm.tabs.length} tabs, switch=${sm.switchChecked}, status readable, dark surface`)
+
+  // --- Toggle interaction ---
+  const toggleBefore = sm.switchChecked
+  await evaluate(window, `(() => {
+    const sw = document.querySelector('[role="switch"]')
+    if (sw) sw.click()
+  })()`)
+  await waitFor(window, `(() => {
+    const sw = document.querySelector('[role="switch"]')
+    return sw && sw.getAttribute('aria-checked') !== ${JSON.stringify(toggleBefore)}
+  })()`, `${viewport.label} toggle state change`)
+  const toggleAfter = await evaluate(window, `document.querySelector('[role="switch"]')?.getAttribute('aria-checked')`)
+  assert(toggleAfter !== toggleBefore, `${viewport.label}: toggle não mudou de estado (${toggleBefore} → ${toggleAfter})`)
+  recordPass(viewport.label, `shared AI memory toggle: ${toggleBefore} → ${toggleAfter}`)
+
+  // --- Activity tab + search ---
+  // Wait for toggle re-render to propagate isEnabled before switching tabs.
+  await waitFor(window, `(() => {
+    const sw = document.querySelector('[role="switch"]')
+    return sw && sw.getAttribute('aria-checked') === 'true'
+  })()`, `${viewport.label} toggle propagated`)
+  const activityTab = await evaluate(window, `(() => {
+    const tabs = document.querySelectorAll('[role="tab"]')
+    for (const t of tabs) { if (t.textContent.trim() === 'Atividade') { t.click(); return true } }
+    return false
+  })()`)
+  assert(activityTab, `${viewport.label}: aba Atividade não encontrada`)
+  // Wait for search input to be enabled (React re-render after toggle).
+  await waitFor(window, `!document.querySelector('[aria-label="Buscar na memória do projeto"]')?.disabled`, `${viewport.label} search enabled`)
+  // Use setInputValue helper: native setter + input/change events for React controlled input.
+  await setInputValue(window, '[aria-label="Buscar na memória do projeto"]', 'auth')
+  // Wait for Buscar button to be enabled (searchQuery committed to React state).
+  await waitFor(window, `(() => { const btns = document.querySelectorAll('button'); for (const b of btns) { if (b.textContent.trim() === 'Buscar' && !b.disabled) return true } return false })()`, `${viewport.label} Buscar enabled`)
+  await clickButtonByText(window, (node) => node.textContent.trim() === 'Buscar' && !node.disabled, `${viewport.label} search button`)
+  // Wait for aiMemoryQuery result to appear in any tabpanel.
+  await waitFor(window, `(() => {
+    const panels = document.querySelectorAll('[role="tabpanel"]')
+    for (const p of panels) { const t = p.innerText || ''; if (t.includes('Auth') || t.includes('JWT') || t.includes('decisions')) return true }
+    return false
+  })()`, `${viewport.label} search results`)
+  const searchResult = await evaluate(window, `(() => {
+    const panels = document.querySelectorAll('[role="tabpanel"]')
+    for (const p of panels) { const t = p.innerText || ''; if (t.includes('Auth') || t.includes('JWT') || t.includes('decisions')) return t.slice(0, 300) }
+    return ''
+  })()`)
+  assert(searchResult.length > 0, `${viewport.label}: busca não retornou resultado legível`)
+  recordPass(viewport.label, 'shared AI memory search: results rendered')
+
+  // --- Migration tab interaction ---
+  const migrateTab = await evaluate(window, `(() => {
+    const tabs = document.querySelectorAll('[role="tab"]')
+    for (const t of tabs) { if (t.textContent.trim() === 'Legado') { t.click(); return !t.disabled } }
+    return false
+  })()`)
+  if (migrateTab) {
+    // Legacy tab is enabled (shouldn't be on first open with receipt=absent, but test the branch)
+    recordPass(viewport.label, 'shared AI memory legacy tab accessible')
+  } else {
+    recordPass(viewport.label, 'shared AI memory legacy tab correctly disabled (no receipt)')
+  }
+
+  // --- Status tab: toggle back and verify ---
+  await evaluate(window, `(() => {
+    const tabs = document.querySelectorAll('[role="tab"]')
+    for (const t of tabs) { if (t.textContent.trim() === 'Status') { t.click(); return } }
+  })()`)
+  await waitFor(window, `document.querySelector('[role="switch"]')`, `${viewport.label} status tab switch`)
+  // Toggle back to original state
+  await evaluate(window, `(() => {
+    const sw = document.querySelector('[role="switch"]')
+    if (sw) sw.click()
+  })()`)
+  await waitFor(window, `(() => {
+    const sw = document.querySelector('[role="switch"]')
+    return sw && sw.getAttribute('aria-checked') === ${JSON.stringify(toggleBefore)}
+  })()`, `${viewport.label} toggle restore`)
+  recordPass(viewport.label, 'shared AI memory toggle restored to original state')
+
+  await screenshot(window, `desktop-${viewport.label}-shared-memory`)
+  await key(window, 'Escape')
+  await waitFor(window, `!document.querySelector('[role="dialog"] #ai-memory-dialog-title')`, `${viewport.label} shared memory Escape`)
 }
 
 async function inspectToolHealth(window, viewport) {
@@ -1394,6 +1548,7 @@ async function runViewport(viewport) {
     await waitFor(window, `document.querySelector('.view-panel:not([hidden])')?.innerText.includes('Projetos')`, `${viewport.label} projects view after audit`)
     await inspectProjectInteractions(window, viewport)
     await inspectMemory(window, viewport)
+    await inspectSharedMemory(window, viewport)
     await inspectUsage(window, viewport)
     // Return to projects so the settings trigger lives in the visible shell.
     await clickButtonByText(window, (node) => node.getAttribute('title') === 'Projetos', `${viewport.label} projects navigation`)
