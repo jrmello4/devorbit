@@ -2,6 +2,33 @@
 
 All notable changes to DevOrbit are documented here.
 
+## [1.0.42] - 2026-09-24
+
+### Added
+
+- Shared AI Memory opt-in por projeto via sidecar local `ai-memory` v2.4.0, com isolamento de dados em `userData/ai-memory` e comunicação MCP interna via IPC.
+- Dashboard Shared AI Memory no Workspace com 6 abas (Status, Atividade, Briefing, Handoffs, Doctor e Legado), busca interativa via MCP (busca e consultas recentes integradas na aba Atividade) e controle de ativação com rollback defensivo.
+- Memória de squad no Canvas, integração de outcomes do Agent Bridge, fluxo de handoff/takeover orientado pelo operador no Inspector e migração idempotente de memória legada com receipt e gate read-only.
+- Provedores explícitos OpenCode 2 e Command Code integrados ao catálogo first-class (`src/shared/agent-provider-contract.ts`), com mapeamento de comandos padrão e injeção de ambiente de terminal (OpenCode e OpenCode 2 operam via MCP sem hooks locais; aider e custom mantêm execução direta sem launcher).
+- Workspace Canvas e Project Library: alternância simplificada de grade/lista sem contorno redundante, cards compactos com transições mais ágeis de 120ms, pílula de branch limpa sem borda interna, conexões via modo Conectar explícito (sem alças/bolinhas de porta permanentes) e publicação periódica com debounce de snapshots de squad.
+
+### Changed
+
+- Escopo de memória resolvido deterministicamente por repositório Git/worktree (`git-common-dir > remote > path`), com marker atômico `.ai-memory.toml` preservando configurações de terceiros.
+- Ciclo de vida e launcher com resiliência fail-open: fallback direto em caso de indisponibilidade de memória e preservação de `CODEX_HOME` e variáveis específicas por perfil de conta.
+- Refinamentos de usabilidade e interface: Settings configura executáveis por provedor, terminal embutido preserva tema e ações compactas, cotas exibem severidade e status claros, e painel Web mantém redimensionamento acessível durante pan/drag no Canvas.
+
+### Fixed
+
+- Provisionamento resiliente do sidecar: timeout finito de download com cancelamento via `AbortController`, verificação estrita de integridade SHA-256 (com expurgo de downloads corrompidos) e adoção graciosa de instâncias pré-existentes em concorrência de portas.
+- Script `smoke:ipc`: validação estrita com retorno de exit code 1 em caminhos negativos induzidos e tratamento de avisos não bloqueantes de limpeza temporária no Windows.
+
+### Limitations & Known Issues
+
+- **Provisionamento Inicial:** O primeiro uso em ambientes sem o binário do sidecar pré-instalado em cache local ou empacotado requer conexão com a internet para download sob demanda a partir do GitHub Releases oficial.
+- **Ciclo de Vida no Windows (Job Object):** A terminação graciosa do sidecar é gerenciada pelos ganchos de saída do DevOrbit (`stopTerminalAsync` / `before-quit`). Quedas anormais ou encerramento forçado do host (`taskkill /F`) podem deixar processos órfãos devido à ausência de `KILL_ON_JOB_CLOSE` nativo no runtime Electron/Node.
+- **Verificador de Atualizações (Limitação Preexistente):** O verificador in-app exige `GH_TOKEN`, `GITHUB_TOKEN` ou autenticação prévia via `gh auth login` para checagem automatizada na API do GitHub; o repositório e os assets públicos permitem download manual direto, não constituindo bloqueio para a release.
+
 ## [1.0.41] - 2026-09-23
 
 ### Added
