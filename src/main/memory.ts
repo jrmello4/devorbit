@@ -48,6 +48,39 @@ const DEFAULT_MEMORY_TEMPLATE = (projectName: string) => `# 🧠 AI Memory & Han
 
 const MEMORY_METADATA_PREFIX = '<!-- devorbit-memory: '
 
+/**
+ * Estado do gate read-only pós-migração (FASE 3):
+ * - 'legacy': receipt ausente (ENOENT) → escritores legacy seguem normais;
+ * - 'read-only': receipt verificada → ai-memory é primary, sem dual-write;
+ * - 'uncertain': falha REAL de I/O/permissão ao consultar a receipt →
+ *   fail-closed (nenhuma escrita legada), com mensagem acionável.
+ */
+export type LegacyMemoryGateState = 'legacy' | 'read-only' | 'uncertain'
+
+export type LegacyMemoryWriteGuard = (projectPath: string) => Promise<boolean>
+
+let legacyWriteGuard: LegacyMemoryWriteGuard | null = null
+
+export function setLegacyMemoryWriteGuard(guard: LegacyMemoryWriteGuard | null): void {
+  legacyWriteGuard = guard
+}
+
+async function legacyGateState(projectPath: string): Promise<LegacyMemoryGateState> {
+  if (!legacyWriteGuard) return 'legacy'
+  try {
+    return (await legacyWriteGuard(projectPath)) ? 'read-only' : 'legacy'
+  } catch {
+    // Erro real ao consultar a receipt NÃO reabre a escrita legacy.
+    return 'uncertain'
+  }
+}
+
+const LEGACY_READ_ONLY_SAVE_MESSAGE = 'Projeto migrado para o ai-memory: .devorbit/memory.md é somente leitura (histórico preservado).'
+const LEGACY_UNCERTAIN_SAVE_MESSAGE = 'Estado de migração incerto (falha ao consultar receipt do ai-memory): escrita legada bloqueada por segurança.'
+
+const LEGACY_READ_ONLY_COMPACT_MESSAGE = 'Projeto migrado para o ai-memory: compactação legacy desabilitada.'
+const LEGACY_UNCERTAIN_COMPACT_MESSAGE = 'Estado de migração incerto (falha ao consultar receipt): compactação legacy ignorada por segurança.'
+
 const saveQueues = new Map<string, Promise<void>>()
 
 interface GitSnapshot {
@@ -333,6 +366,11 @@ export async function saveProjectMemory(
   content: string
 ): Promise<{ success: boolean; message?: string }> {
   try {
+    // Pós-migração: ai-memory é primary; o markdown legacy fica read-only
+    // (sem dual-write). Estado incerto (erro real na receipt) também bloqueia.
+    const gate = await legacyGateState(projectPath)
+    if (gate === 'read-only') return { success: false, message: LEGACY_READ_ONLY_SAVE_MESSAGE }
+    if (gate === 'uncertain') return { success: false, message: LEGACY_UNCERTAIN_SAVE_MESSAGE }
     const root = await resolveProjectRoot(projectPath)
     return await enqueueProjectSave(root, async () => {
       const memoryFile = await resolveSafeMemoryFile(root, true)
@@ -514,6 +552,16 @@ export function compactMemoryContent(content: string): { content: string; report
 }
 
 export async function compactProjectMemory(projectPath: string): Promise<MemoryCompactionReport & { success: boolean; message?: string }> {
+  // Pós-migração: compactação do legacy NÃO reescreve. Receipt verificada →
+  // no-op; estado incerto (erro real na receipt) → fail-closed também
+  // (nenhuma escrita), mas bem-sucedido para o scheduler periódico.
+  const gate = await legacyGateState(projectPath)
+  if (gate === 'read-only') {
+    return { success: true, compacted: false, originalChars: 0, compactedChars: 0, removedLines: 0, truncated: false, message: LEGACY_READ_ONLY_COMPACT_MESSAGE }
+  }
+  if (gate === 'uncertain') {
+    return { success: true, compacted: false, originalChars: 0, compactedChars: 0, removedLines: 0, truncated: false, message: LEGACY_UNCERTAIN_COMPACT_MESSAGE }
+  }
   let root: string
   try {
     root = await resolveProjectRoot(projectPath)

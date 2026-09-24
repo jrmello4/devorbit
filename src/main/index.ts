@@ -6,13 +6,23 @@ import os from 'node:os'
 import fs from 'node:fs/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createResultWaiter } from './agent-turn'
+import {
+  finalizeAiMemorySession,
+  prepareAiMemoryLaunch,
+  registerActiveAiMemorySession,
+  setGlobalAiMemoryService,
+} from './ai-memory-launcher'
 import { createTerminalReadiness } from './terminal-readiness'
 import { scanUsageAdapters, resolveUsageSourceDirs } from './usage-adapters'
 import { createClaudeQuotaPoller, defaultClaudeCredentialsPath } from './claude-usage-quota'
-import { createBridgeService } from './bridge-service'
-import { createHeadlessTurnRunner } from './bridge-headless'
+import { createBridgeService, type BridgeCycleOutcome } from './bridge-service'
+import { createHeadlessTurnRunner, drainHeadlessFinalizers, drainHeadlessRuns } from './bridge-headless'
 import { getAgentProviderHealth, resolveAgentProviderWithFallback } from './agent-providers'
-import { loadConfig } from './config'
+import { loadAiMemoryConfig, loadConfig, setAiMemoryProjectEnabled } from './config'
+import { createAiMemoryService, type AiMemoryService } from './ai-memory-service'
+import { AiMemoryBridgeSync, syncScopeOf } from './ai-memory-sync'
+import { DEFAULT_AI_MEMORY_CONFIG, type AiMemoryScope } from '../shared/ai-memory-contract'
+import { registerAiMemoryIpc } from './ipc/ai-memory-ipc'
 import { createOrchestrationService } from './orchestration-service'
 import { registerOrchestrationIpc } from './ipc/orchestration-ipc'
 import { registerProjectIpc } from './ipc/project-ipc'
@@ -27,14 +37,16 @@ import type { AgentBridgeEvent } from '../shared/agent-bridge-event'
 import { HITLManager, type HitlRequest } from './hitl'
 import { AuditLedger } from './audit-ledger'
 import { Telemetry } from './telemetry'
-import { disposeProjectHybridMemory } from './project-hybrid-memory'
+import { disposeProjectHybridMemory, setProjectHybridMemoryWriteGuard } from './project-hybrid-memory'
+import { readMigrationReceiptState } from './ai-memory-migration'
+import { detectGitCommonDir, detectRemoteUrl, deriveAiMemoryIdentity } from './ai-memory-scope'
 import { EvolutionStore } from './evolution-store'
 import { createUsageStore } from './usage-store'
-import { onTerminalEvent, onTerminalStart, hasTerminal, stopAllTerminals, writeTerminal, type TerminalEvent } from './terminal-session'
+import { onTerminalEvent, onTerminalStart, hasTerminal, stopAllTerminals, stopAllTerminalsAsync, writeTerminal, type TerminalEvent } from './terminal-session'
 import { installPtyPipe } from './pty-pipe'
 import { handleCompanionTerminalEvent, onCompanionEvent, unregisterAllCompanionTerminals, type CompanionSummary } from './companion'
 import { disposeWebPanel, onWebPanelEvent } from './web-panel'
-import { cancelAllMemoryCompactions } from './memory'
+import { cancelAllMemoryCompactions, setLegacyMemoryWriteGuard } from './memory'
 import { initializeUpdater } from './updater'
 import { startShadowRoutingMetrics, stopShadowRoutingMetrics } from './shadow-routing-metrics'
 import type { AgentProviderId, AppConfig, IpcInvokeChannel, IpcSendChannel } from '../renderer/src/types'
@@ -91,11 +103,11 @@ if (isSmokeRun) {
 const hasSingleInstanceLock = isSmokeRun ? true : app.requestSingleInstanceLock()
 let terminalLifecycleGeneration = 0
 
-function invalidateTerminalLifecycle(): void {
+function invalidateTerminalLifecycle(options: { stopTerminals?: boolean } = {}): void {
   terminalLifecycleGeneration += 1
   // Teardown derruba os PTYs sem evento de exit: fecha as sessões de uso aqui.
   endAllUsageSessions()
-  stopAllTerminals()
+  if (options.stopTerminals !== false) stopAllTerminals()
   unregisterAllCompanionTerminals()
 }
 
@@ -171,6 +183,43 @@ const observabilityLedger = new AuditLedger(path.join(app.getPath('userData'), '
 const evolutionStore = new EvolutionStore({ dataDirectory: path.join(app.getPath('userData'), 'evolution') })
 const usageStore = createUsageStore({ directory: path.join(app.getPath('userData'), 'usage') })
 
+// ai-memory (FASE 1): sidecar de propriedade do DevOrbit, opt-in por projeto.
+// Desabilitado não inicia processo, não cria data dir nem escreve marker.
+let aiMemoryService: AiMemoryService | null = null
+
+async function initializeAiMemoryService(): Promise<AiMemoryService> {
+  if (aiMemoryService) return aiMemoryService
+
+  let config = DEFAULT_AI_MEMORY_CONFIG
+  try {
+    config = await loadAiMemoryConfig()
+  } catch (error) {
+    // A configuração corrompida não bloqueia o workspace. A instância fica
+    // desabilitada e a UI poderá exibir/diagnosticar o erro ao tentar opt-in.
+    console.warn('[DevOrbit ai-memory] configuração indisponível; iniciando desabilitado:', error)
+  }
+
+  aiMemoryService = createAiMemoryService({
+    userDataDir: path.join(app.getPath('userData'), 'ai-memory'),
+    resourcesPath: process.resourcesPath,
+    config,
+  })
+  // O launcher e a IPC usam a mesma instância gerenciada no processo principal.
+  setGlobalAiMemoryService(aiMemoryService)
+  return aiMemoryService
+}
+
+async function bootstrapAiMemory(): Promise<void> {
+  try {
+    if (quitCleanupStarted) return
+    const service = await initializeAiMemoryService()
+    if (quitCleanupStarted) return
+    await service.start()
+  } catch (error) {
+    console.warn('[DevOrbit ai-memory] bootstrap falhou:', error)
+  }
+}
+
 // Scanner dos adaptadores locais (Camada B — tokens reais de cada CLI) e o
 // poller de quota do Claude. O poller é autolimitado (30 min mín. entre
 // chamadas; 6h de cooldown após 429), então pode rodar junto do scan barato.
@@ -242,6 +291,35 @@ const headlessTurn = createHeadlessTurnRunner({
     const resolved = await resolveAgentProviderWithFallback(await loadConfig(), provider)
     return resolved.path
   },
+  // Envólucro ai-memory (workstream único + sessão) para o turno headless.
+  // Reusa o MESMO launcher do caminho interativo; `undefined` = execução direta
+  // (opt-out/degradado), preservando o fallback gracioso.
+  prepareMemoryLaunch: async (request) => {
+    try {
+      const plan = await prepareAiMemoryLaunch({
+        provider: request.provider,
+        resolvedCommand: request.commandPath,
+        originalArgs: request.args,
+        env: request.env,
+        cwd: request.cwd,
+        terminalId: request.executionId,
+      })
+      if (!plan.wrapped) return undefined
+      if (plan.metadata) registerActiveAiMemorySession(plan.metadata)
+      const terminalId = plan.metadata?.terminalId
+      return {
+        command: plan.command,
+        args: plan.args,
+        env: plan.env,
+        cwd: plan.cwd,
+        ...(terminalId
+          ? { finalize: () => finalizeAiMemorySession({ terminalId }) }
+          : {}),
+      }
+    } catch {
+      return undefined
+    }
+  },
 })
 
 /**
@@ -260,6 +338,122 @@ function headlessProviderEnv(config: AppConfig): NodeJS.ProcessEnv {
 
 let bridgeEnv: () => NodeJS.ProcessEnv = () => ({})
 
+/**
+ * Sync ai-memory para outcomes do Bridge (FASE 3). Fire-and-forget: falha de
+ * memória nunca quebra o Bridge. Escopo resolve uma vez por projectPath e é
+ * cacheado; opt-in por projeto (isProjectEnabled) e serviço `running` gateiam
+ * toda escrita. Sem serviço/opt-in, o Bridge segue sem persistência.
+ */
+/**
+ * Identidade ai-memory determinística do projeto (cache por caminho) para os
+ * guards read-only pós-migração. Falha de git/derivação lança — o guard
+ * consumidor converte em estado 'uncertain' (fail-closed), nunca reabre
+ * escrita legada.
+ */
+const legacyIdentityCache = new Map<string, string>()
+
+async function legacyMemoryIdentity(projectPath: string): Promise<string> {
+  const key = path.resolve(projectPath)
+  const cached = legacyIdentityCache.get(key)
+  if (cached !== undefined) return cached
+  const [remoteUrl, gitCommonDir] = await Promise.all([
+    detectRemoteUrl(projectPath),
+    detectGitCommonDir(projectPath),
+  ])
+  const identity = deriveAiMemoryIdentity({ projectPath, ...(remoteUrl !== undefined ? { remoteUrl } : {}), ...(gitCommonDir !== undefined ? { gitCommonDir } : {}) }).identity
+  legacyIdentityCache.set(key, identity)
+  return identity
+}
+
+/**
+ * Guard read-only pós-migração para os escritores legacy (memory.md e
+ * memory.json). Receipt 'present' → true (read-only); 'absent' → false
+ * (legado preservado); 'error' → LANÇA (fail-closed nos consumidores).
+ */
+async function isLegacyMemoryMigrated(projectPath: string): Promise<boolean> {
+  // Gate funciona OFFLINE: lê a receipt local (não depende do sidecar).
+  const identity = await legacyMemoryIdentity(projectPath)
+  const state = await readMigrationReceiptState(app.getPath('userData'), identity)
+  if (state.status === 'present') return true
+  if (state.status === 'absent') return false
+  throw new Error(`Receipt de migração ilegível: ${state.message}`)
+}
+
+// Ativação dos guards: ambos os escritores legados (.devorbit/memory.md e
+// .devorbit/memory.json) passam a respeitar a receipt pós-migração. Sem
+// receipt ('absent') o comportamento legado é preservado integralmente;
+// erro real de I/O → fail-closed (consumidores mapeiam para 'uncertain').
+setLegacyMemoryWriteGuard(isLegacyMemoryMigrated)
+setProjectHybridMemoryWriteGuard(isLegacyMemoryMigrated)
+
+const bridgeOutcomeSyncs = new Map<string, AiMemoryBridgeSync>()
+const bridgeOutcomeScopes = new Map<string, AiMemoryScope>()
+const pendingBridgeOutcomeWrites = new Set<Promise<void>>()
+
+const AI_MEMORY_SHUTDOWN_DRAIN_TIMEOUT_MS = 6_000
+
+async function rememberBridgeOutcome(outcome: BridgeCycleOutcome): Promise<void> {
+  const service = aiMemoryService
+  if (!service || service.status().state !== 'running' || !outcome.projectPath) return
+  try {
+    const cacheKey = outcome.projectPath
+    let scope = bridgeOutcomeScopes.get(cacheKey)
+    if (!scope) {
+      scope = await service.resolveScope(outcome.projectPath)
+      bridgeOutcomeScopes.set(cacheKey, scope)
+    }
+    if (!service.isProjectEnabled(scope.identity)) return
+    const client = service.client()
+    if (!client) return
+    const storeKey = `${scope.workspace}/${scope.project}`
+    let sync = bridgeOutcomeSyncs.get(storeKey)
+    if (!sync) {
+      sync = new AiMemoryBridgeSync(syncScopeOf(scope), client)
+      bridgeOutcomeSyncs.set(storeKey, sync)
+    }
+    await sync.handle(outcome)
+  } catch {
+    // Memória nunca quebra o Bridge.
+  }
+}
+
+function scheduleBridgeOutcomeWrite(outcome: BridgeCycleOutcome): void {
+  const task: Promise<void> = rememberBridgeOutcome(outcome)
+    .catch(() => undefined)
+    .finally(() => {
+      pendingBridgeOutcomeWrites.delete(task)
+    })
+  pendingBridgeOutcomeWrites.add(task)
+}
+
+async function drainBridgeOutcomeWrites(timeoutMs = AI_MEMORY_SHUTDOWN_DRAIN_TIMEOUT_MS): Promise<void> {
+  const drain = async (): Promise<void> => {
+    // Await outcomes still resolving project scope as well as writes already
+    // queued in their per-project sync instance. Bridge shutdown prevents new
+    // cycles; the loop also covers an outcome that was reported during PTY stop.
+    for (;;) {
+      while (pendingBridgeOutcomeWrites.size > 0) {
+        await Promise.allSettled([...pendingBridgeOutcomeWrites])
+      }
+      const syncs = [...bridgeOutcomeSyncs.values()]
+      await Promise.allSettled(syncs.map((sync) => sync.flush()))
+      if (pendingBridgeOutcomeWrites.size === 0 && syncs.length === bridgeOutcomeSyncs.size) break
+    }
+  }
+
+  let timer: NodeJS.Timeout | undefined
+  const result = await Promise.race([
+    drain().then(() => 'drained' as const, () => 'failed' as const),
+    new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), timeoutMs)
+    }),
+  ])
+  if (timer) clearTimeout(timer)
+  if (result !== 'drained') {
+    console.warn(`[DevOrbit ai-memory] drain de resultados do Bridge não concluiu (${result}) em ${timeoutMs}ms.`)
+  }
+}
+
 const bridgeService = createBridgeService({
   cliDirectory: app.isPackaged ? process.resourcesPath : (process.env.APP_ROOT || path.resolve(__dirname, '../..')),
   hasTerminal,
@@ -268,6 +462,9 @@ const bridgeService = createBridgeService({
   waitTerminalReady,
   onEvent: sendAgentBridgeEvent,
   onReflection: rememberBridgeReflection,
+  onOutcome: (outcome) => {
+    scheduleBridgeOutcomeWrite(outcome)
+  },
   onGuard: (audit) => {
     void observabilityLedger.append({ type: 'delegation.guard', ...audit }).catch(() => undefined)
   },
@@ -504,6 +701,7 @@ async function runPackagedSmokeTest(): Promise<void> {
   let smokeWindow: BrowserWindowType | null = null
   let timeoutHandle: NodeJS.Timeout | null = null
   try {
+    await initializeAiMemoryService()
     setupIpcHandlers()
 
     smokeWindow = new BrowserWindow({
@@ -556,8 +754,12 @@ if (isSmokeRun) {
   })
 
   app.whenReady().then(async () => {
+    // Configuração local rápida; não aguarda download/saúde do sidecar para abrir a UI.
+    await initializeAiMemoryService()
     setupIpcHandlers()
     agentBridgeRuntime.start()
+    // Depois do bridge e da janela: o sidecar não atrasa o primeiro paint.
+    void bootstrapAiMemory()
     createWindow()
     // Depois da janela: a prontidão dos providers não atrasa o primeiro paint.
     refreshProviderReadiness()
@@ -573,21 +775,86 @@ if (isSmokeRun) {
   })
 }
 
-app.on('before-quit', () => {
-  clearInterval(usageScanTimer)
-  void stopShadowRoutingMetrics()
-  orchestrationService.stop()
-  if (providerReadinessTimer) {
-    clearInterval(providerReadinessTimer)
-    providerReadinessTimer = null
-  }
-  agentBridgeRuntime.stop()
-  invalidateTerminalLifecycle()
-  disposeWebPanel()
-  cancelAllMemoryCompactions()
-  void disposeProjectHybridMemory()
-  void evolutionStore.disposeAsync()
-  void usageStore.close()
+let quitCleanupStarted = false
+let quitCleanupFinished = false
+
+app.on('before-quit', (event) => {
+  // Electron não aguarda a Promise retornada por um listener async de before-quit.
+  // Interrompe o primeiro quit e só o solicita novamente após o drain bounded.
+  if (quitCleanupFinished) return
+  event.preventDefault()
+  if (quitCleanupStarted) return
+  quitCleanupStarted = true
+
+  void (async () => {
+    clearInterval(usageScanTimer)
+    orchestrationService.stop()
+    if (providerReadinessTimer) {
+      clearInterval(providerReadinessTimer)
+      providerReadinessTimer = null
+    }
+    agentBridgeRuntime.stop()
+
+    // Rejeita novos starts antes de encerrar os PTYs; cada stop inicia a
+    // finalização ai-memory correspondente enquanto o sidecar ainda está vivo.
+    invalidateTerminalLifecycle({ stopTerminals: false })
+    const terminalShutdown = await stopAllTerminalsAsync({ timeoutMs: 3_000 })
+    if (!terminalShutdown.completed) {
+      console.warn(
+        `[DevOrbit] ${terminalShutdown.stopped} terminal(is) encerrado(s), mas o drain de ai-memory atingiu o timeout.`
+      )
+    }
+    // Runs headless ATIVOS: aborta a árvore e aguarda o child fechar (bounded).
+    // É o fechamento que registra o finalizador Antigravity do run — e pode
+    // EMITIR o Bridge outcome do run (child que concluiu durante o abort).
+    const headlessRunsDrain = await drainHeadlessRuns({ timeoutMs: 3_000 })
+    if (!headlessRunsDrain.drained) {
+      console.warn(
+        `[DevOrbit ai-memory] ${headlessRunsDrain.pending} run(s) headless ainda ativo(s) no drain de shutdown.`
+      )
+    }
+    // Finalizadores headless (Antigravity): bounded, ANTES de parar o sidecar
+    // (a página de handoff ainda precisa do servidor vivo).
+    const headlessDrain = await drainHeadlessFinalizers({ timeoutMs: 3_000 })
+    if (!headlessDrain.drained) {
+      console.warn(
+        `[DevOrbit ai-memory] ${headlessDrain.pending} finalizador(es) headless ainda pendente(s) no drain de shutdown.`
+      )
+    }
+    // Bridge outcomes (incluindo os emitidos por runs que concluíram durante o
+    // abort acima) por ÚLTIMO, imediatamente antes de parar o sidecar.
+    await drainBridgeOutcomeWrites()
+  })().catch((error) => {
+    console.warn('[DevOrbit] Falha durante o encerramento ordenado:', error)
+  }).finally(async () => {
+    if (pendingBridgeOutcomeWrites.size > 0) {
+      console.warn(
+        `[DevOrbit ai-memory] ${pendingBridgeOutcomeWrites.size} resultado(s) do Bridge ainda pendente(s) ao parar o sidecar.`
+      )
+    }
+    setGlobalAiMemoryService(null)
+    try {
+      await aiMemoryService?.stop()
+    } catch (error) {
+      console.warn('[DevOrbit ai-memory] falha ao parar o sidecar durante o encerramento:', error)
+    }
+
+    disposeWebPanel()
+    cancelAllMemoryCompactions()
+    const cleanupResults = await Promise.allSettled([
+      stopShadowRoutingMetrics(),
+      disposeProjectHybridMemory(),
+      evolutionStore.disposeAsync(),
+      usageStore.close(),
+    ])
+    for (const result of cleanupResults) {
+      if (result.status === 'rejected') {
+        console.warn('[DevOrbit] Falha ao finalizar um recurso durante o encerramento:', result.reason)
+      }
+    }
+    quitCleanupFinished = true
+    app.quit()
+  })
 })
 
 app.on('window-all-closed', () => {
@@ -630,6 +897,16 @@ function registerIpcListener(
 }
 
 function setupIpcHandlers() {
+  if (aiMemoryService) {
+    registerAiMemoryIpc(registerIpcHandler, {
+      service: aiMemoryService,
+      // migrationReceiptPath acrescenta `ai-memory/migrations` a este root.
+      userDataDir: app.getPath('userData'),
+      loadAiMemoryConfig,
+      setProjectEnabled: setAiMemoryProjectEnabled,
+    })
+  }
+
   registerProjectIpc(registerIpcHandler, {
     requestApproval: (input) => hitlManager.request(input),
     sendSyncProgress: (payload) => {

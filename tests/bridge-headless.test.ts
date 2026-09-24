@@ -6,12 +6,20 @@ import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import {
   HEADLESS_PROVIDERS,
+  activeHeadlessRunCount,
   buildAgyHeadlessInvocation,
   createHeadlessTurnRunner,
+  drainHeadlessFinalizers,
+  drainHeadlessRuns,
+  generateHeadlessExecutionId,
   isHeadlessProvider,
   parseHeadlessOutput,
+  pendingHeadlessFinalizerCount,
+  resetHeadlessFinalizersForTests,
   runHeadlessInvocation,
   terminateProcessTree,
+  trackHeadlessFinalizer,
+  type HeadlessMemoryLaunchRequest,
 } from '../src/main/bridge-headless'
 
 interface FakeChild extends EventEmitter {
@@ -35,6 +43,20 @@ function fakeChild(): FakeChild {
   })
   child.kill = vi.fn()
   return child
+}
+
+interface SpawnCall {
+  command: string
+  args: readonly string[]
+  options?: unknown
+}
+
+/** Fake spawn que registra (command, args, options) e devolve o child. */
+function recordingSpawn(child: FakeChild, calls: SpawnCall[]): typeof spawn {
+  return ((command: string, args: readonly string[], options?: unknown) => {
+    calls.push({ command, args, options })
+    return child
+  }) as unknown as typeof spawn
 }
 
 describe('bridge headless — agy não interativo', () => {
@@ -255,6 +277,297 @@ describe('bridge headless — agy não interativo', () => {
     } finally {
       await fs.rm(directory, { recursive: true, force: true })
     }
+  })
+})
+
+describe('bridge headless — envólucro ai-memory (workstream/sessão/finalize)', () => {
+  it('embrulha com prepareMemoryLaunch e finaliza após o close', async () => {
+    const child = fakeChild()
+    const calls: SpawnCall[] = []
+    const spawnImpl = recordingSpawn(child, calls)
+    const finalize = vi.fn(async () => undefined)
+    const prepareMemoryLaunch = vi.fn(async (request: HeadlessMemoryLaunchRequest) => ({
+      command: 'C:\\bin\\ai-memory.exe',
+      args: ['--data-dir', 'd', 'run', '--new', 'ws', '--executable', 'C:\\cli\\agy.exe', 'antigravity', '--', ...request.args],
+      env: { AI_MEMORY_RUN_ID: 'run-1', PATH: 'C:\\Windows' },
+      cwd: 'C:\\proj',
+      finalize,
+    }))
+    const runner = createHeadlessTurnRunner({ spawnImpl, prepareMemoryLaunch, resolveCommand: async () => 'C:\\cli\\agy.exe' })
+
+    const promise = runner({ provider: 'agy', prompt: 'tarefa', cwd: 'C:\\proj' })
+    await new Promise((resolve) => setImmediate(resolve))
+    child.stdout.emit('data', Buffer.from('DEVORBIT_RESULT: {"version":1,"outcome":"completed","summary":"ok"}\n'))
+    child.emit('close', 0)
+
+    await expect(promise).resolves.toMatchObject({ status: 'completed', summary: 'ok' })
+    expect(calls[0].command).toBe('C:\\bin\\ai-memory.exe')
+    expect(calls[0].args).toEqual(expect.arrayContaining(['--print', '--output-format', 'json']))
+    expect(calls[0].options).toMatchObject({ cwd: 'C:\\proj' })
+    // Flags nativas passadas ao launcher; prompt vai por stdin (nunca argv).
+    expect(prepareMemoryLaunch.mock.calls[0][0].args).toEqual(expect.arrayContaining(['--print', '--output-format', 'json']))
+    expect(child.writes.join('')).toContain('tarefa')
+    await waitFor(() => finalize.mock.calls.length === 1)
+    expect(finalize).toHaveBeenCalledTimes(1)
+  })
+
+  it('executa direto quando prepareMemoryLaunch devolve undefined (opt-out/degradado)', async () => {
+    const child = fakeChild()
+    const calls: SpawnCall[] = []
+    const spawnImpl = recordingSpawn(child, calls)
+    const prepareMemoryLaunch = vi.fn(async () => undefined)
+    const runner = createHeadlessTurnRunner({
+      spawnImpl,
+      prepareMemoryLaunch,
+      resolveCommand: async () => 'C:\\cli\\agy.exe',
+    })
+
+    const promise = runner({ provider: 'agy', prompt: 'x', cwd: 'C:\\p' })
+    await new Promise((resolve) => setImmediate(resolve))
+    child.stdout.emit('data', Buffer.from('ok'))
+    child.emit('close', 0)
+
+    await promise
+    expect(prepareMemoryLaunch).toHaveBeenCalledTimes(1)
+    expect(calls[0].command).toBe('C:\\cli\\agy.exe')
+    expect(calls[0].args).toEqual(expect.arrayContaining(['--print']))
+  })
+
+  it('runs paralelos recebem executionId único (workstreams independentes)', async () => {
+    const seen: string[] = []
+    const prepareMemoryLaunch = vi.fn(async (request: HeadlessMemoryLaunchRequest) => {
+      seen.push(request.executionId)
+      return {
+        command: 'C:\\bin\\ai-memory.exe',
+        args: ['run', '--new', request.executionId, '--print'],
+        env: {},
+        finalize: async () => undefined,
+      }
+    })
+    const children = [fakeChild(), fakeChild()]
+    let index = 0
+    const spawnImpl = vi.fn(() => children[index++]) as unknown as typeof spawn
+    const runner = createHeadlessTurnRunner({
+      spawnImpl,
+      prepareMemoryLaunch,
+      resolveCommand: async () => 'C:\\cli\\agy.exe',
+    })
+
+    const first = runner({ provider: 'agy', prompt: 'a', cwd: 'C:\\p' })
+    const second = runner({ provider: 'agy', prompt: 'b', cwd: 'C:\\p' })
+    await new Promise((resolve) => setImmediate(resolve))
+    children[0].emit('close', 0)
+    children[1].emit('close', 0)
+    await Promise.all([first, second])
+
+    expect(seen).toHaveLength(2)
+    expect(new Set(seen).size).toBe(2)
+    expect(generateHeadlessExecutionId('agy', 'x')).not.toBe(generateHeadlessExecutionId('agy', 'x'))
+  })
+
+  it('finaliza mesmo quando o processo termina com falha', async () => {
+    const child = fakeChild()
+    const spawnImpl = vi.fn(() => child) as unknown as typeof spawn
+    const finalize = vi.fn(async () => undefined)
+    const prepareMemoryLaunch = vi.fn(async () => ({
+      command: 'C:\\bin\\ai-memory.exe',
+      args: ['run', '--print'],
+      env: {},
+      finalize,
+    }))
+    const runner = createHeadlessTurnRunner({
+      spawnImpl,
+      prepareMemoryLaunch,
+      resolveCommand: async () => 'C:\\cli\\agy.exe',
+    })
+
+    const promise = runner({ provider: 'agy', prompt: 'x', cwd: 'C:\\p' })
+    await new Promise((resolve) => setImmediate(resolve))
+    child.emit('close', 3)
+
+    await expect(promise).resolves.toMatchObject({ status: 'failed' })
+    await waitFor(() => finalize.mock.calls.length === 1)
+    expect(finalize).toHaveBeenCalledTimes(1)
+  })
+
+  it('drain bounded aguarda finalizadores pendentes sem lançar', async () => {
+    resetHeadlessFinalizersForTests()
+    let release!: () => void
+    trackHeadlessFinalizer(new Promise<void>((resolve) => { release = resolve }))
+    expect(pendingHeadlessFinalizerCount()).toBe(1)
+
+    const timedOut = await drainHeadlessFinalizers({ timeoutMs: 20 })
+    expect(timedOut.drained).toBe(false)
+
+    release()
+    await waitFor(() => pendingHeadlessFinalizerCount() === 0)
+    expect(await drainHeadlessFinalizers({ timeoutMs: 50 })).toEqual({ drained: true, pending: 0 })
+  })
+})
+
+describe('bridge headless — runs ativos e shutdown', () => {
+  it('run ativo é abortado no shutdown: child fecha e finalize Antigravity executa', async () => {
+    resetHeadlessFinalizersForTests()
+    const child = fakeChild()
+    const calls: SpawnCall[] = []
+    const killTreeImpl = vi.fn(() => new Promise<void>((resolve) => { child.once('close', () => resolve()) }))
+    const spawnImpl = recordingSpawn(child, calls)
+    const finalize = vi.fn(async () => undefined)
+    const prepareMemoryLaunch = vi.fn(async () => ({
+      command: 'C:\\bin\\ai-memory.exe',
+      args: ['run', '--print'],
+      env: {},
+      finalize,
+    }))
+    const runner = createHeadlessTurnRunner({
+      spawnImpl,
+      prepareMemoryLaunch,
+      killTreeImpl,
+      resolveCommand: async () => 'C:\\cli\\agy.exe',
+    })
+
+    const run = runner({ provider: 'agy', prompt: 'x', cwd: 'C:\\p' })
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(activeHeadlessRunCount()).toBe(1)
+
+    const drain = drainHeadlessRuns({ timeoutMs: 1_000 })
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(killTreeImpl).toHaveBeenCalled()
+    // Simula o child fechando após o kill da árvore.
+    child.emit('close', 0)
+
+    await expect(run).rejects.toMatchObject({ code: 'HEADLESS_ABORTED' })
+    expect(await drain).toEqual({ drained: true, pending: 0 })
+    await waitFor(() => finalize.mock.calls.length === 1)
+    expect(finalize).toHaveBeenCalledTimes(1)
+  })
+
+  it('shutdown não trava o quit: run sem término drena como timeout bounded', async () => {
+    resetHeadlessFinalizersForTests()
+    const child = fakeChild()
+    const killTreeImpl = vi.fn(() => new Promise<void>(() => undefined))
+    const spawnImpl = recordingSpawn(child, [])
+    const prepareMemoryLaunch = vi.fn(async () => ({
+      command: 'C:\\bin\\ai-memory.exe',
+      args: ['run', '--print'],
+      env: {},
+      finalize: async () => undefined,
+    }))
+    const runner = createHeadlessTurnRunner({
+      spawnImpl,
+      prepareMemoryLaunch,
+      killTreeImpl,
+      resolveCommand: async () => 'C:\\cli\\agy.exe',
+    })
+
+    // Rejeição anexada na criação: nunca vira unhandled rejection.
+    const run = runner({ provider: 'agy', prompt: 'x', cwd: 'C:\\p' }).catch(() => undefined)
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(activeHeadlessRunCount()).toBe(1)
+
+    // O drain é BOUNDED: aborta e retorna no timeout sem aguardar o child
+    // (que nunca fecha) — o quit não trava.
+    const result = await drainHeadlessRuns({ timeoutMs: 20 })
+    expect(result).toEqual({ drained: false, pending: 1 })
+
+    // Limpa o registro do teste (o child pendente é um fake; o `run` pendente
+    // tem `.catch` anexado, sem unhandled rejection).
+    resetHeadlessFinalizersForTests()
+  })
+
+  it('caminho disabled/direct permanece normal e não deixa runs ativos', async () => {
+    resetHeadlessFinalizersForTests()
+    const child = fakeChild()
+    const spawnImpl = recordingSpawn(child, [])
+    const prepareMemoryLaunch = vi.fn(async () => undefined)
+    const runner = createHeadlessTurnRunner({
+      spawnImpl,
+      prepareMemoryLaunch,
+      resolveCommand: async () => 'C:\\cli\\agy.exe',
+    })
+
+    const run = runner({ provider: 'agy', prompt: 'x', cwd: 'C:\\p' })
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(activeHeadlessRunCount()).toBe(1)
+
+    child.emit('close', 0)
+    await expect(run).resolves.toBeDefined()
+    await waitFor(() => activeHeadlessRunCount() === 0)
+    expect(await drainHeadlessRuns({ timeoutMs: 50 })).toEqual({ drained: true, pending: 0 })
+  })
+
+  it('run concluído naturalmente registra finalizer; drains cobrem run→finalize (evidência de ordem)', async () => {
+    resetHeadlessFinalizersForTests()
+    const child = fakeChild()
+    const killTreeImpl = vi.fn(() => new Promise<void>((resolve) => { child.once('close', () => resolve()) }))
+    const spawnImpl = recordingSpawn(child, [])
+    const finalize = vi.fn(async () => undefined)
+    const prepareMemoryLaunch = vi.fn(async () => ({
+      command: 'C:\\bin\\ai-memory.exe',
+      args: ['run', '--print'],
+      env: {},
+      finalize,
+    }))
+    const runner = createHeadlessTurnRunner({
+      spawnImpl,
+      prepareMemoryLaunch,
+      killTreeImpl,
+      resolveCommand: async () => 'C:\\cli\\agy.exe',
+    })
+
+    const run = runner({ provider: 'agy', prompt: 'x', cwd: 'C:\\p' })
+    await new Promise((resolve) => setImmediate(resolve))
+
+    // O child CONCLUI naturalmente (close código 0) ANTES do drain de runs: em
+    // produção o bridge-service emite o outcome do run quando `runHeadlessTurn`
+    // resolve (bridge-service.ts:372) — que pode acontecer DEPOIS de o drain de
+    // outcomes do Bridge do index já ter rodado na ordem antiga. Por isso a
+    // ordem de shutdown é runs → finalizadores → outcomes → stop do sidecar.
+    child.stdout.emit('data', Buffer.from('DEVORBIT_RESULT: {"version":1,"outcome":"completed","summary":"concluiu no shutdown"}\n'))
+    child.emit('close', 0)
+
+    await expect(run).resolves.toMatchObject({ status: 'completed', summary: 'concluiu no shutdown' })
+    expect(await drainHeadlessRuns({ timeoutMs: 1_000 })).toEqual({ drained: true, pending: 0 })
+    expect(await drainHeadlessFinalizers({ timeoutMs: 1_000 })).toEqual({ drained: true, pending: 0 })
+    expect(finalize).toHaveBeenCalledTimes(1)
+  })
+
+  it('múltiplos runs ativos são todos abortados e aguardados no drain', async () => {
+    resetHeadlessFinalizersForTests()
+    const children = [fakeChild(), fakeChild(), fakeChild()]
+    const killCalls: number[] = []
+    let index = 0
+    const spawnImpl = vi.fn(() => children[index++]) as unknown as typeof spawn
+    const killTreeImpl = vi.fn((pid?: number) => {
+      killCalls.push(pid ?? 0)
+      return new Promise<void>((resolve) => {
+        // Cada fake child precisa emitir close para o kill se concretizar.
+        const target = children[killCalls.length - 1]
+        target.once('close', () => resolve())
+      })
+    })
+    const runner = createHeadlessTurnRunner({
+      spawnImpl,
+      killTreeImpl,
+      resolveCommand: async () => 'C:\\cli\\agy.exe',
+    })
+
+    const runs = [
+      runner({ provider: 'agy', prompt: 'a', cwd: 'C:\\p' }),
+      runner({ provider: 'agy', prompt: 'b', cwd: 'C:\\p' }),
+      runner({ provider: 'agy', prompt: 'c', cwd: 'C:\\p' }),
+    ]
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(activeHeadlessRunCount()).toBe(3)
+
+    const drain = drainHeadlessRuns({ timeoutMs: 1_000 })
+    await new Promise((resolve) => setImmediate(resolve))
+    children.forEach((child) => child.emit('close', 0))
+
+    const result = await drain
+    expect(result.drained).toBe(true)
+    expect(killTreeImpl).toHaveBeenCalledTimes(3)
+    await Promise.all(runs.map((run) => expect(run).rejects.toMatchObject({ code: 'HEADLESS_ABORTED' })))
   })
 })
 

@@ -54,14 +54,151 @@ export interface HeadlessTurnInput extends HeadlessInvocationOptions {
   visited?: string[]
 }
 
+/** Pedido de envólucro ai-memory para um turno headless (injetável). */
+export interface HeadlessMemoryLaunchRequest {
+  provider: AgentProviderId
+  commandPath: string
+  /** Flags NATIVAS do harness (ex.: `--print --output-format json`). */
+  args: string[]
+  env: NodeJS.ProcessEnv
+  cwd: string
+  prompt: string
+  /** Id único por execução: garante workstream próprio em runs paralelos. */
+  executionId: string
+}
+
+export interface HeadlessMemoryLaunch {
+  command: string
+  args: string[]
+  env: NodeJS.ProcessEnv
+  cwd?: string
+  /** Finaliza a sessão de memória (Antigravity) após close/abort/timeout. */
+  finalize?: () => Promise<unknown>
+}
+
 export interface HeadlessRunnerDependencies {
   resolveCommand?: (provider: AgentProviderId) => Promise<string | null | undefined>
   spawnImpl?: typeof spawn
   /** Injetável para testes; default encerra a árvore (taskkill /T no Windows). */
   killTreeImpl?: HeadlessKillTree
+  /**
+   * Prepara o envólucro ai-memory (workstream + sessão). `undefined` = execução
+   * direta (opt-out/degradado). Injetável; em produção usa o launcher.
+   */
+  prepareMemoryLaunch?: (
+    request: HeadlessMemoryLaunchRequest
+  ) => Promise<HeadlessMemoryLaunch | undefined>
 }
 
 export type HeadlessTurnRunner = (input: HeadlessTurnInput) => Promise<HeadlessOutcome>
+
+/** Id determinístico-único por execução headless (workstream por run). */
+export function generateHeadlessExecutionId(provider: string, seed = ''): string {
+  const base = `${provider}-${seed}`
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40) || 'headless'
+  const suffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+  return `${base}-${suffix}`
+}
+
+/* ------------------------------------------------------------------------- */
+/* Finalizadores pendentes (drain bounded no shutdown)                       */
+/* ------------------------------------------------------------------------- */
+
+const pendingHeadlessFinalizers = new Set<Promise<unknown>>()
+
+/** Registra um finalizador em voo; erros são engolidos (nunca quebram o run). */
+export function trackHeadlessFinalizer(promise: Promise<unknown>): void {
+  pendingHeadlessFinalizers.add(promise)
+  void promise
+    .catch(() => undefined)
+    .finally(() => pendingHeadlessFinalizers.delete(promise))
+}
+
+export function pendingHeadlessFinalizerCount(): number {
+  return pendingHeadlessFinalizers.size
+}
+
+/** Drena bounded os finalizadores em voo; nunca lança. */
+export async function drainHeadlessFinalizers(
+  options: { timeoutMs?: number } = {},
+): Promise<{ drained: boolean; pending: number }> {
+  const pending = [...pendingHeadlessFinalizers]
+  if (pending.length === 0) return { drained: true, pending: 0 }
+  const timeoutMs = options.timeoutMs ?? 5_000
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      Promise.allSettled(pending),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, Math.max(0, timeoutMs))
+      }),
+    ])
+  } catch {
+    // allSettled nunca rejeita; defesa extra.
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+  return { drained: pendingHeadlessFinalizers.size === 0, pending: pendingHeadlessFinalizers.size }
+}
+
+/** Zera o registro (testes). */
+export function resetHeadlessFinalizersForTests(): void {
+  pendingHeadlessFinalizers.clear()
+  activeHeadlessRuns.clear()
+}
+
+/* ------------------------------------------------------------------------- */
+/* Runs headless ATIVOS (child em execução) — shutdown aborta e aguarda      */
+/* ------------------------------------------------------------------------- */
+
+interface ActiveHeadlessRun {
+  abort: () => void
+  done: Promise<void>
+}
+
+const activeHeadlessRuns = new Map<number, ActiveHeadlessRun>()
+let headlessRunSequence = 0
+
+export function activeHeadlessRunCount(): number {
+  return activeHeadlessRuns.size
+}
+
+/** Aborta (kill da árvore) todos os runs headless ativos. */
+export function abortActiveHeadlessRuns(): void {
+  for (const run of [...activeHeadlessRuns.values()]) run.abort()
+}
+
+/**
+ * Aborta bounded os runs headless ativos e aguarda o `done` de cada um (o
+ * child fechar + o finalizador Antigravity ser registrado). Nunca lança e
+ * nunca trava o quit: devolve `drained:false` no timeout.
+ */
+export async function drainHeadlessRuns(
+  options: { timeoutMs?: number } = {},
+): Promise<{ drained: boolean; pending: number }> {
+  const pending = [...activeHeadlessRuns.values()]
+  if (pending.length === 0) return { drained: true, pending: 0 }
+  for (const run of pending) run.abort()
+
+  const timeoutMs = Math.max(0, options.timeoutMs ?? 5_000)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      Promise.allSettled(pending.map((run) => run.done)),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, timeoutMs)
+      }),
+    ])
+  } catch {
+    // allSettled nunca rejeita; defesa extra.
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+  return { drained: activeHeadlessRuns.size === 0, pending: activeHeadlessRuns.size }
+}
 
 const OPTION_TOKEN = /^[\w][\w.:+-]{0,199}$/u
 
@@ -93,11 +230,8 @@ function assertCommandPath(commandPath: string): void {
  * Constrói o argv do agy em modo print. O modelo/modo/effort/agent são
  * validados como tokens; o prompt é entregue separadamente por stdin.
  */
-export function buildAgyHeadlessInvocation(
-  commandPath: string,
-  options: HeadlessInvocationOptions,
-): HeadlessInvocation {
-  assertCommandPath(commandPath)
+/** Flags nativas do `agy` em modo print (validadas; prompt NUNCA no argv). */
+export function buildAgyPrintFlags(options: HeadlessInvocationOptions): string[] {
   assertOption(options.model, 'model')
   assertOption(options.mode, 'mode')
   assertOption(options.effort, 'effort')
@@ -105,13 +239,20 @@ export function buildAgyHeadlessInvocation(
   if (typeof options.prompt !== 'string' || options.prompt.trim().length === 0 || options.prompt.length > HEADLESS_MAX_PROMPT_CHARS) {
     throw Object.assign(new Error('Prompt do turno não-interativo inválido.'), { code: 'HEADLESS_INVALID_PROMPT' })
   }
-
   const flags: string[] = ['--print', '--output-format', 'json']
   if (options.model) flags.push('--model', options.model)
   if (options.mode) flags.push('--mode', options.mode)
   if (options.effort) flags.push('--effort', options.effort)
   if (options.agent) flags.push('--agent', options.agent)
+  return flags
+}
 
+export function buildAgyHeadlessInvocation(
+  commandPath: string,
+  options: HeadlessInvocationOptions,
+): HeadlessInvocation {
+  assertCommandPath(commandPath)
+  const flags = buildAgyPrintFlags(options)
   const env = composeHeadlessEnv(options.env)
   if (process.platform === 'win32' && /\.(?:cmd|bat)$/iu.test(commandPath)) {
     // Wrapper .cmd: linha citada UMA vez e passada verbatim para
@@ -327,6 +468,21 @@ export function runHeadlessInvocation(invocation: HeadlessInvocation, options: R
     let stdout = ''
     let stderr = ''
     let settled = false
+    // Rastreamento de run ATIVO: `done` só resolve quando o child é
+    // confirmado morto (ou o spawn falha), para o drain de shutdown aguardar
+    // de fato o headless e só então a finalização Antigravity.
+    const runId = ++headlessRunSequence
+    let resolveDone!: () => void
+    const done = new Promise<void>((resolve) => {
+      resolveDone = resolve
+    })
+    let finished = false
+    const finishRun = (): void => {
+      if (finished) return
+      finished = true
+      activeHeadlessRuns.delete(runId)
+      resolveDone()
+    }
 
     const cleanup = (): void => {
       clearTimeout(timer)
@@ -337,20 +493,30 @@ export function runHeadlessInvocation(invocation: HeadlessInvocation, options: R
       settled = true
       cleanup()
       resolve(value)
+      finishRun()
     }
     const killAndThen = (callback: () => void): void => {
       if (settled) return
       settled = true
       cleanup()
       // Resolve/rejeita somente DEPOIS de confirmar o término da árvore.
-      void killTree(child.pid, child).then(callback, callback)
+      void killTree(child.pid, child).then(
+        () => { callback(); finishRun() },
+        () => { callback(); finishRun() },
+      )
     }
-    const onAbort = (): void => killAndThen(() => reject(
-      Object.assign(new Error('O turno não-interativo foi cancelado.'), { code: 'HEADLESS_ABORTED' }),
+    const abortRun = (message: string): void => killAndThen(() => reject(
+      Object.assign(new Error(message), { code: 'HEADLESS_ABORTED' }),
     ))
+    const onAbort = (): void => abortRun('O turno não-interativo foi cancelado.')
     const timer = setTimeout(() => {
       killAndThen(() => resolve({ status: 'failed', summary: 'O turno não-interativo excedeu o tempo limite.' }))
     }, timeoutMs)
+
+    activeHeadlessRuns.set(runId, {
+      abort: () => abortRun('O turno não-interativo foi encerrado no shutdown.'),
+      done,
+    })
 
     options.signal?.addEventListener('abort', onAbort, { once: true })
     if (options.signal?.aborted) {
@@ -369,6 +535,7 @@ export function runHeadlessInvocation(invocation: HeadlessInvocation, options: R
       settled = true
       cleanup()
       reject(Object.assign(new Error(`Falha ao iniciar ${invocation.command}: ${error.message}`), { code: 'HEADLESS_SPAWN_ERROR' }))
+      finishRun()
     })
     child.on('close', (code) => {
       if (settled) return
@@ -395,20 +562,56 @@ export function createHeadlessTurnRunner(dependencies: HeadlessRunnerDependencie
     if (!commandPath) {
       throw Object.assign(new Error(`Binário de ${input.provider} não encontrado.`), { code: 'HEADLESS_COMMAND_MISSING' })
     }
-    const invocation = buildAgyHeadlessInvocation(commandPath, {
+    const options: HeadlessInvocationOptions = {
       prompt: input.prompt,
       ...(input.model !== undefined ? { model: input.model } : {}),
       ...(input.mode !== undefined ? { mode: input.mode } : {}),
       ...(input.effort !== undefined ? { effort: input.effort } : {}),
       ...(input.agent !== undefined ? { agent: input.agent } : {}),
       ...(input.env !== undefined ? { env: input.env } : {}),
-    })
-    return await runHeadlessInvocation(invocation, {
-      cwd: input.cwd,
-      ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
-      ...(input.signal !== undefined ? { signal: input.signal } : {}),
-      ...(dependencies.spawnImpl !== undefined ? { spawnImpl: dependencies.spawnImpl } : {}),
-      ...(dependencies.killTreeImpl !== undefined ? { killTreeImpl: dependencies.killTreeImpl } : {}),
-    })
+    }
+    const direct = buildAgyHeadlessInvocation(commandPath, options)
+    let invocation: HeadlessInvocation = direct
+    let finalize: (() => Promise<unknown>) | undefined
+
+    if (dependencies.prepareMemoryLaunch) {
+      let memory: HeadlessMemoryLaunch | undefined
+      try {
+        memory = await dependencies.prepareMemoryLaunch({
+          provider: input.provider,
+          commandPath,
+          // Flags NATIVAS (sem wrapper cmd.exe): o launcher as repassa ao `run`.
+          args: buildAgyPrintFlags(options),
+          env: direct.env,
+          cwd: input.cwd,
+          prompt: input.prompt,
+          executionId: generateHeadlessExecutionId(input.provider, input.origin ?? ''),
+        })
+      } catch {
+        memory = undefined
+      }
+      if (memory) {
+        invocation = {
+          command: memory.command,
+          args: memory.args,
+          env: memory.env,
+          stdin: input.prompt,
+        }
+        finalize = memory.finalize
+      }
+    }
+
+    try {
+      return await runHeadlessInvocation(invocation, {
+        cwd: input.cwd,
+        ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
+        ...(input.signal !== undefined ? { signal: input.signal } : {}),
+        ...(dependencies.spawnImpl !== undefined ? { spawnImpl: dependencies.spawnImpl } : {}),
+        ...(dependencies.killTreeImpl !== undefined ? { killTreeImpl: dependencies.killTreeImpl } : {}),
+      })
+    } finally {
+      // Finaliza Antigravity em close/abort/timeout: bounded e nunca lança.
+      if (finalize) trackHeadlessFinalizer(Promise.resolve().then(() => finalize!()).catch(() => undefined))
+    }
   }
 }

@@ -72,6 +72,14 @@ const SENSITIVE_KEY = /(?:api[-_]?key|authorization|bearer|cookie|credential|env
 const MAX_REDACTION_DEPTH = 8
 
 const SECRET_VALUE_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
+  // PRIMEIRO: blocos completos de chave privada (PEM/OpenSSH) — o corpo base64
+  // poderia casar outros padrões por acaso; substituir o bloco inteiro antes
+  // evita vazamento parcial. Conservador: bloco SEM o END correspondente não é
+  // redigido (truncado = provável colagem incompleta, não segredo inteiro).
+  [
+    /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g,
+    EVOLUTION_REDACTED,
+  ],
   [/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/giu, `Bearer ${EVOLUTION_REDACTED}`],
   [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/gu, EVOLUTION_REDACTED],
   [/\b(?:sk|key|token)-[A-Za-z0-9_-]{8,}\b/gu, EVOLUTION_REDACTED],
@@ -80,6 +88,15 @@ const SECRET_VALUE_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   [/\bglpat-[A-Za-z0-9_-]{8,}\b/gu, EVOLUTION_REDACTED],
   [/\bnpm_[A-Za-z0-9]{8,}\b/gu, EVOLUTION_REDACTED],
   [/\bxox[baprs]-[A-Za-z0-9-]{8,}\b/gu, EVOLUTION_REDACTED],
+  // Formas de chave com underscore (Stripe etc.) que o padrão com `-` não pega.
+  [/\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{8,}\b/gu, EVOLUTION_REDACTED],
+  // AWS access key ID e Google API key (formas ancoradas, baixo falso-positivo).
+  [/\bAKIA[0-9A-Z]{16}\b/gu, EVOLUTION_REDACTED],
+  [/\bAIza[0-9A-Za-z_-]{35}\b/gu, EVOLUTION_REDACTED],
+  // user:password em URL (host e path preservados; padrões SEM captura para o
+  // callback devolver a substituição literal com o '@' incluído).
+  [/\bhttps:\/\/[^\s:@/]+:[^\s@/]+@/gu, `https://${EVOLUTION_REDACTED}@`],
+  [/\bhttp:\/\/[^\s:@/]+:[^\s@/]+@/gu, `http://${EVOLUTION_REDACTED}@`],
   [/((?:api[_-]?key|token|secret|password|authorization)["'\s:=]+)[^\s"',}]+/giu, `$1${EVOLUTION_REDACTED}`],
 ]
 

@@ -46,6 +46,24 @@ export interface HeadlessTurnRequest {
   visited: string[]
 }
 
+/**
+ * Outcome consolidado de UM ciclo lógico de delegação, emitido exatamente uma
+ * vez por `taskId` estável (`<target>#<generation>` ou run one-shot). O evento
+ * externo de `send` termina apenas em `{accepted:true}`; o resultado real
+ * chega pelo waiter do ciclo — este callback é o ponto único de persistência,
+ * imune a duplicação entre send+wait e waits repetidos em cache.
+ */
+export interface BridgeCycleOutcome {
+  /** ID estável do ciclo lógico; a mesma tarefa nunca é emitida duas vezes. */
+  taskId: string
+  target: string
+  /** projectPath do agente registrado no alvo, para escopo ai-memory. */
+  projectPath?: string
+  status: BridgeDelegationStatus
+  summary: string
+  artifacts?: string[]
+}
+
 export interface BridgeServiceDependencies {
   cliDirectory: string
   hasTerminal: (id: string) => boolean
@@ -55,6 +73,8 @@ export interface BridgeServiceDependencies {
   waitTerminalReady: (id: string) => Promise<void>
   onEvent: (event: AgentBridgeEvent) => void
   onReflection?: (target: string, outcome: { status: string; summary: string }) => void
+  /** Outcome consolidado por ciclo lógico; falha do consumidor nunca quebra o Bridge. */
+  onOutcome?: (outcome: BridgeCycleOutcome) => void
   /**
    * Turno não-interativo (print mode) para orquestração. Injetado pelo app;
    * quando ausente a operação `run` responde NOT_IMPLEMENTED.
@@ -97,6 +117,8 @@ export function createBridgeService(
   const agents = new Map<string, BridgeAgentRegistration>()
   const targetLocks = new Map<string, Promise<unknown>>()
   const cycles = new BridgeTaskCycles<ResultWaitPromise>()
+  /** Sequência de ciclos one-shot `run` (taskId estável por chamada). */
+  let runSequence = 0
 
   const originOf = (request: { origin?: string }): string => request.origin?.trim() || 'devorbit'
 
@@ -170,12 +192,52 @@ export function createBridgeService(
     return { status: 'failed', summary: 'O agente terminou sem um resultado estruturado.' }
   }
 
+  /** Cancelamentos de espera não são outcome de delegação: nunca persistir. */
+  const isCancellationOutcome = (outcome: { summary: string }): boolean =>
+    outcome.summary.trim().toLowerCase().startsWith('a espera da ponte foi cancelada')
+
+  /** Emissão de outcome uma única vez por ciclo lógico (taskId estável). */
+  const emittedCycles = new Set<string>()
+  const emitOutcomeOnce = (
+    id: string,
+    cycleKey: string,
+    outcome: { status: BridgeDelegationStatus; summary: string; artifacts?: string[] },
+  ): void => {
+    if (!dependencies.onOutcome) return
+    if (isCancellationOutcome(outcome)) return
+    if (emittedCycles.has(cycleKey)) return
+    emittedCycles.add(cycleKey)
+    // Bounded: ciclos antigos saem em FIFO para o Set não crescer sem limite.
+    if (emittedCycles.size > 512) {
+      const oldest = emittedCycles.keys().next()
+      if (!oldest.done) emittedCycles.delete(oldest.value)
+    }
+    const projectPath = agents.get(id)?.projectPath
+    try {
+      dependencies.onOutcome({
+        taskId: cycleKey,
+        target: id,
+        ...(projectPath !== undefined ? { projectPath } : {}),
+        status: outcome.status,
+        summary: outcome.summary,
+        ...(outcome.artifacts && outcome.artifacts.length > 0
+          ? { artifacts: outcome.artifacts.slice(0, 16) }
+          : {}),
+      })
+    } catch {
+      // Persistência nunca quebra o Bridge.
+    }
+  }
+
   const trackCycle = (id: string, generation: number, promise: ResultWaitPromise, persistent: boolean, reflectOnComplete: boolean): void => {
     cycles.setPending(id, generation, promise, { cancel: () => promise.cancel() }, persistent)
     void promise.then((waiter) => {
       const outcome = outcomeFrom(waiter)
       cycles.complete(id, generation, outcome)
       if (reflectOnComplete) reflect(id, outcome)
+      // Ponto ÚNICO de emissão para ciclos rastreados: send cria o ciclo e o
+      // outcome real chega aqui; wait acoplado ao MESMO ciclo não reemite.
+      emitOutcomeOnce(id, `${id}#${generation}`, outcome)
     }).catch(() => undefined)
   }
 
@@ -277,6 +339,7 @@ export function createBridgeService(
           const outcome = outcomeFrom(await awaitResult({ promise: pending, persistent: false }, context?.signal))
           if (!context?.signal?.aborted) cycles.cacheOutcome(id, generation, outcome)
           reflect(id, outcome)
+          emitOutcomeOnce(id, `${id}#${generation}`, outcome)
           return finalize(outcome, origin, id)
         }, context?.signal)
       },
@@ -305,6 +368,8 @@ export function createBridgeService(
                   depth: (request.depth ?? 0) + 1,
                   visited,
                 })
+                // run é um ciclo one-shot: taskId único por chamada.
+                emitOutcomeOnce(id, `${id}#run#${++runSequence}`, { status: outcome.status, summary: outcome.summary, ...(outcome.artifacts?.length ? { artifacts: outcome.artifacts } : {}) })
                 return finalize({ status: outcome.status, summary: outcome.summary }, origin, id, outcome.artifacts)
               }, context?.signal)
             },
