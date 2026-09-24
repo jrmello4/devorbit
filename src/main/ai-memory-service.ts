@@ -401,6 +401,7 @@ class AiMemoryServiceController implements AiMemoryService {
     if (!config.enabled || this.enabledProjectCount() === 0) {
       this.stopOwnChild()
       this.conflict = false
+      this.lastIncompatibleCandidate = undefined
       this.state = 'unavailable'
       this.message =
         (config.enabled ? 'ai-memory sem projetos habilitados.' : 'ai-memory desabilitado (opt-in por projeto).') +
@@ -434,6 +435,7 @@ class AiMemoryServiceController implements AiMemoryService {
     this.abortInFlight()
     this.stopOwnChild()
     this.conflict = false
+    this.lastIncompatibleCandidate = undefined
     this.state = 'unavailable'
     this.message = 'Serviço ai-memory parado.'
   }
@@ -666,6 +668,11 @@ class AiMemoryServiceController implements AiMemoryService {
         // win32/x64 degrada graciosamente sem baixar artefato inútil —
         // binários configurados/PATH continuam aceitos em qualquer arch acima.
         if (this.platform !== 'win32' || this.arch !== 'x64') {
+          if (this.lastIncompatibleCandidate?.message) {
+            this.state = 'error'
+            this.message = `${this.lastIncompatibleCandidate.message} A instalação automática só é suportada no Windows x64 (host atual: ${this.platform}/${this.arch}). Instale a versão compatível ${AI_MEMORY_VERSION} manualmente.`
+            return this.status()
+          }
           this.state = 'degraded'
           this.message =
             `Binário ai-memory compatível não encontrado e a instalação automática só é suportada no Windows x64 ` +
@@ -841,12 +848,21 @@ class AiMemoryServiceController implements AiMemoryService {
   }
 
   private async findBinary(): Promise<string | undefined> {
+    this.lastIncompatibleCandidate = undefined
     const candidates: string[] = []
     if (this.configuredBinaryPath) candidates.push(this.configuredBinaryPath)
-    candidates.push(path.join(this.runtimeDir, 'ai-memory.exe'))
+    const executable = this.platform === 'win32' ? 'ai-memory.exe' : 'ai-memory'
+    candidates.push(path.join(this.runtimeDir, executable))
+    if (executable !== 'ai-memory.exe') {
+      candidates.push(path.join(this.runtimeDir, 'ai-memory.exe'))
+    }
     if (this.resourcesPath) {
-      candidates.push(path.join(this.resourcesPath, 'ai-memory', 'ai-memory.exe'))
-      candidates.push(path.join(this.resourcesPath, 'ai-memory.exe'))
+      candidates.push(path.join(this.resourcesPath, 'ai-memory', executable))
+      candidates.push(path.join(this.resourcesPath, executable))
+      if (executable !== 'ai-memory.exe') {
+        candidates.push(path.join(this.resourcesPath, 'ai-memory', 'ai-memory.exe'))
+        candidates.push(path.join(this.resourcesPath, 'ai-memory.exe'))
+      }
     }
     for (const candidate of candidates) {
       if (await this.exists(candidate)) {

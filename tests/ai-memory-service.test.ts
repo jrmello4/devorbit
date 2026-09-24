@@ -4,11 +4,21 @@ import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import {
   buildExpandArchiveInvocation,
-  createAiMemoryService,
+  createAiMemoryService as createAiMemoryServiceBase,
   type AiMemoryChildHandle,
   type AiMemoryChildSpawner,
   type AiMemoryProcessRunner,
+  type AiMemoryService,
+  type AiMemoryServiceOptions,
 } from '../src/main/ai-memory-service'
+
+function createAiMemoryService(options: AiMemoryServiceOptions): AiMemoryService {
+  return createAiMemoryServiceBase({
+    platform: 'win32',
+    arch: 'x64',
+    ...options,
+  })
+}
 import {
   escapeTomlString,
   resolveAiMemoryScope,
@@ -1217,6 +1227,123 @@ describe('ai-memory service — plataforma não-Windows (sem download do asset x
     expect(status).toMatchObject({ state: 'running', owned: true, version: '2.4.0' })
     expect(harness.calls[0][0]).toBe(externalBinary)
   })
+
+  it('macOS sem binário: degrada graceful e NÃO baixa o asset Windows', async () => {
+    const download = vi.fn(async () => undefined)
+    const service = createAiMemoryService({
+      userDataDir: USER_DATA,
+      config: enabledConfig(),
+      platform: 'darwin',
+      arch: 'arm64',
+      fileSystem: createMemoryFs().fs,
+      fetchImpl: fetchAlwaysFail(),
+      processRunner: createRunner(),
+      childSpawner: createChildSpawner().spawner,
+      downloadImpl: download,
+      sleep: async () => undefined,
+    })
+
+    const status = await service.start()
+    expect(status.state).toBe('degraded')
+    expect(download).not.toHaveBeenCalled()
+    expect(status.message).toContain('darwin/arm64')
+  })
+
+  it('macOS com binário no PATH: running (suportado)', async () => {
+    const externalBinary = '/opt/homebrew/bin/ai-memory'
+    const memory = createMemoryFs({ [externalBinary]: '' })
+    let spawned = false
+    const harness = createChildSpawner()
+    const runner: AiMemoryProcessRunner = async (command, args) => {
+      if (command === 'git' && args[0] === 'remote') return { code: 0, stdout: `${REMOTE}\n`, stderr: '' }
+      if (command === 'git' && args[0] === 'rev-parse') {
+        if (args[1] === '--show-toplevel') return { code: 1, stdout: '', stderr: '' }
+        return { code: 0, stdout: `${path.join(PROJECT_PATH, '.git')}\n`, stderr: '' }
+      }
+      if (command === 'which') return { code: 0, stdout: `${externalBinary}\n`, stderr: '' }
+      if (command === 'where') return { code: 1, stdout: '', stderr: '' }
+      return { code: 0, stdout: 'ai-memory 2.4.0\n', stderr: '' }
+    }
+    const service = createAiMemoryService({
+      userDataDir: USER_DATA,
+      config: enabledConfig(),
+      platform: 'darwin',
+      arch: 'arm64',
+      fileSystem: memory.fs,
+      fetchImpl: fetchStatefulScoped(() => spawned),
+      processRunner: runner,
+      childSpawner: (command, args, options) => {
+        spawned = true
+        return harness.spawner(command, args, options)
+      },
+      sleep: async () => undefined,
+    })
+
+    const status = await service.start()
+    expect(status).toMatchObject({ state: 'running', owned: true, version: '2.4.0' })
+    expect(harness.calls[0][0]).toBe(externalBinary)
+  })
+
+  it('macOS com versão divergente no PATH: vira error', async () => {
+    const externalBinary = '/opt/homebrew/bin/ai-memory'
+    const memory = createMemoryFs({ [externalBinary]: '' })
+    const runner: AiMemoryProcessRunner = async (command, args) => {
+      if (command === 'git') return { code: 0, stdout: `${REMOTE}\n`, stderr: '' }
+      if (command === 'which') return { code: 0, stdout: `${externalBinary}\n`, stderr: '' }
+      if (command === externalBinary && args[0] === '--version') {
+        return { code: 0, stdout: 'ai-memory 1.0.0\n', stderr: '' }
+      }
+      return { code: 0, stdout: 'ai-memory 2.4.0\n', stderr: '' }
+    }
+    const service = createAiMemoryService({
+      userDataDir: USER_DATA,
+      config: enabledConfig(),
+      platform: 'darwin',
+      arch: 'arm64',
+      fileSystem: memory.fs,
+      fetchImpl: fetchAlwaysFail(),
+      processRunner: runner,
+      childSpawner: createChildSpawner().spawner,
+      sleep: async () => undefined,
+    })
+
+    const status = await service.start()
+    expect(status.state).toBe('error')
+    expect(status.message).toContain('2.4.0')
+  })
+
+  it('macOS com binário no runtimeDir sem extensão .exe: running (suportado)', async () => {
+    const runtimeBinary = path.join(USER_DATA, 'runtime', 'ai-memory')
+    const memory = createMemoryFs({ [runtimeBinary]: '' })
+    let spawned = false
+    const harness = createChildSpawner()
+    const runner: AiMemoryProcessRunner = async (command, args) => {
+      if (command === 'git') return { code: 0, stdout: `${REMOTE}\n`, stderr: '' }
+      if (command === 'which' || command === 'where') return { code: 1, stdout: '', stderr: '' }
+      if (command === runtimeBinary && args[0] === '--version') {
+        return { code: 0, stdout: 'ai-memory 2.4.0\n', stderr: '' }
+      }
+      return { code: 0, stdout: 'ai-memory 2.4.0\n', stderr: '' }
+    }
+    const service = createAiMemoryService({
+      userDataDir: USER_DATA,
+      config: enabledConfig(),
+      platform: 'darwin',
+      arch: 'arm64',
+      fileSystem: memory.fs,
+      fetchImpl: fetchStatefulScoped(() => spawned),
+      processRunner: runner,
+      childSpawner: (command, args, options) => {
+        spawned = true
+        return harness.spawner(command, args, options)
+      },
+      sleep: async () => undefined,
+    })
+
+    const status = await service.start()
+    expect(status).toMatchObject({ state: 'running', owned: true, version: '2.4.0' })
+    expect(harness.calls[0][0]).toBe(runtimeBinary)
+  })
 })
 
 describe('ai-memory-service — resiliência sidecar, lifecycle e discovery (P1/P2 fixes)', () => {
@@ -1461,5 +1588,45 @@ describe('ai-memory-service — resiliência sidecar, lifecycle e discovery (P1/
     expect(status.state).toBe('running')
     expect(status.owned).toBe(false)
     expect(status.message).toContain('Serviço ai-memory externo detectado')
+  })
+
+  it('lastIncompatibleCandidate é resetado por tentativa de discovery e não vaza em retry sem candidato (P3)', async () => {
+    const incompatibleBinary = path.join(USER_DATA, 'runtime', 'ai-memory')
+    const memory = createMemoryFs({ [incompatibleBinary]: 'bad-bin' })
+
+    const customRunner: AiMemoryProcessRunner = async (command, args) => {
+      if (command === 'git') return { code: 0, stdout: `${REMOTE}\n`, stderr: '' }
+      if (command === 'where' || command === 'which') return { code: 1, stdout: '', stderr: '' }
+      if (args[0] === '--version') {
+        return { code: 0, stdout: 'ai-memory 1.0.0\n', stderr: '' }
+      }
+      return { code: 0, stdout: 'ai-memory 2.4.0\n', stderr: '' }
+    }
+
+    const service = createAiMemoryService({
+      userDataDir: USER_DATA,
+      config: enabledConfig(),
+      platform: 'darwin',
+      arch: 'arm64',
+      fileSystem: memory.fs,
+      fetchImpl: fetchAlwaysFail(),
+      processRunner: customRunner,
+      childSpawner: createChildSpawner().spawner,
+      sleep: async () => undefined,
+    })
+
+    // 1ª tentativa: binário incompatível presente vira error mencionando a versão encontrada
+    const firstStatus = await service.start()
+    expect(firstStatus.state).toBe('error')
+    expect(firstStatus.message).toContain('1.0.0')
+
+    // Remove o binário incompatível: agora nenhum candidato existe
+    await memory.fs.rm(incompatibleBinary, { force: true })
+
+    // 2ª tentativa via reconfigure (sem stop prévio): discovery reseta lastIncompatibleCandidate e mostra estado/mensagem atual sem texto antigo
+    const retryStatus = await service.reconfigure(enabledConfig())
+    expect(retryStatus.state).toBe('degraded')
+    expect(retryStatus.message).not.toContain('1.0.0')
+    expect(retryStatus.message).toContain('Binário ai-memory compatível não encontrado')
   })
 })
