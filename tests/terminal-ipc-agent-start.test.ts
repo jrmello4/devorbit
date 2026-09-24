@@ -11,6 +11,30 @@ vi.mock('electron', () => ({
   },
 }))
 
+const { resolveAgentTurnMock, resolveAgentProviderWithFallbackMock } = vi.hoisted(() => ({
+  resolveAgentTurnMock: vi.fn(),
+  resolveAgentProviderWithFallbackMock: vi.fn(),
+}))
+
+// CI (todos os SOs) não instala OpenCode. O mock ANTERIOR (só
+// resolveAgentProviderCommand) era inócuo: terminal-ipc importa
+// `resolveAgentTurn` e `resolveAgentProviderWithFallback` DIRETAMENTE, e a
+// referência lexical dentro de agent-providers (fallback→command, health→command)
+// não é substituída pelo spread — o PATH real do runner ainda era sondado e
+// `provider-not-ready` continuava acontecendo. Mockamos exatamente os dois
+// seams importados; `spawnAgentProviderTerminal`, `executeExplicitAgentTurn` e
+// `orderProvidersForTask` permanecem REAIS (resolveProviderInvocation intacto).
+vi.mock('../src/main/agent-providers', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/main/agent-providers')>()
+  return {
+    ...actual,
+    resolveAgentTurn: (config: unknown, preferred: string, prompt: unknown) =>
+      resolveAgentTurnMock(config, preferred, prompt),
+    resolveAgentProviderWithFallback: (config: unknown, preferred: string) =>
+      resolveAgentProviderWithFallbackMock(config, preferred),
+  }
+})
+
 const { spawnPtyMock } = vi.hoisted(() => ({ spawnPtyMock: vi.fn() }))
 vi.mock('node-pty', () => ({ spawn: spawnPtyMock }))
 
@@ -81,6 +105,30 @@ describe('devorbit:startAgentTerminal — contrato e ciclo de vida', () => {
     electronPaths.userData = fs.mkdtempSync(path.join(os.tmpdir(), 'devorbit-agent-ipc-'))
     spawnPtyMock.mockReset()
     fakePtyDefaults()
+    // Reset por teste + defaults determinísticos (sem depender do PATH).
+    resolveAgentTurnMock.mockReset()
+    resolveAgentTurnMock.mockResolvedValue({
+      tier: 'fast',
+      model: 'mock-model',
+      authConfigured: true,
+      provider: 'opencode',
+      fellBack: false,
+      available: true,
+      reason: 'mock: provedor disponível para o teste',
+      explanation: {
+        tier: 'fast',
+        complexity: 'mechanical',
+        matchedMechanical: [],
+        matchedDeep: [],
+      },
+    })
+    resolveAgentProviderWithFallbackMock.mockReset()
+    resolveAgentProviderWithFallbackMock.mockResolvedValue({
+      path: path.join(path.sep, 'resolved', 'opencode'),
+      message: 'resolvido (mock)',
+      provider: 'opencode',
+      fellBack: false,
+    })
   })
 
   it('recusa codex indicando o fluxo de conta e não spawna terminal', async () => {
