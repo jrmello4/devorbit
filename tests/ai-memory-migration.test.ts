@@ -828,7 +828,7 @@ describe('worktrees vinculadas (mesma identidade ai-memory)', () => {
 })
 
 describe('defaultGitRunner — env mínimo (helper), sem BYOK/tokens', () => {
-  it('executa git com env filtrado: PATH presente, segredos ausentes', async () => {
+  it('executa git com env filtrado: variável de busca do SO presente, segredos ausentes', async () => {
     const previousKey = process.env.MIGRATION_SECRET_SENTINEL
     process.env.MIGRATION_SECRET_SENTINEL = 'sk-secret-token-123'
     try {
@@ -843,12 +843,18 @@ describe('defaultGitRunner — env mínimo (helper), sem BYOK/tokens', () => {
       expect(options.shell).toBe(false)
       expect(options.timeout).toBe(8_000)
       expect(options.windowsHide).toBe(true)
-      // O host Windows usa `Path` — assert case-insensitive.
+      // Variável de busca de executáveis do SO: `PATH` (POSIX) / `Path`
+      // (Windows). Assert case-insensitive porque o Windows usa `Path`.
       const envKey = (name: string): string | undefined =>
         Object.keys(options.env).find((key) => key.toLowerCase() === name.toLowerCase())
-      expect(envKey('PATH')).toBeDefined()
-      expect(options.env[envKey('PATH') as string]).toBe(process.env[envKey('PATH') as string])
-      expect(envKey('SystemRoot')).toBeDefined()
+      const searchVar = process.platform === 'win32' ? 'Path' : 'PATH'
+      expect(envKey(searchVar)).toBeDefined()
+      expect(options.env[envKey(searchVar) as string]).toBe(process.env[envKey(searchVar) as string])
+      if (process.platform === 'win32') {
+        expect(envKey('SystemRoot')).toBeDefined()
+      } else {
+        expect(envKey('HOME')).toBeDefined()
+      }
       // Nenhum segredo do main vaza para o subprocesso git.
       expect(JSON.stringify(options.env)).not.toContain('sk-secret-token-123')
       // E a busca case-insensitive não pega falso-positivo.

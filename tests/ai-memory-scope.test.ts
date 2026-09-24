@@ -310,7 +310,10 @@ describe('defaultGitRunner do scope — env mínimo (sem herdar segredos do main
       const envKey = (name: string): string | undefined =>
         Object.keys(options.env).find((key) => key.toLowerCase() === name.toLowerCase())
       expect(envKey('PATH')).toBeDefined()
-      expect(envKey('SystemRoot')).toBeDefined()
+      // SystemRoot é Windows-only; em Linux/macOS não existe em process.env.
+      if (process.platform === 'win32') {
+        expect(envKey('SystemRoot')).toBeDefined()
+      }
       expect(options.timeout).toBe(8000)
       expect(options.windowsHide).toBe(true)
       // Nem o segredo bruto nem chave secreta conhecida entram no subprocesso.

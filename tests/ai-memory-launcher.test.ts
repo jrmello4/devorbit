@@ -57,7 +57,9 @@ describe('ai-memory-launcher', () => {
     it('retorna .exe irmão quando existe ao lado do script .cmd', () => {
       const statSpy = vi.spyOn(fsSync, 'statSync').mockReturnValue({ isFile: () => true } as any)
       try {
-        const result = resolveExecutableForRust('C:\\cli\\opencode.cmd')
+        // Sempre win32 explícito: o comportamento sob teste é Windows e o
+        // default (`process.platform`) é linux no CI.
+        const result = resolveExecutableForRust('C:\\cli\\opencode.cmd', { platform: 'win32' })
         expect(result).toBe('C:\\cli\\opencode.exe')
       } finally {
         statSpy.mockRestore()
@@ -66,20 +68,20 @@ describe('ai-memory-launcher', () => {
 
     it('retorna o próprio .cmd diretamente sem embrulhar em cmd.exe quando não há .exe irmão', () => {
       // Em testes sem .exe correspondente no filesystem, retorna o caminho do .cmd diretamente
-      const result = resolveExecutableForRust('C:\\Users\\test\\opencode.cmd')
+      const result = resolveExecutableForRust('C:\\Users\\test\\opencode.cmd', { platform: 'win32' })
       expect(result).toBe('C:\\Users\\test\\opencode.cmd')
       expect(result).not.toContain('cmd.exe')
       expect(result).not.toContain('/c')
     })
 
     it('retorna o próprio .bat diretamente sem cmd.exe', () => {
-      const result = resolveExecutableForRust('D:\\tools\\codex.bat')
+      const result = resolveExecutableForRust('D:\\tools\\codex.bat', { platform: 'win32' })
       expect(result).toBe('D:\\tools\\codex.bat')
       expect(result).not.toContain('cmd.exe')
     })
 
     it('retorna o próprio .com diretamente sem cmd.exe', () => {
-      const result = resolveExecutableForRust('C:\\bin\\tool.com')
+      const result = resolveExecutableForRust('C:\\bin\\tool.com', { platform: 'win32' })
       expect(result).toBe('C:\\bin\\tool.com')
       expect(result).not.toContain('cmd.exe')
     })
@@ -1529,7 +1531,10 @@ describe('ai-memory-launcher', () => {
       const ok = await ensureAllowlistCaptureMode('C:\\test\\data', fsMock)
       expect(ok).toBe(true)
       expect(dirs).toContain('C:\\test\\data')
-      expect(written['C:\\test\\data\\capture-mode']).toBe('allowlist\n')
+      // Chave portável: a produção monta o alvo com path.join — o separador
+      // difere entre Windows ('\\') e POSIX ('/') e a asserção literal quebrava
+      // no CI Linux/macOS.
+      expect(written[path.join('C:\\test\\data', AI_MEMORY_CAPTURE_MODE_FILE)]).toBe('allowlist\n')
     })
 
     it('mantém o arquivo intacto se já contiver allowlist', async () => {

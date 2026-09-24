@@ -78,6 +78,16 @@ function createMemoryFs(): {
 
 const USER_DATA = path.join('C:', 'users', 'dev', 'AppData', 'Roaming', 'DevOrbit')
 const IDENTITY = 'git-common-dir:abc123'
+
+/**
+ * Normalização portável para chaves do mock fs: replica EXATAMENTE o `key()`
+ * de createMemoryFs (path.resolve + lowercase). No POSIX, `path.resolve`
+ * prefixa caminhos ao estilo Windows com o cwd — as asserções que usavam só
+ * `.toLowerCase()` divergiam da chave gravada pelo mock e liam `undefined`
+ * (receipt "vazia") no CI Linux/macOS. Mesma função nos dois lados = fixture
+ * portável sem mudar produção.
+ */
+const receiptKey = (value: string): string => path.resolve(value).toLowerCase()
 const BINARY = 'C:\\bin\\ai-memory.exe'
 
 function baseRequest(overrides: Partial<Parameters<typeof setupGeminiAgentIntegrations>[0]> = {}) {
@@ -147,7 +157,7 @@ describe('ai-memory agent setup — comandos e contrato v2.4.0 (Gemini CLI)', ()
     expect(first.status).toBe('installed')
     expect(calls).toHaveLength(2)
 
-    const receiptPath = geminiAgentSetupReceiptPath(USER_DATA, IDENTITY).toLowerCase()
+    const receiptPath = receiptKey(geminiAgentSetupReceiptPath(USER_DATA, IDENTITY))
     const receipt = JSON.parse(memory.files.get(receiptPath) ?? '{}') as Record<string, unknown>
     expect(receipt).toMatchObject({ version: 1, client: 'gemini-cli', agent: 'gemini-cli' })
     expect(JSON.stringify(receipt)).not.toContain(IDENTITY) // só o hash, nunca a identidade crua
@@ -180,7 +190,7 @@ describe('ai-memory agent setup — comandos e contrato v2.4.0 (Gemini CLI)', ()
     expect(result).toMatchObject({ status: 'degraded', mcp: 'failed', hooks: 'installed' })
     expect(result.message).toContain('install-mcp')
     expect(calls).toHaveLength(2)
-    expect(memory.files.has(geminiAgentSetupReceiptPath(USER_DATA, IDENTITY).toLowerCase())).toBe(false)
+    expect(memory.files.has(receiptKey(geminiAgentSetupReceiptPath(USER_DATA, IDENTITY)))).toBe(false)
   })
 
   it('runner que lança não derruba: degraded, sem throw', async () => {
@@ -210,7 +220,7 @@ describe('ai-memory agent setup — comandos e contrato v2.4.0 (Gemini CLI)', ()
 
   it('receipt corrompida é tratada como ausente (reexecuta com segurança)', async () => {
     const memory = createMemoryFs()
-    memory.files.set(geminiAgentSetupReceiptPath(USER_DATA, IDENTITY).toLowerCase(), '{ corrompida')
+    memory.files.set(receiptKey(geminiAgentSetupReceiptPath(USER_DATA, IDENTITY)), '{ corrompida')
     const { runner, calls } = createRunner()
     const result = await setupGeminiAgentIntegrations(baseRequest(), {
       userDataDir: USER_DATA,
@@ -274,7 +284,7 @@ describe('setup por provider — matriz v2.4.0 (MCP+hooks vs MCP-only)', () => {
           'allowlist',
         ],
       ])
-      expect(memory.files.get(agentSetupReceiptPath(USER_DATA, { provider, identity: IDENTITY, client }).toLowerCase())).toBeDefined()
+      expect(memory.files.get(receiptKey(agentSetupReceiptPath(USER_DATA, { provider, identity: IDENTITY, client })))).toBeDefined()
     }
   })
 
@@ -338,7 +348,7 @@ describe('setup por provider — matriz v2.4.0 (MCP+hooks vs MCP-only)', () => {
     }
     const receipt1 = JSON.parse(
       memory.files.get(
-        agentSetupReceiptPath(USER_DATA, { provider: 'codex', identity: IDENTITY, codexHome: conta1, client: 'codex' }).toLowerCase()
+        receiptKey(agentSetupReceiptPath(USER_DATA, { provider: 'codex', identity: IDENTITY, codexHome: conta1, client: 'codex' }))
       ) ?? '{}'
     ) as Record<string, unknown>
     expect(receipt1).toMatchObject({ version: 1, provider: 'codex', client: 'codex', agent: 'codex', account: '.codex-conta1' })
@@ -389,7 +399,7 @@ describe('setup por provider — matriz v2.4.0 (MCP+hooks vs MCP-only)', () => {
     expect(calls).toHaveLength(2)
     expect(
       memory.files.get(
-        agentSetupReceiptPath(USER_DATA, { provider: 'codex', identity: IDENTITY, codexHome: 'C:\\perfis\\.codex-conta1', client: 'codex' }).toLowerCase()
+        receiptKey(agentSetupReceiptPath(USER_DATA, { provider: 'codex', identity: IDENTITY, codexHome: 'C:\\perfis\\.codex-conta1', client: 'codex' }))
       )
     ).toBeUndefined()
   })
