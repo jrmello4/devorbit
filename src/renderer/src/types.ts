@@ -10,6 +10,23 @@ import type { TextSearchRequest, TextSearchResult } from '../../shared/text-sear
 import type { CustomTerminalPreset } from '../../shared/terminal-presets'
 export type { CustomTerminalPreset }
 import type { UsageShareState } from '../../shared/usage-contract'
+import type {
+  AiMemoryConfig,
+  AiMemoryIpcResult,
+  AiMemoryStatus,
+  AiMemoryEnableProjectRequest,
+  AiMemoryEnableProjectResult,
+  AiMemoryMigrationOutcomeView,
+  AiMemoryMigrationStatusResult,
+  AiMemoryTakeoverRequest,
+  AiMemoryTakeoverPlanView,
+  AiMemorySquadSnapshotView,
+  AiMemoryQueryRequest,
+  AiMemoryRecentRequest,
+  AiMemoryProjectRef,
+  AiMemoryProjectStatusRequest,
+  AiMemoryProjectStatusResult,
+} from '../../shared/ai-memory-ipc-contract'
 
 export interface TechStack {
   id: string
@@ -253,9 +270,11 @@ export interface AppConfig {
     agy?: string
     codex?: string
     opencode?: string
+    opencode2?: string
     claude?: string
     gemini?: string
     aider?: string
+    commandCode?: string
     customAgent?: string
     vscode?: string
     wt?: string
@@ -357,6 +376,13 @@ export type IpcInvokeChannel =
   | 'devorbit:reportOrchestrationTurn'
   | 'devorbit:reportOrchestrationQuota'
   | 'devorbit:getUsageShare' | 'devorbit:refreshUsage'
+  | 'devorbit:aiMemoryStatus' | 'devorbit:aiMemoryDoctor'
+  | 'devorbit:aiMemoryQuery' | 'devorbit:aiMemoryBriefing'
+  | 'devorbit:aiMemoryRecent' | 'devorbit:aiMemoryHandoffs'
+  | 'devorbit:aiMemoryEnableProject' | 'devorbit:aiMemoryMigrateLegacy'
+  | 'devorbit:aiMemoryMigrationStatus' | 'devorbit:aiMemoryProjectStatus'
+  | 'devorbit:aiMemoryTakeover'
+  | 'devorbit:aiMemoryPublishSquadState'
 
 export type IpcEventChannel =
   | 'devorbit:syncProgress' | 'devorbit:terminalEvent' | 'devorbit:webEvent'
@@ -389,7 +415,8 @@ export interface ToolPathCheck {
 
 export type ToolHealthState = 'ready' | 'fallback' | 'missing'
 
-export type AgentProviderId = 'codex' | 'opencode' | 'claude' | 'gemini' | 'aider' | 'agy' | 'custom'
+import type { AgentProviderId } from '../../shared/agent-provider-contract'
+export type { AgentProviderId }
 
 export interface AgentProvider {
   id: AgentProviderId
@@ -404,7 +431,7 @@ export interface AgentProvider {
 }
 
 export interface ToolHealth {
-  id: 'terminal' | 'vscode' | 'codex' | 'opencode' | 'claude' | 'gemini' | 'aider' | 'agy' | 'custom' | 'brave' | 'chrome' | 'mimo'
+  id: 'terminal' | 'vscode' | 'codex' | 'opencode' | 'opencode2' | 'claude' | 'gemini' | 'aider' | 'agy' | 'command-code' | 'custom' | 'brave' | 'chrome' | 'mimo'
   label: string
   state: ToolHealthState
   path?: string
@@ -691,6 +718,30 @@ export interface DevOrbitAPI {
   getUsageShare: () => Promise<UsageShareState>
   /** Força uma varredura dos adaptadores locais antes de responder. */
   refreshUsage: () => Promise<UsageShareState>
+  /** Status do serviço ai-memory (FASE 3). */
+  aiMemoryStatus: () => Promise<AiMemoryIpcResult<AiMemoryStatus>>
+  /** Diagnóstico do sidecar ai-memory. */
+  aiMemoryDoctor: () => Promise<AiMemoryIpcResult<{ ok: boolean; message?: string }>>
+  /** Consulta à memória do projeto. */
+  aiMemoryQuery: (request: AiMemoryQueryRequest) => Promise<AiMemoryIpcResult<unknown>>
+  /** Briefing consolidado do projeto. */
+  aiMemoryBriefing: (request: AiMemoryProjectRef) => Promise<AiMemoryIpcResult<unknown>>
+  /** Handoffs recentes do projeto. */
+  aiMemoryRecent: (request: AiMemoryRecentRequest) => Promise<AiMemoryIpcResult<unknown>>
+  /** Lista de handoffs abertos do projeto. */
+  aiMemoryHandoffs: (request: AiMemoryProjectRef) => Promise<AiMemoryIpcResult<unknown>>
+  /** Habilita/desabilita um projeto no ai-memory. */
+  aiMemoryEnableProject: (request: AiMemoryEnableProjectRequest) => Promise<AiMemoryIpcResult<AiMemoryEnableProjectResult>>
+  /** Migra dados legados para o ai-memory. */
+  aiMemoryMigrateLegacy: (request: AiMemoryProjectRef) => Promise<AiMemoryIpcResult<AiMemoryMigrationOutcomeView>>
+  /** Status da migração legado. */
+  aiMemoryMigrationStatus: (request: AiMemoryProjectRef) => Promise<AiMemoryIpcResult<AiMemoryMigrationStatusResult>>
+  /** Status do projeto para dashboard: opt-in + serviço + migração. */
+  getProjectStatus: (request: AiMemoryProjectStatusRequest) => Promise<AiMemoryIpcResult<AiMemoryProjectStatusResult>>
+  /** Takeover de sessão squad. */
+  aiMemoryTakeover: (request: AiMemoryTakeoverRequest) => Promise<AiMemoryIpcResult<AiMemoryTakeoverPlanView | null>>
+  /** Publica snapshot do squad no ai-memory. */
+  aiMemoryPublishSquadState: (request: { projectPath: string; snapshot: AiMemorySquadSnapshotView }) => Promise<AiMemoryIpcResult<{ path: string; published: boolean }>>
 }
 
 declare global {

@@ -112,6 +112,18 @@ const expectedApiKeys = [
   'onOrchestrationEvent',
   'getUsageShare',
   'refreshUsage',
+  'aiMemoryStatus',
+  'aiMemoryDoctor',
+  'aiMemoryQuery',
+  'aiMemoryBriefing',
+  'aiMemoryRecent',
+  'aiMemoryHandoffs',
+  'aiMemoryEnableProject',
+  'aiMemoryMigrateLegacy',
+  'aiMemoryMigrationStatus',
+  'getProjectStatus',
+  'aiMemoryTakeover',
+  'aiMemoryPublishSquadState',
 ]
 
 let exposedApiObject: Record<string, (...args: any[]) => unknown>

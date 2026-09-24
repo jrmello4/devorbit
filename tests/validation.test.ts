@@ -143,6 +143,12 @@ describe('IPC input validation', () => {
         automation: { defaultExecutor: undefined, autoStartExecutor: undefined, restoreWorkspace: undefined },
       })
     ).toEqual({ automation: {} })
+    expect(await validateConfigUpdates({ automation: { defaultExecutor: 'opencode2' } })).toEqual({
+      automation: { defaultExecutor: 'opencode2' },
+    })
+    expect(await validateConfigUpdates({ automation: { defaultExecutor: 'command-code' } })).toEqual({
+      automation: { defaultExecutor: 'command-code' },
+    })
     await expect(validateConfigUpdates({ automation: { defaultExecutor: 'nope' } })).rejects.toThrow(/Provedor/)
     await expect(validateConfigUpdates({ automation: { defaultCodexAccount: 'account9' } })).rejects.toThrow(/Conta/)
     await expect(validateConfigUpdates({ automation: { autoStartExecutor: 'yes' } })).rejects.toThrow(/executor/)
@@ -283,11 +289,11 @@ describe('resolveWindowsScriptLaunch (wrap cmd.exe)', () => {
     process.env.ComSpec = 'C:\\Windows\\system32\\cmd.exe'
     expect(resolveWindowsScriptLaunch('tool.cmd')).toEqual({
       command: 'C:\\Windows\\system32\\cmd.exe',
-      args: ['/d', '/q', '/k', 'call "tool.cmd"'],
+      args: ['/d', '/q', '/k', 'call', 'tool.cmd'],
     })
     expect(resolveWindowsScriptLaunch('tool.CMD', ['--flag'])).toEqual({
       command: 'C:\\Windows\\system32\\cmd.exe',
-      args: ['/d', '/q', '/k', 'call "tool.CMD"', '--flag'],
+      args: ['/d', '/q', '/k', 'call', 'tool.CMD', '--flag'],
     })
     expect(resolveWindowsScriptLaunch('setup.BaT', ['a', 'b']).args.slice(-2)).toEqual(['a', 'b'])
   })

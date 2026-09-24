@@ -206,6 +206,18 @@ const api: DevOrbitAPI = {
   },
   getUsageShare: (): Promise<UsageShareState> => invoke('devorbit:getUsageShare'),
   refreshUsage: (): Promise<UsageShareState> => invoke('devorbit:refreshUsage'),
+  aiMemoryStatus: () => invoke('devorbit:aiMemoryStatus'),
+  aiMemoryDoctor: () => invoke('devorbit:aiMemoryDoctor'),
+  aiMemoryQuery: (request) => invoke('devorbit:aiMemoryQuery', request),
+  aiMemoryBriefing: (request) => invoke('devorbit:aiMemoryBriefing', request),
+  aiMemoryRecent: (request) => invoke('devorbit:aiMemoryRecent', request),
+  aiMemoryHandoffs: (request) => invoke('devorbit:aiMemoryHandoffs', request),
+  aiMemoryEnableProject: (request) => invoke('devorbit:aiMemoryEnableProject', request),
+  aiMemoryMigrateLegacy: (request) => invoke('devorbit:aiMemoryMigrateLegacy', request),
+  aiMemoryMigrationStatus: (request) => invoke('devorbit:aiMemoryMigrationStatus', request),
+  getProjectStatus: (request) => invoke('devorbit:aiMemoryProjectStatus', request),
+  aiMemoryTakeover: (request) => invoke('devorbit:aiMemoryTakeover', request),
+  aiMemoryPublishSquadState: (request) => invoke('devorbit:aiMemoryPublishSquadState', request),
 }
 
 contextBridge.exposeInMainWorld('devorbit', api)

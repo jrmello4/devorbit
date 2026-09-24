@@ -6,6 +6,11 @@ const { app } = electron
 import type { AppConfig, ManagedProject, ModelRoutingConfig, ModelRoutingSecretKey } from '../renderer/src/types'
 import { MODEL_ROUTING_BASE_URL_KEYS, MODEL_ROUTING_SECRET_KEYS } from '../renderer/src/types'
 import { sanitizeCustomTerminalPresets } from '../shared/terminal-presets'
+import {
+  DEFAULT_AI_MEMORY_CONFIG,
+  type AiMemoryConfig,
+  type AiMemoryProjectConfig,
+} from '../shared/ai-memory-contract'
 import { isAgentProviderId, validateConfigUpdates } from './validation'
 
 const MAX_IMPORT_BYTES = 1_000_000
@@ -13,7 +18,7 @@ const MAX_IMPORT_BYTES = 1_000_000
 const MAX_CONFIG_TEXT_LENGTH = 160
 const MAX_CUSTOM_PATH_LENGTH = 4096
 const MAX_PROJECT_DIRS = 16
-const CUSTOM_PATH_KEYS = ['brave', 'chrome', 'mimo', 'agy', 'codex', 'opencode', 'claude', 'gemini', 'aider', 'customAgent', 'vscode', 'wt'] as const
+const CUSTOM_PATH_KEYS = ['brave', 'chrome', 'mimo', 'agy', 'codex', 'opencode', 'opencode2', 'claude', 'gemini', 'aider', 'commandCode', 'customAgent', 'vscode', 'wt'] as const
 let configOperationQueue: Promise<void> = Promise.resolve()
 const CORRUPT_CONFIG_BACKUP_SUFFIX = '.corrupt.bak'
 const SECRET_STORE_FILE = 'config-secrets.json'
@@ -704,6 +709,103 @@ export async function exportConfigJson(): Promise<string> {
     null,
     2,
   )
+}
+
+/*
+ * ---------------------------------------------------------------------------
+ * ai-memory: consentimento (opt-in) e configuração por projeto.
+ *
+ * Persistido em um arquivo PRÓPRIO (`userData/ai-memory/config.json`) para não
+ * alterar o AppConfig do renderer nem seus tipos. Desabilitado por padrão e
+ * sem qualquer efeito de storage/marker quando `enabled` é falso.
+ * ---------------------------------------------------------------------------
+ */
+
+const AI_MEMORY_CONFIG_DIR = 'ai-memory'
+const AI_MEMORY_CONFIG_FILE = 'config.json'
+const AI_MEMORY_MAX_PROJECTS = 500
+const AI_MEMORY_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]*$/
+
+function getAiMemoryConfigPath(): string {
+  // Sem fallback para outro home: se o userData do Electron não está
+  // disponível, a falha sobe para o chamador em vez de gravar em outro lugar.
+  return path.join(app.getPath('userData'), AI_MEMORY_CONFIG_DIR, AI_MEMORY_CONFIG_FILE)
+}
+
+function normalizeAiMemoryProject(value: unknown): AiMemoryProjectConfig | undefined {
+  if (!isRecord(value)) return undefined
+  const identity = typeof value.identity === 'string' ? value.identity.trim() : ''
+  const workspace = typeof value.workspace === 'string' ? value.workspace.trim().toLowerCase() : ''
+  const project = typeof value.project === 'string' ? value.project.trim().toLowerCase() : ''
+  const projectPath = typeof value.path === 'string' ? value.path.trim() : ''
+  if (!identity || identity.length > 200 || identity.includes('\0')) return undefined
+  if (!AI_MEMORY_NAME_PATTERN.test(workspace) || !AI_MEMORY_NAME_PATTERN.test(project)) {
+    return undefined
+  }
+  if (!projectPath || projectPath.length > MAX_CUSTOM_PATH_LENGTH || projectPath.includes('\0')) {
+    return undefined
+  }
+  return { identity, workspace, project, path: projectPath, enabled: value.enabled === true }
+}
+
+function normalizeAiMemoryConfig(value: unknown): AiMemoryConfig {
+  const source = isRecord(value) ? value : {}
+  const projects: Record<string, AiMemoryProjectConfig> = {}
+  if (isRecord(source.projects)) {
+    for (const entry of Object.values(source.projects).slice(0, AI_MEMORY_MAX_PROJECTS)) {
+      const project = normalizeAiMemoryProject(entry)
+      if (project) projects[project.identity] = project
+    }
+  }
+  return { enabled: source.enabled === true, projects }
+}
+
+export async function loadAiMemoryConfig(): Promise<AiMemoryConfig> {
+  const filePath = getAiMemoryConfigPath()
+  let raw: string
+  try {
+    raw = await fs.readFile(filePath, 'utf-8')
+  } catch (error) {
+    // Arquivo ausente é o default; qualquer outra falha é reportada.
+    if (isFileNotFoundError(error)) return { ...DEFAULT_AI_MEMORY_CONFIG, projects: {} }
+    throw new Error(
+      `Falha ao ler a configuração do ai-memory: ${error instanceof Error ? error.message : String(error)}`
+    )
+  }
+  try {
+    return normalizeAiMemoryConfig(JSON.parse(raw))
+  } catch {
+    throw new Error('Configuração do ai-memory inválida (JSON corrompido).')
+  }
+}
+
+export async function saveAiMemoryConfig(updates: Partial<AiMemoryConfig>): Promise<AiMemoryConfig> {
+  return enqueueConfigOperation(async () => {
+    const current = await loadAiMemoryConfig()
+    const merged = normalizeAiMemoryConfig({
+      enabled: updates.enabled === undefined ? current.enabled : updates.enabled,
+      projects:
+        updates.projects === undefined ? current.projects : { ...current.projects, ...updates.projects },
+    })
+    await atomicallyWriteJson(getAiMemoryConfigPath(), merged)
+    return merged
+  })
+}
+
+export async function setAiMemoryProjectEnabled(
+  entry: AiMemoryProjectConfig,
+  enabled: boolean
+): Promise<AiMemoryConfig> {
+  const project = normalizeAiMemoryProject({ ...entry, enabled })
+  if (!project) throw new Error('Configuração de projeto ai-memory inválida.')
+  // Habilitar um projeto SEMPRE liga o gate global em um único update atômico.
+  // O default `enabled: false` impedia o sidecar de subir após one-click opt-in.
+  // Desabilitar um projeto NÃO desliga o gate: o usuário controla o global
+  // explicitamente; desabilitar o último projeto é seguro (sidecar fica no-op).
+  return saveAiMemoryConfig({
+    ...(enabled ? { enabled: true } : {}),
+    projects: { [project.identity]: project },
+  })
 }
 
 export async function importConfigJson(raw: unknown): Promise<AppConfig> {

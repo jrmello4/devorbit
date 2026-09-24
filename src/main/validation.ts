@@ -3,6 +3,7 @@ import { promisify } from 'node:util'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import type { AgentProviderId, AppConfig, ManagedProject } from '../renderer/src/types'
+import { AGENT_PROVIDER_ID_LIST } from '../shared/agent-provider-contract'
 import { sanitizeCustomTerminalPresets } from '../shared/terminal-presets'
 import { validateModelRoutingConfig } from './agent-providers'
 
@@ -53,7 +54,7 @@ const CUSTOM_PATH_KEYS = [
   'wt',
 ] as const
 
-const AGENT_PROVIDER_IDS = ['codex', 'opencode', 'claude', 'gemini', 'aider', 'agy', 'custom'] as const
+const AGENT_PROVIDER_IDS = AGENT_PROVIDER_ID_LIST
 
 type CustomPathKey = (typeof CUSTOM_PATH_KEYS)[number]
 
