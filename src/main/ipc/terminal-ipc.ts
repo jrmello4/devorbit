@@ -6,6 +6,12 @@ import {
   resolveCodexCommand,
 } from '../account-profiles'
 import {
+  prepareAiMemoryLaunch,
+  registerActiveAiMemorySession,
+  releaseAiMemoryReservation,
+  rollbackAiMemoryLaunch,
+} from '../ai-memory-launcher'
+import {
   executeExplicitAgentTurn,
   getAgentProviderHealth,
   orderProvidersForTask,
@@ -177,16 +183,60 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
     }
     const isScript = /\.(?:cmd|bat)$/i.test(codexCommand)
     const command = isScript ? (process.env.ComSpec || 'cmd.exe') : codexCommand
-    const args = isScript ? ['/d', '/q', '/k', 'call "' + codexCommand + '"'] : []
+    // `call` e o caminho separados: arg único com aspas vira \" no node-pty
+    // (literal para o cmd — shim "não reconhecido").
+    const args = isScript ? ['/d', '/q', '/k', 'call', codexCommand] : []
     dependencies.assertTerminalLifecycle(generation)
     beginCompanionTerminalStart(id)
-    const result = await startTerminal(id, safePath, {
-      command,
-      args,
-      env: { ...getCodexAccountEnvironment(safeAccount), ...dependencies.bridgeEnv() },
-      cols: safeCols,
-      rows: safeRows,
+    const initialEnv = { ...getCodexAccountEnvironment(safeAccount), ...dependencies.bridgeEnv() }
+
+    const launchPlan = await prepareAiMemoryLaunch({
+      provider: 'codex',
+      resolvedCommand: codexCommand,
+      originalArgs: [],
+      env: initialEnv,
+      cwd: safePath,
+      terminalId: id,
+      account: safeAccount,
     })
+
+    let result: { id: string; pid: number | undefined }
+    if (launchPlan.wrapped) {
+      try {
+        result = await startTerminal(id, safePath, {
+          command: launchPlan.command,
+          args: launchPlan.args,
+          env: launchPlan.env,
+          cols: safeCols,
+          rows: safeRows,
+        })
+        if (launchPlan.metadata) {
+          if (!hasTerminal(id)) {
+            rollbackAiMemoryLaunch(id)
+          } else {
+            registerActiveAiMemorySession(launchPlan.metadata)
+          }
+        }
+      } catch (error) {
+        rollbackAiMemoryLaunch(id)
+        console.warn('[DevOrbit] Falha ao iniciar Codex com wrapper ai-memory; fallback direto:', error)
+        result = await startTerminal(id, safePath, {
+          command,
+          args,
+          env: initialEnv,
+          cols: safeCols,
+          rows: safeRows,
+        })
+      }
+    } else {
+      result = await startTerminal(id, safePath, {
+        command,
+        args,
+        env: initialEnv,
+        cols: safeCols,
+        rows: safeRows,
+      })
+    }
     registerCompanionTerminal(id, { projectPath: safePath })
     dependencies.registerBridgeAgent(id, {
       provider: 'codex',
@@ -245,11 +295,12 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
       const spawned = await spawnAgentProviderTerminal(
         {
           resolveWithFallback: resolveAgentProviderWithFallback,
-          startTerminal: (spawnId, options) => startTerminal(spawnId, safePath, {
+          startTerminal: (spawnId, options) => startTerminal(spawnId, options.cwd ?? safePath, {
             ...options,
             env: { ...options.env, ...dependencies.bridgeEnv() },
           }),
           assertLive: () => dependencies.assertTerminalLifecycle(generation),
+          hasTerminal,
         },
         {
           id,
@@ -259,6 +310,7 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
           routing: config.modelRouting,
           cols: safeCols,
           rows: safeRows,
+          cwd: safePath,
         },
         config
       )
@@ -364,7 +416,7 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
           const spawned = await spawnAgentProviderTerminal(
             {
               resolveWithFallback: resolveAgentProviderWithFallback,
-              startTerminal: (spawnId, options) => startTerminal(spawnId, safePath, {
+              startTerminal: (spawnId, options) => startTerminal(spawnId, options.cwd ?? safePath, {
                 ...options,
                 env: { ...options.env, ...dependencies.bridgeEnv() },
               }),
@@ -378,6 +430,7 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
               routing: turnConfig.modelRouting,
               cols: 120,
               rows: 32,
+              cwd: safePath,
             },
             turnConfig
           )

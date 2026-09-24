@@ -8,6 +8,7 @@ import { choice, TypeSafeClient } from '@typesafe-ai/sdk'
 import type { Fetch } from '@typesafe-ai/sdk'
 import { stripAnsiEscapes } from '../shared/ansi'
 import type { AgentProvider, AgentProviderId, AppConfig } from '../renderer/src/types'
+import { AGENT_PROVIDER_ID_LIST } from '../shared/agent-provider-contract'
 
 const execFileAsync = promisify(execFile)
 
@@ -32,15 +33,7 @@ export type AgentCliConfiguredCommands = Partial<
   Record<AgentProviderId, string | undefined>
 >
 
-export const AGENT_CLI_PROVIDER_IDS = [
-  'codex',
-  'opencode',
-  'claude',
-  'gemini',
-  'aider',
-  'agy',
-  'custom',
-] as const satisfies readonly AgentProviderId[]
+export const AGENT_CLI_PROVIDER_IDS = AGENT_PROVIDER_ID_LIST
 
 export const AGENT_CLI_PROVIDERS = {
   codex: {
@@ -54,6 +47,12 @@ export const AGENT_CLI_PROVIDERS = {
     label: 'OpenCode',
     aliases: ['opencode', 'opencode.cmd', 'opencode.exe'],
     defaultCommand: 'opencode.cmd',
+  },
+  opencode2: {
+    id: 'opencode2',
+    label: 'OpenCode 2',
+    aliases: ['opencode2', 'opencode2.cmd', 'opencode2.exe'],
+    defaultCommand: 'opencode2.cmd',
   },
   claude: {
     id: 'claude',
@@ -92,6 +91,12 @@ export const AGENT_CLI_PROVIDERS = {
       'antigravity.exe',
     ],
     defaultCommand: 'agy.cmd',
+  },
+  'command-code': {
+    id: 'command-code',
+    label: 'Command Code',
+    aliases: ['command-code', 'command-code.cmd', 'command-code.exe', 'cmdc', 'cmdc.cmd', 'cmdc.exe'],
+    defaultCommand: 'cmdc.cmd',
   },
   custom: {
     id: 'custom',
@@ -741,10 +746,12 @@ const CONFIGURED_COMMAND_KEYS: Record<
 > = {
   codex: 'codex',
   opencode: 'opencode',
+  opencode2: 'opencode2',
   claude: 'claude',
   gemini: 'gemini',
   aider: 'aider',
   agy: 'agy',
+  'command-code': 'commandCode',
   custom: 'customAgent',
 }
 
@@ -931,6 +938,12 @@ function getKnownPathCandidates(
         winJoin(context.localAppData, 'opencode', 'opencode.exe')
       )
       break
+    case 'opencode2':
+      candidates.push(
+        winJoin(context.home, '.opencode', 'bin', 'opencode2.exe'),
+        winJoin(context.localAppData, 'opencode', 'opencode2.exe')
+      )
+      break
     case 'claude':
       candidates.push(
         winJoin(context.home, '.local', 'bin', 'claude.exe'),
@@ -971,6 +984,15 @@ function getKnownPathCandidates(
         winJoin(context.programFiles, 'Antigravity', 'agy.exe'),
         winJoin(context.programFilesX86, 'Antigravity', 'antigravity.exe'),
         winJoin(context.programFilesX86, 'Antigravity', 'agy.exe')
+      )
+      break
+    case 'command-code':
+      candidates.push(
+        winJoin(context.localAppData, 'command-code', 'bin', 'command-code.exe'),
+        winJoin(context.localAppData, 'command-code', 'command-code.exe'),
+        winJoin(context.localAppData, 'command-code', 'cmdc.exe'),
+        winJoin(context.programFiles, 'Command Code', 'command-code.exe'),
+        winJoin(context.programFilesX86, 'Command Code', 'command-code.exe')
       )
       break
     case 'custom':
@@ -1467,7 +1489,7 @@ export async function getAgentProviderHealth(
  * ambiente-base (inclusive `process.env`) — CLIs/PTYs nunca as herdam.
  */
 export function buildAgentTurnEnv(
-  provider: AgentProviderId,
+  provider: AgentProviderId | string,
   model: string,
   tier: ModelTier,
   routing?: ModelRoutingConfig,
@@ -1494,10 +1516,12 @@ export function buildAgentTurnEnv(
   }
   switch (provider) {
     case 'opencode':
+    case 'opencode2':
     case 'claude':
       assign('ANTHROPIC_API_KEY', anthropic)
       break
     case 'codex':
+    case 'command-code':
       assign('OPENAI_API_KEY', openai)
       break
     case 'gemini':
@@ -1521,13 +1545,15 @@ export function buildAgentTurnEnv(
  * ambiente; chaves BYOK chegam nas vars padrão da família (ex.
  * ANTHROPIC_API_KEY) — nunca em argv, log ou retorno IPC.
  */
-const PROVIDER_MODEL_FLAGS: Record<AgentProviderId, string | null> = {
+const PROVIDER_MODEL_FLAGS: Record<string, string | null> = {
   codex: null,
   opencode: '--model',
+  opencode2: '--model',
   claude: '--model',
   gemini: '--model',
   aider: '--model',
   agy: '--model',
+  'command-code': '--model',
   custom: null,
 }
 
@@ -1535,6 +1561,10 @@ export interface ProviderInvocation {
   command: string
   args: string[]
   env: NodeJS.ProcessEnv
+  /** Executável resolvido do provedor (ex: C:\bin\opencode.cmd ou /usr/bin/opencode) */
+  executablePath?: string
+  /** Argumentos nativos do provedor (ex: ['--model', 'claude-sonnet']), sem wrappers do cmd.exe */
+  nativeArgs?: string[]
 }
 
 /**
@@ -1547,7 +1577,7 @@ export interface ProviderInvocation {
  * família). Chaves nunca vão em argv.
  */
 export function resolveProviderInvocation(
-  provider: AgentProviderId,
+  provider: AgentProviderId | string,
   commandPath: string,
   model: string,
   tier: ModelTier,
@@ -1559,19 +1589,25 @@ export function resolveProviderInvocation(
   }
   const env = buildAgentTurnEnv(provider, model, tier, routing, baseEnv)
   const flag = PROVIDER_MODEL_FLAGS[provider]
+  const nativeArgs = flag ? [flag, model] : []
   if (/\.(?:cmd|bat)$/i.test(commandPath)) {
-    // Wrapper Windows: `call "x.cmd" --model m` — o shim repassa os
-    // argumentos ao CLI real; sem flag conhecida, só env (sem quebrar).
-    const forwarded = flag ? ` ${flag} ${model}` : ''
+    // Wrapper Windows: `cmd /k call <shim> --model m` com CADA parte como arg
+    // separado. O node-pty escapa aspas internas de um arg único como \" —
+    // literal para o cmd, que não acha o shim ("não é reconhecido"); com args
+    // separados ele cita o caminho corretamente.
     return {
       command: process.env.ComSpec || 'cmd.exe',
-      args: ['/d', '/q', '/k', `call "${commandPath}"${forwarded}`],
+      args: ['/d', '/q', '/k', 'call', commandPath, ...nativeArgs],
       env,
+      executablePath: commandPath,
+      nativeArgs,
     }
   }
   return {
     command: commandPath,
-    args: flag ? [flag, model] : [],
+    args: nativeArgs,
     env,
+    executablePath: commandPath,
+    nativeArgs,
   }
 }

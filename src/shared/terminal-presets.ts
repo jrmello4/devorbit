@@ -124,32 +124,43 @@ export interface TerminalThemeDefinition {
   id: TerminalThemeId
   label: string
   accent: string
+  /**
+   * ITheme COMPLETO do xterm: toda a superfície do terminal (fundo com tint
+   * da família, foreground suave, cursor/cursorAccent, seleção translúcida e
+   * as 16 cores ANSI calibradas) muda junto com o tema — não só o accent.
+   * Contraste AA (≥ 4.5:1) garantido para foreground e ANSI de texto sobre o
+   * background da própria família (asserções em tests/terminal-theme.test.ts).
+   */
   xterm: {
     background: string
     foreground: string
     cursor: string
+    /** Cor do texto sob o cursor bloco: o próprio background do tema. */
+    cursorAccent: string
+    /** Translúcido (#RRGGBBAA): o texto sob a seleção continua legível. */
     selectionBackground: string
-    black?: string
-    brightBlack?: string
-    red?: string
-    brightRed?: string
-    green?: string
-    brightGreen?: string
-    yellow?: string
-    brightYellow?: string
-    blue?: string
-    brightBlue?: string
-    magenta?: string
-    brightMagenta?: string
-    cyan?: string
-    brightCyan?: string
-    white?: string
-    brightWhite?: string
+    black: string
+    brightBlack: string
+    red: string
+    brightRed: string
+    green: string
+    brightGreen: string
+    yellow: string
+    brightYellow: string
+    blue: string
+    brightBlue: string
+    magenta: string
+    brightMagenta: string
+    cyan: string
+    brightCyan: string
+    white: string
+    brightWhite: string
   }
 }
 
 export const TERMINAL_THEMES: readonly TerminalThemeDefinition[] = [
   {
+    // Neutro frio (padrão). Fundo/near-fg mantidos; ANSI leve matiz de aço.
     id: 'carbon',
     label: 'Carbon',
     accent: '#8797b4',
@@ -157,8 +168,9 @@ export const TERMINAL_THEMES: readonly TerminalThemeDefinition[] = [
       background: '#0d0f14',
       foreground: '#f5f7fa',
       cursor: '#8797b4',
-      selectionBackground: '#232b39',
-      black: '#0d0f14',
+      cursorAccent: '#0d0f14',
+      selectionBackground: '#8797b42e',
+      black: '#12151d',
       brightBlack: '#7e8491',
       red: '#d27564',
       brightRed: '#ef907a',
@@ -177,137 +189,149 @@ export const TERMINAL_THEMES: readonly TerminalThemeDefinition[] = [
     },
   },
   {
+    // Âmbar CRT: fundo marrom-café, ANSI puxando para o quente (verde oliva,
+    // azul de aço morno, magenta rosado, cian teal quente).
     id: 'amber',
     label: 'Âmbar',
     accent: '#d97706',
     xterm: {
-      background: '#120f09',
-      foreground: '#fbf3e4',
+      background: '#141009',
+      foreground: '#f6ead2',
       cursor: '#f59e0b',
-      selectionBackground: '#382914',
-      black: '#120f09',
-      brightBlack: '#786b59',
-      red: '#d97764',
-      brightRed: '#f0907a',
-      green: '#9bbd88',
-      brightGreen: '#b7d7a3',
-      yellow: '#f59e0b',
-      brightYellow: '#fbbf24',
-      blue: '#87a7c5',
-      brightBlue: '#aac4e0',
-      magenta: '#b49ac4',
-      brightMagenta: '#d4b7e8',
-      cyan: '#7db9b1',
-      brightCyan: '#a5ded5',
-      white: '#fbf3e4',
-      brightWhite: '#ffffff',
+      cursorAccent: '#141009',
+      selectionBackground: '#f59e0b33',
+      black: '#1d1710',
+      brightBlack: '#8d7f68',
+      red: '#e0806a',
+      brightRed: '#f29a84',
+      green: '#a8bd85',
+      brightGreen: '#c4d8a0',
+      yellow: '#f0a83c',
+      brightYellow: '#ffc95e',
+      blue: '#92a9c4',
+      brightBlue: '#b3c6de',
+      magenta: '#c497ae',
+      brightMagenta: '#e0b3c9',
+      cyan: '#82bcae',
+      brightCyan: '#a9ded2',
+      white: '#f6ead2',
+      brightWhite: '#fff8ec',
     },
   },
   {
+    // Esmeralda: fundo verde-petróleo, verdes emergem (green/cian da família),
+    // demais ANSI dessaturados com toque frio-vegetal.
     id: 'emerald',
     label: 'Esmeralda',
     accent: '#059669',
     xterm: {
       background: '#0a130f',
-      foreground: '#eafbf3',
+      foreground: '#e6f5ed',
       cursor: '#10b981',
-      selectionBackground: '#143a29',
-      black: '#0a130f',
-      brightBlack: '#597368',
-      red: '#d27564',
-      brightRed: '#ef907a',
-      green: '#10b981',
-      brightGreen: '#34d399',
-      yellow: '#d5b06c',
-      brightYellow: '#ebcf8d',
-      blue: '#87a7c5',
-      brightBlue: '#aac4e0',
-      magenta: '#b49ac4',
-      brightMagenta: '#d4b7e8',
-      cyan: '#5eead4',
-      brightCyan: '#99f6e4',
-      white: '#eafbf3',
+      cursorAccent: '#0a130f',
+      selectionBackground: '#10b98133',
+      black: '#101d18',
+      brightBlack: '#6b887a',
+      red: '#d87f6e',
+      brightRed: '#f09a89',
+      green: '#2fbd85',
+      brightGreen: '#5bd9a7',
+      yellow: '#cdb97a',
+      brightYellow: '#e8d598',
+      blue: '#7fabc4',
+      brightBlue: '#a6c9de',
+      magenta: '#b09cba',
+      brightMagenta: '#cfbcd9',
+      cyan: '#46cdb2',
+      brightCyan: '#85e5cf',
+      white: '#e6f5ed',
       brightWhite: '#ffffff',
     },
   },
   {
+    // Oceano: fundo azul-abissal, azuis/cian dominantes, magenta periwinkle.
     id: 'ocean',
     label: 'Oceano',
     accent: '#0284c7',
     xterm: {
-      background: '#0a1017',
-      foreground: '#eef6fc',
+      background: '#0a1018',
+      foreground: '#e7f1fa',
       cursor: '#38bdf8',
-      selectionBackground: '#163148',
-      black: '#0a1017',
-      brightBlack: '#566c82',
-      red: '#d27564',
-      brightRed: '#ef907a',
-      green: '#9bbd88',
-      brightGreen: '#b7d7a3',
-      yellow: '#d5b06c',
-      brightYellow: '#ebcf8d',
-      blue: '#38bdf8',
-      brightBlue: '#7dd3fc',
-      magenta: '#b49ac4',
-      brightMagenta: '#d4b7e8',
-      cyan: '#7db9b1',
-      brightCyan: '#a5ded5',
-      white: '#eef6fc',
+      cursorAccent: '#0a1018',
+      selectionBackground: '#38bdf833',
+      black: '#121d2b',
+      brightBlack: '#6d839b',
+      red: '#e07f6e',
+      brightRed: '#f29b8b',
+      green: '#8fbd8f',
+      brightGreen: '#aed7ab',
+      yellow: '#d8c07c',
+      brightYellow: '#ecd899',
+      blue: '#45b1f5',
+      brightBlue: '#7cc7fa',
+      magenta: '#9d8fd0',
+      brightMagenta: '#bcb0e6',
+      cyan: '#55c3d4',
+      brightCyan: '#8edfe8',
+      white: '#e7f1fa',
       brightWhite: '#ffffff',
     },
   },
   {
+    // Violeta: fundo arroxeado, azul/magenta deslizando para o roxo, cian frio.
     id: 'violet',
     label: 'Violeta',
     accent: '#7c3aed',
     xterm: {
-      background: '#110c19',
-      foreground: '#f8f4fc',
+      background: '#110f18',
+      foreground: '#f2edf9',
       cursor: '#a855f7',
-      selectionBackground: '#35204c',
-      black: '#110c19',
-      brightBlack: '#6e5b82',
-      red: '#d27564',
-      brightRed: '#ef907a',
-      green: '#9bbd88',
-      brightGreen: '#b7d7a3',
-      yellow: '#d5b06c',
-      brightYellow: '#ebcf8d',
-      blue: '#87a7c5',
-      brightBlue: '#aac4e0',
-      magenta: '#a855f7',
-      brightMagenta: '#c084fc',
-      cyan: '#7db9b1',
-      brightCyan: '#a5ded5',
-      white: '#f8f4fc',
+      cursorAccent: '#110f18',
+      selectionBackground: '#a855f733',
+      black: '#1a1726',
+      brightBlack: '#8679a4',
+      red: '#d87d90',
+      brightRed: '#ef9aa9',
+      green: '#9fbd8f',
+      brightGreen: '#bdd8ab',
+      yellow: '#d6ba7e',
+      brightYellow: '#ecd4a2',
+      blue: '#9d90e6',
+      brightBlue: '#bcb2f2',
+      magenta: '#c084fc',
+      brightMagenta: '#d8b4fe',
+      cyan: '#82b5cd',
+      brightCyan: '#aad6e6',
+      white: '#f2edf9',
       brightWhite: '#ffffff',
     },
   },
   {
+    // Rosa: fundo vinho-neutro, vermelho/rosa dominantes, magenta pink.
     id: 'rose',
     label: 'Rosa',
     accent: '#e11d48',
     xterm: {
-      background: '#160c11',
-      foreground: '#fdf2f4',
+      background: '#140d10',
+      foreground: '#f9edf0',
       cursor: '#fb7185',
-      selectionBackground: '#4a1c28',
-      black: '#160c11',
-      brightBlack: '#7f5d68',
-      red: '#fb7185',
-      brightRed: '#fda4af',
-      green: '#9bbd88',
-      brightGreen: '#b7d7a3',
-      yellow: '#d5b06c',
-      brightYellow: '#ebcf8d',
-      blue: '#87a7c5',
-      brightBlue: '#aac4e0',
-      magenta: '#b49ac4',
-      brightMagenta: '#d4b7e8',
-      cyan: '#7db9b1',
-      brightCyan: '#a5ded5',
-      white: '#fdf2f4',
+      cursorAccent: '#140d10',
+      selectionBackground: '#fb718533',
+      black: '#211419',
+      brightBlack: '#93737e',
+      red: '#f2687f',
+      brightRed: '#ff8fa3',
+      green: '#a8bd8c',
+      brightGreen: '#c6d9ab',
+      yellow: '#dcc386',
+      brightYellow: '#f0d9a6',
+      blue: '#92a9d2',
+      brightBlue: '#b3c7e8',
+      magenta: '#e08fb4',
+      brightMagenta: '#f2b1ce',
+      cyan: '#7fb9c1',
+      brightCyan: '#a8dde2',
+      white: '#f9edf0',
       brightWhite: '#ffffff',
     },
   },

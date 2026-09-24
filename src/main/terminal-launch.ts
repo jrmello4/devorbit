@@ -26,6 +26,9 @@ export function resolveWindowsScriptLaunch(command: string, args: readonly strin
   }
   return {
     command: process.env.ComSpec || 'cmd.exe',
-    args: ['/d', '/q', '/k', 'call "' + command + '"', ...args],
+    // `call` e o caminho como args SEPARADOS: o node-pty escapa aspas internas
+    // de um arg único como \" (literal para o cmd — shim "não reconhecido");
+    // separados, ele cita o caminho corretamente.
+    args: ['/d', '/q', '/k', 'call', command, ...args],
   }
 }

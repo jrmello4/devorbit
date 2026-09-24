@@ -1,6 +1,7 @@
 import { spawn as spawnProcess, type SpawnOptions } from 'node:child_process'
 import { spawn as spawnPty, type IPty } from 'node-pty'
 import { clearPipesFor, PTY_PIPE_MAX_CHUNK, resetPipes } from './pty-pipe'
+import { finalizeAiMemorySession, drainPendingAiMemoryFinalizations } from './ai-memory-launcher'
 
 export interface TerminalEvent {
   id: string
@@ -212,6 +213,7 @@ export async function startTerminal(
     flushPendingData(id)
     sessions.delete(id)
     emit({ id, type: 'exit', code: exitCode })
+    void finalizeAiMemorySession({ terminalId: id })
   })
 
   return { id, pid: terminal.pid }
@@ -296,14 +298,15 @@ export function terminateProcessTree(pid: number, deps: TerminateProcessTreeDeps
 
 export function stopTerminal(id: string, options?: { keepPipes?: boolean }): void {
   const record = sessions.get(id)
-  // Saída pendente do PTY que está morrendo vai antes de qualquer teardown:
-  // nunca depois (o PTY morreu) nem descartada.
-  flushPendingData(id)
   // Limpeza bidirecional por padrão: remove cabos que saem E que chegam neste
   // terminal. Restart interno usa keepPipes para preservar o grafo visual.
   if (!options?.keepPipes) clearPipesFor(id)
   if (!record) return
+  // Saída pendente do PTY que está morrendo vai antes de qualquer teardown:
+  // nunca depois (o PTY morreu) nem descartada.
+  flushPendingData(id)
   sessions.delete(id)
+  void finalizeAiMemorySession({ terminalId: id })
   terminateProcessTree(record.terminal.pid, {
     onFailure: ({ pid, reason }) => {
       emit({ id, type: 'error', data: `Falha ao encerrar a árvore do processo ${pid}: ${reason}` })
@@ -320,3 +323,77 @@ export function stopAllTerminals(): void {
   for (const id of Array.from(sessions.keys())) stopTerminal(id)
   resetPipes()
 }
+
+/**
+ * Encerra um terminal ativo e aguarda de forma bounded a finalização da sua sessão ai-memory.
+ */
+export async function stopTerminalAsync(
+  id: string,
+  options?: { keepPipes?: boolean; timeoutMs?: number }
+): Promise<{ finalized: boolean; message?: string }> {
+  const record = sessions.get(id)
+  if (!options?.keepPipes) clearPipesFor(id)
+  if (!record) return { finalized: false, message: 'Nenhum terminal ativo para encerrar.' }
+
+  flushPendingData(id)
+  sessions.delete(id)
+  const finalizationPromise = finalizeAiMemorySession({ terminalId: id })
+
+  terminateProcessTree(record.terminal.pid, {
+    onFailure: ({ pid, reason }) => {
+      emit({ id, type: 'error', data: `Falha ao encerrar a árvore do processo ${pid}: ${reason}` })
+    },
+  })
+  try {
+    record.terminal.kill()
+  } catch {
+    // O processo já pode ter terminado; a sessão já foi removida.
+  }
+
+  const timeoutMs = options?.timeoutMs ?? 5_000
+  let timer: NodeJS.Timeout | undefined
+  const timeoutPromise = new Promise<{ timeout: true }>((resolve) => {
+    timer = setTimeout(() => resolve({ timeout: true }), timeoutMs)
+  })
+
+  try {
+    const outcome = await Promise.race([
+      finalizationPromise.then((res) => ({ timeout: false as const, result: res })),
+      timeoutPromise,
+    ])
+
+    if (outcome.timeout) {
+      console.warn(`[DevOrbit terminal-session] Timeout (${timeoutMs}ms) ao aguardar finalização do terminal ${id}.`)
+      return { finalized: false, message: `Timeout de ${timeoutMs}ms atingido durante a finalização.` }
+    }
+
+    return outcome.result
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return { finalized: false, message: `Falha na finalização: ${msg}` }
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+/**
+ * Encerra todos os terminais ativos e aguarda de forma bounded a conclusão de todas
+ * as finalizações de sessões pendentes que necessitam do sidecar ai-memory antes do desligamento.
+ */
+export async function stopAllTerminalsAsync(options: { timeoutMs?: number } = {}): Promise<{
+  stopped: number
+  completed: boolean
+}> {
+  const terminalIds = Array.from(sessions.keys())
+  const stopped = terminalIds.length
+
+  for (const id of terminalIds) {
+    stopTerminal(id)
+  }
+  resetPipes()
+
+  const drainResult = await drainPendingAiMemoryFinalizations({ timeoutMs: options.timeoutMs })
+  return { stopped, completed: drainResult.drained }
+}
+
+export { drainPendingAiMemoryFinalizations as drainTerminalFinalizations }

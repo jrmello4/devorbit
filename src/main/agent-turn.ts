@@ -11,12 +11,27 @@ import {
   type ModelTier,
   type ProviderUnavailableError,
 } from './agent-providers'
+import {
+  prepareAiMemoryLaunch,
+  registerActiveAiMemorySession,
+  releaseAiMemoryReservation,
+  rollbackAiMemoryLaunch,
+} from './ai-memory-launcher'
 
 export { buildAgentTurnEnv }
 
 export interface SpawnAgentTerminal {
   id: string
   pid: number | undefined
+}
+
+export interface SpawnAgentTerminalOptions {
+  command: string
+  args: string[]
+  env: NodeJS.ProcessEnv
+  cols: number
+  rows: number
+  cwd?: string
 }
 
 export interface SpawnAgentTerminalDeps {
@@ -26,9 +41,10 @@ export interface SpawnAgentTerminalDeps {
   ) => Promise<{ path: string | null; message: string; provider: AgentProviderId }>
   startTerminal: (
     id: string,
-    options: { command: string; args: string[]; env: NodeJS.ProcessEnv; cols: number; rows: number }
+    options: SpawnAgentTerminalOptions
   ) => Promise<SpawnAgentTerminal>
   assertLive: () => void
+  hasTerminal?: (id: string) => boolean
 }
 
 /**
@@ -46,6 +62,7 @@ export async function spawnAgentProviderTerminal(
     routing?: ModelRoutingConfig
     cols: number
     rows: number
+    cwd?: string
   },
   config: AppConfig
 ): Promise<{ started: SpawnAgentTerminal; provider: AgentProviderId; command: string }> {
@@ -70,12 +87,50 @@ export async function spawnAgentProviderTerminal(
     input.routing
   )
   deps.assertLive()
-  const started = await deps.startTerminal(input.id, {
+
+  const effectiveCwd = input.cwd ?? process.cwd()
+
+  const launchPlan = await prepareAiMemoryLaunch({
+    provider: resolved.provider,
+    resolvedCommand: resolved.path,
+    originalArgs: invocation.nativeArgs ?? (invocation.command === resolved.path ? invocation.args : []),
+    env: invocation.env,
+    cwd: effectiveCwd,
+    terminalId: input.id,
+  })
+
+  let started: SpawnAgentTerminal
+  if (launchPlan.wrapped) {
+    try {
+      started = await deps.startTerminal(input.id, {
+        command: launchPlan.command,
+        args: launchPlan.args,
+        env: launchPlan.env,
+        cols: input.cols,
+        rows: input.rows,
+        cwd: effectiveCwd,
+      })
+      if (launchPlan.metadata) {
+        if (deps.hasTerminal && !deps.hasTerminal(input.id)) {
+          rollbackAiMemoryLaunch(input.id)
+        } else {
+          registerActiveAiMemorySession(launchPlan.metadata)
+        }
+      }
+      return { started, provider: resolved.provider, command: resolved.path }
+    } catch (error) {
+      rollbackAiMemoryLaunch(input.id)
+      console.warn('[DevOrbit] Falha ao iniciar agente com wrapper ai-memory; fallback direto:', error)
+    }
+  }
+
+  started = await deps.startTerminal(input.id, {
     command: invocation.command,
     args: invocation.args,
     env: invocation.env,
     cols: input.cols,
     rows: input.rows,
+    cwd: effectiveCwd,
   })
   return { started, provider: resolved.provider, command: resolved.path }
 }

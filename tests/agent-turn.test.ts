@@ -1,4 +1,18 @@
-import { describe, expect, it, vi } from 'vitest'
+import os from 'node:os'
+import path from 'node:path'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+// A launcher exige `app.getPath('userData')` (sem fallback para ~/.devorbit).
+// Mock mínimo e determinístico: só `app.getPath`, apontando para um dir temporário.
+const electronPaths = vi.hoisted(() => ({ userDataDir: '' }))
+vi.mock('electron', () => ({
+  default: {
+    app: {
+      getPath: () => electronPaths.userDataDir,
+    },
+  },
+}))
+
 import {
   buildAgentTurnEnv,
   createResultWaiter,
@@ -11,6 +25,11 @@ import {
 } from '../src/main/agent-turn'
 import type { AgentProviderId, AppConfig } from '../src/renderer/src/types'
 import type { TerminalEvent } from '../src/main/terminal-session'
+
+// userData determinístico sob o tmp do host (o dir é criado on-demand pelo launcher).
+beforeEach(() => {
+  electronPaths.userDataDir = path.join(os.tmpdir(), 'devorbit-agent-turn-userdata')
+})
 
 function createHarness(options: {
   waiters?: TurnWaiter[]
@@ -518,9 +537,10 @@ describe('spawnAgentProviderTerminal', () => {
   function createSpawnDeps(options: {
     healthProvider?: AgentProviderId
     healthPath?: string | null
-    starts?: Array<{ id: string; command: string; args: string[] }>
+    starts?: Array<{ id: string; command: string; args: string[]; cwd?: string }>
+    hasTerminal?: (id: string) => boolean
   } = {}) {
-    const starts: Array<{ id: string; command: string; args: string[] }> =
+    const starts: Array<{ id: string; command: string; args: string[]; cwd?: string }> =
       options.starts || []
     return {
       starts,
@@ -530,11 +550,12 @@ describe('spawnAgentProviderTerminal', () => {
           message: 'ok',
           provider: (options.healthProvider || 'claude') as AgentProviderId,
         })),
-        startTerminal: vi.fn(async (id: string, spawnOptions: { command: string; args: string[] }) => {
-          starts.push({ id, command: spawnOptions.command, args: spawnOptions.args })
+        startTerminal: vi.fn(async (id: string, spawnOptions: { command: string; args: string[]; cwd?: string }) => {
+          starts.push({ id, command: spawnOptions.command, args: spawnOptions.args, cwd: spawnOptions.cwd })
           return { id, pid: 4242 }
         }),
         assertLive: vi.fn(),
+        ...(options.hasTerminal ? { hasTerminal: options.hasTerminal } : {}),
       },
     }
   }
@@ -564,7 +585,7 @@ describe('spawnAgentProviderTerminal', () => {
     expect(starts).toHaveLength(1)
     expect(starts[0]).toMatchObject({
       id: 't1',
-      args: ['/d', '/q', '/k', 'call "C:\\cli\\agent.cmd" --model gpt-4o-mini'],
+      args: ['/d', '/q', '/k', 'call', 'C:\\cli\\agent.cmd', '--model', 'gpt-4o-mini'],
     })
     expect(deps.assertLive).toHaveBeenCalledOnce()
   })
@@ -579,5 +600,226 @@ describe('spawnAgentProviderTerminal', () => {
       )
     ).rejects.toThrow()
     expect(starts).toHaveLength(0)
+  })
+
+  it('preserva flag --model em originalArgs para scripts Windows .cmd ao usar wrapper ai-memory', async () => {
+    const { setAiMemorySetupOverrideForTest, setGlobalAiMemoryService } = await import('../src/main/ai-memory-launcher')
+    const fakeScope = {
+      workspace: 'devorbit',
+      project: 'p-cmd',
+      identity: 'id-cmd',
+      root: 'C:\\workspace',
+      source: 'path' as const,
+    }
+    const service = {
+      status: vi.fn(() => ({
+        state: 'running' as const,
+        owned: true,
+        binaryPath: 'C:\\bin\\ai-memory.exe',
+      })),
+      health: vi.fn(async () => ({ ok: true })),
+      resolveScope: vi.fn(async () => fakeScope),
+      ensureProjectMarker: vi.fn(async () => ({
+        configured: true,
+        status: 'unchanged' as const,
+        path: 'C:\\workspace\\.ai-memory.toml',
+      })),
+      isProjectEnabled: vi.fn(() => true),
+    }
+    setGlobalAiMemoryService(service as any)
+    setAiMemorySetupOverrideForTest(async () => ({ status: 'already-installed', mcp: 'skipped', hooks: 'skipped' }))
+
+    try {
+      const { deps, starts } = createSpawnDeps({
+        healthProvider: 'opencode',
+        healthPath: 'C:\\cli\\opencode.cmd',
+      })
+      const spawned = await spawnAgentProviderTerminal(
+        deps,
+        { id: 't-cmd-model', candidate: 'opencode', model: 'claude-sonnet', tier: 'deep', cols: 120, rows: 32 },
+        config
+      )
+      expect(spawned.provider).toBe('opencode')
+      expect(starts).toHaveLength(1)
+      const startArgs = starts[0].args
+      expect(starts[0].command).toBe('C:\\bin\\ai-memory.exe')
+      // Comprova que --model e o modelo claude-sonnet foram repassados após o --
+      const dashDashIndex = startArgs.indexOf('--')
+      expect(dashDashIndex).toBeGreaterThan(-1)
+      const nativeArgs = startArgs.slice(dashDashIndex + 1)
+      expect(nativeArgs).toEqual(['--model', 'claude-sonnet'])
+      expect(startArgs).toContain('--executable')
+      const executableIdx = startArgs.indexOf('--executable')
+      expect(startArgs[executableIdx + 1]).toBe('C:\\cli\\opencode.cmd')
+      expect(startArgs[executableIdx + 1]).not.toContain('cmd.exe')
+    } finally {
+      setGlobalAiMemoryService(null)
+      setAiMemorySetupOverrideForTest(null)
+    }
+  })
+
+  it('preserva fallback direto com cmd.exe e call para scripts Windows .cmd quando wrapper está indisponível', async () => {
+    const { setAiMemorySetupOverrideForTest, setGlobalAiMemoryService } = await import('../src/main/ai-memory-launcher')
+    // Simula serviço indisponível
+    setGlobalAiMemoryService(null)
+
+    const { deps, starts } = createSpawnDeps({
+      healthProvider: 'opencode',
+      healthPath: 'C:\\cli\\opencode.cmd',
+    })
+    const spawned = await spawnAgentProviderTerminal(
+      deps,
+      { id: 't-cmd-fallback', candidate: 'opencode', model: 'claude-sonnet', tier: 'deep', cols: 120, rows: 32 },
+      config
+    )
+    expect(spawned.provider).toBe('opencode')
+    expect(starts).toHaveLength(1)
+    expect(starts[0].command).toContain('cmd')
+    expect(starts[0].args).toEqual(['/d', '/q', '/k', 'call', 'C:\\cli\\opencode.cmd', '--model', 'claude-sonnet'])
+  })
+
+  it('preserva cwd no contrato deps.startTerminal no spawn direto e no wrapper', async () => {
+    const { deps, starts } = createSpawnDeps({
+      healthProvider: 'opencode',
+      healthPath: 'C:\\cli\\opencode.cmd',
+    })
+    const targetCwd = 'C:\\custom\\project-dir'
+    await spawnAgentProviderTerminal(
+      deps,
+      {
+        id: 't-cwd',
+        candidate: 'opencode',
+        model: 'claude-sonnet',
+        tier: 'deep',
+        cols: 120,
+        rows: 32,
+        cwd: targetCwd,
+      },
+      config
+    )
+    expect(starts).toHaveLength(1)
+    expect(starts[0].cwd).toBe(targetCwd)
+  })
+
+  it('executa rollback explícito quando o PTY encerra imediatamente após o startTerminal (!hasTerminal)', async () => {
+    const { setAiMemorySetupOverrideForTest, setGlobalAiMemoryService, getActiveAiMemorySession, getPendingScopeReservation, clearActiveAiMemorySessions } =
+      await import('../src/main/ai-memory-launcher')
+    clearActiveAiMemorySessions()
+
+    const service = {
+      status: vi.fn(() => ({
+        state: 'running' as const,
+        owned: true,
+        binaryPath: 'C:\\bin\\ai-memory.exe',
+      })),
+      health: vi.fn(async () => ({ ok: true })),
+      resolveScope: vi.fn(async () => ({
+        workspace: 'devorbit',
+        project: 'p-immediate',
+        identity: 'id-immediate',
+        root: 'C:\\workspace',
+        source: 'path' as const,
+      })),
+      ensureProjectMarker: vi.fn(async () => ({
+        configured: true,
+        status: 'unchanged' as const,
+        path: 'C:\\workspace\\.ai-memory.toml',
+      })),
+      isProjectEnabled: vi.fn(() => true),
+    }
+    setGlobalAiMemoryService(service as any)
+    setAiMemorySetupOverrideForTest(async () => ({ status: 'already-installed', mcp: 'skipped', hooks: 'skipped' }))
+
+    try {
+      const { deps, starts } = createSpawnDeps({
+        healthProvider: 'opencode',
+        healthPath: 'C:\\cli\\opencode.cmd',
+        hasTerminal: () => false,
+      })
+
+      const spawned = await spawnAgentProviderTerminal(
+        deps,
+        { id: 't-immediate-exit', candidate: 'opencode', model: 'claude-sonnet', tier: 'deep', cols: 120, rows: 32 },
+        config
+      )
+
+      expect(spawned.provider).toBe('opencode')
+      expect(starts).toHaveLength(1)
+      expect(starts[0].command).toBe('C:\\bin\\ai-memory.exe')
+      expect(getActiveAiMemorySession('t-immediate-exit')).toBeUndefined()
+      expect(getPendingScopeReservation('t-immediate-exit')).toBeUndefined()
+    } finally {
+      setGlobalAiMemoryService(null)
+      setAiMemorySetupOverrideForTest(null)
+      clearActiveAiMemorySessions()
+    }
+  })
+
+  it('executa rollback e fallback direto quando startTerminal com wrapper falha no spawn', async () => {
+    const { setAiMemorySetupOverrideForTest, setGlobalAiMemoryService, getActiveAiMemorySession, getPendingScopeReservation, clearActiveAiMemorySessions } =
+      await import('../src/main/ai-memory-launcher')
+    clearActiveAiMemorySessions()
+
+    const service = {
+      status: vi.fn(() => ({
+        state: 'running' as const,
+        owned: true,
+        binaryPath: 'C:\\bin\\ai-memory.exe',
+      })),
+      health: vi.fn(async () => ({ ok: true })),
+      resolveScope: vi.fn(async () => ({
+        workspace: 'devorbit',
+        project: 'p-fail',
+        identity: 'id-fail',
+        root: 'C:\\workspace',
+        source: 'path' as const,
+      })),
+      ensureProjectMarker: vi.fn(async () => ({
+        configured: true,
+        status: 'unchanged' as const,
+        path: 'C:\\workspace\\.ai-memory.toml',
+      })),
+      isProjectEnabled: vi.fn(() => true),
+    }
+    setGlobalAiMemoryService(service as any)
+    setAiMemorySetupOverrideForTest(async () => ({ status: 'already-installed', mcp: 'skipped', hooks: 'skipped' }))
+
+    try {
+      let callCount = 0
+      const starts: Array<{ id: string; command: string; args: string[]; cwd?: string }> = []
+      const deps = {
+        resolveWithFallback: vi.fn(async () => ({
+          path: 'C:\\cli\\opencode.cmd',
+          message: 'ok',
+          provider: 'opencode' as AgentProviderId,
+        })),
+        startTerminal: vi.fn(async (id: string, opts: { command: string; args: string[]; cwd?: string }) => {
+          callCount++
+          starts.push({ id, command: opts.command, args: opts.args, cwd: opts.cwd })
+          if (callCount === 1) {
+            throw new Error('PTY spawn failed: ENOENT')
+          }
+          return { id, pid: 9999 }
+        }),
+        assertLive: vi.fn(),
+      }
+
+      const spawned = await spawnAgentProviderTerminal(
+        deps,
+        { id: 't-spawn-fail', candidate: 'opencode', model: 'claude-sonnet', tier: 'deep', cols: 120, rows: 32 },
+        config
+      )
+
+      expect(spawned.provider).toBe('opencode')
+      expect(starts).toHaveLength(2)
+      expect(starts[0].command).toBe('C:\\bin\\ai-memory.exe')
+      expect(starts[1].command).toContain('cmd')
+      expect(getActiveAiMemorySession('t-spawn-fail')).toBeUndefined()
+      expect(getPendingScopeReservation('t-spawn-fail')).toBeUndefined()
+    } finally {
+      setGlobalAiMemoryService(null)
+      setAiMemorySetupOverrideForTest(null)
+      clearActiveAiMemorySessions()
+    }
   })
 })

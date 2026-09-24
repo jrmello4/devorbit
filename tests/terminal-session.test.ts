@@ -25,7 +25,7 @@ const { spawnMock, childSpawnMock } = vi.hoisted(() => ({
 }))
 
 vi.mock('node-pty', () => ({ spawn: spawnMock }))
-vi.mock('node:child_process', () => ({ spawn: childSpawnMock }))
+vi.mock('node:child_process', () => ({ spawn: childSpawnMock, execFile: vi.fn() }))
 
 interface FakeTerminal {
   pid: number
@@ -272,5 +272,64 @@ describe('terminal-session', () => {
     expect(terminateProcessTree(55, { onFailure })).toBe(false)
     expect(onFailure).toHaveBeenCalledWith({ pid: 55, reason: 'EACCES' })
     expect(JSON.stringify(onFailure.mock.calls)).not.toContain('hunter2')
+  })
+
+  it('stopTerminalAsync encerra o terminal e aguarda bounded a finalização', async () => {
+    const terminal = createFakeTerminal(6001)
+    spawnMock.mockReturnValue(terminal)
+    const { startTerminal, stopTerminalAsync } = await import('../src/main/terminal-session')
+
+    await startTerminal('async-term-1', 'C:\\workspace')
+    const res = await stopTerminalAsync('async-term-1', { timeoutMs: 1000 })
+    expect(res).toBeDefined()
+    expect(terminal.kill).toHaveBeenCalledOnce()
+  })
+
+  it('stopTerminalAsync faz fallback gracioso quando ocorre timeout', async () => {
+    const terminal = createFakeTerminal(6002)
+    spawnMock.mockReturnValue(terminal)
+    const { registerActiveAiMemorySession } = await import('../src/main/ai-memory-launcher')
+    const { startTerminal, stopTerminalAsync } = await import('../src/main/terminal-session')
+
+    registerActiveAiMemorySession({
+      terminalId: 'async-timeout-term',
+      provider: 'agy',
+      harness: 'antigravity',
+      workstream: 'ws-hang',
+      workspace: 'devorbit',
+      project: 'p1',
+      dataDir: 'C:\\data',
+      binaryPath: 'C:\\bin\\ai-memory.exe',
+      sessionId: 'sess-hang',
+      startedAt: Date.now(),
+    })
+
+    await startTerminal('async-timeout-term', 'C:\\workspace')
+    const res = await stopTerminalAsync('async-timeout-term', { timeoutMs: 30 })
+    expect(res.finalized).toBe(false)
+    expect(res.message).toContain('Timeout')
+  })
+
+  it('stopAllTerminalsAsync encerra múltiplos terminais, limpa pipes e aguarda finalizações de forma bounded', async () => {
+    const term1 = createFakeTerminal(7001)
+    const term2 = createFakeTerminal(7002)
+    spawnMock.mockReturnValueOnce(term1).mockReturnValueOnce(term2)
+    const { startTerminal, stopAllTerminalsAsync, hasTerminal } = await import('../src/main/terminal-session')
+    const pipes = await import('../src/main/pty-pipe')
+
+    await startTerminal('term-a', 'C:\\workspace')
+    await startTerminal('term-b', 'C:\\workspace')
+    expect(hasTerminal('term-a')).toBe(true)
+    expect(hasTerminal('term-b')).toBe(true)
+
+    pipes.setPipe('term-a', 'term-b')
+    expect(pipes.listPipes()).toEqual([{ from: 'term-a', to: 'term-b' }])
+
+    const outcome = await stopAllTerminalsAsync({ timeoutMs: 2000 })
+    expect(outcome.stopped).toBe(2)
+    expect(outcome.completed).toBe(true)
+    expect(hasTerminal('term-a')).toBe(false)
+    expect(hasTerminal('term-b')).toBe(false)
+    expect(pipes.listPipes()).toEqual([])
   })
 })

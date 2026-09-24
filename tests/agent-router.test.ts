@@ -233,22 +233,24 @@ describe('resolveProviderInvocation', () => {
 
   it('forwards the flag through the Windows .cmd wrapper', () => {
     // No Windows os CLIs resolvem para .cmd: a flag tem que atravessar o
-    // `call`, senão o modelo nunca chega ao processo real.
+    // `call`, senão o modelo nunca chega ao processo real. `call` e o caminho
+    // são args SEPARADOS — num arg único, o node-pty escapa as aspas como \"
+    // e o cmd não acha o shim.
     const invocation = resolveProviderInvocation('opencode', 'C:\\cli\\opencode.cmd', 'gpt-4o-mini', 'fast', undefined, {})
     expect(invocation.command).toContain('cmd')
-    expect(invocation.args).toEqual(['/d', '/q', '/k', 'call "C:\\cli\\opencode.cmd" --model gpt-4o-mini'])
+    expect(invocation.args).toEqual(['/d', '/q', '/k', 'call', 'C:\\cli\\opencode.cmd', '--model', 'gpt-4o-mini'])
     expect(invocation.env.DEVORBIT_MODEL).toBe('gpt-4o-mini')
   })
 
   it('forwards --model flag to agy script wrapping', () => {
     const invocation = resolveProviderInvocation('agy', 'C:\\cli\\agy.cmd', 'x-model', 'fast', undefined, {})
-    expect(invocation.args).toEqual(['/d', '/q', '/k', 'call "C:\\cli\\agy.cmd" --model x-model'])
+    expect(invocation.args).toEqual(['/d', '/q', '/k', 'call', 'C:\\cli\\agy.cmd', '--model', 'x-model'])
     expect(invocation.env.DEVORBIT_MODEL).toBe('x-model')
   })
 
   it('keeps script wrapping env-only without a documented flag for custom CLIs', () => {
     const invocation = resolveProviderInvocation('custom', 'C:\\cli\\custom.cmd', 'x-model', 'fast', undefined, {})
-    expect(invocation.args).toEqual(['/d', '/q', '/k', 'call "C:\\cli\\custom.cmd"'])
+    expect(invocation.args).toEqual(['/d', '/q', '/k', 'call', 'C:\\cli\\custom.cmd'])
     expect(invocation.env.DEVORBIT_MODEL).toBe('x-model')
   })
 
