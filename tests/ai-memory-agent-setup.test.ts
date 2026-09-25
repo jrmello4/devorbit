@@ -256,13 +256,15 @@ describe('ai-memory agent setup — comandos e contrato v2.4.0 (Gemini CLI)', ()
   })
 })
 
-describe('setup por provider — matriz v2.4.0 (MCP+hooks vs MCP-only)', () => {
-  it('codex/claude/command-code/antigravity: install-mcp --client <c> --apply + install-hooks --agent <a> --apply --capture-mode allowlist', async () => {
+describe('setup por provider — matriz v2.4.0 (MCP + hooks)', () => {
+  it('codex/claude/command-code/antigravity/opencode/opencode2: install-mcp --client <c> --apply + install-hooks --agent <a> --apply --capture-mode allowlist', async () => {
     for (const [provider, client, agent] of [
       ['codex', 'codex', 'codex'],
       ['claude', 'claude-code', 'claude-code'],
       ['command-code', 'command-code', 'command-code'],
       ['agy', 'antigravity-cli', 'antigravity-cli'],
+      ['opencode', 'opencode', 'opencode'],
+      ['opencode2', 'opencode2', 'opencode2'],
     ] as const) {
       const { runner, calls } = createRunner()
       const memory = createMemoryFs()
@@ -288,10 +290,10 @@ describe('setup por provider — matriz v2.4.0 (MCP+hooks vs MCP-only)', () => {
     }
   })
 
-  it('opencode/opencode2: SOMENTE remote MCP + plugin (nenhum install-hooks)', async () => {
-    for (const [provider, client] of [
-      ['opencode', 'opencode'],
-      ['opencode2', 'opencode2'],
+  it('opencode/opencode2: executa ambos subprocessos (mcp + hooks allowlist) e grava receipt com agent', async () => {
+    for (const [provider, client, agent] of [
+      ['opencode', 'opencode', 'opencode'],
+      ['opencode2', 'opencode2', 'opencode2'],
     ] as const) {
       const { runner, calls } = createRunner()
       const memory = createMemoryFs()
@@ -299,10 +301,34 @@ describe('setup por provider — matriz v2.4.0 (MCP+hooks vs MCP-only)', () => {
         baseRequest({ provider, dataDir: 'C:\\data\\ai-memory' }),
         { userDataDir: USER_DATA, runCli: runner, fileSystem: memory.fs }
       )
-      expect(result).toMatchObject({ status: 'installed', mcp: 'installed', hooks: 'skipped' })
+      expect(result).toMatchObject({
+        status: 'installed',
+        mcp: 'installed',
+        hooks: 'installed',
+      })
       expect(calls.map((call) => call.args)).toEqual([
         ['--data-dir', 'C:\\data\\ai-memory', 'install-mcp', '--client', client, '--apply'],
+        [
+          '--data-dir',
+          'C:\\data\\ai-memory',
+          'install-hooks',
+          '--agent',
+          agent,
+          '--apply',
+          '--capture-mode',
+          'allowlist',
+        ],
       ])
+      const receiptPath = agentSetupReceiptPath(USER_DATA, { provider, identity: IDENTITY, client })
+      const rawReceipt = memory.files.get(receiptKey(receiptPath))
+      expect(rawReceipt).toBeDefined()
+      const parsed = JSON.parse(rawReceipt!)
+      expect(parsed).toMatchObject({
+        version: 1,
+        provider,
+        client,
+        agent,
+      })
     }
   })
 
@@ -379,7 +405,7 @@ describe('setup por provider — matriz v2.4.0 (MCP+hooks vs MCP-only)', () => {
       const deps = { userDataDir: USER_DATA, runCli: runner, fileSystem: memory.fs }
       await setupAgentIntegrations(baseRequest({ provider }), deps)
       const afterFirst = calls.length
-      expect(afterFirst).toBe(provider === 'opencode' || provider === 'opencode2' ? 1 : 2)
+      expect(afterFirst).toBe(2)
       const second = await setupAgentIntegrations(baseRequest({ provider }), deps)
       expect(second.status).toBe('already-installed')
       expect(calls).toHaveLength(afterFirst)
@@ -409,8 +435,8 @@ describe('setup por provider — matriz v2.4.0 (MCP+hooks vs MCP-only)', () => {
     expect(buildInstallHooksArgs('codex', 'D:\\d')).toEqual(['--data-dir', 'D:\\d', 'install-hooks', '--agent', 'codex', '--apply', '--capture-mode', 'allowlist'])
     expect(buildInstallMcpArgs('claude')).toEqual(['install-mcp', '--client', 'claude-code', '--apply'])
     expect(buildInstallHooksArgs('cmdc')).toEqual(['install-hooks', '--agent', 'command-code', '--apply', '--capture-mode', 'allowlist'])
-    expect(buildInstallHooksArgs('opencode')).toBeNull()
-    expect(buildInstallHooksArgs('opencode2')).toBeNull()
+    expect(buildInstallHooksArgs('opencode')).toEqual(['install-hooks', '--agent', 'opencode', '--apply', '--capture-mode', 'allowlist'])
+    expect(buildInstallHooksArgs('opencode2')).toEqual(['install-hooks', '--agent', 'opencode2', '--apply', '--capture-mode', 'allowlist'])
     expect(buildInstallMcpArgs('opencode2')).toEqual(['install-mcp', '--client', 'opencode2', '--apply'])
     expect(buildInstallMcpArgs('aider')).toEqual(['install-mcp', '--client', 'gemini-cli', '--apply'])
   })

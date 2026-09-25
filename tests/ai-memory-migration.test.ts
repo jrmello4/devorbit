@@ -68,12 +68,14 @@ function createMockClient(options: {
         pages.set(pagePath, String(args.body))
         return { text: 'ok', isError: false }
       }
-      // memory_read_page
+      // memory_read_page — envelope real v2.4.0: text=json+json object
       const pagePath = String(args.path)
       if (options.failReadOnPath === pagePath || !pages.has(pagePath)) {
         return { text: '', isError: true }
       }
-      return { text: pages.get(pagePath) ?? '', isError: false }
+      const stored = pages.get(pagePath) ?? ''
+      const envelope = { path: pagePath, body: stored }
+      return { text: JSON.stringify(envelope), json: envelope, isError: false }
     },
   }
   return { client, writes, pages }
@@ -259,6 +261,30 @@ describe("migração legacy → ai-memory (FASE 3)", () => {
     expect(outcomeRead.status).toBe('failed')
     expect(outcomeRead.message).toContain('Read-back')
     expect(await isLegacyWriterReadOnly(userDataDir, 'fail-read')).toBe(false)
+  })
+
+  it('read-back sem json.body (formato antigo text-only) falha explicitamente', async () => {
+    const { writes } = createMockClient()
+    // Override o mock para retornar APENAS text (formato antigo, sem json.body).
+    const textOnlyClient: MigrationMemoryClient = {
+      callTool: async (name, args) => {
+        if (name === 'memory_write_page') {
+          writes.push({ ...args } as never)
+          return { text: 'ok', isError: false }
+        }
+        // Formato antigo: só text, sem json
+        return { text: JSON.stringify({ path: args.path, body: 'conteúdo antigo' }), isError: false }
+      },
+    }
+    const outcome = await runLegacyMigration({
+      userDataDir,
+      identity: 'old-format',
+      target: { scope: { workspace: 'w', project: 'p' }, client: textOnlyClient },
+      markdown: 'conteúdo',
+    })
+    expect(outcome.status).toBe('failed')
+    expect(outcome.message).toContain('Read-back')
+    expect(await loadMigrationReceipt(userDataDir, 'old-format')).toBeUndefined()
   })
 
   it("sem conteúdo legado → skipped-empty, sem receipt", async () => {

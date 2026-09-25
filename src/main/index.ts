@@ -203,6 +203,7 @@ async function initializeAiMemoryService(): Promise<AiMemoryService> {
     userDataDir: path.join(app.getPath('userData'), 'ai-memory'),
     resourcesPath: process.resourcesPath,
     config,
+    getAppVersion: () => app.getVersion(),
   })
   // O launcher e a IPC usam a mesma instância gerenciada no processo principal.
   setGlobalAiMemoryService(aiMemoryService)

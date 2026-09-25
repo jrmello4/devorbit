@@ -147,10 +147,10 @@ export interface AiMemoryLauncherDeps {
     deps: AiMemoryAgentSetupDeps
   ) => Promise<AiMemoryAgentSetupResult>
   /**
-   * Setup NATIVO por provider (v2.4.0: MCP + hooks onde a matriz diz hooks;
-   * OpenCode/OpenCode2 = remote MCP + plugin). Complementar ao `ai-memory run`
-   * (que é opt-in de continuidade, NÃO substituto). Injetável; falha → fallback
-   * direto degradado ('setup-failed'), nunca bloqueia o workspace.
+   * Setup NATIVO por provider (v2.4.0: MCP + hooks, inclusive para OpenCode e
+   * OpenCode 2). Complementar ao `ai-memory run` (que opera continuidade e
+   * workstreams, NÃO substituto). Injetável; falha → fallback direto
+   * degradado ('setup-failed'), nunca bloqueia o workspace.
    */
   setupAgent?: (
     request: AiMemoryAgentSetupRequest,
@@ -516,11 +516,11 @@ export async function prepareAiMemoryLaunch(
       return fallbackPlan(context, 'preparation-failed')
     }
 
-    // Setup NATIVO complementar (v2.4.0): `ai-memory run` é opt-in de
-    // continuidade/resume e NÃO substitui a integração (MCP + hooks onde a
-    // matriz diz hooks; OpenCode/OpenCode2 = remote MCP + plugin). Roda APÓS o
-    // opt-in (isProjectEnabled acima) e com capture-mode allowlist garantido;
-    // é idempotente por receipt (provider/identidade/conta-Codex). Falha →
+    // Setup NATIVO complementar (v2.4.0): `ai-memory run` é complementar para
+    // continuidade e workstreams, NÃO substitui a integração (MCP + hooks,
+    // inclusive para OpenCode e OpenCode 2). Roda APÓS o opt-in
+    // (isProjectEnabled acima) e com capture-mode allowlist garantido; é
+    // idempotente por receipt (provider/identidade/conta-Codex). Falha →
     // fallback direto degradado (fail-open), sem receipt de sucesso e sem
     // bloquear o workspace.
     const setupAgent = deps.setupAgent ?? aiMemorySetupOverride ?? setupAgentIntegrations

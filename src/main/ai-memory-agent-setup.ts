@@ -83,8 +83,7 @@ export interface AiMemoryAgentSetupResult {
 /**
  * Integração oficial v2.4.0 por provider (docs/support-matrix.md + cli.rs):
  * `client` = valor de `install-mcp --client`; `agent` = valor de
- * `install-hooks --agent` — `null` quando a integração é MCP-only
- * (família OpenCode: remote MCP + plugin; hooks NÃO são forçados).
+ * `install-hooks --agent`.
  */
 export interface AiMemorySetupFamily {
   client: string
@@ -96,7 +95,7 @@ export interface AiMemorySetupFamily {
  * cli.rs v2.4.0 — tests `*_mcp_and_hook_aliases_parse`): codex → `codex`;
  * claude → `claude-code`; command-code → `command-code` (commandcode/cmdc/cmd);
  * antigravity → `antigravity-cli` (antigravity/agy); gemini → `gemini-cli`;
- * opencode → `opencode` e opencode2 → `opencode2` (MCP-only). Aider/custom
+ * opencode → `opencode`; opencode2 → `opencode2`. Aider/custom
  * não são comprovados upstream → fora do mapa (setup `unsupported`).
  */
 export const AI_MEMORY_SETUP_FAMILIES: Readonly<Record<string, AiMemorySetupFamily>> = {
@@ -109,8 +108,8 @@ export const AI_MEMORY_SETUP_FAMILIES: Readonly<Record<string, AiMemorySetupFami
   'antigravity-cli': { client: 'antigravity-cli', agent: 'antigravity-cli' },
   'command-code': { client: 'command-code', agent: 'command-code' },
   cmdc: { client: 'command-code', agent: 'command-code' },
-  opencode: { client: 'opencode', agent: null },
-  opencode2: { client: 'opencode2', agent: null },
+  opencode: { client: 'opencode', agent: 'opencode' },
+  opencode2: { client: 'opencode2', agent: 'opencode2' },
 }
 
 export function resolveAiMemorySetupFamily(provider: string): AiMemorySetupFamily | null {
@@ -168,8 +167,7 @@ export function buildInstallMcpArgs(provider: string, dataDir?: string): string[
  * Args exatos de `install-hooks --agent <agent> --apply --capture-mode
  * allowlist` por provider. A flag é aceita pelo CLI v2.4.0 (CaptureModeArg em
  * `install-hooks`, persistida no data dir) e fixa a política em allowlist.
- * Família MCP-only (OpenCode) NÃO tem comando de hooks → `null` = nada a
- * instalar (a matriz official usa remote MCP + plugin).
+ * Caso family.agent seja `null`, retorna `null` = nada a instalar.
  */
 export function buildInstallHooksArgs(provider: string, dataDir?: string): string[] | null {
   const family = resolveAiMemorySetupFamily(provider)
@@ -351,15 +349,19 @@ function installedMessage(provider: string, family: AiMemorySetupFamily): string
           ? 'Claude Code'
           : provider === 'agy' || provider === 'antigravity' || provider === 'antigravity-cli'
             ? 'Antigravity CLI'
-            : 'Command Code CLI'
+            : provider === 'opencode'
+              ? 'OpenCode CLI'
+              : provider === 'opencode2'
+                ? 'OpenCode 2 CLI'
+                : 'Command Code CLI'
   return `${label} configurado (MCP + hooks allowlist; configuração do usuário preservada pelo upstream --apply).`
 }
 
 /**
- * Setup idempotente da integração nativa por provider (v2.4.0): MCP (+ hooks
- * quando a família é MCP+hooks; família OpenCode = MCP-only). Complementar ao
- * `ai-memory run`. Nunca lança; `unsupported` para providers sem prova
- * upstream; falha → `degraded` sem receipt (fail-open do chamador).
+ * Setup idempotente da integração nativa por provider (v2.4.0): MCP + hooks
+ * (allowlist). Complementar ao `ai-memory run`. Nunca lança; `unsupported` para
+ * providers sem prova upstream; falha → `degraded` sem receipt (fail-open do
+ * chamador).
  */
 export async function setupAgentIntegrations(
   request: AiMemoryAgentSetupRequest,

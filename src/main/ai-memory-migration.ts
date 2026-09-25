@@ -591,13 +591,17 @@ async function writeAndConfirm(
     if (result.isError) {
       return { paths, hashes, message: `Falha ao escrever ${pagePath} no ai-memory.` }
     }
-    // Read-back: só conta como migrado o que o servidor confirma.
+    // Read-back: extrai body do envelope JSON; exatidão, não substring.
     const readBack = await target.client.callTool(AI_MEMORY_MCP_TOOLS.readPage, {
       workspace,
       project,
       path: pagePath,
     })
-    if (readBack.isError || !readBack.text.includes(body.slice(0, 64))) {
+    const readBody =
+      readBack.json && typeof readBack.json === 'object'
+        ? (readBack.json as { body?: unknown }).body
+        : undefined
+    if (readBack.isError || typeof readBody !== 'string' || readBody !== body) {
       return { paths, hashes, message: `Read-back falhou para ${pagePath}.` }
     }
     paths.push(pagePath)

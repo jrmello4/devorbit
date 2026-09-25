@@ -194,6 +194,8 @@ export interface AiMemoryServiceOptions {
   downloadTimeoutMs?: number
   /** Contenção do sidecar próprio (Job Object Windows); injetável em teste. */
   containment?: AiMemoryJobContainment
+  /** Função para obter a versão do app em runtime (injetável para teste; default = Electron app.getVersion). */
+  getAppVersion?: () => string
 }
 
 export interface AiMemoryEnsureMarkerResult {
@@ -288,6 +290,7 @@ class AiMemoryServiceController implements AiMemoryService {
   private readonly sleep: (ms: number) => Promise<void>
   private readonly healthTimeoutMs: number
   private readonly healthIntervalMs: number
+  private readonly getAppVersion?: () => string
 
   private state: AiMemoryServiceState = 'unavailable'
   private owned = false
@@ -331,6 +334,7 @@ class AiMemoryServiceController implements AiMemoryService {
     this.sleep = options.sleep ?? defaultSleep
     this.healthTimeoutMs = options.healthTimeoutMs ?? 20_000
     this.healthIntervalMs = options.healthIntervalMs ?? 250
+    this.getAppVersion = options.getAppVersion
   }
 
   private abortInFlight(): void {
@@ -492,6 +496,7 @@ class AiMemoryServiceController implements AiMemoryService {
     return new AiMemoryClient({
       endpoint: this.endpoint,
       ...(this.fetchImpl ? { fetchImpl: this.fetchImpl } : {}),
+      appVersion: this.getAppVersion?.() ?? 'unknown',
     })
   }
 

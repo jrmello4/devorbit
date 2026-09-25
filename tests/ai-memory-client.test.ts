@@ -216,6 +216,17 @@ describe('AiMemoryClient — MCP Streamable HTTP', () => {
     expect((await client.health()).ok).toBe(true)
   })
 
+  it('initialize envia clientInfo com appVersion dinâmico e protocolVersion fixado', async () => {
+    const { fetchImpl, calls } = createFetch(() => initializeResponse())
+    const client = new AiMemoryClient({ endpoint: 'http://x/mcp', fetchImpl, appVersion: '1.0.43' })
+    await client.initialize()
+    expect(calls).toHaveLength(1)
+    const payload = JSON.parse(calls[0].body)
+    expect(payload.method).toBe('initialize')
+    expect(payload.params.protocolVersion).toBe('2025-06-18')
+    expect(payload.params.clientInfo).toEqual({ name: 'devorbit', version: '1.0.43' })
+  })
+
   it('não confunde outro servidor MCP com ai-memory', async () => {
     const { fetchImpl } = createFetch(() => initializeResponse('outro-mcp', '9.9.9'))
     const client = new AiMemoryClient({ endpoint: 'http://x/mcp', fetchImpl })

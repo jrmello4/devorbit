@@ -184,6 +184,7 @@ export interface AiMemoryClientOptions {
   fetchImpl?: typeof fetch
   timeoutMs?: number
   idFactory?: () => number
+  appVersion?: string
 }
 
 /**
@@ -195,6 +196,7 @@ export class AiMemoryClient {
   private readonly fetchImpl: typeof fetch | undefined
   private readonly timeoutMs: number
   private readonly idFactory: () => number
+  private readonly appVersion: string
 
   constructor(options: AiMemoryClientOptions) {
     this.endpoint = options.endpoint
@@ -202,6 +204,7 @@ export class AiMemoryClient {
     this.timeoutMs = options.timeoutMs ?? 5_000
     let sequence = 0
     this.idFactory = options.idFactory ?? (() => ++sequence)
+    this.appVersion = options.appVersion ?? 'unknown'
   }
 
   request(method: string, params?: unknown): Promise<unknown> {
@@ -212,11 +215,11 @@ export class AiMemoryClient {
     })
   }
 
-  initialize(): Promise<unknown> {
+  async initialize(): Promise<unknown> {
     return this.request('initialize', {
       protocolVersion: '2025-06-18',
       capabilities: {},
-      clientInfo: { name: 'devorbit', version: '1.0.41' },
+      clientInfo: { name: 'devorbit', version: this.appVersion },
     })
   }
 
