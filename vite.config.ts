@@ -19,10 +19,12 @@ export default defineConfig({
               external: [
                 'electron',
                 'electron-updater',
+                'koffi',
                 'node:child_process',
                 'node-pty',
                 'node:fs',
                 'node:fs/promises',
+                'node:module',
                 'node:path',
                 'node:os',
                 'node:url',

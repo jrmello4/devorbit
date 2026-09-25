@@ -2,11 +2,25 @@ import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import {
-  createAiMemoryService,
+  createAiMemoryService as createAiMemoryServiceBase,
   type AiMemoryChildHandle,
   type AiMemoryChildSpawner,
   type AiMemoryProcessRunner,
+  type AiMemoryService,
+  type AiMemoryServiceOptions,
 } from '../src/main/ai-memory-service'
+
+/** Containment fake: esta suíte nunca abre processos reais (FFI só no job.test). */
+function createAiMemoryService(options: AiMemoryServiceOptions): AiMemoryService {
+  return createAiMemoryServiceBase({
+    containment: {
+      contain: () => undefined,
+      release: () => undefined,
+      status: () => ({ platform: process.platform, supported: process.platform === 'win32', active: false }),
+    },
+    ...options,
+  })
+}
 import { AiMemoryError, AiMemoryClient } from '../src/main/ai-memory-client'
 import { resolveAiMemoryScope, type AiMemoryFileSystem } from '../src/main/ai-memory-scope'
 import type { AiMemoryConfig } from '../src/shared/ai-memory-contract'

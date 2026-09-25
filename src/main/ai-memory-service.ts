@@ -28,6 +28,10 @@ import {
 } from './ai-memory-client'
 import { buildAiMemoryHelperEnv } from './ai-memory-process-env'
 import {
+  createAiMemoryJobContainment,
+  type AiMemoryJobContainment,
+} from './ai-memory-job'
+import {
   detectGitCommonDir,
   detectGitTopLevel,
   detectRemoteUrl,
@@ -68,11 +72,11 @@ export type AiMemoryProcessRunner = (
 /**
  * Spawner padrão do processo filho do sidecar ai-memory.
  *
- * Limitação residual (P2 #5): no Windows, o encerramento gracioso via before-quit
- * chama child.kill(). Encerramentos abruptos (crash do DevOrbit ou SIGKILL) podem
- * deixar o processo filho órfão, pois o Node.js não vincula subprocessos a um
- * Windows Job Object com JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE sem add-ons nativos.
- * Na reinicialização seguinte, o DevOrbit detecta a porta e adota como external.
+ * No Windows, o child PRÓPRIO é associado a um Job Object com
+ * JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE (ver ai-memory-job.ts): crash/kill do
+ * DevOrbit não deixa órfão. Se a FFI/Assign falhar, o fluxo é fail-open e a
+ * limitação aparece no status; em Mac/Linux nada muda. Serviço externo/adotado
+ * nunca é associado nem encerrado.
  */
 const defaultChildSpawner: AiMemoryChildSpawner = (command, args, options) => {
   const child = spawn(command, [...args], {
@@ -188,6 +192,8 @@ export interface AiMemoryServiceOptions {
   healthIntervalMs?: number
   /** Timeout para download do artefato zip (default = 60_000ms). */
   downloadTimeoutMs?: number
+  /** Contenção do sidecar próprio (Job Object Windows); injetável em teste. */
+  containment?: AiMemoryJobContainment
 }
 
 export interface AiMemoryEnsureMarkerResult {
@@ -253,6 +259,7 @@ function isProjectNotYetCreatedError(
 
 class AiMemoryServiceController implements AiMemoryService {
   private readonly userDataDir: string
+  private readonly containment: AiMemoryJobContainment
   private readonly resourcesPath: string | undefined
   private readonly platform: NodeJS.Platform
   private readonly arch: NodeJS.Architecture
@@ -297,6 +304,7 @@ class AiMemoryServiceController implements AiMemoryService {
 
   constructor(options: AiMemoryServiceOptions) {
     this.userDataDir = options.userDataDir
+    this.containment = options.containment ?? createAiMemoryJobContainment()
     this.resourcesPath = options.resourcesPath
     this.platform = options.platform ?? process.platform
     this.arch = options.arch ?? process.arch
@@ -414,13 +422,13 @@ class AiMemoryServiceController implements AiMemoryService {
       if (verification) {
         this.conflict = verification.conflict
         this.state = 'degraded'
-        this.message = verification.message + conflictNote
+        this.message = this.withContainmentNote(verification.message + conflictNote)
       } else {
         this.conflict = false
         this.state = 'running'
         this.message =
           (this.owned
-            ? 'ai-memory em execução (processo próprio do DevOrbit).'
+            ? this.withContainmentNote('ai-memory em execução (processo próprio do DevOrbit).')
             : 'Serviço ai-memory externo detectado; o DevOrbit não o controla.') + conflictNote
       }
       return this.status()
@@ -433,11 +441,15 @@ class AiMemoryServiceController implements AiMemoryService {
     // Invalida qualquer start em voo antes de derrubar o filho.
     this.lifecycleGeneration += 1
     this.abortInFlight()
-    this.stopOwnChild()
-    this.conflict = false
-    this.lastIncompatibleCandidate = undefined
-    this.state = 'unavailable'
-    this.message = 'Serviço ai-memory parado.'
+    try {
+      this.stopOwnChild()
+    } finally {
+      // Mesmo se kill() lançar, o status não pode ficar stale como running/owned.
+      this.conflict = false
+      this.lastIncompatibleCandidate = undefined
+      this.state = 'unavailable'
+      this.message = 'Serviço ai-memory parado.'
+    }
   }
 
   async dispose(): Promise<void> {
@@ -463,14 +475,16 @@ class AiMemoryServiceController implements AiMemoryService {
         this.conflict = false
         this.state = 'running'
         this.message = this.owned
-          ? 'ai-memory em execução (processo próprio do DevOrbit).'
+          ? this.withContainmentNote('ai-memory em execução (processo próprio do DevOrbit).')
           : 'Serviço ai-memory externo detectado; o DevOrbit não o controla.'
       }
       return { ok: true }
     }
     this.conflict = false
     this.state = 'degraded'
-    this.message = `ai-memory sem resposta em ${this.endpoint}: ${result.message ?? 'endpoint indisponível'}. O workspace continua funcionando; a memória compartilhada está indisponível.`
+    this.message = this.withContainmentNote(
+      `ai-memory sem resposta em ${this.endpoint}: ${result.message ?? 'endpoint indisponível'}. O workspace continua funcionando; a memória compartilhada está indisponível.`
+    )
     return { ok: false, message: this.message }
   }
 
@@ -703,7 +717,11 @@ class AiMemoryServiceController implements AiMemoryService {
       this.binaryPath = binary
       await this.fileSystem.mkdir(this.dataDir, { recursive: true })
       if (this.isStale(generation)) return this.status()
+      const spawnedAtMs = this.now()
       const child = this.spawnChild(binary)
+      // Contenção Windows-only do sidecar PRÓPRIO (serviço externo nunca passa
+      // por aqui): job por child com KILL_ON_JOB_CLOSE; falha é fail-open.
+      this.containOwnedChild(child, binary, spawnedAtMs)
       const healthy = await this.waitForHealth(generation)
       if (this.isStale(generation)) {
         // stop() durante o start: encerra SOMENTE o filho deste start.
@@ -713,7 +731,7 @@ class AiMemoryServiceController implements AiMemoryService {
       if (!healthy) {
         this.stopOwnChild()
         this.state = 'degraded'
-        this.message = 'Binário validado, mas o ai-memory não respondeu no prazo.'
+        this.message = this.withContainmentNote('Binário validado, mas o ai-memory não respondeu no prazo.')
         return this.status()
       }
 
@@ -727,14 +745,14 @@ class AiMemoryServiceController implements AiMemoryService {
       } else {
         this.owned = true
         this.state = 'running'
-        this.message = 'ai-memory em execução (processo próprio do DevOrbit).'
+        this.message = this.withContainmentNote('ai-memory em execução (processo próprio do DevOrbit).')
       }
 
       const verification = await this.verifyEnabledScopes()
       if (verification) {
         this.conflict = verification.conflict
         this.state = 'degraded'
-        this.message = verification.message
+        this.message = this.owned ? this.withContainmentNote(verification.message) : verification.message
       }
       return this.status()
     } catch (error) {
@@ -754,7 +772,30 @@ class AiMemoryServiceController implements AiMemoryService {
     const child = this.child
     this.child = undefined
     this.owned = false
-    if (child) child.kill()
+    try {
+      if (child) child.kill()
+    } finally {
+      // Fecha o handle do Job Object do sidecar (KILL_ON_JOB_CLOSE) mesmo se
+      // kill() lançar; a rejeição do kill é propagada ao caller. Nunca afeta
+      // serviço externo/adotado: o job só existe se um child PRÓPRIO foi
+      // associado.
+      this.containment.release()
+    }
+  }
+
+  /** Associa APENAS o child que o DevOrbit spawnou; falha nunca lança. */
+  private containOwnedChild(child: AiMemoryChildHandle, imagePath: string, spawnedAtMs: number): void {
+    if (this.child !== child) return
+    try {
+      this.containment.contain(child.pid ?? Number.NaN, { imagePath, spawnedAtMs })
+    } catch {
+      // Fail-open: sidecar segue sem contenção; limitação é reportada no status.
+    }
+  }
+
+  private withContainmentNote(message: string): string {
+    const limitation = this.containment.status().limitation
+    return limitation ? `${message} Contenção de processo indisponível: ${limitation}` : message
   }
 
   private spawnChild(binary: string): AiMemoryChildHandle {
@@ -770,12 +811,15 @@ class AiMemoryServiceController implements AiMemoryService {
     const handle = this.childSpawner(binary, args, { windowsHide: true })
     this.child = handle
     handle.onExit?.(() => {
+      // Geração antiga: nunca toca no job de um child novo.
       if (this.child !== handle) return
       this.child = undefined
+      // Libera o job EXATAMENTE uma vez, só para este handle; idempotente.
+      this.containment.release()
       if (this.owned && this.state === 'running') {
         this.owned = false
         this.state = 'degraded'
-        this.message = 'O processo ai-memory encerrou inesperadamente.'
+        this.message = this.withContainmentNote('O processo ai-memory encerrou inesperadamente.')
       }
     })
     return handle

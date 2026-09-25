@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, type Mock } from 'vitest'
 import {
   buildExpandArchiveInvocation,
   createAiMemoryService as createAiMemoryServiceBase,
@@ -16,6 +16,13 @@ function createAiMemoryService(options: AiMemoryServiceOptions): AiMemoryService
   return createAiMemoryServiceBase({
     platform: 'win32',
     arch: 'x64',
+    // Nenhum teste desta suíte pode abrir processos reais: a FFI real fica
+    // restrita ao teste de kernel explícito em tests/ai-memory-job.test.ts.
+    containment: {
+      contain: () => undefined,
+      release: () => undefined,
+      status: () => ({ platform: 'win32', supported: true, active: false }),
+    },
     ...options,
   })
 }
@@ -25,6 +32,7 @@ import {
   type AiMemoryFileSystem,
 } from '../src/main/ai-memory-scope'
 import { AI_MEMORY_MARKER_MANAGED_HEADER, type AiMemoryConfig } from '../src/shared/ai-memory-contract'
+import type { AiMemoryJobContainment, AiMemoryJobProcessIdentity } from '../src/main/ai-memory-job'
 
 const PROJECT_PATH = path.join(os.tmpdir(), 'devorbit-ai-memory-proj')
 const REPO_ROOT = path.join(os.tmpdir(), 'devorbit-ai-memory-repo')
@@ -1628,5 +1636,352 @@ describe('ai-memory-service — resiliência sidecar, lifecycle e discovery (P1/
     expect(retryStatus.state).toBe('degraded')
     expect(retryStatus.message).not.toContain('1.0.0')
     expect(retryStatus.message).toContain('Binário ai-memory compatível não encontrado')
+  })
+})
+
+describe('ai-memory service — contenção Job Object do sidecar próprio', () => {
+  function fakeContainment(limitation?: string): AiMemoryJobContainment & {
+    contain: Mock<(pid: number, identity?: AiMemoryJobProcessIdentity) => void>
+    release: Mock<() => void>
+  } {
+    const contain = vi.fn<(pid: number, identity?: AiMemoryJobProcessIdentity) => void>()
+    const release = vi.fn<() => void>()
+    return {
+      contain,
+      release,
+      status: () => ({
+        platform: 'win32' as NodeJS.Platform,
+        supported: true,
+        active: contain.mock.calls.length > 0,
+        ...(limitation !== undefined ? { limitation } : {}),
+      }),
+    }
+  }
+
+  it('associa SOMENTE o child próprio (pid do spawner) e libera o job no stop', async () => {
+    let spawned = false
+    const harness = createChildSpawner()
+    const containment = fakeContainment()
+    const service = createAiMemoryService({
+      userDataDir: USER_DATA,
+      config: enabledConfig(),
+      fileSystem: createMemoryFs(seededBinary()).fs,
+      fetchImpl: fetchStatefulScoped(() => spawned),
+      processRunner: createRunner(),
+      childSpawner: (command, args, options) => {
+        spawned = true
+        return harness.spawner(command, args, options)
+      },
+      containment,
+      sleep: async () => undefined,
+    })
+
+    const status = await service.start()
+    expect(status).toMatchObject({ state: 'running', owned: true })
+    expect(containment.contain).toHaveBeenCalledTimes(1)
+    expect(containment.contain).toHaveBeenCalledWith(
+      4242,
+      expect.objectContaining({
+        imagePath: path.join(USER_DATA, 'runtime', 'ai-memory.exe'),
+        spawnedAtMs: expect.any(Number),
+      })
+    )
+    expect(status.message).not.toContain('Contenção de processo indisponível')
+    expect(containment.release).not.toHaveBeenCalled()
+
+    await service.stop()
+    expect(containment.release).toHaveBeenCalledTimes(1)
+    expect(harness.kill).toHaveBeenCalledTimes(1)
+  })
+
+  it('serviço externo/adotado NUNCA é associado nem encerrado', async () => {
+    const harness = createChildSpawner()
+    const containment = fakeContainment()
+    const service = createAiMemoryService({
+      userDataDir: USER_DATA,
+      config: enabledConfig(),
+      fileSystem: createMemoryFs(seededBinary()).fs,
+      fetchImpl: fetchScopedOk(),
+      processRunner: createRunner(),
+      childSpawner: harness.spawner,
+      containment,
+      sleep: async () => undefined,
+    })
+
+    const status = await service.start()
+    expect(status).toMatchObject({ state: 'running', owned: false })
+    expect(harness.calls).toHaveLength(0)
+    expect(containment.contain).not.toHaveBeenCalled()
+
+    await service.stop()
+    expect(harness.kill).not.toHaveBeenCalled()
+  })
+
+  it('falha da contenção é fail-open: serviço sobe e a limitação aparece no status', async () => {
+    let spawned = false
+    const harness = createChildSpawner()
+    const containment = fakeContainment('Job Object indisponível: koffi ausente no asar')
+    const service = createAiMemoryService({
+      userDataDir: USER_DATA,
+      config: enabledConfig(),
+      fileSystem: createMemoryFs(seededBinary()).fs,
+      fetchImpl: fetchStatefulScoped(() => spawned),
+      processRunner: createRunner(),
+      childSpawner: (command, args, options) => {
+        spawned = true
+        return harness.spawner(command, args, options)
+      },
+      containment,
+      sleep: async () => undefined,
+    })
+
+    const status = await service.start()
+    expect(status).toMatchObject({ state: 'running', owned: true, version: '2.4.0' })
+    expect(status.message).toContain('Contenção de processo indisponível')
+    expect(status.message).toContain('koffi ausente no asar')
+    await service.stop()
+    expect(containment.release).toHaveBeenCalledTimes(1)
+  })
+
+  it('child sem pid não impede o start e reporta limitação', async () => {
+    let spawned = false
+    const containment = fakeContainment('processo do sidecar sem pid válido; contenção Job Object indisponível.')
+    const service = createAiMemoryService({
+      userDataDir: USER_DATA,
+      config: enabledConfig(),
+      fileSystem: createMemoryFs(seededBinary()).fs,
+      fetchImpl: fetchStatefulScoped(() => spawned),
+      processRunner: createRunner(),
+      childSpawner: () => {
+        spawned = true
+        return { kill: vi.fn() }
+      },
+      containment,
+      sleep: async () => undefined,
+    })
+
+    const status = await service.start()
+    expect(status).toMatchObject({ state: 'running', owned: true })
+    expect(containment.contain).toHaveBeenCalledWith(Number.NaN, expect.objectContaining({ spawnedAtMs: expect.any(Number) }))
+    expect(status.message).toContain('Contenção de processo indisponível')
+  })
+
+  it('exit do child libera o job EXATAMENTE uma vez (listener repetido é no-op)', async () => {
+    let spawned = false
+    const listeners: Array<(code: number | null) => void> = []
+    const containment = fakeContainment()
+    const service = createAiMemoryService({
+      userDataDir: USER_DATA,
+      config: enabledConfig(),
+      fileSystem: createMemoryFs(seededBinary()).fs,
+      fetchImpl: fetchStatefulScoped(() => spawned),
+      processRunner: createRunner(),
+      childSpawner: () => {
+        spawned = true
+        return { pid: 777, kill: vi.fn(), onExit: (listener) => listeners.push(listener) }
+      },
+      containment,
+      sleep: async () => undefined,
+    })
+
+    await service.start()
+    expect(containment.contain).toHaveBeenCalledTimes(1)
+    expect(containment.release).not.toHaveBeenCalled()
+
+    listeners[0](0)
+    expect(containment.release).toHaveBeenCalledTimes(1)
+    listeners[0](0)
+    expect(containment.release).toHaveBeenCalledTimes(1)
+  })
+
+  it('callback de geração antiga NÃO libera o job do child novo', async () => {
+    let serverUp = false
+    let spawnIndex = 0
+    const listeners: Array<(code: number | null) => void> = []
+    const pids = [111, 222]
+    const containment = fakeContainment()
+    const service = createAiMemoryService({
+      userDataDir: USER_DATA,
+      config: enabledConfig(),
+      fileSystem: createMemoryFs(seededBinary()).fs,
+      fetchImpl: fetchStatefulScoped(() => serverUp),
+      processRunner: createRunner(),
+      childSpawner: () => {
+        serverUp = true
+        const pid = pids[spawnIndex++]
+        return { pid, kill: vi.fn(), onExit: (listener) => listeners.push(listener) }
+      },
+      containment,
+      sleep: async () => undefined,
+    })
+
+    await service.start()
+    expect(containment.contain).toHaveBeenLastCalledWith(111, expect.objectContaining({ spawnedAtMs: expect.any(Number) }))
+    await service.stop()
+    expect(containment.release).toHaveBeenCalledTimes(1)
+
+    serverUp = false
+    await service.start()
+    expect(containment.contain).toHaveBeenLastCalledWith(222, expect.objectContaining({ spawnedAtMs: expect.any(Number) }))
+
+    const releasesAfterRestart = containment.release.mock.calls.length
+    listeners[0](0)
+    expect(containment.release.mock.calls.length).toBe(releasesAfterRestart)
+  })
+
+  function switchableFetch(
+    state: { spawned: boolean; mode: 'ok' | 'fail' | 'alien' }
+  ): typeof fetch {
+    const scope = enabledScope()
+    return (async (_url: unknown, init?: { body?: unknown }) => {
+      const body = JSON.parse(String(init?.body ?? '{}')) as { method?: string }
+      if (!state.spawned) throw new Error('recusado')
+      if (state.mode === 'fail') throw new Error('recusado')
+      if (body.method === 'initialize') return initializeOk()
+      return state.mode === 'alien'
+        ? scopedStatus('alien-ws', 'alien-proj')
+        : scopedStatus(scope.workspace, scope.project)
+    }) as unknown as typeof fetch
+  }
+
+  it('reconfigure mantém a limitação da FFI no status (running)', async () => {
+    const state = { spawned: false, mode: 'ok' as const }
+    const containment = fakeContainment('Job Object indisponível: koffi ausente no asar')
+    const service = createAiMemoryService({
+      userDataDir: USER_DATA,
+      config: enabledConfig(),
+      fileSystem: createMemoryFs(seededBinary()).fs,
+      fetchImpl: switchableFetch(state),
+      processRunner: createRunner(),
+      childSpawner: (command, args, options) => {
+        state.spawned = true
+        return createChildSpawner().spawner(command, args, options)
+      },
+      containment,
+      sleep: async () => undefined,
+    })
+
+    const status = await service.start()
+    expect(status).toMatchObject({ state: 'running', owned: true })
+    const reconfigured = await service.reconfigure(enabledConfig())
+    expect(reconfigured.state).toBe('running')
+    expect(reconfigured.message).toContain('Contenção de processo indisponível')
+    expect(reconfigured.message).toContain('koffi ausente no asar')
+    await service.stop()
+  })
+
+  it('health degradado e recuperação preservam a limitação', async () => {
+    const state: { spawned: boolean; mode: 'ok' | 'fail' | 'alien' } = { spawned: false, mode: 'ok' }
+    const containment = fakeContainment('Job Object indisponível: loader falhou')
+    const service = createAiMemoryService({
+      userDataDir: USER_DATA,
+      config: enabledConfig(),
+      fileSystem: createMemoryFs(seededBinary()).fs,
+      fetchImpl: switchableFetch(state),
+      processRunner: createRunner(),
+      childSpawner: (command, args, options) => {
+        state.spawned = true
+        return createChildSpawner().spawner(command, args, options)
+      },
+      containment,
+      sleep: async () => undefined,
+    })
+
+    await service.start()
+    state.mode = 'fail'
+    const degraded = await service.health()
+    expect(degraded.ok).toBe(false)
+    expect(degraded.message).toContain('Contenção de processo indisponível')
+    expect(service.status().message).toContain('Contenção de processo indisponível')
+
+    state.mode = 'ok'
+    const recovered = await service.health()
+    expect(recovered.ok).toBe(true)
+    expect(service.status().state).toBe('running')
+    expect(service.status().message).toContain('em execução')
+    expect(service.status().message).toContain('Contenção de processo indisponível')
+    await service.stop()
+  })
+
+  it('verifyEnabledScopes degradado mantém a limitação no status', async () => {
+    const state: { spawned: boolean; mode: 'ok' | 'fail' | 'alien' } = { spawned: false, mode: 'alien' }
+    const containment = fakeContainment('Job Object indisponível: koffi bloqueado')
+    const service = createAiMemoryService({
+      userDataDir: USER_DATA,
+      config: enabledConfig(),
+      fileSystem: createMemoryFs(seededBinary()).fs,
+      fetchImpl: switchableFetch(state),
+      processRunner: createRunner(),
+      childSpawner: (command, args, options) => {
+        state.spawned = true
+        return createChildSpawner().spawner(command, args, options)
+      },
+      containment,
+      sleep: async () => undefined,
+    })
+
+    const status = await service.start()
+    expect(status.state).toBe('degraded')
+    expect(status.message).toContain('Contenção de processo indisponível')
+    expect(status.message).toContain('koffi bloqueado')
+    await service.stop()
+  })
+
+  it('kill que lança rejeita o stop sem vazar o Job Object, com status coerente', async () => {
+    let spawned = false
+    const kill = vi.fn(() => {
+      throw new Error('kill boom')
+    })
+    const containment = fakeContainment()
+    const service = createAiMemoryService({
+      userDataDir: USER_DATA,
+      config: enabledConfig(),
+      fileSystem: createMemoryFs(seededBinary()).fs,
+      fetchImpl: fetchStatefulScoped(() => spawned),
+      processRunner: createRunner(),
+      childSpawner: () => {
+        spawned = true
+        return { pid: 555, kill, onExit: () => undefined }
+      },
+      containment,
+      sleep: async () => undefined,
+    })
+
+    await service.start()
+    expect(containment.contain).toHaveBeenCalledTimes(1)
+    expect(containment.release).not.toHaveBeenCalled()
+
+    await expect(service.stop()).rejects.toThrow('kill boom')
+    expect(kill).toHaveBeenCalledTimes(1)
+    expect(containment.release).toHaveBeenCalledTimes(1)
+    const status = service.status()
+    expect(status).toMatchObject({ state: 'unavailable', owned: false })
+    expect(status.message).toBe('Serviço ai-memory parado.')
+  })
+
+  it('exit inesperado do child preserva a limitação no status degradado', async () => {
+    let spawned = false
+    const listeners: Array<(code: number | null) => void> = []
+    const containment = fakeContainment('Job Object indisponível: sem FFI')
+    const service = createAiMemoryService({
+      userDataDir: USER_DATA,
+      config: enabledConfig(),
+      fileSystem: createMemoryFs(seededBinary()).fs,
+      fetchImpl: fetchStatefulScoped(() => spawned),
+      processRunner: createRunner(),
+      childSpawner: () => {
+        spawned = true
+        return { pid: 999, kill: vi.fn(), onExit: (listener) => listeners.push(listener) }
+      },
+      containment,
+      sleep: async () => undefined,
+    })
+
+    await service.start()
+    listeners[0](1)
+    const status = service.status()
+    expect(status.state).toBe('degraded')
+    expect(status.message).toContain('encerrou inesperadamente')
+    expect(status.message).toContain('Contenção de processo indisponível')
   })
 })

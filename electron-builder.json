@@ -5,7 +5,9 @@
   "asar": true,
   "npmRebuild": false,
   "asarUnpack": [
-    "node_modules/node-pty/**/*"
+    "node_modules/node-pty/**/*",
+    "node_modules/koffi/**/*",
+    "node_modules/@koromix/koffi-win32-x64/**/*"
   ],
   "electronUpdaterCompatibility": ">=2.16",
   "publish": {
