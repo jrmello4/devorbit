@@ -203,6 +203,9 @@ jobs:
           $hasSecrets = -not [string]::IsNullOrWhiteSpace($env:CSC_LINK) -and -not [string]::IsNullOrWhiteSpace($env:CSC_KEY_PASSWORD) -and -not [string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_THUMBPRINT)
           "signing=$($hasSecrets.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
+      - name: Preparar ai-usagebar pinado (download verificado por SHA-256)
+        run: node scripts/prepare-ai-usagebar.cjs
+
       - name: Production build
         run: npm run build
 
@@ -235,7 +238,10 @@ jobs:
             "release/DevOrbit-$version-x64.exe",
             "release/DevOrbit-$version-portable.exe",
             "release/latest.yml",
-            "release/latest-portable.yml"
+            "release/latest-portable.yml",
+            "release/win-unpacked/resources/ai-usagebar/ai-usagebar.exe",
+            "release/win-unpacked/resources/ai-usagebar/LICENSE-ai-usagebar.txt",
+            "release/win-unpacked/resources/ai-usagebar/ATTRIBUTION-ai-usagebar.txt"
           )
           $missing = @($expected | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) })
           if ($missing.Count -gt 0) {

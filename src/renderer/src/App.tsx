@@ -4,7 +4,8 @@ import { ProjectGrid } from './components/ProjectGrid'
 import { ProjectCard } from './components/ProjectCard'
 import { SettingsModal } from './components/SettingsModal'
 import { CodexAuthModal } from './components/CodexAuthModal'
-import { UsageBar } from './components/UsageBar'
+import { AiUsagebarProviderPanel } from './components/AiUsagebarProviderPanel'
+import { UsageSharePanel } from './components/UsageSharePanel'
 import { AiMemoryModal } from './components/AiMemoryModal'
 import { GitDock, type GitDockTab } from './components/GitDock'
 import { CommandPalette } from './components/CommandPalette'
@@ -24,13 +25,14 @@ import type {
   OtherDir,
   AppConfig,
   CodexAccountStatus,
-  RealUsageState,
   SyncResult,
   UpdateState,
   HitlRequestView,
 } from './types'
 import { CheckCircle2, AlertCircle, Info, X, FolderKanban, ChartNoAxesCombined, ShieldCheck, Settings, ArrowRightLeft, GitPullRequest, PanelLeftClose, PanelLeftOpen, Wrench, LayoutDashboard, RefreshCw, Orbit } from 'lucide-react'
 import { resolveRestorableProjectId } from './components/workspace-restore'
+import type { AiUsagebarApiKeyChange, AiUsagebarProviderChange, AiUsagebarSnapshot } from '../../shared/ai-usagebar-contract'
+import type { AiUsagebarIpcResult } from '../../shared/ai-usagebar-ipc-contract'
 
 const IntegratedWorkspace = React.lazy(() => import('./components/IntegratedWorkspace').then((module) => ({ default: module.IntegratedWorkspace })))
 
@@ -55,7 +57,10 @@ export const App: React.FC = () => {
   const [config, setConfig] = useState<AppConfig | null>(null)
   const [authStatus, setAuthStatus] = useState<CodexAccountStatus | null>(null)
   const [authModalAccount, setAuthModalAccount] = useState<'account1' | 'account2' | null>(null)
-  const [realUsage, setRealUsage] = useState<RealUsageState | null>(null)
+  const [aiUsagebarSnapshot, setAiUsagebarSnapshot] = useState<AiUsagebarSnapshot | null>(null)
+  const [isAiUsagebarLoading, setIsAiUsagebarLoading] = useState(true)
+  const [isAiUsagebarRefreshing, setIsAiUsagebarRefreshing] = useState(false)
+  const [isAiUsagebarDetecting, setIsAiUsagebarDetecting] = useState(false)
   const [activeMemoryProject, setActiveMemoryProject] = useState<Project | null>(null)
   const [gitDockProject, setGitDockProject] = useState<Project | null>(null)
   const [gitDockTab, setGitDockTab] = useState<GitDockTab>('push')
@@ -125,7 +130,6 @@ export const App: React.FC = () => {
   }, [])
   const [isToolHealthOpen, setIsToolHealthOpen] = useState(false)
   const [isSwitchingAccount, setIsSwitchingAccount] = useState(false)
-  const [isRefreshingRealUsage, setIsRefreshingRealUsage] = useState(false)
   const [updateState, setUpdateState] = useState<UpdateState | null>(null)
   const [isUpdateDismissed, setIsUpdateDismissed] = useState(false)
   const accountSwitchInFlightRef = useRef(false)
@@ -326,8 +330,9 @@ export const App: React.FC = () => {
   const loadRealUsage = useCallback(async (force = false): Promise<boolean> => {
     try {
       if (window.devorbit) {
-        const usage = await window.devorbit.getRealUsage(force)
-        setRealUsage(usage)
+        // Shadow-read only during staged migration; usage and the new sidecar
+        // are serialized in main because both may rotate the Codex refresh token.
+        await window.devorbit.getRealUsage(force)
         return true
       }
     } catch (err: any) {
@@ -335,6 +340,56 @@ export const App: React.FC = () => {
     }
     return false
   }, [])
+
+  const applyAiUsagebarResult = useCallback((result: AiUsagebarIpcResult<AiUsagebarSnapshot>): boolean => {
+    if (result.ok) {
+      setAiUsagebarSnapshot(result.data)
+      return true
+    }
+    setAiUsagebarSnapshot((current) => ({
+      state: current?.report ? 'degraded' : result.reason === 'unavailable' ? 'unavailable' : 'error',
+      vendors: current?.vendors || [],
+      ...(current?.report ? { report: current.report } : {}),
+      ...(current?.version ? { version: current.version } : {}),
+      ...(current?.fetchedAt ? { fetchedAt: current.fetchedAt } : {}),
+      stale: Boolean(current?.report),
+      message: result.message,
+    }))
+    return false
+  }, [])
+
+  const refreshAiUsagebar = useCallback(async (): Promise<boolean> => {
+    setIsAiUsagebarRefreshing(true)
+    try {
+      if (!window.devorbit?.aiUsagebarRefresh) {
+        setAiUsagebarSnapshot({
+          state: 'unavailable',
+          vendors: [],
+          stale: false,
+          message: 'A integração de quotas do provedor não está disponível.',
+        })
+        return false
+      }
+      return applyAiUsagebarResult(await window.devorbit.aiUsagebarRefresh())
+    } catch {
+      applyAiUsagebarResult({ ok: false, reason: 'unavailable', message: 'O serviço de quotas não está disponível.' })
+      return false
+    } finally {
+      setIsAiUsagebarLoading(false)
+      setIsAiUsagebarRefreshing(false)
+    }
+  }, [applyAiUsagebarResult])
+
+  const loadAiUsagebar = useCallback(async () => {
+    try {
+      if (window.devorbit?.aiUsagebarSnapshot) {
+        applyAiUsagebarResult(await window.devorbit.aiUsagebarSnapshot())
+      }
+    } catch {
+      // A consulta consolidada abaixo resolve indisponibilidade e estado em cache.
+    }
+    await refreshAiUsagebar()
+  }, [applyAiUsagebarResult, refreshAiUsagebar])
 
   const applyProjects = useCallback((nextProjects: Project[]) => {
     setProjects(nextProjects)
@@ -388,20 +443,27 @@ export const App: React.FC = () => {
     if (!isLoading && !bootstrapError) void loadRealUsage()
   }, [bootstrapError, isLoading, loadRealUsage])
 
+  useEffect(() => {
+    if (!isLoading && !bootstrapError) void loadAiUsagebar()
+  }, [bootstrapError, isLoading, loadAiUsagebar])
+
   // Refresh projects on demand
   const handleRefresh = async () => {
     setIsRefreshing(true)
     try {
       if (window.devorbit) {
-        const [refreshed, refreshedOtherDirs, authLoaded, realUsageLoaded] = await Promise.all([
+        const [refreshed, refreshedOtherDirs, authLoaded] = await Promise.all([
           window.devorbit.refreshProjects(),
           window.devorbit.getOtherDirs(),
           loadAuthStatus(),
-          loadRealUsage(true),
         ])
+        // Quotas stay in the background; a slow provider cannot hold the
+        // project/workspace refresh spinner open.
+        void loadRealUsage(true)
+        void refreshAiUsagebar()
         applyProjects(refreshed)
         setOtherDirs(refreshedOtherDirs)
-        const allDataLoaded = authLoaded && realUsageLoaded
+        const allDataLoaded = authLoaded
         notify(
           allDataLoaded
             ? 'Lista de projetos atualizada!'
@@ -446,23 +508,72 @@ export const App: React.FC = () => {
   // for an immediate check.
   useEffect(() => {
     const timer = window.setInterval(() => {
-      if (!document.hidden) void loadRealUsage(true)
+      if (!document.hidden) {
+        void refreshAiUsagebar()
+        void loadRealUsage(true)
+      }
     }, 5 * 60_000)
     return () => window.clearInterval(timer)
-  }, [loadRealUsage])
+  }, [loadRealUsage, refreshAiUsagebar])
 
-  const handleRefreshRealUsage = async () => {
-    setIsRefreshingRealUsage(true)
+  const detectAiUsagebarProviders = useCallback(async () => {
+    setIsAiUsagebarDetecting(true)
     try {
-      const loaded = await loadRealUsage(true)
-      notify(
-        loaded ? 'Uso real do Codex atualizado.' : 'Não foi possível atualizar o uso real do Codex.',
-        loaded ? 'success' : 'error'
-      )
+      const result = await window.devorbit.aiUsagebarDetect()
+      if (!result.ok) {
+        notify(result.message, 'error')
+        return
+      }
+      await refreshAiUsagebar()
+      notify(`Detecção concluída: ${result.data.enabled.length} provider(s) habilitado(s).`, 'success')
+    } catch {
+      notify('Não foi possível detectar providers locais.', 'error')
     } finally {
-      setIsRefreshingRealUsage(false)
+      setIsAiUsagebarDetecting(false)
     }
-  }
+  }, [notify, refreshAiUsagebar])
+
+  const toggleAiUsagebarProvider = useCallback(async (change: AiUsagebarProviderChange) => {
+    try {
+      const result = await window.devorbit.aiUsagebarSetProvider(change)
+      if (!applyAiUsagebarResult(result)) {
+        if (!result.ok) notify(result.message, 'error')
+        return
+      }
+      await refreshAiUsagebar()
+    } catch {
+      notify('Não foi possível atualizar a configuração do provider.', 'error')
+    }
+  }, [applyAiUsagebarResult, notify, refreshAiUsagebar])
+
+  const submitAiUsagebarApiKey = useCallback(async (change: AiUsagebarApiKeyChange) => {
+    try {
+      const result = await window.devorbit.aiUsagebarSetApiKey(change)
+      if (!applyAiUsagebarResult(result)) {
+        if (!result.ok) notify(result.message, 'error')
+        return
+      }
+      // O main já devolve o snapshot pós-refresh ao salvar a chave: nada de
+      // disparar um segundo `usage` só para atualizar a UI.
+      notify('Chave armazenada de forma segura.', 'success')
+    } catch {
+      notify('Não foi possível armazenar a chave do provider.', 'error')
+    }
+  }, [applyAiUsagebarResult, notify])
+
+  const removeAiUsagebarApiKey = useCallback(async (vendorId: string) => {
+    try {
+      const result = await window.devorbit.aiUsagebarRemoveApiKey({ vendorId })
+      if (!applyAiUsagebarResult(result)) {
+        if (!result.ok) notify(result.message, 'error')
+        return
+      }
+// Idem: o snapshot devolvido pelo IPC já reflete a remoção.
+      notify('Chave removida.', 'success')
+    } catch {
+      notify('Não foi possível remover a chave do provider.', 'error')
+    }
+  }, [applyAiUsagebarResult, notify])
 
   // Sincronizar um repositório
   const handleSyncProject = async (projectPath: string) => {
@@ -1060,14 +1171,22 @@ export const App: React.FC = () => {
         </div>
       </div>
       <div className="view-panel" hidden={workspaceView !== 'usage'}>
-      <UsageBar
-        config={config}
-        onSwitchAccount={handleToggleAccount}
-        isSwitchingAccount={isSwitchingAccount}
-        realUsage={realUsage}
-        onRefreshRealUsage={handleRefreshRealUsage}
-        isRefreshingRealUsage={isRefreshingRealUsage}
-      />
+        <div className="usage-panel usage-scroll">
+          <div className="usage-shell">
+            <AiUsagebarProviderPanel
+              snapshot={aiUsagebarSnapshot}
+              loading={isAiUsagebarLoading}
+              refreshing={isAiUsagebarRefreshing}
+              detecting={isAiUsagebarDetecting}
+              onRefresh={async () => { await refreshAiUsagebar() }}
+              onDetect={detectAiUsagebarProviders}
+              onToggleProvider={toggleAiUsagebarProvider}
+              onSubmitApiKey={submitAiUsagebarApiKey}
+              onRemoveApiKey={removeAiUsagebarApiKey}
+            />
+            <UsageSharePanel showQuotaSnapshots={false} />
+          </div>
+        </div>
 
       </div>
       <div className="view-panel" hidden={workspaceView !== 'audit'}>

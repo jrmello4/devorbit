@@ -1202,7 +1202,7 @@ async function inspectProjectInteractions(window, viewport) {
   recordPass(viewport.label, 'multiple projects use workspace tabs with inactive sessions suspended')
 
   await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Contas e uso', `${viewport.label} usage navigation from workspace`)
-  await waitFor(window, `document.querySelector('.view-panel:not([hidden])')?.innerText.includes('Quotas do provedor')`, `${viewport.label} usage navigation from workspace`)
+  await waitFor(window, `Boolean(document.querySelector('.view-panel:not([hidden]) .ai-usagebar-panel'))`, `${viewport.label} usage navigation from workspace`)
   await clickButtonByText(window, (node) => (node.getAttribute('title') || '').startsWith('Ambiente integrado de '), `${viewport.label} workspace restore`)
   await waitFor(window, `Boolean(document.querySelector('.integrated-workspace') && document.querySelector('.integrated-workspace-view:not([hidden])'))`, `${viewport.label} workspace restore`)
   recordPass(viewport.label, 'workspace remains mounted while switching sections')
@@ -1297,16 +1297,20 @@ async function inspectProjectInteractions(window, viewport) {
 
 async function inspectUsage(window, viewport) {
   await clickButtonByText(window, (node) => node.getAttribute('aria-label') === 'Contas e uso', `${viewport.label} usage navigation`)
-  await waitFor(window, `document.body.innerText.includes('Quotas do provedor') && document.querySelectorAll('[role="progressbar"]').length >= 2`, `${viewport.label} usage view`)
-  const usage = await evaluate(window, `(() => ({
-    hiddenProjects: document.querySelector('.view-panel[hidden]')?.innerText.includes('Projetos') || false,
-    realUsage: document.body.innerText.includes('Quotas do provedor'),
-    progressbars: document.querySelectorAll('[role="progressbar"]').length,
-    connected: (document.querySelector('.sidebar-account')?.textContent || '').includes('Codex conectado'),
-  }))()`)
-  assert(usage.realUsage && usage.progressbars >= 2, `${viewport.label}: usage view incompleta (${JSON.stringify(usage)})`)
+  await waitFor(window, `Boolean(document.querySelector('.view-panel:not([hidden]) .ai-usagebar-panel'))`, `${viewport.label} usage view`)
+  const usage = await evaluate(window, `(() => {
+    const panel = document.querySelector('.view-panel:not([hidden]) .ai-usagebar-panel')
+    return {
+      hiddenProjects: document.querySelector('.view-panel[hidden]')?.innerText.includes('Projetos') || false,
+      hasUsagePanel: Boolean(panel),
+      hasTitle: Boolean(panel?.querySelector('.ai-usagebar-title')),
+      hasActions: Boolean(panel?.querySelector('button[aria-label="Atualizar quotas de uso"]')),
+      connected: (document.querySelector('.sidebar-account')?.textContent || '').includes('Codex conectado'),
+    }
+  })()`)
+  assert(usage.hasUsagePanel && usage.hasTitle && usage.hasActions, `${viewport.label}: usage view incompleta (${JSON.stringify(usage)})`)
   assert(usage.connected, `${viewport.label}: auth fixture não aparece no workspace`)
-  recordPass(viewport.label, `usage view visible with ${usage.progressbars} progress bars and auth status`)
+  recordPass(viewport.label, 'usage view visible with ai-usagebar provider panel and auth status')
   await screenshot(window, `desktop-${viewport.label}-usage`)
 }
 

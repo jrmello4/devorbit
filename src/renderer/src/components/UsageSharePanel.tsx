@@ -39,9 +39,9 @@ const formatGeneratedAt = (generatedAt: string): string | null => {
   return new Date(time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
 }
 
-/** Janela vazia: nenhum evento (turno, token ou quota) em nenhuma janela. */
-const hasAnyEvent = (state: UsageShareState) =>
-  state.quota.length > 0 ||
+/** Janela vazia: nenhum evento (turno, token ou quota visível) em nenhuma janela. */
+const hasAnyEvent = (state: UsageShareState, includeQuotaSnapshots: boolean) =>
+  (includeQuotaSnapshots && state.quota.length > 0) ||
   Object.values(state.windows).some(
     (entry) => entry.models.length > 0 || entry.totalTokens > 0 || entry.totalTurns > 0,
   )
@@ -145,11 +145,14 @@ const renderQuotaCard = (snapshot: UsageQuotaSnapshotView, now: number) => {
 export interface UsageSharePanelProps {
   initialState?: UsageShareState | null
   initialLoading?: boolean
+  /** Mantém Uso local isolado das quotas agora mostradas pelo catálogo dinâmico. */
+  showQuotaSnapshots?: boolean
 }
 
 export const UsageSharePanel: React.FC<UsageSharePanelProps> = ({
   initialState = null,
   initialLoading,
+  showQuotaSnapshots = true,
 }) => {
   const [state, setState] = useState<UsageShareState | null>(initialState)
   const [isLoading, setIsLoading] = useState(initialLoading ?? !initialState)
@@ -201,7 +204,7 @@ export const UsageSharePanel: React.FC<UsageSharePanelProps> = ({
 
   const activeShareWindow = state?.windows[selectedWindow]
   const rows = activeShareWindow ? computeUsageRows(activeShareWindow) : []
-  const isEmpty = state ? !hasAnyEvent(state) : false
+  const isEmpty = state ? !hasAnyEvent(state, showQuotaSnapshots) : false
   const adaptersSummary = state ? summarizeAdapters(state.adapters) : ''
   const generatedLabel = state ? formatGeneratedAt(state.generatedAt) : null
 
@@ -253,7 +256,7 @@ export const UsageSharePanel: React.FC<UsageSharePanelProps> = ({
             <p className="usage-share-note">Sem registros nesta janela.</p>
           )}
 
-          {state.quota.length > 0 && (
+          {showQuotaSnapshots && state.quota.length > 0 && (
             <div className="usage-share-quota">
               <h3>Quota por conta</h3>
               <div className="usage-share-quota-grid">

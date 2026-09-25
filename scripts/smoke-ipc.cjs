@@ -156,6 +156,12 @@ const EXPECTED_METHODS = [
   'getProjectStatus',
   'aiMemoryTakeover',
   'aiMemoryPublishSquadState',
+  'aiUsagebarSnapshot',
+  'aiUsagebarRefresh',
+  'aiUsagebarDetect',
+  'aiUsagebarSetProvider',
+  'aiUsagebarSetApiKey',
+  'aiUsagebarRemoveApiKey',
 ]
 
 const checks = []

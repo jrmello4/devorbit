@@ -21,3 +21,6 @@ artifacts/ui/
 
 # Local agent tool state
 /.commandcode/
+
+# AI usagebar pinned binary prepared before packaging (downloaded, verified)
+/build/ai-usagebar/

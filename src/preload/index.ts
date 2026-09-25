@@ -24,6 +24,11 @@ import type { LlmCompletionRequestView, LlmRouteView } from '../shared/llm-contr
 import type { EvolutionRecord } from '../shared/evolution-history'
 import type { TextSearchRequest, TextSearchResult } from '../shared/text-search-contract'
 import type { ContinuityEvent, OrchestrationState } from '../shared/orchestration-continuity'
+import {
+  AI_USAGEBAR_IPC_CHANNELS,
+  type AiUsagebarApiKeyRequest,
+  type AiUsagebarProviderChangeRequest,
+} from '../shared/ai-usagebar-ipc-contract'
 
 const invoke = <T>(channel: IpcInvokeChannel, ...args: unknown[]): Promise<T> =>
   ipcRenderer.invoke(channel, ...args) as Promise<T>
@@ -218,6 +223,12 @@ const api: DevOrbitAPI = {
   getProjectStatus: (request) => invoke('devorbit:aiMemoryProjectStatus', request),
   aiMemoryTakeover: (request) => invoke('devorbit:aiMemoryTakeover', request),
   aiMemoryPublishSquadState: (request) => invoke('devorbit:aiMemoryPublishSquadState', request),
+  aiUsagebarSnapshot: () => invoke(AI_USAGEBAR_IPC_CHANNELS.snapshot),
+  aiUsagebarRefresh: () => invoke(AI_USAGEBAR_IPC_CHANNELS.refresh),
+  aiUsagebarDetect: () => invoke(AI_USAGEBAR_IPC_CHANNELS.detect),
+  aiUsagebarSetProvider: (request: AiUsagebarProviderChangeRequest) => invoke(AI_USAGEBAR_IPC_CHANNELS.setProvider, request),
+  aiUsagebarSetApiKey: (request: AiUsagebarApiKeyRequest) => invoke(AI_USAGEBAR_IPC_CHANNELS.setApiKey, request),
+  aiUsagebarRemoveApiKey: (request: { vendorId: string }) => invoke(AI_USAGEBAR_IPC_CHANNELS.removeApiKey, request),
 }
 
 contextBridge.exposeInMainWorld('devorbit', api)

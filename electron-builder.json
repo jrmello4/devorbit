@@ -31,7 +31,8 @@
     { "from": "devorbit.cmd", "to": "devorbit.cmd" },
     { "from": "devorbit-mcp.cmd", "to": "devorbit-mcp.cmd" },
     { "from": "scripts/devorbit-bridge.cjs", "to": "scripts/devorbit-bridge.cjs" },
-    { "from": "scripts/devorbit-mcp.cjs", "to": "scripts/devorbit-mcp.cjs" }
+    { "from": "scripts/devorbit-mcp.cjs", "to": "scripts/devorbit-mcp.cjs" },
+    { "from": "build/ai-usagebar", "to": "ai-usagebar" }
   ],
   "win": {
     "icon": "build/icon.ico",

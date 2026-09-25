@@ -140,6 +140,10 @@ async function main() {
     await fs.access(mainEntry)
     await fs.access(preloadEntry)
     await fs.access(rendererEntry)
+    // Modo seguro de verificação de runtime: impede auto-refresh de cotas,
+    // leitura de credenciais em ~/.codex-conta1/2 e download/spawn do ai-usagebar.
+    process.env.DEVORBIT_VERIFY_UI = '1'
+    process.env.DEVORBIT_VERIFY_RUNTIME = '1'
     await import(pathToFileURL(mainEntry).href)
     await app.whenReady()
 

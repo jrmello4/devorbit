@@ -27,6 +27,15 @@ import type {
   AiMemoryProjectStatusRequest,
   AiMemoryProjectStatusResult,
 } from '../../shared/ai-memory-ipc-contract'
+import type {
+  AiUsagebarDetectReport,
+  AiUsagebarSnapshot,
+} from '../../shared/ai-usagebar-contract'
+import type {
+  AiUsagebarApiKeyRequest,
+  AiUsagebarIpcResult,
+  AiUsagebarProviderChangeRequest,
+} from '../../shared/ai-usagebar-ipc-contract'
 
 export interface TechStack {
   id: string
@@ -383,6 +392,8 @@ export type IpcInvokeChannel =
   | 'devorbit:aiMemoryMigrationStatus' | 'devorbit:aiMemoryProjectStatus'
   | 'devorbit:aiMemoryTakeover'
   | 'devorbit:aiMemoryPublishSquadState'
+  | 'devorbit:aiUsagebarSnapshot' | 'devorbit:aiUsagebarRefresh' | 'devorbit:aiUsagebarDetect'
+  | 'devorbit:aiUsagebarSetProvider' | 'devorbit:aiUsagebarSetApiKey' | 'devorbit:aiUsagebarRemoveApiKey'
 
 export type IpcEventChannel =
   | 'devorbit:syncProgress' | 'devorbit:terminalEvent' | 'devorbit:webEvent'
@@ -742,6 +753,15 @@ export interface DevOrbitAPI {
   aiMemoryTakeover: (request: AiMemoryTakeoverRequest) => Promise<AiMemoryIpcResult<AiMemoryTakeoverPlanView | null>>
   /** Publica snapshot do squad no ai-memory. */
   aiMemoryPublishSquadState: (request: { projectPath: string; snapshot: AiMemorySquadSnapshotView }) => Promise<AiMemoryIpcResult<{ path: string; published: boolean }>>
+  /** Snapshot em cache do catálogo e quotas externas, sem credenciais. */
+  aiUsagebarSnapshot: () => Promise<AiUsagebarIpcResult<AiUsagebarSnapshot>>
+  /** Atualiza a consulta consolidada de quotas. */
+  aiUsagebarRefresh: () => Promise<AiUsagebarIpcResult<AiUsagebarSnapshot>>
+  /** Ação explícita: o comando upstream pode alterar o config.toml. */
+  aiUsagebarDetect: () => Promise<AiUsagebarIpcResult<AiUsagebarDetectReport>>
+  aiUsagebarSetProvider: (request: AiUsagebarProviderChangeRequest) => Promise<AiUsagebarIpcResult<AiUsagebarSnapshot>>
+  aiUsagebarSetApiKey: (request: AiUsagebarApiKeyRequest) => Promise<AiUsagebarIpcResult<AiUsagebarSnapshot>>
+  aiUsagebarRemoveApiKey: (request: Pick<AiUsagebarApiKeyRequest, 'vendorId'>) => Promise<AiUsagebarIpcResult<AiUsagebarSnapshot>>
 }
 
 declare global {

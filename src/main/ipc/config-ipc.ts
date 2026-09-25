@@ -31,6 +31,8 @@ export interface ConfigIpcDependencies {
   /** Alimenta a continuidade com a quota OAuth real do Codex (por conta). */
   onRealUsage?: (usage: RealUsageState) => void
   usage?: UsageQuotaRecorder
+  /** Lock assíncrono compartilhado com ai-usagebar para serializar rotação de tokens. */
+  aiUsagebarLock?: { withLock<T>(fn: () => Promise<T>): Promise<T> }
 }
 
 /**
@@ -203,13 +205,20 @@ export function registerConfigIpc(register: IpcRegistrar, dependencies: ConfigIp
     if (force !== undefined && typeof force !== 'boolean') {
       throw new Error('Opção de atualização de uso inválida.')
     }
-    const usage = await getRealUsage(force === true)
-    try {
-      dependencies.onRealUsage?.(usage)
-    } catch {
-      // A telemetria de continuidade nunca quebra a leitura de uso.
+    const runGetRealUsage = async (): Promise<RealUsageState> => {
+      const usage = await getRealUsage(force === true)
+      try {
+        dependencies.onRealUsage?.(usage)
+      } catch {
+        // A telemetria de continuidade nunca quebra a leitura de uso.
+      }
+      recordCodexQuotaUsage(dependencies.usage, lastRecordedQuotaFetchedAt, usage)
+      return usage
     }
-    recordCodexQuotaUsage(dependencies.usage, lastRecordedQuotaFetchedAt, usage)
-    return usage
+
+    if (dependencies.aiUsagebarLock) {
+      return await dependencies.aiUsagebarLock.withLock(runGetRealUsage)
+    }
+    return await runGetRealUsage()
   })
 }

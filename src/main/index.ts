@@ -1,9 +1,10 @@
 import electron, { type BrowserWindow as BrowserWindowType } from 'electron'
-const { app, BrowserWindow, ipcMain } = electron
+const { app, BrowserWindow, ipcMain, safeStorage } = electron
 if (process.argv.includes('--disable-gpu')) app.disableHardwareAcceleration()
 import path from 'node:path'
 import os from 'node:os'
 import fs from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createResultWaiter } from './agent-turn'
 import {
@@ -32,6 +33,12 @@ import { registerWebIpc } from './ipc/web-ipc'
 import { registerConfigIpc } from './ipc/config-ipc'
 import { registerObservabilityIpc } from './ipc/observability-ipc'
 import { registerWindowIpc } from './ipc/window-ipc'
+import { registerAiUsagebarIpc, type AiUsagebarIpcOperations } from './ipc/ai-usagebar-ipc'
+import { createAiUsagebarService } from './ai-usagebar-service'
+import { resolveAiUsagebarPaths, sanitizeAiUsagebarMessage } from './ai-usagebar-config'
+import { createAiUsagebarAsyncLock, syncAiUsagebarAccounts } from './ai-usagebar-accounts'
+import { createAiUsagebarSecretsStore } from './ai-usagebar-secrets'
+import type { AiUsagebarSnapshot, AiUsagebarVendor } from '../shared/ai-usagebar-contract'
 import { createOtlpExporter, readOtlpOptionsFromEnv } from './telemetry-otlp'
 import type { AgentBridgeEvent } from '../shared/agent-bridge-event'
 import { HITLManager, type HitlRequest } from './hitl'
@@ -527,6 +534,12 @@ onWebPanelEvent((event) => {
   window.webContents.send('devorbit:webEvent', event)
 })
 
+/**
+ * Lock assíncrono compartilhado entre o ai-usagebar (refresh/usage) e o
+ * getRealUsage do Config IPC para serializar rotação concorrente de tokens Codex.
+ */
+const aiUsagebarLock = createAiUsagebarAsyncLock()
+
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -948,6 +961,7 @@ function setupIpcHandlers() {
     usage: {
       recordUsageEvents: (events) => usageStore.recordUsageEvents(events),
     },
+    aiUsagebarLock,
   })
 
   registerObservabilityIpc(registerIpcHandler, {
@@ -961,4 +975,106 @@ function setupIpcHandlers() {
   registerOrchestrationIpc(registerIpcHandler, { service: orchestrationService })
 
   registerWindowIpc(registerIpcListener, { getWindow: () => mainWindow })
+
+  const isSmokeOrVerify = isSmokeRun ||
+    process.argv.includes('--devorbit-smoke') ||
+    process.argv.includes('--devorbit-verify-ui') ||
+    process.argv.includes('--devorbit-verify-runtime') ||
+    process.env.DEVORBIT_VERIFY_UI === '1' ||
+    process.env.DEVORBIT_VERIFY_RUNTIME === '1'
+
+  const bundledAiUsagebarBinaryPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'ai-usagebar', 'ai-usagebar.exe')
+    : path.join(process.env.APP_ROOT || path.resolve(__dirname, '../..'), 'resources', 'ai-usagebar', 'ai-usagebar.exe')
+
+  const unavailableSnapshot: AiUsagebarSnapshot = {
+    state: 'unavailable',
+    message: 'ai-usagebar indisponível em modo smoke/verificação.',
+    vendors: [],
+    stale: false,
+  }
+
+  let aiUsagebarOperations: AiUsagebarIpcOperations
+
+  if (isSmokeOrVerify) {
+    aiUsagebarOperations = {
+      snapshot: async () => unavailableSnapshot,
+      refresh: async () => unavailableSnapshot,
+      detect: async () => ({ enabled: [], known: [], probed: 0 }),
+      setProviderEnabled: async () => unavailableSnapshot,
+      setApiKey: async () => unavailableSnapshot,
+      removeApiKey: async () => unavailableSnapshot,
+    }
+  } else {
+    const aiUsagebarService = createAiUsagebarService({
+      userDataDir: app.getPath('userData'),
+      bundledBinaryPath: bundledAiUsagebarBinaryPath,
+      usageLock: (run) => aiUsagebarLock.withLock(run),
+    })
+
+    const aiUsagebarSecretsStore = createAiUsagebarSecretsStore(
+      { userDataPath: app.getPath('userData') },
+      safeStorage
+    )
+
+    const syncAccountsBeforeRefresh = async (): Promise<void> => {
+      try {
+        const paths = resolveAiUsagebarPaths(app.getPath('userData'))
+        const syncResult = await syncAiUsagebarAccounts({ configPath: paths.configPath })
+        if (syncResult && syncResult.status !== 'ok') {
+          console.warn(`[ai-usagebar] Sincronização de contas Codex reportou status '${syncResult.status}'.`)
+        }
+      } catch {
+        console.warn('[ai-usagebar] Falha ao sincronizar contas Codex antes do refresh.')
+      }
+    }
+
+    const updateSecretsOverlay = async (vendors?: AiUsagebarVendor[]): Promise<void> => {
+      try {
+        const vendorList = vendors ?? (await aiUsagebarService.vendors().catch(() => []))
+        const overlay = await aiUsagebarSecretsStore.getEnvOverlay({ vendors: vendorList })
+        aiUsagebarService.setSecretEnv(overlay)
+      } catch {
+        // Fail-open: limpa overlay para undefined em caso de falha/erro
+        aiUsagebarService.setSecretEnv(undefined)
+      }
+    }
+
+    const refreshWithSync = async (): Promise<AiUsagebarSnapshot> => {
+      await syncAccountsBeforeRefresh()
+      await updateSecretsOverlay()
+      return await aiUsagebarService.refresh()
+    }
+
+    aiUsagebarOperations = {
+      snapshot: async () => aiUsagebarService.snapshot(),
+      refresh: async () => refreshWithSync(),
+      detect: async () => aiUsagebarService.detect({ all: true }),
+      setProviderEnabled: async (vendorId: string, enabled: boolean) => {
+        return await aiUsagebarService.setVendorEnabled(vendorId, enabled)
+      },
+      setApiKey: async (vendorId: string, apiKey: string) => {
+        const vendors = await aiUsagebarService.vendors()
+        const vendor = vendors.find((v) => v.id === vendorId)
+        if (!vendor) {
+          throw new Error(`Provedor desconhecido: ${vendorId}`)
+        }
+        if (!vendor.env) {
+          throw new Error(`Provedor ${vendorId} não aceita chave de API via variável de ambiente.`)
+        }
+        const catalog = { vendors }
+        await aiUsagebarSecretsStore.setSecret(vendorId, vendor.env, apiKey, catalog)
+        const overlay = await aiUsagebarSecretsStore.getEnvOverlay(catalog)
+        aiUsagebarService.setSecretEnv(overlay)
+        return await refreshWithSync()
+      },
+      removeApiKey: async (vendorId: string) => {
+        await aiUsagebarSecretsStore.removeSecret(vendorId)
+        await updateSecretsOverlay()
+        return await refreshWithSync()
+      },
+    }
+  }
+
+  registerAiUsagebarIpc(registerIpcHandler, aiUsagebarOperations)
 }

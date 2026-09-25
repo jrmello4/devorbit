@@ -124,6 +124,12 @@ const expectedApiKeys = [
   'getProjectStatus',
   'aiMemoryTakeover',
   'aiMemoryPublishSquadState',
+  'aiUsagebarSnapshot',
+  'aiUsagebarRefresh',
+  'aiUsagebarDetect',
+  'aiUsagebarSetProvider',
+  'aiUsagebarSetApiKey',
+  'aiUsagebarRemoveApiKey',
 ]
 
 let exposedApiObject: Record<string, (...args: any[]) => unknown>
@@ -229,6 +235,12 @@ describe('preload IPC contract', () => {
       ['devorbit:reportOrchestrationQuota', 'project', 'agent-1', 90],
       ['devorbit:getUsageShare'],
       ['devorbit:refreshUsage'],
+      ['devorbit:aiUsagebarSnapshot'],
+      ['devorbit:aiUsagebarRefresh'],
+      ['devorbit:aiUsagebarDetect'],
+      ['devorbit:aiUsagebarSetProvider', { vendorId: 'future-provider', enabled: true }],
+      ['devorbit:aiUsagebarSetApiKey', { vendorId: 'future-provider', apiKey: 'safe-test-key' }],
+      ['devorbit:aiUsagebarRemoveApiKey', { vendorId: 'future-provider' }],
     ]
 
     const methodNames = [
@@ -246,6 +258,8 @@ describe('preload IPC contract', () => {
       'generateMemoryFromGit', 'getRealUsage', 'getProjectAudit', 'getHitlRequests', 'approveHitl', 'rejectHitl', 'runDiagnostic', 'getTelemetrySpans', 'getHybridMemory', 'rememberHybridMemory', 'searchHybridMemory', 'completeLlm', 'getEvolutionHistory', 'searchProjectText',
       'getOrchestrationState', 'setOrchestrationContinuity', 'upsertOrchestrationSeat', 'removeOrchestrationSeat', 'assignOrchestrationRole', 'reportOrchestrationTurn', 'reportOrchestrationQuota',
       'getUsageShare', 'refreshUsage',
+      'aiUsagebarSnapshot', 'aiUsagebarRefresh', 'aiUsagebarDetect',
+      'aiUsagebarSetProvider', 'aiUsagebarSetApiKey', 'aiUsagebarRemoveApiKey',
     ]
 
     for (const [index, methodName] of methodNames.entries()) await api[methodName](...calls[index].slice(1))

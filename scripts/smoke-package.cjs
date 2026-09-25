@@ -227,6 +227,9 @@ const BRIDGE_RESOURCE_FILES = [
   'devorbit-mcp.cmd',
   path.join('scripts', 'devorbit-bridge.cjs'),
   path.join('scripts', 'devorbit-mcp.cjs'),
+  path.join('ai-usagebar', 'ai-usagebar.exe'),
+  path.join('ai-usagebar', 'LICENSE-ai-usagebar.txt'),
+  path.join('ai-usagebar', 'ATTRIBUTION-ai-usagebar.txt'),
 ]
 
 function runLauncherProbe(command, args, input, timeoutMs = 30_000, windowsVerbatimArguments = false) {
@@ -318,7 +321,7 @@ async function verifyBridgeResources() {
   if (launcher.timedOut || launcher.code !== 0 || !launcher.stdout.includes('DevOrbit MCP')) {
     return { label, ok: false, detail: `launcher fisico devorbit-mcp.cmd nao respondeu initialize (${launcher.timedOut ? 'timeout' : launcher.code})` }
   }
-  return { label, ok: true, detail: '4 arquivos fora do ASAR; initialize OK via mcp.cjs e devorbit-mcp.cmd' }
+  return { label, ok: true, detail: '7 arquivos fora do ASAR (bridge + sidecar); initialize OK via mcp.cjs e devorbit-mcp.cmd' }
 }
 
 function runProcess(exePath, args, timeoutMs) {

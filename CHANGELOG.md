@@ -2,6 +2,23 @@
 
 All notable changes to DevOrbit are documented here.
 
+## [1.0.45] - 2026-09-25
+
+### Added
+
+- Centralized provider quota reporting through the pinned ai-usagebar v1.24.0 CLI, with a dynamic vendor catalog and generic rendering for heterogeneous usage metrics.
+- Provider configuration and Codex account synchronization that preserve existing CODEX_HOME profiles and keep credentials in the main process.
+- Windows packaging for the SHA-256-verified ai-usagebar binary with upstream MIT license and attribution files.
+
+### Changed
+
+- Provider quotas are shown separately from DevOrbit's local token and activity reporting, which remains available in UsageShare.
+- Explicit provider detection refreshes the complete local catalog; startup and smoke/verification paths do not run detection.
+
+### Fixed
+
+- Stabilized the Windows Agent Bridge end-to-end harness by running Electron GPU work in-process.
+
 ## [1.0.44] - 2026-09-25
 
 ### Added
