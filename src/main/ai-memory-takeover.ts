@@ -2,7 +2,7 @@
  * ENTRY POINT de backend do takeover/resync do squad (FASE 3).
  *
  * Consumível por IPC/UI do Shell #2 ou pelo fluxo do coordenador. Carrega
- * briefing + `squads/<id>/state` + handoffs do ai-memory, extrai as pendências
+ * briefing + `squads/<id>/state.md` + handoffs do ai-memory, extrai as pendências
  * do snapshot durável e vincula tudo ao agente sobrevivente. Estado
  * Git/checkout entra como EVIDÊNCIA a confirmar (inspector read-only) — NUNCA
  * como comando autorizado. Não existe arquivo local de squad-state: a página
@@ -26,7 +26,14 @@ import type {
   SyncMemoryClient,
   SyncScope,
 } from './ai-memory-sync'
-import { squadStatePagePath } from './ai-memory-sync'
+import {
+  collectRecentBridgeOutcomeHistory,
+  extractAiMemoryBriefingText,
+  extractAiMemoryHandoffsText,
+  extractAiMemoryPageBody,
+  legacySquadStatePagePath,
+  squadStatePagePath,
+} from './ai-memory-sync'
 
 const execFileAsync = promisify(execFile)
 
@@ -241,7 +248,7 @@ const TASK_LINE_PATTERN = /^- \[(pending|in-progress|blocked)\] (.+)$/
 
 /**
  * Extrai as tarefas abertas (pending/in-progress/blocked) do corpo do
- * snapshot `squads/<id>/state` — formato determinístico renderizado por
+ * snapshot `squads/<id>/state.md` — formato determinístico renderizado por
  * `renderSquadStateBody` (`- [status] título (responsável: membro)`).
  * `done` NÃO é pendência e fica de fora.
  *
@@ -291,7 +298,7 @@ export function fallbackTakeoverPlan(input: BuildTakeoverPlanInput): TakeoverPla
 
 /**
  * Constrói o plano estruturado de takeover:
- * 1. briefing + squads/<id>/state + handoffs em paralelo;
+ * 1. briefing + squads/<id>/state.md + handoffs em paralelo;
  * 2. pendências extraídas do estado durável (associação por requestId NÃO é
  *    exigida aqui — o snapshot é a verdade);
  * 3. evidência Git read-only (injetável) anexada como "a confirmar".
@@ -304,15 +311,54 @@ export async function buildTakeoverPlan(
   const squadPath = squadStatePagePath(input.squadId)
   const scopeArgs = { workspace: scope.workspace, project: scope.project }
   try {
+    // Chamadas independentes com fail-open: um throw em qualquer fonte vira
+    // "vazio" e NÃO impede carregar as demais (nem o fallback legado).
+    let failedCalls = 0
+    const safeCall = async (
+      name: (typeof AI_MEMORY_MCP_TOOLS)[keyof typeof AI_MEMORY_MCP_TOOLS],
+      args: Record<string, unknown>
+    ): Promise<{ text: string; json?: unknown; isError: boolean }> => {
+      try {
+        return await client.callTool(name, args)
+      } catch {
+        failedCalls += 1
+        return { text: '', isError: true }
+      }
+    }
     const [statePage, briefing, handoffs] = await Promise.all([
-      client.callTool(AI_MEMORY_MCP_TOOLS.readPage, { ...scopeArgs, path: squadPath }),
-      client.callTool(AI_MEMORY_MCP_TOOLS.briefing, scopeArgs),
-      client.callTool(AI_MEMORY_MCP_TOOLS.handoffList, scopeArgs),
+      safeCall(AI_MEMORY_MCP_TOOLS.readPage, { ...scopeArgs, path: squadPath }),
+      safeCall(AI_MEMORY_MCP_TOOLS.briefing, scopeArgs),
+      safeCall(AI_MEMORY_MCP_TOOLS.handoffList, scopeArgs),
     ])
-    const stateText = !statePage.isError && statePage.text ? statePage.text : ''
-    const briefingText = !briefing.isError && briefing.text ? briefing.text : ''
-    const handoffText = !handoffs.isError && handoffs.text ? handoffs.text : ''
-    if (!stateText && !briefingText && !handoffText) return undefined
+    // Shapes reais v2.4.0: read_page = { path, body }; briefing/handoffs são
+    // estruturados. Fallback para text preserva compatibilidade.
+    let stateText = !statePage.isError ? extractAiMemoryPageBody(statePage) : ''
+    if (!stateText) {
+      // Compat v1.0.43: snapshot antigo vivia em `squads/<slug>/state` (sem
+      // extensão). Leitura SOMENTE se o canônico faltou/erro/sem body; nunca
+      // escreve nem apaga o legado (todas as escritas seguem em state.md).
+      try {
+        const legacyPage = await client.callTool(AI_MEMORY_MCP_TOOLS.readPage, {
+          ...scopeArgs,
+          path: legacySquadStatePagePath(input.squadId),
+        })
+        const legacyText = !legacyPage.isError ? extractAiMemoryPageBody(legacyPage) : ''
+        if (legacyText) stateText = legacyText
+      } catch {
+        // Fail-open: sem legado, o plano segue com as demais fontes.
+      }
+    }
+    const briefingText = !briefing.isError ? extractAiMemoryBriefingText(briefing) : ''
+    const handoffText = !handoffs.isError ? extractAiMemoryHandoffsText(handoffs) : ''
+    // Evidência recente do Bridge (delegações fora do fluxo automático): a
+    // coleta é fail-open e NÃO afirma vínculo exato com o squad.
+    const bridgeHistory = await collectRecentBridgeOutcomeHistory(client, scope)
+    if (!stateText && !briefingText && !handoffText && bridgeHistory.length === 0) {
+      // Bridge já foi consultado (fonte independente). Sem NADA recuperável:
+      // falha de alguma fonte → plano mínimo verification-first; servidor
+      // saudável porém vazio → undefined.
+      return failedCalls > 0 ? fallbackInstruction(input) : undefined
+    }
 
     const pendingTasks = parsePendingTasksFromStateBody(stateText)
     let evidence: TakeoverGitEvidence | undefined
@@ -356,6 +402,13 @@ export async function buildTakeoverPlan(
       'Títulos/status estão SOMENTE no bloco histórico delimitado abaixo; confirme cada tarefa contra o checkout/Git atual antes de retomar.',
     ].join('\n')
 
+    const bridgeSection = bridgeHistory.length
+      ? [
+          '',
+          '## Evidência recente do Agent Bridge (histórico não confiável; sem vínculo exato com este squad)',
+          ...bridgeHistory.flatMap((entry) => [`### ${entry.path}`, entry.body]),
+        ]
+      : []
     const historyBody = [
       '## Estado consolidado do squad',
       stateText || '(estado indisponível)',
@@ -365,6 +418,7 @@ export async function buildTakeoverPlan(
       '',
       '## Handoffs abertos',
       handoffText.slice(0, 2_000) || '(nenhum)',
+      ...bridgeSection,
     ].join('\n')
     const truncationMarker = '\n[histórico truncado por orçamento de takeover]'
     const reserved =

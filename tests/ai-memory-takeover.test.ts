@@ -49,23 +49,58 @@ function scriptedRunner(
   }
 }
 
+interface FakeToolResult {
+  text?: string
+  json?: unknown
+  isError?: boolean
+}
+
 interface FakePages {
-  readPage?: { text: string; isError?: boolean }
-  briefing?: { text: string; isError?: boolean }
-  handoffList?: { text: string; isError?: boolean }
+  readPage?: FakeToolResult
+  briefing?: FakeToolResult
+  handoffList?: FakeToolResult
+  /** Bodies por path (ex.: páginas de outcome lidas na evidência recente). */
+  pagesByPath?: Record<string, FakeToolResult>
+  recent?: FakeToolResult
+  throwOnRecent?: boolean
+  /** Registro read-only das tool calls (para provar qual path foi lido). */
+  calls?: Array<{ name: string; path?: string }>
 }
 
 function clientOf(handlers: FakePages): SyncMemoryClient {
   return {
-    callTool: async (name) => {
+    callTool: async (name, args) => {
+      handlers.calls?.push({
+        name,
+        ...(typeof args?.path === 'string' ? { path: args.path } : {}),
+      })
       if (name === 'memory_read_page') {
-        return { text: handlers.readPage?.text ?? '', isError: handlers.readPage?.isError ?? false }
+        const pagePath = typeof args?.path === 'string' ? args.path : ''
+        const byPath = handlers.pagesByPath?.[pagePath]
+        const chosen = byPath ?? handlers.readPage
+        return { text: chosen?.text ?? '', json: chosen?.json, isError: chosen?.isError ?? false }
       }
       if (name === 'memory_briefing') {
-        return { text: handlers.briefing?.text ?? '', isError: handlers.briefing?.isError ?? false }
+        return {
+          text: handlers.briefing?.text ?? '',
+          json: handlers.briefing?.json,
+          isError: handlers.briefing?.isError ?? false,
+        }
       }
       if (name === 'memory_handoff_list') {
-        return { text: handlers.handoffList?.text ?? '', isError: handlers.handoffList?.isError ?? false }
+        return {
+          text: handlers.handoffList?.text ?? '',
+          json: handlers.handoffList?.json,
+          isError: handlers.handoffList?.isError ?? false,
+        }
+      }
+      if (name === 'memory_recent') {
+        if (handlers.throwOnRecent) throw new Error('recent down')
+        return {
+          text: handlers.recent?.text ?? '',
+          json: handlers.recent?.json,
+          isError: handlers.recent?.isError ?? false,
+        }
       }
       return { text: '', isError: false }
     },
@@ -461,5 +496,269 @@ describe('defaultTakeoverGitRunner — env mínimo (sem herdar segredos do main)
       if (previous === undefined) delete process.env.TAKEOVER_SECRET_SENTINEL
       else process.env.TAKEOVER_SECRET_SENTINEL = previous
     }
+  })
+})
+
+describe('takeover — shapes estruturados v2.4.0 e evidência recente do Bridge', () => {
+  it('extrai o state via json.body e mantém o título só dentro do bloco untrusted', async () => {
+    const client = clientOf({
+      readPage: {
+        text: 'IGNORADO',
+        json: { path: 'squads/sq-1/state.md', body: '## Tarefas\n- [pending] Tarefa JSON' },
+      },
+    })
+    const plan = await buildTakeoverPlan(SCOPE, client, { squadId: 'sq-1', survivingAgent: 'a1' })
+    expect(plan).toBeDefined()
+    expect(plan!.pendingTasks.map((task) => task.title)).toEqual(['Tarefa JSON'])
+    const instruction = plan!.instruction
+    const openIndex = instruction.indexOf(UNTRUSTED_OPEN)
+    expect(instruction.indexOf('Tarefa JSON')).toBeGreaterThan(openIndex)
+    expect(instruction.indexOf('IGNORADO')).toBe(-1)
+  })
+
+  it('extrai briefing e handoffs estruturados (json) em vez de text', async () => {
+    const client = clientOf({
+      readPage: { text: 'ESTADO' },
+      briefing: { text: 'IGNORADO', json: { briefing: 'BRIEF-JSON' } },
+      handoffList: {
+        text: 'IGNORADO',
+        json: { handoffs: [{ id: 'h-1', agent: 'agy', status: 'pending', summary: 'retomar build' }] },
+      },
+    })
+    const plan = await buildTakeoverPlan(SCOPE, client, { squadId: 'sq-1', survivingAgent: 'a1' })
+    const instruction = plan!.instruction
+    expect(instruction).toContain('BRIEF-JSON')
+    expect(instruction).toContain('- [pending] agy: retomar build (h-1)')
+    expect(instruction).not.toContain('IGNORADO')
+  })
+
+  it('briefing no shape REAL { recent, recent_pages_limit } entra no bloco untrusted sem text cru', async () => {
+    const client = clientOf({
+      readPage: { text: 'ESTADO' },
+      briefing: {
+        text: 'IGNORADO',
+        json: { recent: ['notes/a.md'], recent_pages_limit: 10 },
+      },
+    })
+    const plan = await buildTakeoverPlan(SCOPE, client, { squadId: 'sq-1', survivingAgent: 'a1' })
+    const instruction = plan!.instruction
+    expect(instruction).toContain('"recent_pages_limit": 10')
+    expect(instruction).toContain('notes/a.md')
+    expect(instruction).not.toContain('IGNORADO')
+    expect(instruction.indexOf('"recent_pages_limit"')).toBeGreaterThan(instruction.indexOf(UNTRUSTED_OPEN))
+    expect(instruction.indexOf('"recent_pages_limit"')).toBeLessThan(instruction.indexOf(UNTRUSTED_CLOSE))
+  })
+
+  it('inclui evidência recente do Bridge no bloco untrusted, sem afirmar vínculo de squad', async () => {
+    const bridgePath = 'sessions/bridge-agent-1-1-abcdef123456.md'
+    const client = clientOf({
+      readPage: { text: 'ESTADO' },
+      recent: { text: '', json: { pages: [bridgePath] } },
+      pagesByPath: { [bridgePath]: { text: 'IGNORADO', json: { body: 'BRIDGE-BODY' } } },
+    })
+    const plan = await buildTakeoverPlan(SCOPE, client, { squadId: 'sq-1', survivingAgent: 'a1' })
+    const instruction = plan!.instruction
+    expect(instruction).toContain('Evidência recente do Agent Bridge')
+    expect(instruction).toContain(bridgePath)
+    expect(instruction).toContain('BRIDGE-BODY')
+    const openIndex = instruction.indexOf(UNTRUSTED_OPEN)
+    const closeIndex = instruction.indexOf(UNTRUSTED_CLOSE)
+    expect(instruction.indexOf('BRIDGE-BODY')).toBeGreaterThan(openIndex)
+    expect(instruction.indexOf('BRIDGE-BODY')).toBeLessThan(closeIndex)
+    expect(instruction.indexOf('IGNORADO')).toBe(-1)
+  })
+
+  it('outcome do Bridge sozinho já produz plano (fontes principais vazias)', async () => {
+    const bridgePath = 'sessions/bridge-agent-9-9-abcdef123456.md'
+    const client = clientOf({
+      recent: { json: { pages: [{ path: bridgePath, tags: ['devorbit-bridge'] }] } },
+      pagesByPath: { [bridgePath]: { json: { body: 'SOMENTE-BRIDGE' } } },
+    })
+    const plan = await buildTakeoverPlan(SCOPE, client, { squadId: 'sq-1', survivingAgent: 'a1' })
+    expect(plan).toBeDefined()
+    expect(plan!.instruction).toContain('SOMENTE-BRIDGE')
+  })
+
+  it('canônico state.md vence e o legado NÃO é lido quando há body', async () => {
+    const calls: Array<{ name: string; path?: string }> = []
+    const client = clientOf({
+      calls,
+      pagesByPath: {
+        'squads/sq-1/state.md': { json: { body: '## Tarefas\n- [pending] Canonica' } },
+        'squads/sq-1/state': { json: { body: '## Tarefas\n- [pending] Legado' } },
+      },
+    })
+    const plan = await buildTakeoverPlan(SCOPE, client, { squadId: 'sq-1', survivingAgent: 'a1' })
+    expect(plan!.pendingTasks.map((task) => task.title)).toEqual(['Canonica'])
+    expect(plan!.instruction).toContain('Canonica')
+    expect(plan!.instruction).not.toContain('Legado')
+    const readPaths = calls.filter((call) => call.name === 'memory_read_page').map((call) => call.path)
+    expect(readPaths).toEqual(['squads/sq-1/state.md'])
+    expect(calls.some((call) => call.name === 'memory_write_page')).toBe(false)
+  })
+
+  it('canônico com erro usa legado (read-only) para body/tarefas e não grava nada', async () => {
+    const calls: Array<{ name: string; path?: string }> = []
+    const client = clientOf({
+      calls,
+      pagesByPath: {
+        'squads/sq-1/state.md': { isError: true },
+        'squads/sq-1/state': { json: { body: '## Tarefas\n- [pending] Legado' } },
+      },
+    })
+    const plan = await buildTakeoverPlan(SCOPE, client, { squadId: 'sq-1', survivingAgent: 'a1' })
+    expect(plan!.pendingTasks.map((task) => task.title)).toEqual(['Legado'])
+    const openIndex = plan!.instruction.indexOf(UNTRUSTED_OPEN)
+    const closeIndex = plan!.instruction.indexOf(UNTRUSTED_CLOSE)
+    expect(plan!.instruction.indexOf('Legado')).toBeGreaterThan(openIndex)
+    expect(plan!.instruction.indexOf('Legado')).toBeLessThan(closeIndex)
+    const readPaths = calls.filter((call) => call.name === 'memory_read_page').map((call) => call.path)
+    expect(readPaths).toEqual(['squads/sq-1/state.md', 'squads/sq-1/state'])
+    expect(calls.some((call) => call.name === 'memory_write_page')).toBe(false)
+  })
+
+  it('canônico sem body utilizável também cai no legado', async () => {
+    const calls: Array<{ name: string; path?: string }> = []
+    const client = clientOf({
+      calls,
+      pagesByPath: {
+        'squads/sq-1/state.md': { text: '', json: { body: '' } },
+        'squads/sq-1/state': { json: { body: '## Tarefas\n- [pending] Legado-vazio' } },
+      },
+    })
+    const plan = await buildTakeoverPlan(SCOPE, client, { squadId: 'sq-1', survivingAgent: 'a1' })
+    expect(plan!.pendingTasks.map((task) => task.title)).toEqual(['Legado-vazio'])
+  })
+
+  it('canônico malformed (json sem body) não vira estado/tarefas; usa legado', async () => {
+    const serialized = JSON.stringify({ path: 'squads/sq-1/state.md', note: 'sem body' })
+    const calls: Array<{ name: string; path?: string }> = []
+    const client = clientOf({
+      calls,
+      pagesByPath: {
+        'squads/sq-1/state.md': { text: serialized, json: { path: 'squads/sq-1/state.md', note: 'sem body' } },
+        'squads/sq-1/state': { json: { body: '## Tarefas\n- [pending] Legado-malformed' } },
+      },
+    })
+    const plan = await buildTakeoverPlan(SCOPE, client, { squadId: 'sq-1', survivingAgent: 'a1' })
+    expect(plan!.pendingTasks.map((task) => task.title)).toEqual(['Legado-malformed'])
+    expect(plan!.instruction).toContain('Legado-malformed')
+    expect(plan!.instruction).not.toContain('"note"')
+    expect(calls.some((call) => call.name === 'memory_write_page')).toBe(false)
+  })
+
+  it('canônico REJEITANDO não aborta: legado entrega pendência delimitada e zero writes', async () => {
+    const calls: Array<{ name: string; path?: string }> = []
+    const client: SyncMemoryClient = {
+      callTool: async (name, args) => {
+        calls.push({ name, ...(typeof args?.path === 'string' ? { path: args.path } : {}) })
+        if (name === 'memory_read_page' && args?.path === 'squads/sq-1/state.md') {
+          throw new Error('canonical down')
+        }
+        if (name === 'memory_read_page' && args?.path === 'squads/sq-1/state') {
+          return { text: '', json: { body: '## Tarefas\n- [pending] Legado-reject' }, isError: false }
+        }
+        return { text: '', isError: false }
+      },
+    }
+    const plan = await buildTakeoverPlan(SCOPE, client, { squadId: 'sq-1', survivingAgent: 'a1' })
+    expect(plan).toBeDefined()
+    expect(plan!.pendingTasks.map((task) => task.title)).toEqual(['Legado-reject'])
+    const openIndex = plan!.instruction.indexOf(UNTRUSTED_OPEN)
+    const closeIndex = plan!.instruction.indexOf(UNTRUSTED_CLOSE)
+    expect(plan!.instruction.indexOf('Legado-reject')).toBeGreaterThan(openIndex)
+    expect(plan!.instruction.indexOf('Legado-reject')).toBeLessThan(closeIndex)
+    const readPaths = calls.filter((call) => call.name === 'memory_read_page').map((call) => call.path)
+    expect(readPaths).toEqual(['squads/sq-1/state.md', 'squads/sq-1/state'])
+    expect(calls.some((call) => call.name === 'memory_write_page')).toBe(false)
+  })
+
+  it('briefing/handoffs rejeitando NÃO anulam o state (cada fonte é fail-open)', async () => {
+    const calls: Array<{ name: string; path?: string }> = []
+    const client: SyncMemoryClient = {
+      callTool: async (name, args) => {
+        calls.push({ name, ...(typeof args?.path === 'string' ? { path: args.path } : {}) })
+        if (name === 'memory_read_page') {
+          return { text: '', json: { body: '## Tarefas\n- [pending] Estado-vivo' }, isError: false }
+        }
+        if (name === 'memory_briefing' || name === 'memory_handoff_list') {
+          throw new Error(`${name} down`)
+        }
+        return { text: '', isError: false }
+      },
+    }
+    const plan = await buildTakeoverPlan(SCOPE, client, { squadId: 'sq-1', survivingAgent: 'a1' })
+    expect(plan).toBeDefined()
+    expect(plan!.pendingTasks.map((task) => task.title)).toEqual(['Estado-vivo'])
+    const instruction = plan!.instruction
+    expect(instruction).toContain('Estado-vivo')
+    expect(instruction).toContain('(indisponível)')
+    expect(instruction).toContain('(nenhum)')
+    expect(calls.some((call) => call.name === 'memory_write_page')).toBe(false)
+  })
+
+  it('Bridge é fonte independente: read_page/briefing/handoffs falhando ainda recupera outcome', async () => {
+    const bridgePath = 'sessions/bridge-agent-7-7-abcdef123456.md'
+    const calls: Array<{ name: string; path?: string }> = []
+    const client: SyncMemoryClient = {
+      callTool: async (name, args) => {
+        calls.push({ name, ...(typeof args?.path === 'string' ? { path: args.path } : {}) })
+        if (name === 'memory_read_page' && args?.path === bridgePath) {
+          return { text: '', json: { body: 'BRIDGE-INDEPENDENTE' }, isError: false }
+        }
+        if (name === 'memory_read_page') throw new Error('state down')
+        if (name === 'memory_briefing' || name === 'memory_handoff_list') throw new Error(`${name} down`)
+        if (name === 'memory_recent') {
+          return { text: '', json: { pages: [{ path: bridgePath, tags: ['devorbit-bridge'] }] }, isError: false }
+        }
+        return { text: '', isError: false }
+      },
+    }
+    const plan = await buildTakeoverPlan(SCOPE, client, { squadId: 'sq-1', survivingAgent: 'a1' })
+    expect(plan).toBeDefined()
+    const instruction = plan!.instruction
+    expect(instruction).toContain('BRIDGE-INDEPENDENTE')
+    expect(instruction).toContain('Evidência recente do Agent Bridge')
+    expect(instruction).not.toContain('reconstrua o estado')
+    expect(calls.some((call) => call.name === 'memory_write_page')).toBe(false)
+  })
+
+  it('fail-open: canônico e legado indisponíveis (ou legado lançando) não derrubam o plano', async () => {
+    const calls: Array<{ name: string; path?: string }> = []
+    const bothError = clientOf({
+      calls,
+      readPage: { isError: true },
+      briefing: { json: { briefing: 'BRIEF' } },
+    })
+    const plan = await buildTakeoverPlan(SCOPE, bothError, { squadId: 'sq-1', survivingAgent: 'a1' })
+    expect(plan).toBeDefined()
+    expect(plan!.instruction).toContain('BRIEF')
+    expect(calls.some((call) => call.name === 'memory_write_page')).toBe(false)
+
+    const throwingLegacy: SyncMemoryClient = {
+      callTool: async (name, args) => {
+        if (name === 'memory_read_page' && args?.path === 'squads/sq-1/state') {
+          throw new Error('legacy down')
+        }
+        if (name === 'memory_read_page') return { text: '', isError: false }
+        if (name === 'memory_briefing') return { text: '', json: { briefing: 'BRIEF-2' }, isError: false }
+        return { text: '', isError: false }
+      },
+    }
+    const throwingPlan = await buildTakeoverPlan(SCOPE, throwingLegacy, { squadId: 'sq-1', survivingAgent: 'a1' })
+    expect(throwingPlan).toBeDefined()
+    expect(throwingPlan!.instruction).toContain('BRIEF-2')
+  })
+
+  it('fail-open: memory_recent ausente/erro não derruba o plano', async () => {
+    const throwing = clientOf({ readPage: { text: 'ESTADO' }, throwOnRecent: true })
+    const plan = await buildTakeoverPlan(SCOPE, throwing, { squadId: 'sq-1', survivingAgent: 'a1' })
+    expect(plan).toBeDefined()
+    expect(plan!.instruction).toContain('ESTADO')
+    expect(plan!.instruction).not.toContain('Evidência recente do Agent Bridge')
+
+    const empty = clientOf({ readPage: { text: 'ESTADO' } })
+    const emptyPlan = await buildTakeoverPlan(SCOPE, empty, { squadId: 'sq-1', survivingAgent: 'a1' })
+    expect(emptyPlan!.instruction).not.toContain('Evidência recente do Agent Bridge')
   })
 })

@@ -4,7 +4,12 @@ import {
   applyBridgeEventToSnapshot,
   applyBridgeStatusToTask,
   bridgeOutcomePagePath,
+  collectRecentBridgeOutcomeHistory,
+  extractAiMemoryBriefingText,
+  extractAiMemoryHandoffsText,
+  extractAiMemoryPageBody,
   isCancellationSummary,
+  legacySquadStatePagePath,
   outcomeToPage,
   renderSquadStateBody,
   SquadMemoryPublisher,
@@ -190,7 +195,7 @@ describe('sync de outcomes do Bridge → ai-memory', () => {
   })
 })
 
-describe('snapshot consolidado do squad (squads/<id>/state)', () => {
+describe('snapshot consolidado do squad (squads/<id>/state.md)', () => {
   it('renderiza objetivo, membros e tarefas com status', () => {
     const body = renderSquadStateBody({
       id: 'sq-1',
@@ -207,8 +212,11 @@ describe('snapshot consolidado do squad (squads/<id>/state)', () => {
   })
 
   it('path do squad é determinístico', () => {
-    expect(squadStatePagePath('Squad Principal!')).toBe('squads/squad-principal/state')
-    expect(squadStatePagePath('')).toBe('squads/squad/state')
+    expect(squadStatePagePath('Squad Principal!')).toBe('squads/squad-principal/state.md')
+    expect(squadStatePagePath('')).toBe('squads/squad/state.md')
+    // Compat v1.0.43: path legado é read-only no takeover; nunca escrito aqui.
+    expect(legacySquadStatePagePath('Squad Principal!')).toBe('squads/squad-principal/state')
+    expect(legacySquadStatePagePath('')).toBe('squads/squad/state')
   })
 
   it('pending projeta in-progress UMA vez; reaplicar não transita', () => {
@@ -248,7 +256,7 @@ describe('snapshot consolidado do squad (squads/<id>/state)', () => {
 })
 
 describe('publicação e resync do squad', () => {
-  it('publica snapshot em squads/<id>/state com escritas concorrentes serializadas', async () => {
+  it('publica snapshot em squads/<id>/state.md com escritas concorrentes serializadas', async () => {
     const gate = deferred<void>()
     const { client, writes } = createClient({ delayFirst: gate })
     const publisher = new SquadMemoryPublisher({ workspace: 'devorbit', project: 'p-1' }, client)
@@ -268,7 +276,7 @@ describe('publicação e resync do squad', () => {
     const results = await Promise.all([first, second])
     expect(results).toEqual([true, true])
     // Mesma página, ordem preservada: último estado vence (idempotente).
-    expect(writes.every((call) => call.path === 'squads/sq-1/state')).toBe(true)
+    expect(writes.every((call) => call.path === 'squads/sq-1/state.md')).toBe(true)
     expect(writes[1].body).toContain('dois')
   })
 
@@ -417,5 +425,163 @@ describe('AiMemoryBridgeSync.flush (drain de shutdown)', () => {
     await expect(sync.flush(25)).resolves.toBeUndefined()
     expect(calls).toHaveLength(1) // sem retry nem nova leitura
     gate.resolve() // libera para o teardown do teste
+  })
+})
+
+describe('extração de resultados MCP (shapes v2.4.0)', () => {
+  it('read_page: prefere json.body e cai para text só sem json objeto', () => {
+    expect(extractAiMemoryPageBody({ text: 'TEXTO', json: { path: 'p', body: 'CORPO' }, isError: false })).toBe('CORPO')
+    expect(extractAiMemoryPageBody({ text: 'TEXTO', isError: false })).toBe('TEXTO')
+    expect(extractAiMemoryPageBody({ text: 'TEXTO', json: { body: 'CORPO' }, isError: true })).toBe('')
+    expect(extractAiMemoryPageBody({ text: '', json: { body: 42 }, isError: false })).toBe('')
+  })
+
+  it('read_page malformed (json objeto sem body string): text serializado NUNCA vira corpo', () => {
+    const serialized = JSON.stringify({ path: 'squads/sq-1/state.md', note: 'sem body' })
+    expect(
+      extractAiMemoryPageBody({
+        text: serialized,
+        json: { path: 'squads/sq-1/state.md', note: 'sem body' },
+        isError: false,
+      })
+    ).toBe('')
+    expect(extractAiMemoryPageBody({ text: serialized, json: { body: 42 }, isError: false })).toBe('')
+    expect(extractAiMemoryPageBody({ text: serialized, json: [1, 2, 3], isError: false })).toBe('')
+    expect(extractAiMemoryPageBody({ text: serialized, json: null, isError: false })).toBe(serialized)
+  })
+
+  it('briefing: prefere campos estruturados; objeto desconhecido vira JSON bounded (nunca text cru)', () => {
+    expect(extractAiMemoryBriefingText({ text: 'T', json: { briefing: 'BRIEF' }, isError: false })).toBe('BRIEF')
+    expect(extractAiMemoryBriefingText({ text: 'T', json: { summary: 'SUM' }, isError: false })).toBe('SUM')
+    expect(extractAiMemoryBriefingText({ text: 'T', isError: false })).toBe('T')
+  })
+
+  it('briefing: shape REAL { recent, recent_pages_limit } renderiza JSON e ignora text', () => {
+    const rendered = extractAiMemoryBriefingText({
+      text: 'IGNORADO',
+      isError: false,
+      json: { recent: ['notes/a.md', 'sessions/bridge-x-1-abcdef123456.md'], recent_pages_limit: 10 },
+    })
+    expect(rendered).toContain('"recent_pages_limit": 10')
+    expect(rendered).toContain('notes/a.md')
+    expect(rendered).not.toContain('IGNORADO')
+  })
+
+  it('briefing: JSON bounded respeita maxChars', () => {
+    const rendered = extractAiMemoryBriefingText(
+      { text: 'IGNORADO', isError: false, json: { recent: Array.from({ length: 200 }, (_v, i) => `p-${i}.md`) } },
+      120
+    )
+    expect(rendered.length).toBeLessThanOrEqual(120)
+    expect(rendered).not.toContain('IGNORADO')
+  })
+
+  it('handoffs: formata lista, lista vazia explícita e itens sem summary em JSON (nunca text cru)', () => {
+    const structured = extractAiMemoryHandoffsText({
+      text: 'T',
+      isError: false,
+      json: { handoffs: [{ id: 'h-1', agent: 'codex', status: 'pending', summary: 'retomar build' }] },
+    })
+    expect(structured).toContain('- [pending] codex: retomar build (h-1)')
+    expect(extractAiMemoryHandoffsText({ text: 'IGNORADO', json: { handoffs: [] }, isError: false })).toBe(
+      '(nenhum handoff aberto)'
+    )
+    const noSummary = extractAiMemoryHandoffsText({
+      text: 'IGNORADO',
+      isError: false,
+      json: { handoffs: [{ id: 'h-2', agent: 'agy' }] },
+    })
+    expect(noSummary).toContain('"h-2"')
+    expect(noSummary).not.toContain('IGNORADO')
+    expect(extractAiMemoryHandoffsText({ text: 'T', isError: false })).toBe('T')
+  })
+})
+
+describe('evidência recente do Bridge para takeover (fail-open, bounded)', () => {
+  function recentClient(options: {
+    pages?: unknown[]
+    bodies?: Record<string, { text?: string; json?: unknown }>
+    failRecent?: boolean
+    failShape?: boolean
+  }): { client: SyncMemoryClient; reads: string[]; recentLimits: number[] } {
+    const reads: string[] = []
+    const recentLimits: number[] = []
+    const client: SyncMemoryClient = {
+      callTool: async (name, args) => {
+        if (name === 'memory_recent') {
+          if (options.failRecent) throw new Error('recent down')
+          recentLimits.push(Number(args.limit))
+          if (options.failShape) return { text: 'sem json', isError: false }
+          return { text: '', json: { pages: options.pages ?? [] }, isError: false }
+        }
+        if (name === 'memory_read_page') {
+          const pagePath = String(args.path)
+          reads.push(pagePath)
+          const body = options.bodies?.[pagePath]
+          return { text: body?.text ?? '', json: body?.json ?? {}, isError: false }
+        }
+        return { text: '', isError: false }
+      },
+    }
+    return { client, reads, recentLimits }
+  }
+
+  const SCOPE = { workspace: 'devorbit', project: 'p-1' }
+
+  it('seleciona apenas sessions/bridge-*.md (ou tag devorbit-bridge) e lê bodies via json.body', async () => {
+    const { client, reads, recentLimits } = recentClient({
+      pages: [
+        'notes/normal.md',
+        'sessions/bridge-agent-1-1-abcdef123456.md',
+        { path: 'sessions/bridge-agent-2-2-fedcba654321.md', tags: ['devorbit-bridge', 'historical'] },
+        { path: 'notes/tagged.md', tags: ['devorbit-bridge'] },
+      ],
+      bodies: {
+        'sessions/bridge-agent-1-1-abcdef123456.md': { text: 'IGNORADO', json: { body: 'BODY-1' } },
+        'sessions/bridge-agent-2-2-fedcba654321.md': { text: 'IGNORADO', json: { body: 'BODY-2' } },
+        'notes/tagged.md': { json: { body: 'BODY-TAGGED' } },
+      },
+    })
+
+    const entries = await collectRecentBridgeOutcomeHistory(client, SCOPE, { recentLimit: 7 })
+    expect(recentLimits).toEqual([7])
+    expect(entries.map((entry) => entry.path)).toEqual([
+      'sessions/bridge-agent-1-1-abcdef123456.md',
+      'sessions/bridge-agent-2-2-fedcba654321.md',
+      'notes/tagged.md',
+    ])
+    expect(entries.map((entry) => entry.body)).toEqual(['BODY-1', 'BODY-2', 'BODY-TAGGED'])
+    expect(reads).toHaveLength(3)
+  })
+
+  it('respeita maxPages e maxChars (bounded)', async () => {
+    const pages = Array.from({ length: 5 }, (_value, index) => `sessions/bridge-a-${index}-0123456789ab.md`)
+    const bodies = Object.fromEntries(pages.map((pagePath) => [pagePath, { json: { body: 'X'.repeat(100) } }]))
+    const first = recentClient({ pages, bodies })
+    const limited = await collectRecentBridgeOutcomeHistory(first.client, SCOPE, { maxPages: 2, maxChars: 1_000 })
+    expect(limited).toHaveLength(2)
+
+    const second = recentClient({ pages, bodies })
+    const clamped = await collectRecentBridgeOutcomeHistory(second.client, SCOPE, { maxChars: 250 })
+    expect(clamped.reduce((sum, entry) => sum + entry.body.length, 0)).toBe(250)
+    expect(clamped).toHaveLength(3)
+  })
+
+  it('é fail-open quando recent falha, shape some ou read_page cai', async () => {
+    const failing = recentClient({ failRecent: true })
+    expect(await collectRecentBridgeOutcomeHistory(failing.client, SCOPE)).toEqual([])
+
+    const unknownShape = recentClient({ failShape: true })
+    expect(await collectRecentBridgeOutcomeHistory(unknownShape.client, SCOPE)).toEqual([])
+
+    const readsFailing: SyncMemoryClient = {
+      callTool: async (name) => {
+        if (name === 'memory_recent') {
+          return { text: '', json: { pages: ['sessions/bridge-a-1-0123456789ab.md'] }, isError: false }
+        }
+        throw new Error('read down')
+      },
+    }
+    expect(await collectRecentBridgeOutcomeHistory(readsFailing, SCOPE)).toEqual([])
   })
 })

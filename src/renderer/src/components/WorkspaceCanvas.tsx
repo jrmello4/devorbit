@@ -2846,7 +2846,7 @@ export const WorkspaceCanvas: React.FC<{
   const [isTakingOver, setIsTakingOver] = useState(false);
 
   // Takeover do agente sobrevivente: solicita plano consolidado via aiMemoryTakeover
-  // (briefing + squads/<id>/state + handoffs + evidências Git atuais) e encaminha
+  // (briefing + squads/<id>/state.md + handoffs + evidências Git atuais) e encaminha
   // ao sobrevivente pelo callback/bridge existente onSendAgentTask (sem novo PTY).
   const handleSurvivorTakeover = useCallback(
     async (squadId: string, memberId: string) => {
