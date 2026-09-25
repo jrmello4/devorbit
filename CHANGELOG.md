@@ -2,6 +2,30 @@
 
 All notable changes to DevOrbit are documented here.
 
+## [1.0.44] - 2026-09-25
+
+### Added
+
+- Helpers de extração MCP para shapes reais v2.4.0: `extractAiMemoryPageBody` (json.body de `memory_read_page`), `extractAiMemoryBriefingText` (campos estruturados `briefing/summary/text/content`), `extractAiMemoryHandoffsText` (lista `handoffs[]` com agent/summary/status/id). Fallback para `text` preserva compatibilidade.
+- `collectRecentBridgeOutcomeHistory`: coleta evidência recente do Agent Bridge via `memory_recent` + `memory_read_page`, com limites bounded e seleção por path pattern `sessions/bridge-*.md` ou tag `devorbit-bridge`. Fail-open sem squad vinculado.
+- `legacySquadStatePagePath`: path legado `squads/<id>/state` (sem `.md`) preservado para leitura-only como fallback no takeover/resync.
+- Rollback persistente do opt-in no handler IPC `aiMemoryEnableProject`: quando `marker.configured !== true` (conflict, preserved-but-incomplete, ou marker incompleto), o projeto é desabilitado automaticamente. Marker de terceiros NÃO é modificado. Preserved+configured=true mantém opt-in.
+- Versão dinâmica do `clientInfo.version` no handshake MCP: `AiMemoryClient` aceita `appVersion` (injetável; default `'unknown'`); `AiMemoryService` passa `getAppVersion` em runtime. `protocolVersion` mantido em `2025-06-18`.
+
+### Changed
+
+- Página de estado do squad renomeada de `squads/<id>/state` para `squads/<id>/state.md` como path canônico de escrita; o path legado (sem extensão) permanece como fallback de leitura no takeover.
+- Takeover agora usa `extractAiMemoryBriefingText` e `extractAiMemoryHandoffsText` em vez de ler `text` cru; aceita shapes estruturados v2.4.0 com fallback compatível.
+- Migração `writeAndConfirm` exige igualdade exata de `readBack.json.body` com `body` escrito; antes aceitava substring de 64 chars (falso positivo em divergências parciais).
+- Setup OpenCode/OpenCode 2 agora instala hooks (allowlist) além do MCP, alinhando-se ao mapa de famílias v2.4.0.
+- Modal: toast de sucesso do opt-in só é emitido quando o IPC confirma o estado desejado; rollback por marker retorna `enabled=false` sem toast enganoso.
+
+### Fixed
+
+- Toast de opt-in não mais informa "habilitado" quando o IPC faz rollback automático por marker não-configurado.
+- Takeover lê o path legado `squads/<id>/state` como fallback quando o canônico `state.md` não existe, preservando continuidade com dados v1.0.43.
+- Migração read-back agora falha corretamente quando o envelope MCP não contém `json.body` (formato antigo text-only).
+
 ## [1.0.43] - 2026-09-25
 
 ### Added
