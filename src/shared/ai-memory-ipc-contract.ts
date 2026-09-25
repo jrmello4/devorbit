@@ -97,6 +97,8 @@ export interface AiMemoryMarkerView {
 export interface AiMemoryEnableProjectResult {
   config: AiMemoryConfig
   status: AiMemoryStatus
+  /** Opt-in efetivo do projeto (derivado de config.projects[identity].enabled). */
+  isProjectEnabled: boolean
   /** Marker garantido após o reconfigure (quando `enabled`). */
   marker?: AiMemoryMarkerView
   /** Migração rodada SOMENTE com opt-in + marker sem conflito. */

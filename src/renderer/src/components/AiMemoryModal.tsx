@@ -288,8 +288,10 @@ export function buildEnableNotice(enableResult: {
       })
     } else if (m.status === 'preserved') {
       notices.push({
-        message: 'Marker de terceiros preservado — configuração manual necessária para habilitar captura.',
-        type: 'info',
+        message: m.configured
+          ? 'Marker de terceiros preservado — configuração manual necessária para habilitar captura.'
+          : 'Marker de terceiros preservado mas incompleto — opt-in revertido. Revise o .ai-memory.toml e ajuste workspace/project/exclusões antes de tentar novamente.',
+        type: m.configured ? 'info' : 'warning',
       })
     } else if (m.status === 'disabled') {
       notices.push({
@@ -326,6 +328,57 @@ export function buildEnableNotice(enableResult: {
       message: 'Dados legados não foram migrados automaticamente. Use "Migrar agora" na aba Legado.',
       type: 'info',
     })
+  }
+
+  return notices
+}
+
+/**
+ * Resolve o estado isProjectEnabled para o fallback visual quando
+ * getProjectStatus falha após toggle. Prioriza o valor explícito da
+ * resposta IPC (rollback por marker retorna false); só inverte o
+ * valor anterior quando o IPC não fornece isProjectEnabled.
+ *
+ * Função pura: testável sem React/DOM.
+ */
+export function resolveToggleFallback(
+  previousEnabled: boolean,
+  ipcResult: { isProjectEnabled?: boolean },
+): boolean {
+  return ipcResult.isProjectEnabled ?? !previousEnabled
+}
+
+/**
+ * Gera as notificações resultantes de um toggle de opt-in.
+ * Função pura: testável sem React/DOM.
+ *
+ * Produz no máximo 1 success (quando o estado confirmado == desejado)
+ * + N warnings/infos do buildEnableNotice (marker/migration).
+ * Rollback (isProjectEnabled != desired) NÃO emite success.
+ */
+export function buildToggleNotifications(
+  previousEnabled: boolean,
+  enableResult: {
+    isProjectEnabled?: boolean
+    marker?: { status: string; configured?: boolean; conflicts?: string[] }
+    migration?: { status: string; message?: string; paths?: string[] }
+  }
+): Array<{ message: string; type: 'success' | 'error' | 'info' }> {
+  const desiredEnabled = !previousEnabled
+  const actualEnabled = enableResult.isProjectEnabled ?? desiredEnabled
+  const notices: Array<{ message: string; type: 'success' | 'error' | 'info' }> = []
+
+  if (actualEnabled === desiredEnabled) {
+    notices.push({
+      message: desiredEnabled
+        ? 'Shared AI Memory habilitado para este projeto.'
+        : 'Shared AI Memory desabilitado para este projeto.',
+      type: 'success',
+    })
+  }
+
+  for (const notice of buildEnableNotice(enableResult)) {
+    notices.push({ message: notice.message, type: mapNoticeSeverity(notice.type) })
   }
 
   return notices
@@ -440,28 +493,20 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
           } else {
             setProjStatus({
               ...projStatus,
-              isProjectEnabled: !projStatus.isProjectEnabled,
+              isProjectEnabled: resolveToggleFallback(projStatus.isProjectEnabled, res.data),
               status: res.data.status,
             })
           }
         } catch {
           setProjStatus({
             ...projStatus,
-            isProjectEnabled: !projStatus.isProjectEnabled,
+            isProjectEnabled: resolveToggleFallback(projStatus.isProjectEnabled, res.data),
             status: res.data.status,
           })
         }
-        // Confirmação explícita do opt-in (não promete que o sidecar está running).
-        const wasEnabled = projStatus.isProjectEnabled
-        onNotify(
-          !wasEnabled
-            ? 'Shared AI Memory habilitado para este projeto.'
-            : 'Shared AI Memory desabilitado para este projeto.',
-          'success',
-        )
-        // Avisos adicionais sobre marker e migração.
-        for (const notice of buildEnableNotice(res.data as AiMemoryEnableProjectResult)) {
-          onNotify(notice.message, mapNoticeSeverity(notice.type))
+        // Gera notificações via helper puro (testável sem DOM).
+        for (const notice of buildToggleNotifications(projStatus.isProjectEnabled, res.data as AiMemoryEnableProjectResult)) {
+          onNotify(notice.message, notice.type)
         }
       } else {
         onNotify(res.message || res.reason || 'Falha ao alterar opt-in.', 'error')

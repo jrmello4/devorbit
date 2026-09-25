@@ -371,7 +371,7 @@ export function registerAiMemoryIpc(
         }
         const config = await deps.setProjectEnabled(entry, request.enabled)
         const status = await service.reconfigure(config)
-        if (!request.enabled) return ok({ config, status })
+        if (!request.enabled) return ok({ config, status, isProjectEnabled: config.projects[scope.identity]?.enabled ?? false })
         // Marker garantido DEPOIS do reconfigure: conflito com marker de
         // terceiros impede a migração (surface estruturada, sem throw).
         const marker = await service.ensureProjectMarker(projectPath)
@@ -382,8 +382,14 @@ export function registerAiMemoryIpc(
           ...(marker.conflicts !== undefined ? { conflicts: marker.conflicts } : {}),
           ...(marker.missingFields !== undefined ? { missingFields: marker.missingFields } : {}),
         }
-        if (!MARKER_MIGRATION_READY.has(marker.status)) {
-          return ok({ config, status, marker: markerView })
+        if (!marker.configured) {
+          // Rollback persistente do opt-in: marker não está configurado
+          // (conflict, preserved-but-incomplete, ou created/unchanged sem
+          // campos obrigatórios). Marker de terceiros NÃO é modificado.
+          // Preserved+configured=true mantém opt-in (launcher-usable).
+          const rolledBack = await deps.setProjectEnabled(entry, false)
+          await service.reconfigure(rolledBack)
+          return ok({ config: rolledBack, status: await service.status(), isProjectEnabled: rolledBack.projects[scope.identity]?.enabled ?? false, marker: markerView })
         }
         const migration = await migrateProjectLegacyMemory({
           userDataDir: deps.userDataDir,
@@ -393,7 +399,7 @@ export function registerAiMemoryIpc(
           isProjectEnabled: (identity) => service.isProjectEnabled(identity),
           ...(deps.readLegacyFiles ? { readLegacyFiles: deps.readLegacyFiles } : {}),
         })
-        return ok({ config, status, marker: markerView, migration })
+        return ok({ config, status, isProjectEnabled: config.projects[scope.identity]?.enabled ?? false, marker: markerView, migration })
       } catch (error) {
         return { ok: false, reason: 'error', message: error instanceof Error ? error.message : String(error) }
       }

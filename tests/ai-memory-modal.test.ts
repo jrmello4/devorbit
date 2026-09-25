@@ -4,6 +4,8 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import {
   appendGitMemory,
   buildEnableNotice,
+  buildToggleNotifications,
+  resolveToggleFallback,
   mapNoticeSeverity,
   extractIpcArray,
   renderPage,
@@ -662,13 +664,76 @@ describe('AiMemoryModal migration and opt-in recapture contract', () => {
     expect(notices[0].message).not.toContain('remova')
   })
 
-  it('buildEnableNotice: marker preserved → info com orientação', () => {
+  it('buildEnableNotice: marker preserved configured=false → warning acionável (opt-in revertido)', () => {
     const notices = buildEnableNotice({
       marker: { status: 'preserved', configured: false },
     })
     expect(notices).toHaveLength(1)
+    expect(notices[0].type).toBe('warning')
+    expect(notices[0].message).toContain('preservado')
+    expect(notices[0].message).toContain('revertido')
+  })
+
+  it('buildEnableNotice: marker preserved configured=true → info + info legado', () => {
+    const notices = buildEnableNotice({
+      marker: { status: 'preserved', configured: true },
+    })
+    expect(notices).toHaveLength(2)
     expect(notices[0].type).toBe('info')
     expect(notices[0].message).toContain('preservado')
+    expect(notices[1].type).toBe('info')
+    expect(notices[1].message).toContain('legados')
+  })
+
+  it('resolveToggleFallback: prioriza isProjectEnabled do IPC sobre inversão', () => {
+    // Rollback: IPC retorna false, anterior era true → resultado false (não inverte)
+    expect(resolveToggleFallback(true, { isProjectEnabled: false })).toBe(false)
+    // Sucesso: IPC retorna true, anterior era false → resultado true
+    expect(resolveToggleFallback(false, { isProjectEnabled: true })).toBe(true)
+    // IPC sem isProjectEnabled → inverte o anterior (compatibilidade)
+    expect(resolveToggleFallback(true, {})).toBe(false)
+    expect(resolveToggleFallback(false, {})).toBe(true)
+  })
+
+  it('buildToggleNotifications: rollback conflict isProjectEnabled=false → sem success, com warning', () => {
+    // Rollback: user tried to enable (previous=false) but IPC returned false
+    const notices = buildToggleNotifications(false, {
+      isProjectEnabled: false,
+      marker: { status: 'conflict', configured: false, conflicts: ['workspace'] },
+    })
+    // Nenhum success "habilitado"
+    expect(notices.some((n) => n.type === 'success')).toBe(false)
+    // Warning de conflito presente
+    const warnings = notices.filter((n) => n.type === 'error')
+    expect(warnings.length).toBeGreaterThanOrEqual(1)
+    expect(warnings.some((n) => n.message.includes('conflita'))).toBe(true)
+  })
+
+  it('buildToggleNotifications: rollback preserved incompleto → sem success, com warning acionável', () => {
+    // Rollback: user tried to enable (previous=false) but IPC returned false
+    const notices = buildToggleNotifications(false, {
+      isProjectEnabled: false,
+      marker: { status: 'preserved', configured: false },
+    })
+    expect(notices.some((n) => n.type === 'success')).toBe(false)
+    const warnings = notices.filter((n) => n.type === 'error')
+    expect(warnings.length).toBeGreaterThanOrEqual(1)
+    expect(warnings.some((n) => n.message.includes('preservado') && n.message.includes('revertido'))).toBe(true)
+  })
+
+  it('buildToggleNotifications: estado confirmado == desejado → success presente', () => {
+    // Habilitando: anterior false, IPC retorna true → success "habilitado"
+    const enabling = buildToggleNotifications(false, {
+      isProjectEnabled: true,
+      marker: { status: 'created', configured: true },
+    })
+    expect(enabling.some((n) => n.type === 'success' && n.message.includes('habilitado'))).toBe(true)
+
+    // Desabilitando: anterior true, IPC retorna false → success "desabilitado"
+    const disabling = buildToggleNotifications(true, {
+      isProjectEnabled: false,
+    })
+    expect(disabling.some((n) => n.type === 'success' && n.message.includes('desabilitado'))).toBe(true)
   })
 
   it('buildEnableNotice: marker configured + sem migration → info sobre legado', () => {

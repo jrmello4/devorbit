@@ -85,7 +85,8 @@ function harnessOf(initial: { enabled?: boolean; state?: AiMemoryStatus['state']
         const path_ = args.path as string
         const page = writes.find((entry) => entry.path === path_)
         if (!page) return { text: '', isError: true }
-        return { text: page.body, isError: false }
+        const envelope = { path: path_, body: page.body }
+        return { text: JSON.stringify(envelope), json: envelope, isError: false }
       }
       if (name === 'memory_briefing') return { text: 'BRIEFING-OK', isError: false }
       if (name === 'memory_recent') return { text: 'RECENT-OK', isError: false }
@@ -326,7 +327,7 @@ describe('ai-memory-ipc — enable → migração (opt-in explícito)', () => {
     expect(second.data!.status).toBe('already-migrated')
   })
 
-  it('marker em conflito com terceiros: migration NÃO roda e o conflito é surfaceado', async () => {
+  it('marker em conflito com terceiros: migration NÃO roda, isProjectEnabled=false e config desabilitado', async () => {
     const h = harnessOf()
     h.deps.userDataDir = await userDataOf()
     h.deps.readLegacyFiles = async () => ({ markdown: '# legado' })
@@ -336,14 +337,37 @@ describe('ai-memory-ipc — enable → migração (opt-in explícito)', () => {
       path: '/repo/.ai-memory.toml',
       conflicts: ['workspace'],
     })
-    const result = await invokeIpc<{ marker?: { status: string; conflicts?: string[] }; migration?: AiMemoryMigrationOutcomeView }>(h, AI_MEMORY_IPC_CHANNELS.enableProject, {
+    const result = await invokeIpc<{ config: AiMemoryConfig; isProjectEnabled: boolean; marker?: { status: string; conflicts?: string[] }; migration?: AiMemoryMigrationOutcomeView }>(h, AI_MEMORY_IPC_CHANNELS.enableProject, {
       projectPath: '/repo',
       enabled: true,
     })
     expect(result.ok).toBe(true)
+    expect(result.data!.isProjectEnabled).toBe(false)
+    expect(result.data!.config.projects['identity-p1']?.enabled).toBe(false)
     expect(result.data!.marker!.status).toBe('conflict')
     expect(result.data!.marker!.conflicts).toEqual(['workspace'])
     expect(result.data!.migration).toBeUndefined()
+    expect(h.client.calls.some((call) => call.name === 'memory_write_page')).toBe(false)
+  })
+
+  it('marker preserved incompleto: rollback isProjectEnabled=false e config desabilitado', async () => {
+    const h = harnessOf()
+    h.deps.userDataDir = await userDataOf()
+    h.deps.readLegacyFiles = async () => ({ markdown: '# legado' })
+    h.deps.service.ensureProjectMarker = async () => ({
+      status: 'preserved',
+      configured: false,
+      path: '/repo/.ai-memory.toml',
+      missingFields: ['ignore_paths'],
+    })
+    const result = await invokeIpc<{ config: AiMemoryConfig; isProjectEnabled: boolean; marker?: { status: string } }>(h, AI_MEMORY_IPC_CHANNELS.enableProject, {
+      projectPath: '/repo',
+      enabled: true,
+    })
+    expect(result.ok).toBe(true)
+    expect(result.data!.isProjectEnabled).toBe(false)
+    expect(result.data!.config.projects['identity-p1']?.enabled).toBe(false)
+    expect(result.data!.marker!.status).toBe('preserved')
     expect(h.client.calls.some((call) => call.name === 'memory_write_page')).toBe(false)
   })
 
@@ -474,8 +498,9 @@ describe('ai-memory-ipc — takeover e squad state', () => {
     })
     const original = h.client.callTool
     h.client.callTool = async (name, args) => {
-      if (name === 'memory_read_page' && args.path === 'squads/sq-1/state') {
-        return { text: body, isError: false }
+      if (name === 'memory_read_page' && args.path === 'squads/sq-1/state.md') {
+        const envelope = { path: args.path, body }
+        return { text: JSON.stringify(envelope), json: envelope, isError: false }
       }
       return await original(name, args)
     }
@@ -512,8 +537,9 @@ describe('ai-memory-ipc — takeover e squad state', () => {
     const body = renderSquadStateBody({ id: 'sq-1', objective: 'entregar', members: [], tasks: [] })
     const original = h.client.callTool
     h.client.callTool = async (name, args) => {
-      if (name === 'memory_read_page' && args.path === 'squads/sq-1/state') {
-        return { text: body, isError: false }
+      if (name === 'memory_read_page' && args.path === 'squads/sq-1/state.md') {
+        const envelope = { path: args.path, body }
+        return { text: JSON.stringify(envelope), json: envelope, isError: false }
       }
       return await original(name, args)
     }
@@ -544,7 +570,7 @@ describe('ai-memory-ipc — takeover e squad state', () => {
     })
     expect(result.ok).toBe(true)
     expect(result.data!.published).toBe(true)
-    expect(result.data!.path).toBe('squads/sq-9/state')
+    expect(result.data!.path).toBe('squads/sq-9/state.md')
     expect(h.writes[0].body).toContain('Fechar fase 3')
   })
 
