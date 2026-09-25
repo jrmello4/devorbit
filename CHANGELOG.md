@@ -2,6 +2,21 @@
 
 All notable changes to DevOrbit are documented here.
 
+## [1.0.43] - 2026-09-25
+
+### Added
+
+- E2E do sidecar ai-memory v2.4.0 no CI Windows: baixa o asset oficial com SHA-256 fixado em `ai-memory-contract.ts` e executa três cenários — resolução de mappings, escopo/gravação contra o serviço real e persistência de decisão/handoff após reiniciar o serviço. Os testes exercitam as APIs do sidecar; não iniciam os CLIs de Codex ou OpenCode.
+- Contenção do processo sidecar próprio por Windows Job Object com `KILL_ON_JOB_CLOSE`. Quando o Job Object é associado com sucesso, fechar o handle encerra o sidecar e seus descendentes, inclusive após encerramento abrupto do DevOrbit. Serviços externos/adotados não são associados nem encerrados.
+
+### Fixed
+
+- Mitigada a limitação de lifecycle documentada em 1.0.42: a associação bem-sucedida ao Job Object permite ao Windows encerrar o processo próprio e seus descendentes quando o handle fecha, sem depender de `before-quit`.
+
+### Limitations & Known Issues
+
+- **Job Object (fail-open):** Se criar, configurar ou associar o Job Object falhar, o sidecar continua funcionando sem contenção de crash; a limitação aparece no status e o processo pode continuar ativo até ser adotado na próxima inicialização do DevOrbit.
+
 ## [1.0.42] - 2026-09-24
 
 ### Added

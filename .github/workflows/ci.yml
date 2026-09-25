@@ -125,6 +125,33 @@ jobs:
             npm run verify:ui
           fi
 
+      - name: E2E ai-memory sidecar v2.4.0 (Windows only)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $url = 'https://github.com/akitaonrails/ai-memory/releases/download/v2.4.0/ai-memory-windows-x86_64.zip'
+          $expectedHash = '4b3b8757c16a6ae97a3a43f46baef012a400121017272fb4e799503d8c130a50'
+          $zip = Join-Path $env:RUNNER_TEMP 'ai-memory-windows-x86_64.zip'
+          $binDir = Join-Path $env:RUNNER_TEMP 'ai-memory-bin'
+
+          Write-Host "Downloading ai-memory v2.4.0..."
+          Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+
+          $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne $expectedHash) {
+            throw "SHA-256 mismatch: expected $expectedHash, got $hash"
+          }
+          Write-Host "SHA-256 verified: $hash"
+
+          Expand-Archive -LiteralPath $zip -DestinationPath $binDir -Force
+          $exe = Get-ChildItem -LiteralPath $binDir -Filter 'ai-memory.exe' -Recurse |
+                 Select-Object -First 1 -ExpandProperty FullName
+          if (-not $exe) { throw "ai-memory.exe not found in extracted archive" }
+          Write-Host "Binary: $exe"
+
+          $env:AI_MEMORY_E2E_BINARY = $exe
+          npx vitest run tests/ai-memory-real-scope-e2e.test.ts
+
       - name: Upload UI artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v4
