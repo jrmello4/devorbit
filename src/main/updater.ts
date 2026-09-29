@@ -55,6 +55,108 @@ export const PUBLISH_CONFIG = {
   private: true,
 }
 
+// Publisher esperado no certificado Authenticode do binário de atualização.
+// Derivado de electron-builder.json → win.certificateSubjectName / win.publisherName.
+// O electron-builder.json atual NÃO define nenhum desses campos (o build ainda
+// não é assinado), então o default é string vazia.
+// Trade-off com publisher vazio: a verificação exige apenas Status 'Valid', ou
+// seja, qualquer certificado com cadeia confiável no Windows é aceito —
+// inclusive um de outro publisher. Quando o build passar a ser assinado,
+// preencha esta constante com o subject do certificado (ex.: 'DevOrbit') para
+// que a verificação também compare o emissor do certificado.
+export const EXPECTED_UPDATE_PUBLISHER = ''
+
+// Timeout da verificação via PowerShell. Timeout/erro de execução = fail-closed.
+export const AUTHENTICODE_TIMEOUT_MS = 30_000
+
+export interface AuthenticodeVerification {
+  status: string
+  signer: string | null
+}
+
+function getPowershellPath(): string {
+  return path.join(
+    process.env.SystemRoot || 'C:\\Windows',
+    'System32',
+    'WindowsPowerShell',
+    'v1.0',
+    'powershell.exe'
+  )
+}
+
+/**
+ * Verifica a assinatura Authenticode de um binário baixado via
+ * `Get-AuthenticodeSignature` (PowerShell — zero dependências novas).
+ *
+ * Fail-closed: qualquer erro de execução, timeout, saída inesperada,
+ * Status diferente de 'Valid' ou publisher divergente lança UpdateError.
+ * Fora do Windows (process.platform !== 'win32') a verificação de assinatura é
+ * pulada (não há Authenticode); a verificação de hash SHA-512 do portable
+ * continua obrigatória independentemente de plataforma.
+ */
+export async function verifyAuthenticode(
+  filePath: string,
+  expectedPublisher: string = EXPECTED_UPDATE_PUBLISHER
+): Promise<AuthenticodeVerification> {
+  if (process.platform !== 'win32') {
+    return { status: 'SkippedNonWindows', signer: null }
+  }
+
+  try {
+    await fs.access(filePath)
+  } catch {
+    throw new UpdateError('Arquivo de atualização não encontrado para verificação de assinatura.')
+  }
+
+  const escapedPath = filePath.replace(/'/g, "''")
+  const command = [
+    `$sig = Get-AuthenticodeSignature -LiteralPath '${escapedPath}'`,
+    'Write-Output ("STATUS={0}" -f $sig.Status)',
+    'Write-Output ("SIGNER={0}" -f $sig.SignerCertificate.Subject)',
+  ].join('; ')
+
+  let result: { stdout: string; stderr: string }
+  try {
+    result = await execFileRunner(
+      getPowershellPath(),
+      [
+        '-NoLogo',
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-Command',
+        command,
+      ],
+      { timeout: AUTHENTICODE_TIMEOUT_MS, windowsHide: true, maxBuffer: 1024 * 1024 }
+    )
+  } catch {
+    // Erro de execução/timeout do PowerShell: falha de verificação (fail-closed).
+    throw new UpdateError('A verificação de assinatura Authenticode não pôde ser concluída.')
+  }
+
+  const stdout = String(result.stdout || '')
+  const status = stdout.match(/^STATUS=(.*)$/m)?.[1]?.trim() ?? ''
+  const signer = stdout.match(/^SIGNER=(.*)$/m)?.[1]?.trim() ?? ''
+  if (!status) {
+    throw new UpdateError('Saída inesperada da verificação de assinatura Authenticode.')
+  }
+  if (!/^valid$/i.test(status)) {
+    // Status é um enum fixo do PowerShell (ex.: NotSigned, HashMismatch) — não sensível.
+    throw new UpdateError(`A verificação de assinatura Authenticode falhou (Status: ${status}).`)
+  }
+  const publisher = expectedPublisher.trim()
+  if (publisher) {
+    if (!signer) {
+      throw new UpdateError('O certificado da atualização não possui publisher no subject.')
+    }
+    if (!signer.toLowerCase().includes(publisher.toLowerCase())) {
+      throw new UpdateError('O publisher do certificado da atualização não corresponde ao esperado.')
+    }
+  }
+  return { status, signer: signer || null }
+}
+
 export type TokenSource = 'env:GH_TOKEN' | 'env:GITHUB_TOKEN' | 'gh-cli' | 'none'
 
 export interface UpdateDiagnostic {
@@ -118,6 +220,7 @@ let retryTimer: NodeJS.Timeout | null = null
 let consecutiveFailures = 0
 let portableInstallTriggered = false
 let portableQuitHandlerRegistered = false
+let installedDownloadedPath: string | null = null
 let currentDiagnostic: UpdateDiagnostic | undefined = undefined
 
 export function getUpdateDiagnostic(): UpdateDiagnostic | undefined {
@@ -174,6 +277,16 @@ function setState(nextState: UpdateState): void {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function fallbackDiagnostic(): UpdateDiagnostic {
+  return {
+    hasToken: Boolean(process.env.GH_TOKEN),
+    tokenSource: process.env.GH_TOKEN ? 'env:GH_TOKEN' : 'none',
+    tokenMasked: maskToken(process.env.GH_TOKEN || null),
+    provider: PUBLISH_CONFIG.provider,
+    isPrivate: PUBLISH_CONFIG.private,
+  }
 }
 
 function getTempDir(): string {
@@ -603,6 +716,25 @@ export async function checkInstalledForUpdates(distribution: UpdateDistribution 
   }
 }
 
+/** Fail-closed para o fluxo instalado (NSIS): marca erro, impede que o
+ * electron-updater instale no encerramento um binário rejeitado e mantém o
+ * status longe de 'downloaded' (gate do installUpdate). */
+function rejectInstalledUpdate(message: string): void {
+  autoUpdater.autoInstallOnAppQuit = false
+  currentDiagnostic = {
+    ...(currentDiagnostic || fallbackDiagnostic()),
+    errorDetail: message,
+  }
+  setState({
+    supported: true,
+    status: 'error',
+    distribution: 'installed',
+    version: state.version,
+    message,
+    diagnostic: currentDiagnostic,
+  })
+}
+
 function registerInstalledUpdaterEvents(distribution: UpdateDistribution): void {
   autoUpdater.on('checking-for-update', () => {
     setState({
@@ -679,14 +811,48 @@ function registerInstalledUpdaterEvents(distribution: UpdateDistribution): void 
       manifestFound: true,
       manifestVersion: info.version,
     }
-    setState({
-      supported: true,
-      status: 'downloaded',
-      distribution,
-      version: info.version,
-      progress: 100,
-      diagnostic: currentDiagnostic,
-    })
+    // electron-updater >= 6 (6.8.9 aqui) expõe UpdateDownloadedEvent.downloadedFile:
+    // caminho do instalador já baixado, antes de qualquer instalação.
+    const downloadedFile =
+      typeof info?.downloadedFile === 'string' && info.downloadedFile.trim()
+        ? info.downloadedFile
+        : null
+
+    // Fora do Windows a verificação de assinatura é pulada (não há Authenticode;
+    // a verificação de hash do electron-updater continua valendo).
+    if (process.platform !== 'win32') {
+      setState({
+        supported: true,
+        status: 'downloaded',
+        distribution,
+        version: info.version,
+        progress: 100,
+        diagnostic: currentDiagnostic,
+      })
+      return
+    }
+
+    // No Windows, sem caminho do arquivo baixado = fail-closed.
+    if (!downloadedFile) {
+      rejectInstalledUpdate('Arquivo baixado da atualização indisponível para verificação de assinatura.')
+      return
+    }
+
+    installedDownloadedPath = downloadedFile
+    void verifyAuthenticode(downloadedFile)
+      .then(() => {
+        setState({
+          supported: true,
+          status: 'downloaded',
+          distribution,
+          version: info.version,
+          progress: 100,
+          diagnostic: currentDiagnostic,
+        })
+      })
+      .catch((error: unknown) => {
+        rejectInstalledUpdate(errorMessage(error))
+      })
   })
   autoUpdater.on('error', (error) => {
     console.warn('Falha ao verificar atualização:', error)
@@ -847,6 +1013,15 @@ async function performPortableDownload(): Promise<UpdateState> {
     if (!valid) {
       throw new UpdateError('A verificação de integridade da atualização falhou.', 200, manifest.path)
     }
+    // Defesa em profundidade: valida a assinatura Authenticode do binário
+    // baixado ANTES de promovê-lo (.download → .exe final). Fora do Windows a
+    // verificação de assinatura é pulada dentro de verifyAuthenticode; o hash
+    // SHA-512 acima continua obrigatório em qualquer plataforma.
+    try {
+      await verifyAuthenticode(temporaryPath)
+    } catch (error) {
+      throw new UpdateError(errorMessage(error), 200, manifest.path)
+    }
     const finalPath = temporaryPath.replace(/\.download$/i, '')
     await fs.rename(temporaryPath, finalPath)
     portableDownloadPath = finalPath
@@ -939,18 +1114,42 @@ export async function handleAppQuitPortableUpdate(): Promise<boolean> {
   const executablePath = getPortableExecutablePath()
   if (!executablePath) return false
 
-  const powershellPath = path.join(
-    process.env.SystemRoot || 'C:\\Windows',
-    'System32',
-    'WindowsPowerShell',
-    'v1.0',
-    'powershell.exe'
-  )
+  const powershellPath = getPowershellPath()
 
   try {
     await fs.access(executablePath)
     await fs.access(portableDownloadPath)
     await fs.access(powershellPath)
+  } catch (error) {
+    console.warn('Falha ao preparar instalação portable no encerramento:', errorMessage(error))
+    return false
+  }
+
+  // Defesa em profundidade: revalida a assinatura do binário baixado
+  // imediatamente antes de agendar a substituição do executável. Falha aqui
+  // aborta a instalação (o arquivo não é promovido/agendado).
+  try {
+    await verifyAuthenticode(portableDownloadPath)
+  } catch (error) {
+    const message = errorMessage(error)
+    console.warn('Verificação de assinatura falhou; instalação portable abortada.', message)
+    await fs.rm(portableDownloadPath, { force: true }).catch(() => undefined)
+    currentDiagnostic = {
+      ...(currentDiagnostic || fallbackDiagnostic()),
+      errorDetail: message,
+    }
+    setState({
+      supported: true,
+      status: 'error',
+      distribution: 'portable',
+      version: state.version,
+      message,
+      diagnostic: currentDiagnostic,
+    })
+    return false
+  }
+
+  try {
     portableInstallTriggered = true
 
     const scriptPath = path.join(getTempDir(), 'devorbit-update-' + process.pid + '-' + Date.now() + '.ps1')
@@ -995,6 +1194,20 @@ export async function installUpdate(): Promise<{ success: boolean; message?: str
   }
 
   if (distribution === 'installed') {
+    // Defesa em profundidade: revalida a assinatura do instalador baixado
+    // imediatamente antes de quitAndInstall (substituição do app).
+    if (process.platform === 'win32') {
+      if (!installedDownloadedPath) {
+        return { success: false, message: 'Arquivo da atualização indisponível para verificação de assinatura.' }
+      }
+      try {
+        await verifyAuthenticode(installedDownloadedPath)
+      } catch (error) {
+        const message = errorMessage(error)
+        rejectInstalledUpdate(message)
+        return { success: false, message }
+      }
+    }
     autoUpdater.quitAndInstall()
     return { success: true }
   }
@@ -1015,6 +1228,7 @@ export function _resetUpdaterForTest(): void {
   consecutiveFailures = 0
   portableInstallTriggered = false
   portableQuitHandlerRegistered = false
+  installedDownloadedPath = null
   portableManifest = null
   portableDownloadPath = null
   portableDownloadUrl = null
