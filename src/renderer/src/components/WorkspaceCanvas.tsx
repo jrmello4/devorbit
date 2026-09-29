@@ -74,7 +74,6 @@ import { AgentCreationDialog } from "./AgentCreationDialog";
 import { CanvasToolbar, type CanvasZoomPreset } from "./CanvasToolbar";
 import { CanvasNodeInspector } from "./CanvasNodeInspector";
 import {
-  agentNodeBlockedLabel,
   agentNodeSetupMessage,
   injectAgentTerminalLaunch,
   isAgentNodeConfigured,
@@ -86,6 +85,14 @@ import {
   type AgentCreationSpec,
   type SquadCreationSpec,
 } from "./agent-creation-helpers";
+import {
+  composeAgentPrompt,
+  dispatchAgentTask as dispatchAgentTaskPure,
+  dispatchOrchestrationTask as dispatchOrchestrationTaskPure,
+  orchestrationResultInstruction,
+  orchestrationRunId,
+  reportAgentTaskFailure as reportAgentTaskFailurePure,
+} from "./canvas/agent-dispatch";
 import { agentSendPolicy } from "./agent-send-policy";
 import {
   CANVAS_STATE_VERSION,
@@ -110,6 +117,10 @@ import { CanvasNodeCard } from "./CanvasNodeCard";
 import { CanvasMinimap } from "./CanvasMinimap";
 import { CanvasRadialMenu, type CanvasRadialItem } from "./CanvasRadialMenu";
 import "./WorkspaceCanvas.css";
+
+// Contrato de prompt/despacho extraído para canvas/agent-dispatch (testável).
+// Reexportado aqui para compatibilidade com importadores existentes (testes).
+export { composeAgentPrompt, orchestrationResultInstruction };
 
 export type NodeKind = "workbench" | "browser" | "note" | "agent" | "terminal";
 export type AgentRole = "Coordenador" | "Implementação" | "Revisão" | "Testes";
@@ -147,7 +158,7 @@ export interface CanvasSquad {
   memberNodeIds: string[];
   collapsed?: boolean;
 }
-interface CanvasState {
+export interface CanvasState {
   version: typeof CANVAS_STATE_VERSION;
   nodes: CanvasNode[];
   connections: CanvasConnection[];
@@ -318,27 +329,6 @@ const orchestrationRoleOrder: readonly string[] = [
   "Revisão",
   "Testes",
 ];
-const legacyOrchestrationResultInstruction =
-  "Esta etapa faz parte de uma orquestração automática. Ao concluir, imprima uma única linha iniciada por DEVORBIT_RESULT: e seguida de um resumo objetivo. Use DEVORBIT_RESULT: CONCLUIDO: para uma etapa concluída; se não puder continuar, use DEVORBIT_RESULT: BLOQUEADO: e explique o motivo. Não aguarde outro clique para encaminhar a próxima etapa.";
-export const orchestrationResultInstruction = legacyOrchestrationResultInstruction &&
-  'Emita primeiro uma única linha com JSON compacto: DEVORBIT_RESULT: {"version":1,"outcome":"completed","summary":"resumo objetivo"}. Use outcome completed, blocked ou failed e summary objetivo, sem quebras de linha e com no máximo 1000 caracteres. Emita imediatamente depois o espelho legado DEVORBIT_RESULT: CONCLUIDO: <resumo>, DEVORBIT_RESULT: BLOQUEADO: <motivo> ou DEVORBIT_RESULT: FALHA: <motivo>. O JSON vem primeiro e não aguarde outro clique para encaminhar a próxima etapa.';
-
-/**
- * A instrução de resultado SEMPRE vem primeiro no prompt do agente. Assim
- * qualquer truncamento de prefixo (limite do turno/IPC) preserva o contrato
- * DEVORBIT_RESULT intacto e corta apenas o corpo de notas/resultados.
- */
-export function composeAgentPrompt(lines: string[]): string {
-  return [
-    orchestrationResultInstruction,
-    ...lines.filter((line) => line !== orchestrationResultInstruction),
-  ].join("\n");
-}
-const orchestrationRunId = () =>
-  "orchestration-" +
-  Date.now().toString(36) +
-  "-" +
-    Math.random().toString(36).slice(2, 7);
 const agentProviderIds: AgentProviderId[] = [
   "codex",
   "opencode",
@@ -937,8 +927,6 @@ function continuityRoleFor(role: string | undefined, isCoordinator = false): Orc
   if (role === "Testes") return "tester";
   return "implementer";
 }
-
-const CONTINUITY_TRANSIENT_PATTERN = /limite|rate.?limit|quota|esgot|indispon|overload|429|503/i;
 
 function continuityEventMessage(event: ContinuityEvent): string {
   const from = event.fromSeatId ? ` de ${event.fromSeatId}` : "";
@@ -2813,33 +2801,13 @@ export const WorkspaceCanvas: React.FC<{
       agent: CanvasNode,
       prompt: string,
       progress?: AgentProgress,
-    ): string | null => {
-      if (!onSendAgentTask) return null;
-      if (!isAgentNodeConfigured(agent, agentProviders)) {
-        setAgentProgress((current) => ({
-          ...current,
-          [agent.id]: { state: "blocked", label: agentNodeBlockedLabel },
-        }));
-        return null;
-      }
-      if (progress) {
-        setAgentProgress((current) => ({ ...current, [agent.id]: progress }));
-      }
-      const taskId = onSendAgentTask(agent, prompt);
-      if (!taskId) return null;
-      update(
-        (current) => ({
-          ...current,
-          nodes: current.nodes.map((node) =>
-            node.id === agent.id
-              ? { ...node, content: progress?.label || "Tarefa enviada agora" }
-              : node,
-          ),
-        }),
-        true,
-      );
-      return taskId;
-    },
+    ): string | null =>
+      dispatchAgentTaskPure(
+        { onSendAgentTask, agentProviders, setAgentProgress, update },
+        agent,
+        prompt,
+        progress,
+      ),
     [agentProviders, onSendAgentTask, update],
   );
 
@@ -2989,48 +2957,33 @@ export const WorkspaceCanvas: React.FC<{
       agent: CanvasNode,
       prompt: string,
       progress: AgentProgress,
-    ): boolean => {
-      const taskId = dispatchAgentTask(agent, prompt, progress);
-      if (!taskId) {
-        markOrchestrationBlocked(run, agent.id);
-        return false;
-      }
-      commitOrchestration({ ...run, expectedTaskId: taskId });
-      return true;
-    },
+    ): boolean =>
+      dispatchOrchestrationTaskPure(
+        { dispatchAgentTask, markOrchestrationBlocked, commitOrchestration },
+        run,
+        agent,
+        prompt,
+        progress,
+      ),
     [commitOrchestration, dispatchAgentTask, markOrchestrationBlocked],
   );
   const reportAgentTaskFailure = useCallback(
-    (agentId: string, taskId: string, message: string) => {
-      void window.devorbit
-        .reportOrchestrationTurn(project.path, {
-          seatId: agentId,
-          outcome: "failed",
-          summary: message,
-          transient: CONTINUITY_TRANSIENT_PATTERN.test(message),
-        })
-        .catch(() => undefined);
-      if (manualTasksRef.current.delete(agentId)) {
-        setAgentProgress((current) => ({
-          ...current,
-          [agentId]: { state: "blocked", label: message || "A tarefa falhou" },
-        }));
-      }
-      const run = orchestrationRef.current;
-      if (
-        !run ||
-        run.projectId !== project.id ||
-        run.phase === "complete" ||
-        run.phase === "blocked" ||
-        run.expectedAgentId !== agentId ||
-        (run.expectedTaskId !== undefined && run.expectedTaskId !== taskId)
-      )
-        return;
-      markOrchestrationBlocked(
-        { ...run, lastHandledResult: `failure:${taskId}:${message}` },
+    (agentId: string, taskId: string, message: string) =>
+      reportAgentTaskFailurePure(
+        {
+          projectId: project.id,
+          projectPath: project.path,
+          manualTasks: manualTasksRef.current,
+          getOrchestrationRun: () => orchestrationRef.current,
+          setAgentProgress,
+          markOrchestrationBlocked,
+          reportOrchestrationTurn: (path, input) =>
+            window.devorbit.reportOrchestrationTurn(path, input),
+        },
         agentId,
-      );
-    },
+        taskId,
+        message,
+      ),
     [markOrchestrationBlocked, project.id, project.path],
   );
   const startCoordinatorOrchestration = useCallback(
