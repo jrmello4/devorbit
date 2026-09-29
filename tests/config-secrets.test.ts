@@ -88,6 +88,7 @@ describe('config — armazenamento seguro de credenciais BYOK', () => {
     const safe = toSafeConfig(loaded)
     expect(safe.modelRouting?.hasDeepseekKey).toBe(true)
     expect(safe.modelRouting?.hasGeminiKey).toBe(true)
+    expect(safe.secretsSessionOnly).toBeUndefined()
     expect(safe.modelRouting).not.toHaveProperty('deepseekApiKey')
     expect(safe.modelRouting).not.toHaveProperty('geminiApiKey')
     expect(JSON.stringify(safe)).not.toContain(SECRET)
@@ -133,20 +134,120 @@ describe('config — armazenamento seguro de credenciais BYOK', () => {
     await expect(fs.readFile(secretStoreFilePath(), 'utf-8')).rejects.toThrow()
   })
 
-  it('usa fallback sem criptografia, avisa e mantém o renderer seguro', async () => {
+  it('safeStorage indisponível: nada é gravado em disco e a chave fica session-only', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     electronState.encryptionAvailable = false
 
-    await saveConfig({ modelRouting: { vllmApiKey: SECRET } })
+    const saved = await saveConfig({ modelRouting: { fastModel: 'gpt-mini', vllmApiKey: SECRET } })
+    expect(saved.modelRouting?.vllmApiKey).toBe(SECRET)
 
-    const store = JSON.parse(await fs.readFile(secretStoreFilePath(), 'utf-8'))
-    expect(store.encrypted).toBe(false)
-    expect(store.data.vllmApiKey).toBe(SECRET)
+    // (a) Nada persistido: sem cofre novo, sem `encrypted:false`, sem segredo.
+    await expect(fs.readFile(secretStoreFilePath(), 'utf-8')).rejects.toThrow()
+    const persisted = JSON.parse(await fs.readFile(configFilePath(), 'utf-8'))
+    expect(persisted.modelRouting).toMatchObject({ fastModel: 'gpt-mini' })
+    expect(JSON.stringify(persisted)).not.toContain(SECRET)
+    expect(JSON.stringify(persisted)).not.toContain('vllmApiKey')
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('Armazenamento seguro'))
 
+    // (b) Utilizável em memória na mesma sessão.
+    expect((await loadConfig()).modelRouting?.vllmApiKey).toBe(SECRET)
+
+    // (c) Sinal exposto ao renderer sem revelar o valor.
     const safe = toSafeConfig(await loadConfig())
     expect(safe.modelRouting?.hasVllmKey).toBe(true)
+    expect(safe.secretsSessionOnly).toBe(true)
     expect(JSON.stringify(safe)).not.toContain(SECRET)
+  })
+
+  it('safeStorage indisponível: edições seguintes mantêm as credenciais da sessão', async () => {
+    electronState.encryptionAvailable = false
+    await saveConfig({ modelRouting: { vllmApiKey: SECRET } })
+    await saveConfig({ modelRouting: { kimiApiKey: GEMINI_SECRET } })
+
+    const loaded = await loadConfig()
+    expect(loaded.modelRouting?.vllmApiKey).toBe(SECRET)
+    expect(loaded.modelRouting?.kimiApiKey).toBe(GEMINI_SECRET)
+    await expect(fs.readFile(secretStoreFilePath(), 'utf-8')).rejects.toThrow()
+  })
+
+  it('safeStorage indisponível: remover a chave da sessão a apaga da memória', async () => {
+    electronState.encryptionAvailable = false
+    await saveConfig({ modelRouting: { vllmApiKey: SECRET } })
+
+    const cleared = await saveConfig({ modelRouting: { vllmApiKey: '' } })
+    expect(cleared.modelRouting?.vllmApiKey).toBeUndefined()
+    expect((await loadConfig()).modelRouting?.vllmApiKey).toBeUndefined()
+    await expect(fs.readFile(secretStoreFilePath(), 'utf-8')).rejects.toThrow()
+  })
+
+  it('legado plaintext no config.json: indisponível preserva o arquivo e usa a chave em memória', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const legacyConfig = JSON.stringify({ modelRouting: { fastModel: 'legacy', deepseekApiKey: SECRET } })
+    await fs.writeFile(configFilePath(), legacyConfig)
+    electronState.encryptionAvailable = false
+
+    // (d) Migração adiada: o texto claro NÃO é reescrito nem apagado e a
+    // chave continua utilizável em memória nesta sessão.
+    const loaded = await loadConfig()
+    expect(loaded.modelRouting?.deepseekApiKey).toBe(SECRET)
+    expect(loaded.modelRouting?.fastModel).toBe('legacy')
+    expect(await fs.readFile(configFilePath(), 'utf-8')).toBe(legacyConfig)
+    await expect(fs.readFile(secretStoreFilePath(), 'utf-8')).rejects.toThrow()
+    expect(toSafeConfig(loaded).secretsSessionOnly).toBe(true)
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Armazenamento seguro'))
+
+    // (e) Com o safeStorage de volta, a migração normal acontece.
+    electronState.encryptionAvailable = true
+    const migrated = await loadConfig()
+    expect(migrated.modelRouting?.deepseekApiKey).toBe(SECRET)
+    expect(await fs.readFile(configFilePath(), 'utf-8')).not.toContain(SECRET)
+    const store = JSON.parse(await fs.readFile(secretStoreFilePath(), 'utf-8'))
+    expect(store.encrypted).toBe(true)
+  })
+
+  it('cofre plaintext legado (encrypted:false): indisponível não o reescreve; disponível re-cifra', async () => {
+    const legacyStore = JSON.stringify({ version: 1, encrypted: false, data: { vllmApiKey: SECRET } })
+    await fs.writeFile(secretStoreFilePath(), legacyStore)
+    electronState.encryptionAvailable = false
+
+    const loaded = await loadConfig()
+    expect(loaded.modelRouting?.vllmApiKey).toBe(SECRET)
+    expect(await fs.readFile(secretStoreFilePath(), 'utf-8')).toBe(legacyStore)
+
+    electronState.encryptionAvailable = true
+    const migrated = await loadConfig()
+    expect(migrated.modelRouting?.vllmApiKey).toBe(SECRET)
+    const store = JSON.parse(await fs.readFile(secretStoreFilePath(), 'utf-8'))
+    expect(store.encrypted).toBe(true)
+    expect(JSON.stringify(store)).not.toContain(SECRET)
+  })
+
+  it('safeStorage indisponível: save de outros campos succeeds e preserva o legado não tocado', async () => {
+    await fs.writeFile(
+      configFilePath(),
+      JSON.stringify({ chatGptAccount1Name: 'Antiga', modelRouting: { deepseekApiKey: SECRET } })
+    )
+    electronState.encryptionAvailable = false
+
+    const saved = await saveConfig({ chatGptAccount1Name: 'Nova' })
+    expect(saved.chatGptAccount1Name).toBe('Nova')
+    expect(saved.modelRouting?.deepseekApiKey).toBe(SECRET)
+
+    const persisted = JSON.parse(await fs.readFile(configFilePath(), 'utf-8'))
+    expect(persisted.chatGptAccount1Name).toBe('Nova')
+    expect(persisted.modelRouting.deepseekApiKey).toBe(SECRET)
+    await expect(fs.readFile(secretStoreFilePath(), 'utf-8')).rejects.toThrow()
+  })
+
+  it('safeStorage indisponível: remover chave legada limpa o texto claro do config.json', async () => {
+    await fs.writeFile(configFilePath(), JSON.stringify({ modelRouting: { deepseekApiKey: SECRET } }))
+    electronState.encryptionAvailable = false
+
+    const cleared = await saveConfig({ modelRouting: { deepseekApiKey: '' } })
+    expect(cleared.modelRouting?.deepseekApiKey).toBeUndefined()
+    expect((await loadConfig()).modelRouting?.deepseekApiKey).toBeUndefined()
+    expect(await fs.readFile(configFilePath(), 'utf-8')).not.toContain('deepseekApiKey')
+    await expect(fs.readFile(secretStoreFilePath(), 'utf-8')).rejects.toThrow()
   })
 
   it('preserva o cofre cifrado e bloqueia edição quando safeStorage fica indisponível', async () => {

@@ -294,6 +294,13 @@ export interface AppConfig {
   terminalPresets?: CustomTerminalPreset[]
   /** Ids de provedores do ai-usagebar ocultos na tela "Provedores & Quotas de IA". */
   aiUsagebarHiddenProviders?: string[]
+  /**
+   * Somente leitura (processo main → renderer): true quando o armazenamento
+   * seguro está indisponível e as credenciais BYOK existem apenas na memória
+   * desta sessão — nada é gravado em disco. Nunca é persistido nem aceito em
+   * atualizações de configuração.
+   */
+  secretsSessionOnly?: boolean
 }
 
 export interface SyncResult {
@@ -361,7 +368,7 @@ export type IpcInvokeChannel =
   | 'devorbit:createAgentWorktree'
   | 'devorbit:integrateAgentWorktree'
   | 'devorbit:resizeTerminal' | 'devorbit:writeTerminal' | 'devorbit:stopTerminal'
-  | 'devorbit:pipeTerminals' | 'devorbit:sendAgentTurn'
+  | 'devorbit:pipeTerminals' | 'devorbit:sendAgentTurn' | 'devorbit:submitAgentInstruction'
   | 'devorbit:navigateWeb' | 'devorbit:getWebState' | 'devorbit:goBackWeb'
   | 'devorbit:goForwardWeb' | 'devorbit:reloadWeb' | 'devorbit:setWebVisible'
   | 'devorbit:disposeWebPanel' | 'devorbit:setWebBounds' | 'devorbit:launchTool'
@@ -640,7 +647,13 @@ export interface DevOrbitAPI {
     projectPath: string,
     prompt: string,
     timeouts?: { idleMs?: number; overallMs?: number },
+    turnId?: string,
   ) => Promise<AgentTurnResult>
+  /** Submissão centralizada (prontidão por turno + UM Enter + ack) — o Enter nunca é montado no renderer. */
+  submitAgentInstruction: (
+    terminalId: string,
+    instruction: { turnId: string; content: string },
+  ) => Promise<{ success: boolean; acked: boolean; attempts: number; error?: string }>
   onTerminalEvent: (callback: (event: TerminalEvent) => void) => () => void
   onCompanionEvent: (callback: (summary: CompanionSummary) => void) => () => void
   onAgentBridgeEvent: (callback: (event: AgentBridgeEvent) => void) => () => void

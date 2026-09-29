@@ -529,6 +529,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         <section className="pt-5 border-t border-[var(--color-border-subtle)]">
           <h3 className="font-semibold mb-1">Roteamento de modelos (BYOK)</h3>
           <p className="text-xs text-[var(--color-text-muted)] mb-3">Chaves criptografadas no sistema; deixe vazio para manter a credencial salva.</p>
+          {config.secretsSessionOnly && (
+            <p className="text-xs text-[var(--color-warning)] mb-3" role="note">
+              Armazenamento seguro indisponível: as chaves salvas valem apenas nesta sessão e não ficam gravadas no disco.
+            </p>
+          )}
 
           <div className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

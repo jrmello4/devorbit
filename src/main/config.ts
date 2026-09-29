@@ -25,6 +25,33 @@ const SECRET_STORE_FILE = 'config-secrets.json'
 const SECRET_STORE_VERSION = 1
 const MAX_API_KEY_LENGTH = 500
 
+/*
+ * Segredos BYOK retidos APENAS na memória do processo, indexados por diretório
+ * do cofre. Preenchidos quando o armazenamento seguro (safeStorage) está
+ * indisponível: o cofre NUNCA é gravado em texto claro e estes valores se
+ * perdem ao encerrar o app — degradação deliberada, sinalizada ao usuário via
+ * `secretsSessionOnly` em `toSafeConfig` e por aviso no console.
+ */
+const sessionSecretsByDir = new Map<string, Record<string, string>>()
+
+function getSessionSecrets(): Record<string, string> {
+  return sessionSecretsByDir.get(path.dirname(getConfigPath())) ?? {}
+}
+
+function setSessionSecrets(secrets: Record<string, string>): void {
+  sessionSecretsByDir.set(path.dirname(getConfigPath()), { ...secrets })
+}
+
+function clearSessionSecrets(): void {
+  sessionSecretsByDir.delete(path.dirname(getConfigPath()))
+}
+
+/** Aplica o overlay session-only: o estado em memória é o mais recente. */
+function withSessionSecrets(secrets: Record<string, string>): Record<string, string> {
+  const session = getSessionSecrets()
+  return Object.keys(session).length > 0 ? { ...secrets, ...session } : secrets
+}
+
 /** Subconjunto tipado de `electron.safeStorage` usado para cifrar segredos. */
 interface SafeStorageLike {
   isEncryptionAvailable(): boolean
@@ -417,53 +444,92 @@ interface SecretStoreRead {
   secrets: Record<string, string>
   /** Há um cofre cifrado que não pôde ser lido neste ambiente. */
   locked: boolean
+  /** O cofre em disco usa o formato plaintext legado (`encrypted: false`). */
+  legacyPlaintext: boolean
 }
 
-async function readSecretStore(): Promise<SecretStoreRead> {
+async function readSecretStoreFile(): Promise<SecretStoreRead> {
   let content: string
   try {
     content = await fs.readFile(getSecretStorePath(), 'utf-8')
   } catch {
-    return { secrets: {}, locked: false }
+    return { secrets: {}, locked: false, legacyPlaintext: false }
   }
   try {
     const parsed: unknown = JSON.parse(content)
-    if (!isRecord(parsed)) return { secrets: {}, locked: false }
+    if (!isRecord(parsed)) return { secrets: {}, locked: false, legacyPlaintext: false }
     if (parsed.encrypted === true) {
-      if (typeof parsed.data !== 'string') return { secrets: {}, locked: false }
+      if (typeof parsed.data !== 'string') return { secrets: {}, locked: false, legacyPlaintext: false }
       const storage = getSafeStorage()
-      if (!storage) return { secrets: {}, locked: true }
+      if (!storage) return { secrets: {}, locked: true, legacyPlaintext: false }
       try {
-        return { secrets: sanitizeSecretRecord(JSON.parse(storage.decryptString(Buffer.from(parsed.data, 'base64')))), locked: false }
+        return {
+          secrets: sanitizeSecretRecord(JSON.parse(storage.decryptString(Buffer.from(parsed.data, 'base64')))),
+          locked: false,
+          legacyPlaintext: false,
+        }
       } catch {
-        return { secrets: {}, locked: true }
+        return { secrets: {}, locked: true, legacyPlaintext: false }
       }
     }
-    return { secrets: sanitizeSecretRecord(parsed.data), locked: false }
+    /*
+     * Formato plaintext legado (fallback antigo). Leitura tolerante apenas para
+     * não perder credenciais de instalações antigas. Este formato NUNCA volta a
+     * ser escrito; com o safeStorage disponível, o loadConfig re-cifra o cofre
+     * (flag `legacyPlaintext`).
+     */
+    const secrets = sanitizeSecretRecord(parsed.data)
+    return { secrets, locked: false, legacyPlaintext: Object.keys(secrets).length > 0 }
   } catch {
-    return { secrets: {}, locked: false }
+    return { secrets: {}, locked: false, legacyPlaintext: false }
   }
 }
 
-async function writeSecretStore(secrets: Record<string, string>): Promise<void> {
+async function readSecretStore(): Promise<SecretStoreRead> {
+  const read = await readSecretStoreFile()
+  // Overlay session-only: segredos retidos em memória (gravados sem
+  // criptografia disponível) continuam visíveis para o processo e vencem
+  // valores mais antigos de arquivo.
+  if (read.locked || Object.keys(getSessionSecrets()).length === 0) return read
+  return { ...read, secrets: withSessionSecrets(read.secrets) }
+}
+
+/**
+ * Persiste o cofre de credenciais. Retorna `false` quando o armazenamento
+ * seguro está indisponível e as credenciais foram retidas apenas em memória.
+ *
+ * Decisão de segurança (P1): NUNCA gravamos `encrypted: false`. Sem
+ * criptografia o cofre não é escrito; os segredos vigentes passam a viver
+ * somente no mapa `sessionSecretsByDir` (memória do processo) e se perdem ao
+ * encerrar o app — o usuário é avisado no console (apenas NOMES de chaves,
+ * nunca valores) e via `secretsSessionOnly` em `toSafeConfig`. Um cofre
+ * plaintext pré-existente NÃO é reescrito nem apagado aqui; quando o
+ * safeStorage voltar, o loadConfig o migra para o formato cifrado.
+ */
+async function writeSecretStore(secrets: Record<string, string>): Promise<boolean> {
   const cleaned = sanitizeSecretRecord(secrets)
   const file = getSecretStorePath()
   if (Object.keys(cleaned).length === 0) {
+    clearSessionSecrets()
     await fs.rm(file, { force: true }).catch(() => undefined)
-    return
+    return true
   }
   const storage = getSafeStorage()
-  const record = storage
-    ? {
-        version: SECRET_STORE_VERSION,
-        encrypted: true,
-        data: Buffer.from(storage.encryptString(JSON.stringify(cleaned))).toString('base64'),
-      }
-    : { version: SECRET_STORE_VERSION, encrypted: false, data: cleaned }
   if (!storage) {
-    console.warn('[DevOrbit config] Armazenamento seguro indisponivel; credenciais BYOK foram salvas sem criptografia.')
+    setSessionSecrets(cleaned)
+    console.warn(
+      `[DevOrbit config] Armazenamento seguro indisponível: credenciais (${Object.keys(cleaned).join(', ')}) mantidas apenas em memória nesta sessão; nada será gravado em disco.`
+    )
+    return false
+  }
+  const record = {
+    version: SECRET_STORE_VERSION,
+    encrypted: true,
+    data: Buffer.from(storage.encryptString(JSON.stringify(cleaned))).toString('base64'),
   }
   await atomicallyWriteJson(file, record, 0o600)
+  clearSessionSecrets()
+  return true
 }
 
 /** Cópia destinada à persistência: sem credenciais nem flags derivadas. */
@@ -500,7 +566,9 @@ function injectRoutingSecrets(config: AppConfig, secrets: Record<string, string>
 
 /**
  * Projeção segura para o renderer: remove as chaves BYOK e publica apenas
- * booleanos `has*Key`, indicando presença sem revelar o valor.
+ * booleanos `has*Key`, indicando presença sem revelar o valor. Quando o
+ * armazenamento seguro está indisponível e há credenciais em uso, publica
+ * também `secretsSessionOnly: true` — essas credenciais não são persistidas.
  */
 export function toSafeConfig(config: AppConfig): AppConfig {
   const routing = config.modelRouting
@@ -512,6 +580,7 @@ export function toSafeConfig(config: AppConfig): AppConfig {
     const url = routing[key]
     if (url) safe[key] = url
   }
+  const hasAnySecret = MODEL_ROUTING_SECRET_KEYS.some((key) => Boolean(routing[key]))
   if (routing.openaiApiKey) safe.hasOpenaiKey = true
   if (routing.anthropicApiKey) safe.hasAnthropicKey = true
   if (routing.geminiApiKey) safe.hasGeminiKey = true
@@ -520,7 +589,9 @@ export function toSafeConfig(config: AppConfig): AppConfig {
   if (routing.kimiApiKey) safe.hasKimiKey = true
   if (routing.minimaxApiKey) safe.hasMinimaxKey = true
   if (routing.vllmApiKey) safe.hasVllmKey = true
-  return { ...config, modelRouting: safe, customPaths: { ...config.customPaths } }
+  const result: AppConfig = { ...config, modelRouting: safe, customPaths: { ...config.customPaths } }
+  if (hasAnySecret && !getSafeStorage()) result.secretsSessionOnly = true
+  return result
 }
 
 /**
@@ -622,8 +693,9 @@ export async function loadConfig(): Promise<AppConfig> {
   }
 
   const normalized = normalizeConfig(raw)
-  if (Object.keys(legacySecretsFrom(raw)).length === 0) {
-    return injectRoutingSecrets(normalized, (await readSecretStore()).secrets)
+  const store = await readSecretStore()
+  if (Object.keys(legacySecretsFrom(raw)).length === 0 && !store.legacyPlaintext) {
+    return injectRoutingSecrets(normalized, store.secrets)
   }
 
   /*
@@ -636,13 +708,31 @@ export async function loadConfig(): Promise<AppConfig> {
     const freshRaw = await readRawConfig(filePath)
     const fresh = freshRaw === undefined ? normalized : normalizeConfig(freshRaw)
     const legacy = legacySecretsFrom(freshRaw)
-    const store = await readSecretStore()
-    if (store.locked || Object.keys(legacy).length === 0) {
-      return injectRoutingSecrets(fresh, { ...legacy, ...store.secrets })
+    const freshStore = await readSecretStore()
+    const secrets = withSessionSecrets({ ...freshStore.secrets, ...legacy })
+    if (freshStore.locked) {
+      return injectRoutingSecrets(fresh, { ...legacy, ...freshStore.secrets })
     }
-    const secrets = { ...store.secrets, ...legacy }
+    if (!getSafeStorage()) {
+      /*
+       * Armazenamento seguro indisponível: a migração ficaria sem destino
+       * cifrado. Decisão (P1): NÃO removemos o texto claro legado do
+       * config.json (não há cópia cifrada que o substitua — a credencial se
+       * perderia ao reiniciar) e NÃO gravamos plaintext novo em formato
+       * algum. Os segredos seguem utilizáveis apenas na memória desta
+       * sessão; a migração acontece quando o safeStorage voltar.
+       */
+      if (Object.keys(secrets).length > 0) {
+        console.warn(
+          `[DevOrbit config] Armazenamento seguro indisponível: credenciais (${Object.keys(secrets).join(', ')}) em uso apenas em memória nesta sessão; migração para o cofre cifrado adiada.`
+        )
+      }
+      return injectRoutingSecrets(fresh, secrets)
+    }
     await writeSecretStore(secrets)
-    await atomicallyWriteConfig(filePath, toPersistedConfig(fresh))
+    if (Object.keys(legacy).length > 0) {
+      await atomicallyWriteConfig(filePath, toPersistedConfig(fresh))
+    }
     return injectRoutingSecrets(fresh, secrets)
   })
 }
@@ -655,7 +745,7 @@ export async function saveConfig(updates: Partial<AppConfig>): Promise<AppConfig
     if (persisted.recovery) recordConfigRecovery(persisted.recovery)
 
     const store = await readSecretStore()
-    const secrets = { ...store.secrets }
+    const secrets: Record<string, string> = { ...store.secrets }
     let legacySecrets: Partial<Record<ModelRoutingSecretKey, string>> = {}
     try {
       const raw: unknown = JSON.parse(await fs.readFile(filePath, 'utf-8'))
@@ -664,6 +754,10 @@ export async function saveConfig(updates: Partial<AppConfig>): Promise<AppConfig
     } catch {
       // Sem config.json legível: nada a migrar deste arquivo.
     }
+    // Overlay por último: segredos retidos em memória (session-only) são o
+    // estado mais recente e vencem valores mais antigos de arquivo.
+    Object.assign(secrets, getSessionSecrets())
+
     const secretInputs = readSecretInputs(updates.modelRouting)
     const touchingSecrets = Object.keys(secretInputs.values).length > 0 || secretInputs.clears.length > 0
     if (store.locked && touchingSecrets) {
@@ -712,8 +806,31 @@ export async function saveConfig(updates: Partial<AppConfig>): Promise<AppConfig
     } else {
       // Cofre ANTES da remoção pública: se a escrita falhar, o config.json
       // legado permanece intacto e o segredo não se perde.
-      await writeSecretStore(secrets)
-      await atomicallyWriteConfig(filePath, toPersistedConfig(merged))
+      const persistedSecrets = await writeSecretStore(secrets)
+      if (persistedSecrets) {
+        await atomicallyWriteConfig(filePath, toPersistedConfig(merged))
+      } else {
+        /*
+         * Armazenamento seguro indisponível: o cofre NÃO é gravado (nunca em
+         * texto claro) e as credenciais ficam session-only (memória do
+         * processo, perdem-se ao reiniciar). O config.json público é gravado
+         * normalmente; preserva APENAS o texto claro legado que esta
+         * atualização NÃO tocou — chaves definidas, trocadas ou removidas
+         * aqui deixam de existir no disco. O usuário é informado via
+         * `secretsSessionOnly` (toSafeConfig) e pelo aviso do writeSecretStore.
+         */
+        const touched = new Set<string>([
+          ...Object.keys(secretInputs.values),
+          ...secretInputs.clears,
+        ])
+        const preservedLegacy: Partial<Record<ModelRoutingSecretKey, string>> = {}
+        for (const [key, value] of Object.entries(legacySecrets)) {
+          if (!touched.has(key)) {
+            preservedLegacy[key as ModelRoutingSecretKey] = value as string
+          }
+        }
+        await atomicallyWriteConfig(filePath, toPersistedConfigPreservingSecrets(merged, preservedLegacy))
+      }
     }
     return injectRoutingSecrets(merged, secrets)
   })
