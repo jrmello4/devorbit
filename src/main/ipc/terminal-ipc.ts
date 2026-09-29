@@ -44,7 +44,7 @@ import { validateAgentProvider, validateCodexAccount, validateFiniteNumber, vali
 import { resolveWindowsScriptLaunch } from '../terminal-launch'
 import type { UsageEvent } from '../../shared/usage-contract'
 import type { IpcRegistrar } from './registrar'
-import type { AgentProviderId } from '../../renderer/src/types'
+import type { AgentProviderId } from '../../shared/agent-provider-contract'
 
 /** Ponto de injeção do registro de uso (turnos e sessões) — opcional e best-effort. */
 export interface UsageRecorder {

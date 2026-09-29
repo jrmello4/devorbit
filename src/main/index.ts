@@ -56,7 +56,9 @@ import { disposeWebPanel, onWebPanelEvent } from './web-panel'
 import { cancelAllMemoryCompactions, setLegacyMemoryWriteGuard } from './memory'
 import { initializeUpdater } from './updater'
 import { startShadowRoutingMetrics, stopShadowRoutingMetrics } from './shadow-routing-metrics'
-import type { AgentProviderId, AppConfig, IpcInvokeChannel, IpcSendChannel } from '../renderer/src/types'
+import type { AgentProviderId } from '../shared/agent-provider-contract'
+import type { AppConfig } from '../shared/app-config'
+import type { IpcInvokeChannel, IpcSendChannel } from '../shared/ipc-channels'
 import {
   assertTrustedIpcSender,
   isPathWithinRoot,

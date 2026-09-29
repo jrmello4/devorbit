@@ -1,20 +1,18 @@
 import electron from 'electron'
 import type { IpcRendererEvent } from 'electron'
 const { contextBridge, ipcRenderer } = electron
+import type { AppConfig } from '../shared/app-config'
 import type {
-  AppConfig,
+  CodexAuthProgress,
   CompanionSummary,
-  DevOrbitAPI,
-  IpcEventChannel,
-  IpcInvokeChannel,
-  IpcSendChannel,
+  HitlRequestView,
   SyncProgress,
   TerminalEvent,
-  WebPanelEvent,
   UpdateState,
-  CodexAuthProgress,
-  HitlRequestView,
-} from '../renderer/src/types'
+  WebPanelEvent,
+} from '../shared/app-events'
+import type { IpcEventChannel, IpcInvokeChannel, IpcSendChannel } from '../shared/ipc-channels'
+import type { DevOrbitAPI } from '../shared/devorbit-api'
 import type { AgentBridgeEvent } from '../shared/agent-bridge-event'
 import type { DiagnosticProcessRequest, DiagnosticProcessResult } from '../shared/diagnostic-process'
 import type { TelemetrySpanView } from '../shared/telemetry-contract'

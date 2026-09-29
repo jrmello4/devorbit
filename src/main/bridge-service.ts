@@ -3,7 +3,7 @@ import { BridgeTaskCycles } from './bridge-task-cycles'
 import { buildDelegationAudit, evaluateDelegationGuard, type AgentBridgeRunRequest } from './agent-bridge'
 import type { HeadlessOutcome } from './bridge-headless'
 import type { ResultWaitPromise, TurnWaiter } from './agent-turn'
-import type { AgentProviderId } from '../renderer/src/types'
+import type { AgentProviderId } from '../shared/agent-provider-contract'
 import type { AgentBridgeEvent } from '../shared/agent-bridge-event'
 
 export interface BridgeAgentRegistration {

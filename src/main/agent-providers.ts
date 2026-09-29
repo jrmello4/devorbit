@@ -7,7 +7,9 @@ import { promisify } from 'node:util'
 import { choice, TypeSafeClient } from '@typesafe-ai/sdk'
 import type { Fetch } from '@typesafe-ai/sdk'
 import { stripAnsiEscapes } from '../shared/ansi'
-import type { AgentProvider, AgentProviderId, AppConfig } from '../renderer/src/types'
+import type { AgentProvider } from '../shared/tool-health-contract'
+import type { AgentProviderId } from '../shared/agent-provider-contract'
+import type { AppConfig } from '../shared/app-config'
 import { AGENT_PROVIDER_ID_LIST } from '../shared/agent-provider-contract'
 
 const execFileAsync = promisify(execFile)

@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { loadConfig, saveConfig } from './config'
 import { canonicalizeExistingDirectory, isPathWithinRoot } from './validation'
-import type { ManagedProject } from '../renderer/src/types'
+import type { ManagedProject } from '../shared/app-config'
 
 let managedConfigQueue: Promise<void> = Promise.resolve()
 

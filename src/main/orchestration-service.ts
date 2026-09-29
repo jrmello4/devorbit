@@ -1,4 +1,5 @@
-import type { AgentProviderId, RealUsageState } from '../renderer/src/types'
+import type { AgentProviderId } from '../shared/agent-provider-contract'
+import type { RealUsageState } from '../shared/usage-real-contract'
 import {
   type ContinuityEvent,
   type ContinuityQuota,

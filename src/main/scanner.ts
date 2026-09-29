@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import type { ManagedProject, Project, TechStack } from '../renderer/src/types'
+import type { ManagedProject, Project, TechStack } from '../shared/app-config'
 import { getGitStatus, isGitRepository } from './git'
 
 const IGNORED_DIRS = new Set([

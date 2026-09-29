@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
-import type { AgentProviderId } from '../renderer/src/types'
+import type { AgentProviderId } from '../shared/agent-provider-contract'
 import { parseAgentResultLine, type AgentResultOutcome } from '../shared/agent-result'
 import { stripAnsiEscapes } from '../shared/ansi'
 

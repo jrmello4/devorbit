@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { AgentProviderId } from '../renderer/src/types'
+import type { AgentProviderId } from '../shared/agent-provider-contract'
 import {
   CONTINUITY_MAX_EVENTS,
   CONTINUITY_MAX_PROMPT_CHARS,

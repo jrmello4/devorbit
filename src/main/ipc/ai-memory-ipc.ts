@@ -26,7 +26,7 @@
 
 import path from 'node:path'
 import type { IpcRegistrar } from './registrar'
-import type { IpcInvokeChannel } from '../../renderer/src/types'
+import type { IpcInvokeChannel } from '../../shared/ipc-channels'
 import { validateProjectPath } from '../project-paths'
 import {
   AI_MEMORY_CLI_COMMANDS,

@@ -6,8 +6,8 @@
  * ausência do ai-memory em erro impeditivo — toda falha vira resposta
  * estruturada `{ ok: false, ... }`.
  *
- * Canais (IpcInvokeChannel em renderer/src/types fica para o Shell #2;
- * aqui são constantes tipadas como string, convertidas com cast local).
+ * Canais (IpcInvokeChannel agora em shared/ipc-channels; a UI chega via
+ * preload/types; aqui são constantes tipadas como string, com cast local).
  */
 
 import type { AiMemoryConfig, AiMemoryProjectConfig, AiMemoryStatus } from './ai-memory-contract'

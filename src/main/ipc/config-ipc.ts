@@ -18,7 +18,8 @@ import { testToolPath, validateCodexAccount } from '../validation'
 import { validateConfigUpdates } from '../validation'
 import type { UsageEvent } from '../../shared/usage-contract'
 import type { IpcRegistrar } from './registrar'
-import type { AppConfig, RealUsageState } from '../../renderer/src/types'
+import type { AppConfig } from '../../shared/app-config'
+import type { RealUsageState } from '../../shared/usage-real-contract'
 
 /** Ponto de injeção do registro de uso (quota Codex) — opcional e best-effort. */
 export interface UsageQuotaRecorder {

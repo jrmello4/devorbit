@@ -3,8 +3,8 @@ import path from 'node:path'
 import os from 'node:os'
 import electron from 'electron'
 const { app } = electron
-import type { AppConfig, ManagedProject, ModelRoutingConfig, ModelRoutingSecretKey } from '../renderer/src/types'
-import { MODEL_ROUTING_BASE_URL_KEYS, MODEL_ROUTING_SECRET_KEYS } from '../renderer/src/types'
+import type { AppConfig, ManagedProject, ModelRoutingConfig, ModelRoutingSecretKey } from '../shared/app-config'
+import { MODEL_ROUTING_BASE_URL_KEYS, MODEL_ROUTING_SECRET_KEYS } from '../shared/app-config'
 import { sanitizeCustomTerminalPresets } from '../shared/terminal-presets'
 import {
   DEFAULT_AI_MEMORY_CONFIG,

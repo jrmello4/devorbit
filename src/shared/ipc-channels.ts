@@ -1,0 +1,62 @@
+/**
+ * Canais IPC do DevOrbit (fonte única main ↔ preload ↔ renderer).
+ *
+ * Todo nome de canal invoke/send/event nasce aqui. Handlers no main, a bridge
+ * do preload e os listeners do renderer derivam exatamente desta lista.
+ */
+
+export type IpcInvokeChannel =
+  | 'devorbit:getProjects' | 'devorbit:refreshProjects' | 'devorbit:getOtherDirs'
+  | 'devorbit:listProjectFiles' | 'devorbit:readProjectFile' | 'devorbit:saveProjectFile'
+  | 'devorbit:createProjectFile' | 'devorbit:createProjectDirectory' | 'devorbit:moveProjectEntry' | 'devorbit:deleteProjectEntry'
+  | 'devorbit:syncGit' | 'devorbit:getGitBranches' | 'devorbit:switchGitBranch'
+  | 'devorbit:stashSyncGit' | 'devorbit:stashSwitchGitBranch' | 'devorbit:pushGit'
+  | 'devorbit:getGitChanges' | 'devorbit:getGitFileDiff' | 'devorbit:syncAllGit' | 'devorbit:getGitInitPreview'
+  | 'devorbit:initGitRepository' | 'devorbit:cloneGitRepository' | 'devorbit:restoreManagedProject'
+  | 'devorbit:finalizeManagedProject' | 'devorbit:startTerminal' | 'devorbit:startCodexTerminal'
+  | 'devorbit:startAgentTerminal'
+  | 'devorbit:createAgentWorktree'
+  | 'devorbit:integrateAgentWorktree'
+  | 'devorbit:resizeTerminal' | 'devorbit:writeTerminal' | 'devorbit:stopTerminal'
+  | 'devorbit:pipeTerminals' | 'devorbit:sendAgentTurn' | 'devorbit:submitAgentInstruction'
+  | 'devorbit:navigateWeb' | 'devorbit:getWebState' | 'devorbit:goBackWeb'
+  | 'devorbit:goForwardWeb' | 'devorbit:reloadWeb' | 'devorbit:setWebVisible'
+  | 'devorbit:disposeWebPanel' | 'devorbit:setWebBounds' | 'devorbit:launchTool'
+  | 'devorbit:copyProjectContext' | 'devorbit:getConfig' | 'devorbit:getUpdateState'
+  | 'devorbit:downloadUpdate' | 'devorbit:installUpdate' | 'devorbit:saveConfig'
+  | 'devorbit:exportConfig' | 'devorbit:importConfig' | 'devorbit:selectDirectory'
+  | 'devorbit:testToolPath' | 'devorbit:getToolHealth' | 'devorbit:getCodexAuthStatus'
+  | 'devorbit:startCodexLogin' | 'devorbit:cancelCodexLogin' | 'devorbit:getProjectMemory'
+  | 'devorbit:saveProjectMemory' | 'devorbit:generateMemoryFromGit'
+  | 'devorbit:getRealUsage' | 'devorbit:getProjectAudit' | 'devorbit:getHitlRequests'
+  | 'devorbit:approveHitl' | 'devorbit:rejectHitl'
+  | 'devorbit:runDiagnostic'
+  | 'devorbit:getTelemetrySpans'
+  | 'devorbit:getHybridMemory' | 'devorbit:rememberHybridMemory' | 'devorbit:searchHybridMemory'
+  | 'devorbit:completeLlm'
+  | 'devorbit:getEvolutionHistory'
+  | 'devorbit:searchProjectText'
+  | 'devorbit:getOrchestrationState'
+  | 'devorbit:setOrchestrationContinuity'
+  | 'devorbit:upsertOrchestrationSeat'
+  | 'devorbit:removeOrchestrationSeat'
+  | 'devorbit:assignOrchestrationRole'
+  | 'devorbit:reportOrchestrationTurn'
+  | 'devorbit:reportOrchestrationQuota'
+  | 'devorbit:getUsageShare' | 'devorbit:refreshUsage'
+  | 'devorbit:aiMemoryStatus' | 'devorbit:aiMemoryDoctor'
+  | 'devorbit:aiMemoryQuery' | 'devorbit:aiMemoryBriefing'
+  | 'devorbit:aiMemoryRecent' | 'devorbit:aiMemoryHandoffs'
+  | 'devorbit:aiMemoryEnableProject' | 'devorbit:aiMemoryMigrateLegacy'
+  | 'devorbit:aiMemoryMigrationStatus' | 'devorbit:aiMemoryProjectStatus'
+  | 'devorbit:aiMemoryTakeover'
+  | 'devorbit:aiMemoryPublishSquadState'
+  | 'devorbit:aiUsagebarSnapshot' | 'devorbit:aiUsagebarRefresh' | 'devorbit:aiUsagebarDetect'
+  | 'devorbit:aiUsagebarSetProvider' | 'devorbit:aiUsagebarSetApiKey' | 'devorbit:aiUsagebarRemoveApiKey'
+
+export type IpcEventChannel =
+  | 'devorbit:syncProgress' | 'devorbit:terminalEvent' | 'devorbit:webEvent'
+  | 'devorbit:updateStatus' | 'devorbit:codexAuthProgress' | 'devorbit:companionEvent'
+  | 'devorbit:agentBridgeEvent' | 'devorbit:hitlEvent' | 'devorbit:orchestrationEvent'
+
+export type IpcSendChannel = 'devorbit:windowControl'

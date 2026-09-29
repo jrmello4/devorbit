@@ -11,7 +11,7 @@ import type {
   RealAccountUsage,
   RealUsageMetric,
   RealUsageState,
-} from '../renderer/src/types'
+} from '../shared/usage-real-contract'
 import { getAuthFilePaths } from './account-profiles'
 
 const CODEX_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage'

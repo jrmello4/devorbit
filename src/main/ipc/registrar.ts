@@ -1,5 +1,5 @@
 import type { IpcSenderLike } from '../validation'
-import type { IpcInvokeChannel, IpcSendChannel } from '../../renderer/src/types'
+import type { IpcInvokeChannel, IpcSendChannel } from '../../shared/ipc-channels'
 
 export type IpcHandlerFn = (event: IpcSenderLike, ...args: any[]) => unknown
 

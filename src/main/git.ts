@@ -10,7 +10,7 @@ import type {
   GitPushOptions,
   GitStatus,
   SyncResult,
-} from '../renderer/src/types'
+} from '../shared/git-contract'
 import { validateFolderName, validateGitBranch, validateHttpsUrl } from './validation'
 
 const execFileAsync = promisify(execFile)

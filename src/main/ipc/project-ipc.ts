@@ -28,7 +28,8 @@ import {
   validateLaunchTool,
 } from '../validation'
 import type { IpcRegistrar } from './registrar'
-import type { ManagedProject, SyncResult } from '../../renderer/src/types'
+import type { ManagedProject } from '../../shared/app-config'
+import type { SyncResult } from '../../shared/git-contract'
 
 export interface ProjectIpcDependencies {
   requestApproval: (input: { prompt: string; metadata?: Record<string, unknown> }) => Promise<{ state: string }>

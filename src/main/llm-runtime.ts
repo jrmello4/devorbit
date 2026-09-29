@@ -1,4 +1,4 @@
-import type { AppConfig, ModelRoutingBaseUrlKey } from '../renderer/src/types'
+import type { AppConfig, ModelRoutingBaseUrlKey } from '../shared/app-config'
 import { createHash } from 'node:crypto'
 import { createLlmRouter, LLM_PROVIDER_IDS, type LlmProviderId, type LlmRequest, type LlmRouteResult } from './llm-router'
 import type { LlmCompletionRequestView as SharedLlmRequest } from '../shared/llm-contract'

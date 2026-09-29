@@ -1,4 +1,5 @@
-import type { AgentProviderId, AppConfig } from '../renderer/src/types'
+import type { AgentProviderId } from '../shared/agent-provider-contract'
+import type { AppConfig } from '../shared/app-config'
 import type { TerminalEvent } from './terminal-session'
 import type { AgentInstructionInput, AgentInstructionResult } from './agent-instruction'
 import { createAgentResultScanner, type AgentResultInvalidReason } from '../shared/agent-result'

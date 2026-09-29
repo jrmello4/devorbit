@@ -1,4 +1,4 @@
-import type { AgentProviderId } from '../renderer/src/types'
+import type { AgentProviderId } from './agent-provider-contract'
 
 /**
  * Contrato de continuidade multi-provedor do canvas.
