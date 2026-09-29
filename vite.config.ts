@@ -39,6 +39,23 @@ export default defineConfig({
           args.reload()
         },
         vite: {
+          plugins: [
+            {
+              name: 'preload-force-cjs',
+              // O package.json é "type": "module", então o default do
+              // vite-plugin-electron é formats:['es']; o mergeConfig do Vite
+              // CONCATENA arrays e o ['cjs'] abaixo vira ['es','cjs'] — os dois
+              // bundles caem no mesmo index.cjs e, no dev, o ESM pode escrever
+              // por último ("Cannot use import statement outside a module" no
+              // preload). Força só CJS depois do merge.
+              config(config) {
+                const lib = config.build?.lib
+                if (lib && 'formats' in lib) {
+                  lib.formats = ['cjs']
+                }
+              },
+            },
+          ],
           build: {
             lib: {
               entry: 'src/preload/index.ts',

@@ -556,6 +556,22 @@ export async function validateConfigUpdates(value: unknown): Promise<Partial<App
     // IPC seria um no-op porque o sanitizer devolve undefined para [].
     updates.terminalPresets = sanitizeCustomTerminalPresets(value.terminalPresets) ?? []
   }
+  if ('aiUsagebarHiddenProviders' in value && value.aiUsagebarHiddenProviders !== undefined) {
+    if (!Array.isArray(value.aiUsagebarHiddenProviders)) {
+      throw new Error('Lista de provedores ocultos inválida.')
+    }
+    const seen = new Set<string>()
+    for (const item of value.aiUsagebarHiddenProviders) {
+      if (typeof item !== 'string') throw new Error('Lista de provedores ocultos inválida.')
+      const id = item.trim()
+      if (!id) continue
+      if (id.length > 64) throw new Error('Id de provedor oculto inválido.')
+      seen.add(id)
+      if (seen.size > 64) throw new Error('Lista de provedores ocultos excedida.')
+    }
+    // Lista vazia é limpeza explícita (reexibir tudo), igual a terminalPresets.
+    updates.aiUsagebarHiddenProviders = [...seen]
+  }
   return updates
 }
 

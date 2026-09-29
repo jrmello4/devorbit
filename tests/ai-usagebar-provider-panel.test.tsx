@@ -11,6 +11,8 @@ import {
   formatResetCredits,
   formatResetTime,
   formatWindowDuration,
+  isPercentEchoText,
+  isRenderableEntryIcon,
   mapSeverityTone,
   validateAndTrimApiKey,
 } from '../src/renderer/src/components/AiUsagebarProviderPanel'
@@ -896,6 +898,13 @@ describe('AiUsagebarProviderPanel - Validações de Acessibilidade e Estilo', ()
     expect(cssContent).toContain('overflow: hidden')
   })
 
+  it('declara o modo compacto de card de erro no CSS', () => {
+    const cssPath = path.resolve(__dirname, '../src/renderer/src/components/AiUsagebarProviderPanel.css')
+    const cssContent = fs.readFileSync(cssPath, 'utf-8')
+
+    expect(cssContent).toContain('.ai-usagebar-entry-card--compact')
+  })
+
   it('aceita callbacks assíncronos rejeitados sem provocar exceções no ciclo de renderização', () => {
     const rejectingCallback = vi.fn(async () => {
       throw new Error('Falha de rede simulada')
@@ -920,6 +929,246 @@ describe('AiUsagebarProviderPanel - Validações de Acessibilidade e Estilo', ()
         })
       )
     }).not.toThrow()
+  })
+})
+
+describe('AiUsagebarProviderPanel - Ajustes de Exibição de Quota', () => {
+  describe('isPercentEchoText', () => {
+    it('detecta ecos do percentual com ou sem sufixo %', () => {
+      expect(isPercentEchoText('22%', 22.4)).toBe(true)
+      expect(isPercentEchoText('0%', 0)).toBe(true)
+      expect(isPercentEchoText('2', 2.3)).toBe(true)
+      expect(isPercentEchoText('2,4', 2.4)).toBe(true)
+    })
+
+    it('não marca valores com informação própria como eco', () => {
+      expect(isPercentEchoText('42 mensagens', 42.4)).toBe(false)
+      expect(isPercentEchoText('$2.50 of $6.00', 42)).toBe(false)
+      expect(isPercentEchoText('', 10)).toBe(false)
+    })
+  })
+
+  describe('formatMetricDisplay - dedupe de percentual e fallback de detail', () => {
+    it('descarta value que só ecoa o percentual (sem "22% 22%" na UI)', () => {
+      const result = formatMetricDisplay({
+        label: 'Codex weekly',
+        headline: 'percent',
+        percent: 22,
+        value: '22%',
+      })
+      expect(result.primaryText).toBe('22%')
+      expect(result.secondaryText).toBeUndefined()
+    })
+
+    it('usa detail como secundário quando o value é eco e o rodapé não cobre reset', () => {
+      const result = formatMetricDisplay({
+        label: 'Session (5h)',
+        headline: 'percent',
+        percent: 0,
+        value: '0%',
+        detail: '$0.00 of $3.00',
+      })
+      expect(result.primaryText).toBe('0%')
+      expect(result.secondaryText).toBe('$0.00 of $3.00')
+    })
+
+    it('mantém value informativo (não-eco) mesmo com detail presente', () => {
+      const result = formatMetricDisplay({
+        label: 'Weekly',
+        headline: 'percent',
+        percent: 42,
+        value: '$2.50 of $6.00',
+        detail: 'Resets in 19h 35m',
+      })
+      expect(result.secondaryText).toBe('$2.50 of $6.00')
+    })
+
+    it('omite detail quando window_secs/reset_at já rendem o rodapé Janela/Reseta', () => {
+      const result = formatMetricDisplay({
+        label: 'Codex 5h',
+        headline: 'percent',
+        percent: 2,
+        value: '2%',
+        detail: 'Resets in 4h 40m · 6% elapsed',
+        window_secs: 18000,
+        reset_at: '2026-09-29T20:06:00Z',
+      })
+      expect(result.secondaryText).toBeUndefined()
+    })
+  })
+
+  describe('isRenderableEntryIcon', () => {
+    it('rejeita glifos Nerd Font (área de uso privado) que viram tofu na fonte do app', () => {
+      expect(isRenderableEntryIcon('󰚩', { id: 'anthropic' })).toBe(false)
+      expect(isRenderableEntryIcon('󱢆', { id: 'openai' })).toBe(false)
+    })
+
+    it('rejeita ícone vazio ou igual a id/brand/short_name', () => {
+      expect(isRenderableEntryIcon('', { id: 'zai' })).toBe(false)
+      expect(isRenderableEntryIcon('   ', { id: 'zai' })).toBe(false)
+      expect(isRenderableEntryIcon('zai', { id: 'zai' })).toBe(false)
+      expect(isRenderableEntryIcon('cmc', { id: 'commandcode', short_name: 'cmc' })).toBe(false)
+      expect(isRenderableEntryIcon('OpenRouter', { id: 'openrouter', brand: 'OpenRouter' })).toBe(
+        false
+      )
+    })
+
+    it('mantém símbolos unicode renderizáveis e rejeita não-strings', () => {
+      expect(isRenderableEntryIcon('⚛', { id: 'quantum' })).toBe(true)
+      expect(isRenderableEntryIcon(undefined, { id: 'x' })).toBe(false)
+      expect(isRenderableEntryIcon(42, { id: 'x' })).toBe(false)
+    })
+  })
+
+  it('card de erro sem dados ganha classe compacta e não exibe ícone tofu', () => {
+    const entry: AiUsagebarEntry = {
+      id: 'copilot',
+      name: 'GitHub Copilot',
+      icon: '󰚩',
+      status: 'error',
+      sections: [],
+    }
+    const snapshot: AiUsagebarSnapshot = {
+      state: 'ready',
+      vendors: [],
+      report: { schema_version: 1, entries: [entry] },
+      stale: false,
+    }
+
+    const html = renderToStaticMarkup(createElement(AiUsagebarProviderPanel, { snapshot }))
+
+    expect(html).toContain('ai-usagebar-entry-card--error')
+    expect(html).toContain('ai-usagebar-entry-card--compact')
+    expect(html).not.toContain('ai-usagebar-entry-icon')
+    expect(html).not.toContain('󰚩')
+    expect(html).toContain(ENTRY_ERROR_FALLBACK)
+  })
+
+  it('não renderiza bloco com corpo vazio (rótulo "Resets:" órfão) nem percentual duplicado', () => {
+    const entry: AiUsagebarEntry = {
+      id: 'commandcode',
+      name: 'Command Code',
+      status: 'ready',
+      sections: [
+        { type: 'metric', label: 'Session (5h)', headline: 'percent', percent: 0, value: '0%' },
+        { type: 'block', label: 'Resets:', body: ['  ', ''] },
+        { type: 'text', label: '', value: '' },
+      ],
+    }
+    const snapshot: AiUsagebarSnapshot = {
+      state: 'ready',
+      vendors: [],
+      report: { schema_version: 1, entries: [entry] },
+      stale: false,
+    }
+
+    const html = renderToStaticMarkup(createElement(AiUsagebarProviderPanel, { snapshot }))
+
+    expect(html).not.toContain('Resets:')
+    expect(html).not.toContain('ai-usagebar-block-row')
+    expect(html).not.toContain('ai-usagebar-text-row')
+    expect(html).not.toContain('ai-usagebar-metric-secondary')
+  })
+
+  it('barra de progresso usa o percentual arredondado do rótulo (sem pinto em <1%)', () => {
+    const entry: AiUsagebarEntry = {
+      id: 'codex',
+      name: 'Codex',
+      status: 'ready',
+      sections: [
+        { type: 'metric', label: 'Codex 5h', headline: 'percent', percent: 0.4, value: '0%' },
+      ],
+    }
+    const snapshot: AiUsagebarSnapshot = {
+      state: 'ready',
+      vendors: [],
+      report: { schema_version: 1, entries: [entry] },
+      stale: false,
+    }
+
+    const html = renderToStaticMarkup(createElement(AiUsagebarProviderPanel, { snapshot }))
+
+    expect(html).toContain('width:0%')
+    expect(html).toContain('aria-valuenow="0"')
+  })
+})
+
+describe('AiUsagebarProviderPanel - Visibilidade de Provedores', () => {
+  const twoEntries: AiUsagebarSnapshot = {
+    state: 'ready',
+    vendors: [],
+    report: {
+      schema_version: 1,
+      entries: [
+        { id: 'openai', name: 'OpenAI', status: 'ready' },
+        { id: 'zai', name: 'Z.AI', status: 'error' },
+      ],
+    },
+    stale: false,
+  }
+
+  it('esconde entradas listadas em hiddenProviderIds', () => {
+    const html = renderToStaticMarkup(
+      createElement(AiUsagebarProviderPanel, {
+        snapshot: twoEntries,
+        hiddenProviderIds: ['zai'],
+        onToggleProviderVisible: vi.fn(),
+      })
+    )
+
+    expect(html).toContain('OpenAI')
+    expect(html).not.toContain('>Z.AI<')
+    expect(html).not.toContain(ENTRY_ERROR_FALLBACK)
+  })
+
+  it('sem hiddenProviderIds renderiza todas as entradas (retrocompatível)', () => {
+    const html = renderToStaticMarkup(createElement(AiUsagebarProviderPanel, { snapshot: twoEntries }))
+
+    expect(html).toContain('OpenAI')
+    expect(html).toContain('Z.AI')
+  })
+
+  it('com todas as entradas ocultas exibe dica para reexibir', () => {
+    const html = renderToStaticMarkup(
+      createElement(AiUsagebarProviderPanel, {
+        snapshot: twoEntries,
+        hiddenProviderIds: ['openai', 'zai'],
+        onToggleProviderVisible: vi.fn(),
+      })
+    )
+
+    expect(html).toContain('Todos os provedores estão ocultos')
+    expect(html).not.toContain('ai-usagebar-entries-grid')
+  })
+
+  it('exibe o botão do menu de visibilidade somente com callback e entradas', () => {
+    const withButton = renderToStaticMarkup(
+      createElement(AiUsagebarProviderPanel, {
+        snapshot: twoEntries,
+        onToggleProviderVisible: vi.fn(),
+      })
+    )
+    expect(withButton).toContain('aria-label="Escolher provedores visíveis"')
+    expect(withButton).toContain('aria-expanded="false"')
+
+    const withoutCallback = renderToStaticMarkup(
+      createElement(AiUsagebarProviderPanel, { snapshot: twoEntries })
+    )
+    expect(withoutCallback).not.toContain('Escolher provedores visíveis')
+
+    const emptySnapshot: AiUsagebarSnapshot = {
+      state: 'ready',
+      vendors: [],
+      report: { schema_version: 1, entries: [] },
+      stale: false,
+    }
+    const withEmptyEntries = renderToStaticMarkup(
+      createElement(AiUsagebarProviderPanel, {
+        snapshot: emptySnapshot,
+        onToggleProviderVisible: vi.fn(),
+      })
+    )
+    expect(withEmptyEntries).not.toContain('Escolher provedores visíveis')
   })
 })
 

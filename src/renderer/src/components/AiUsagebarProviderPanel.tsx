@@ -1,4 +1,4 @@
-import React, { useState, useId, useRef } from 'react'
+import React, { useState, useId, useRef, useEffect } from 'react'
 import {
   RefreshCw,
   Search,
@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   Key,
+  ListFilter,
   ShieldAlert,
   Zap,
   Info,
@@ -33,6 +34,10 @@ export interface AiUsagebarProviderPanelProps {
   onToggleProvider?: (change: AiUsagebarProviderChange) => void | Promise<void>
   onSubmitApiKey?: (change: AiUsagebarApiKeyChange) => void | Promise<void>
   onRemoveApiKey?: (vendorId: string) => void | Promise<void>
+  /** Ids de entrada ocultos pelo usuário (persistido no config do DevOrbit). */
+  hiddenProviderIds?: string[]
+  /** Presente => o menu "Provedores" de visibilidade é exibido. */
+  onToggleProviderVisible?: (entryId: string, visible: boolean) => void | Promise<void>
   className?: string
   initialPendingToggles?: Record<string, boolean>
 }
@@ -86,6 +91,37 @@ export function validateAndTrimApiKey(raw: string): { ok: true; apiKey: string }
 export const ENTRY_ERROR_FALLBACK =
   'Não foi possível consultar este provedor. Verifique credenciais e configuração.'
 
+/**
+ * Detecta quando `value` do upstream é só o eco do percentual ("22%" ou 22
+ * para percent 22.4): exibir os dois rende o "22% 22%" na UI.
+ */
+export function isPercentEchoText(text: string, percent: number): boolean {
+  const match = /^(\d+(?:[.,]\d+)?)\s*%?$/.exec(text.trim())
+  if (!match) return false
+  const numeric = parseFloat(match[1].replace(',', '.'))
+  return Math.abs(numeric - Math.round(percent)) < 0.5
+}
+
+/**
+ * Ícones do upstream só entram no DOM quando renderizáveis: glifos de área
+ * de uso privado (Nerd Font, ex. U+F06A9) viram "tofu" na fonte padrão do
+ * app, e texto igual a id/brand/short_name duplica o que já está no card.
+ */
+export function isRenderableEntryIcon(
+  icon: unknown,
+  entry: Pick<AiUsagebarEntry, 'id' | 'brand' | 'short_name'>
+): boolean {
+  if (typeof icon !== 'string') return false
+  const text = icon.trim()
+  if (!text) return false
+  if (/[\uE000-\uF8FF\u{F0000}-\u{FFFFD}\u{100000}-\u{10FFFD}]/u.test(text)) return false
+  const lower = text.toLowerCase()
+  if (lower === entry.id.trim().toLowerCase()) return false
+  if (entry.brand && lower === entry.brand.trim().toLowerCase()) return false
+  if (entry.short_name && lower === entry.short_name.trim().toLowerCase()) return false
+  return true
+}
+
 /** Formata exibição da métrica respeitando metric.headline ('value' vs 'percent'). */
 export function formatMetricDisplay(metric: AiUsagebarMetric): {
   headlineType: 'value' | 'percent'
@@ -108,10 +144,22 @@ export function formatMetricDisplay(metric: AiUsagebarMetric): {
   }
 
   if (hasPercent) {
+    const valueText = hasValue ? String(metric.value).trim() : ''
+    const detailText = (metric.detail || '').trim()
+    // Upstream manda value ("22%") ecoando o percent (22): exibir os dois
+    // rende "22% 22%". O detail só entra quando o rodapé (Janela/Reseta,
+    // derivado de window_secs/reset_at) não vai cobrir essa informação.
+    const footerCoversReset = Boolean(metric.reset_at || metric.window_secs)
+    let secondaryText: string | undefined
+    if (valueText && !isPercentEchoText(valueText, metric.percent!)) {
+      secondaryText = valueText
+    } else if (detailText && !footerCoversReset) {
+      secondaryText = detailText
+    }
     return {
       headlineType: 'percent',
       primaryText: `${Math.round(metric.percent!)}%`,
-      secondaryText: hasValue ? String(metric.value) : metric.detail,
+      secondaryText,
       percent: metric.percent,
     }
   }
@@ -199,19 +247,46 @@ export const AiUsagebarProviderPanel: React.FC<AiUsagebarProviderPanelProps> = (
   onToggleProvider,
   onSubmitApiKey,
   onRemoveApiKey,
+  hiddenProviderIds,
+  onToggleProviderVisible,
   className = '',
   initialPendingToggles,
 }) => {
   const [keyInputs, setKeyInputs] = useState<Record<string, string>>({})
   const [keyErrors, setKeyErrors] = useState<Record<string, string>>({})
   const [actionError, setActionError] = useState<string>('')
+  const [providerMenuOpen, setProviderMenuOpen] = useState<boolean>(false)
   const pendingTogglesRef = useRef<Record<string, boolean>>(
     initialPendingToggles ? { ...initialPendingToggles } : {}
   )
   const [pendingToggles, setPendingToggles] = useState<Record<string, boolean>>(
     initialPendingToggles || {}
   )
+  const providerMenuAnchorRef = useRef<HTMLDivElement | null>(null)
+  const providerMenuButtonRef = useRef<HTMLButtonElement | null>(null)
   const baseId = useId()
+
+  // Fecha o menu de visibilidade com clique fora ou Escape.
+  useEffect(() => {
+    if (!providerMenuOpen) return
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!providerMenuAnchorRef.current?.contains(event.target as Node)) {
+        setProviderMenuOpen(false)
+      }
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setProviderMenuOpen(false)
+        providerMenuButtonRef.current?.focus()
+      }
+    }
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [providerMenuOpen])
 
   const handleKeySubmit = async (vendorId: string, e: React.FormEvent) => {
     e.preventDefault()
@@ -285,6 +360,8 @@ export const AiUsagebarProviderPanel: React.FC<AiUsagebarProviderPanelProps> = (
   }
 
   const entries = snapshot?.report?.entries || []
+  const hiddenProviderSet = new Set(hiddenProviderIds ?? [])
+  const visibleEntries = entries.filter((entry) => !hiddenProviderSet.has(entry.id))
   const vendors = snapshot?.vendors || []
   const state = snapshot?.state || (loading ? 'starting' : 'unavailable')
   const isStale = snapshot?.stale === true
@@ -325,6 +402,45 @@ export const AiUsagebarProviderPanel: React.FC<AiUsagebarProviderPanelProps> = (
         </div>
 
         <div className="ai-usagebar-actions">
+          {onToggleProviderVisible && entries.length > 0 && (
+            <div className="ai-usagebar-menu-anchor" ref={providerMenuAnchorRef}>
+              <button
+                type="button"
+                ref={providerMenuButtonRef}
+                className="ai-usagebar-btn"
+                onClick={() => setProviderMenuOpen((open) => !open)}
+                aria-expanded={providerMenuOpen}
+                aria-haspopup="true"
+                aria-label="Escolher provedores visíveis"
+              >
+                <ListFilter size={14} aria-hidden="true" />
+                Provedores
+              </button>
+              {providerMenuOpen && (
+                <div
+                  className="ai-usagebar-provider-menu"
+                  role="group"
+                  aria-label="Visibilidade dos provedores"
+                >
+                  {entries.map((entry) => (
+                    <label
+                      key={entry.id}
+                      className="ai-usagebar-provider-menu-item"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={!hiddenProviderSet.has(entry.id)}
+                        onChange={(e) => {
+                          void onToggleProviderVisible?.(entry.id, e.target.checked)
+                        }}
+                      />
+                      <span>{entry.display_name || entry.name}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           {onDetect && (
             <button
               type="button"
@@ -417,17 +533,16 @@ export const AiUsagebarProviderPanel: React.FC<AiUsagebarProviderPanelProps> = (
       {entries.length > 0 && (
         <div className="ai-usagebar-entries-container">
           <h3 className="ai-usagebar-section-title">Uso & Quotas</h3>
+          {visibleEntries.length === 0 ? (
+            <div className="ai-usagebar-empty-container">
+              <Info size={24} aria-hidden="true" />
+              <p>Todos os provedores estão ocultos. Reexiba pelo menu "Provedores".</p>
+            </div>
+          ) : (
           <div className="ai-usagebar-entries-grid" role="list">
-            {entries.map((entry) => {
+            {visibleEntries.map((entry) => {
               const displayName = entry.display_name || entry.name
               const hasError = entry.status === 'error' || Boolean(entry.error)
-              const cardClass = [
-                'ai-usagebar-entry-card',
-                hasError ? 'ai-usagebar-entry-card--error' : '',
-                entry.stale ? 'ai-usagebar-entry-card--stale' : '',
-              ]
-                .filter(Boolean)
-                .join(' ')
 
               // Suporta seções ordenadas se existirem, senão converte metrics para seções
               const rawSections =
@@ -446,11 +561,22 @@ export const AiUsagebarProviderPanel: React.FC<AiUsagebarProviderPanelProps> = (
                 (s): s is AiUsagebarSection => Boolean(s && typeof s === 'object')
               )
 
+              // Erro sem dados: card compacto (não estica na grid com espaço morto)
+              const isErrorOnly = hasError && sectionsToRender.length === 0
+              const cardClass = [
+                'ai-usagebar-entry-card',
+                hasError ? 'ai-usagebar-entry-card--error' : '',
+                isErrorOnly ? 'ai-usagebar-entry-card--compact' : '',
+                entry.stale ? 'ai-usagebar-entry-card--stale' : '',
+              ]
+                .filter(Boolean)
+                .join(' ')
+
               return (
                 <article key={entry.id} className={cardClass} role="listitem">
                   <div className="ai-usagebar-entry-head">
                     <div className="ai-usagebar-entry-identity">
-                      {entry.icon && (
+                      {isRenderableEntryIcon(entry.icon, entry) && (
                         <span className="ai-usagebar-entry-icon" aria-hidden="true">
                           {entry.icon}
                         </span>
@@ -542,7 +668,9 @@ export const AiUsagebarProviderPanel: React.FC<AiUsagebarProviderPanelProps> = (
                                 <div
                                   className={`ai-usagebar-progress-fill ai-usagebar-progress-fill--${tone}`}
                                   style={{
-                                    width: `${Math.min(100, Math.max(0, percent))}%`,
+                                    // Arredondado como o rótulo: evita pinto de <1%
+                                    // (barra de 1px) num card que exibe "0%"
+                                    width: `${Math.min(100, Math.max(0, Math.round(percent)))}%`,
                                   }}
                                 />
                               </div>
@@ -562,6 +690,7 @@ export const AiUsagebarProviderPanel: React.FC<AiUsagebarProviderPanelProps> = (
                         const rec = section as Record<string, unknown>
                         const label = rec.label !== undefined ? String(rec.label) : ''
                         const val = rec.value !== undefined ? String(rec.value) : ''
+                        if (!label.trim() && !val.trim()) return null
                         return (
                           <div key={`text-${idx}`} className="ai-usagebar-text-row">
                             <span className="ai-usagebar-text-label">{label}</span>
@@ -574,9 +703,11 @@ export const AiUsagebarProviderPanel: React.FC<AiUsagebarProviderPanelProps> = (
                         const rec = section as Record<string, unknown>
                         const label = rec.label !== undefined ? String(rec.label) : ''
                         const body = rec.body
-                        const bodyLines = Array.isArray(body)
-                          ? body.map((line) => String(line))
-                          : [String(body ?? '')]
+                        // Corpo vazio com rótulo (ex. "Resets:" órfão) não renderiza
+                        const bodyLines = (Array.isArray(body) ? body.map((line) => String(line)) : [String(body ?? '')])
+                          .map((line) => line.trim())
+                          .filter((line) => line !== '')
+                        if (bodyLines.length === 0) return null
                         return (
                           <div key={`block-${idx}`} className="ai-usagebar-block-row">
                             <div className="ai-usagebar-block-label">{label}</div>
@@ -619,6 +750,7 @@ export const AiUsagebarProviderPanel: React.FC<AiUsagebarProviderPanelProps> = (
               )
             })}
           </div>
+          )}
         </div>
       )}
 

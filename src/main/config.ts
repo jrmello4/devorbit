@@ -259,6 +259,9 @@ function normalizeConfig(value: unknown): AppConfig {
   const modelRouting = normalizeModelRouting(source.modelRouting)
   const automation = normalizeAutomation(source.automation)
   const terminalPresets = sanitizeCustomTerminalPresets(source.terminalPresets)
+  const aiUsagebarHiddenProviders = normalizeAiUsagebarHiddenProviders(
+    source.aiUsagebarHiddenProviders
+  )
   return {
     projectDirs: hasValidProjectDirList ? projectDirs : [...defaultConfig.projectDirs],
     managedProjects: normalizeManagedProjects(source.managedProjects),
@@ -277,7 +280,21 @@ function normalizeConfig(value: unknown): AppConfig {
     ...(modelRouting ? { modelRouting } : {}),
     ...(automation ? { automation } : {}),
     ...(terminalPresets ? { terminalPresets } : {}),
+    ...(aiUsagebarHiddenProviders ? { aiUsagebarHiddenProviders } : {}),
   }
+}
+
+/** Ids de provedores do ai-usagebar ocultos na tela de quotas — tolerante e limitado. */
+function normalizeAiUsagebarHiddenProviders(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const seen = new Set<string>()
+  for (const item of value) {
+    if (typeof item !== 'string') continue
+    const id = item.trim()
+    if (id && id.length <= 64) seen.add(id)
+    if (seen.size >= 64) break
+  }
+  return seen.size > 0 ? [...seen] : undefined
 }
 
 function getConfigPath(): string {

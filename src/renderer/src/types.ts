@@ -292,6 +292,8 @@ export interface AppConfig {
   automation?: AutomationConfig
   /** Presets de terminal personalizados criados pelo usuário (Smart Terminals). */
   terminalPresets?: CustomTerminalPreset[]
+  /** Ids de provedores do ai-usagebar ocultos na tela "Provedores & Quotas de IA". */
+  aiUsagebarHiddenProviders?: string[]
 }
 
 export interface SyncResult {

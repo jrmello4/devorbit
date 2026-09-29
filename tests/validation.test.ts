@@ -166,6 +166,21 @@ describe('IPC input validation', () => {
     ).toEqual({ terminalPresets: [] })
   })
 
+  it('validates aiUsagebarHiddenProviders: trima, deduplica e rejeita lixo', async () => {
+    expect(
+      await validateConfigUpdates({ aiUsagebarHiddenProviders: [' zai ', 'openai', 'zai'] })
+    ).toEqual({ aiUsagebarHiddenProviders: ['zai', 'openai'] })
+    // Lista vazia é limpeza explícita (reexibir todos os provedores).
+    expect(await validateConfigUpdates({ aiUsagebarHiddenProviders: [] })).toEqual({
+      aiUsagebarHiddenProviders: [],
+    })
+    await expect(validateConfigUpdates({ aiUsagebarHiddenProviders: 'nope' })).rejects.toThrow(/provedores ocultos/)
+    await expect(validateConfigUpdates({ aiUsagebarHiddenProviders: [42] })).rejects.toThrow(/provedores ocultos/)
+    await expect(
+      validateConfigUpdates({ aiUsagebarHiddenProviders: ['x'.repeat(65)] })
+    ).rejects.toThrow(/Id de provedor/)
+  })
+
   it('canonicalizes project directories and removes duplicate paths', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'devorbit-validation-'))
     temporaryDirectories.push(root)

@@ -6,6 +6,10 @@ import { SettingsModal } from './components/SettingsModal'
 import { CodexAuthModal } from './components/CodexAuthModal'
 import { AiUsagebarProviderPanel } from './components/AiUsagebarProviderPanel'
 import { UsageSharePanel } from './components/UsageSharePanel'
+// Estilos da view de uso (usage-panel/usage-scroll/usage-shell). O único outro
+// importador é UsageBar.tsx, que não é montado em lugar nenhum — sem este
+// import a view fica sem overflow e o conteúdo é cortado sem scroll.
+import './components/UsagePanel.css'
 import { AiMemoryModal } from './components/AiMemoryModal'
 import { GitDock, type GitDockTab } from './components/GitDock'
 import { CommandPalette } from './components/CommandPalette'
@@ -732,6 +736,25 @@ export const App: React.FC = () => {
     setConfig(saved)
     await handleRefresh()
   }
+
+  // Visibilidade de provedores na tela "Provedores & Quotas de IA" (persistida no config).
+  const handleToggleUsageProviderVisible = async (providerId: string, visible: boolean) => {
+    if (!window.devorbit) return
+    const hidden = new Set(config?.aiUsagebarHiddenProviders ?? [])
+    if (visible) hidden.delete(providerId)
+    else hidden.add(providerId)
+    try {
+      const saved = await window.devorbit.saveConfig({
+        aiUsagebarHiddenProviders: [...hidden].sort(),
+      })
+      setConfig(saved)
+    } catch (err: any) {
+      notify(
+        `Não foi possível salvar a visibilidade do provedor: ${err.message || 'erro desconhecido'}`,
+        'error'
+      )
+    }
+  }
   const openProjectTab = (project: Project) => {
     setProjectTabs((current) => {
       const existing = current.find((item) => item.id === project.id)
@@ -1183,6 +1206,8 @@ export const App: React.FC = () => {
               onToggleProvider={toggleAiUsagebarProvider}
               onSubmitApiKey={submitAiUsagebarApiKey}
               onRemoveApiKey={removeAiUsagebarApiKey}
+              hiddenProviderIds={config?.aiUsagebarHiddenProviders ?? []}
+              onToggleProviderVisible={handleToggleUsageProviderVisible}
             />
             <UsageSharePanel showQuotaSnapshots={false} />
           </div>
