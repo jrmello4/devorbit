@@ -76,7 +76,7 @@ function createHarness() {
     cancelBridgeTarget: vi.fn(),
     turnSessions: new Map(),
     waitTurnResult: vi.fn(),
-    waitTerminalReady: vi.fn(async () => undefined),
+    waitTerminalReady: vi.fn(async () => ({ timedOut: false })),
     usage,
   }
   registerTerminalIpc(register, dependencies)

@@ -23,6 +23,8 @@ import {
   type TurnDependencies,
   type TurnWaiter,
 } from '../src/main/agent-turn'
+import type { AgentInstructionInput, AgentInstructionResult } from '../src/main/agent-instruction'
+import { AGENT_SUBMIT_SEQUENCE } from '../src/shared/agent-instruction-contract'
 import type { AgentProviderId, AppConfig } from '../src/renderer/src/types'
 import type { TerminalEvent } from '../src/main/terminal-session'
 
@@ -58,7 +60,6 @@ function createHarness(options: {
       spawns.push({ id, provider: turn.provider })
     }),
     write: vi.fn((id: string, input: string) => {
-      order.push('write')
       writes.push({ id, input })
       return live.has(id)
     }),
@@ -68,6 +69,17 @@ function createHarness(options: {
     }),
     waitReady: vi.fn(async () => {
       order.push('ready')
+      return { timedOut: false }
+    }),
+    // Submissão centralizada: conteúdo + UM Enter via deps.write (o stub
+    // registra 'write' uma única vez na ordem do turno).
+    sendInstruction: vi.fn(async (input: AgentInstructionInput): Promise<AgentInstructionResult> => {
+      order.push('write')
+      const contentOk = input.content.length === 0 || deps.write(input.terminalId, input.content)
+      if (!contentOk || !deps.write(input.terminalId, AGENT_SUBMIT_SEQUENCE)) {
+        return { acked: false, attempts: 1, error: 'O terminal recusou a tarefa.' }
+      }
+      return { acked: true, attempts: 1 }
     }),
     resolveTurn: async (provider: AgentProviderId) => ({
       tier: options.tier || 'fast',
@@ -151,7 +163,7 @@ describe('sendAgentTurn', () => {
       prompt: 'faça algo',
     })).rejects.toThrow(/rate limit/i)
     expect(harness.spawns).toEqual([{ id: 'turn-no-failover', provider: 'opencode' }])
-    expect(harness.writes.map((entry) => entry.id)).toEqual(['turn-no-failover'])
+    expect(harness.writes.map((entry) => entry.id)).toEqual(['turn-no-failover', 'turn-no-failover'])
     resetTurnQueues()
   })
 
@@ -246,22 +258,91 @@ describe('sendAgentTurn', () => {
       terminalId: 'turn-ready-first',
       provider: 'opencode',
       prompt: 'liste os arquivos',
+      turnId: 'task-first-turn',
     })
     expect(outcome).toMatchObject({ provider: 'opencode', result: 'CONCLUIDO: ok' })
     expect(harness.order).toEqual(['spawn', 'ready', 'waiter', 'write'])
-    expect(harness.deps.waitReady).toHaveBeenCalledWith('turn-ready-first')
-    expect(harness.writes).toEqual([{ id: 'turn-ready-first', input: 'liste os arquivos\r' }])
+    expect(harness.deps.waitReady).toHaveBeenCalledWith(
+      'turn-ready-first',
+      expect.objectContaining({ since: expect.any(Number) })
+    )
+    // Submissão centralizada: conteúdo verbatim + UM Enter, nessa ordem.
+    expect(harness.deps.sendInstruction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        terminalId: 'turn-ready-first',
+        turnId: 'task-first-turn',
+        content: 'liste os arquivos',
+        provider: 'opencode',
+      })
+    )
+    expect(harness.writes).toEqual([
+      { id: 'turn-ready-first', input: 'liste os arquivos' },
+      { id: 'turn-ready-first', input: '\r' },
+    ])
     resetTurnQueues()
   })
 
-  it('does not wait for readiness when the terminal is already in the turn provider/model', async () => {
+  it('generates a default turn id when the caller does not provide one', async () => {
+    resetTurnQueues()
+    const harness = createHarness({ waiters: [{ result: 'ok' }] })
+    await sendAgentTurn(harness.deps, { terminalId: 'turn-default-id', provider: 'opencode', prompt: 'oi' })
+    const input = vi.mocked(harness.deps.sendInstruction).mock.calls[0][0]
+    expect(input.turnId).toMatch(/^turn_\d+_/)
+    resetTurnQueues()
+  })
+
+  it('reused session still waits for per-turn readiness before writing', async () => {
     resetTurnQueues()
     const harness = createHarness({ waiters: [{ result: 'ok' }] })
     harness.live.add('turn-ready-reuse')
     harness.sessions.set('turn-ready-reuse', { provider: 'opencode', model: 'gpt-4o-mini' })
     await sendAgentTurn(harness.deps, { terminalId: 'turn-ready-reuse', provider: 'opencode', prompt: 'oi' })
-    expect(harness.deps.waitReady).not.toHaveBeenCalled()
-    expect(harness.order).toEqual(['waiter', 'write'])
+    expect(harness.spawns).toHaveLength(0)
+    // Prontidão é POR TURNO: sessão reutilizada também espera, ancorada no
+    // início do turno (cache de prontidão resolve na hora se idle).
+    expect(harness.deps.waitReady).toHaveBeenCalledWith(
+      'turn-ready-reuse',
+      expect.objectContaining({ since: expect.any(Number) })
+    )
+    expect(harness.order).toEqual(['ready', 'waiter', 'write'])
+    resetTurnQueues()
+  })
+
+  it('fails with terminal-not-ready and writes nothing when readiness times out', async () => {
+    resetTurnQueues()
+    const harness = createHarness({ waiters: [{ result: 'ok' }] })
+    harness.deps.waitReady = vi.fn(async () => ({ timedOut: true }))
+    await expect(sendAgentTurn(harness.deps, {
+      terminalId: 'turn-not-ready',
+      provider: 'opencode',
+      prompt: 'faça algo',
+    })).rejects.toMatchObject({ code: 'terminal-not-ready' })
+    expect(harness.writes).toHaveLength(0)
+    expect(harness.deps.sendInstruction).not.toHaveBeenCalled()
+    expect(harness.deps.waitResult).not.toHaveBeenCalled()
+    resetTurnQueues()
+  })
+
+  it('cancels the result waiter and fails explicitly when the instruction is not acknowledged', async () => {
+    resetTurnQueues()
+    const harness = createHarness({ waiters: [{ result: 'nunca deve ser consumido' }] })
+    const cancel = vi.fn()
+    harness.deps.waitResult = vi.fn(() => {
+      const promise = Promise.resolve({ result: 'nunca deve ser consumido' }) as Awaited<ReturnType<TurnDependencies['waitResult']>> & { cancel?: () => void }
+      promise.cancel = cancel
+      return promise as ReturnType<TurnDependencies['waitResult']>
+    })
+    harness.deps.sendInstruction = vi.fn(async () => ({
+      acked: false,
+      attempts: 2,
+      error: 'O terminal não confirmou o recebimento da tarefa após 2 tentativa(s) de Enter.',
+    }))
+    await expect(sendAgentTurn(harness.deps, {
+      terminalId: 'turn-no-ack',
+      provider: 'opencode',
+      prompt: 'faça algo',
+    })).rejects.toMatchObject({ code: 'instruction-not-acknowledged' })
+    expect(cancel).toHaveBeenCalledOnce()
     resetTurnQueues()
   })
 
@@ -273,12 +354,16 @@ describe('sendAgentTurn', () => {
       harness.spawns.push({ id, provider: 'claude' as AgentProviderId })
       return { provider: 'claude' as AgentProviderId }
     })
+    // Mesmo com uma lista "stale" oferecendo um segundo provedor, nada é
+    // spawnado nem escrito no lugar do explícito.
+    harness.deps.orderProviders = () => ['opencode', 'claude'] as AgentProviderId[]
     await expect(sendAgentTurn(harness.deps, {
       terminalId: 'turn-provider-swap',
       provider: 'opencode',
       prompt: 'refatore a arquitetura',
     })).rejects.toMatchObject({ code: 'provider-mismatch', provider: 'opencode' })
     expect(harness.writes).toHaveLength(0)
+    expect(harness.spawns).toEqual([{ id: 'turn-provider-swap', provider: 'claude' as AgentProviderId }])
     expect(harness.sessions.has('turn-provider-swap')).toBe(false)
     resetTurnQueues()
   })
@@ -325,7 +410,8 @@ describe('waiter integrado ao turno via eventos reais', () => {  function create
     harness.emit({ id: 'turn-live-no-failover', type: 'exit', code: 0 })
     await expect(pending).rejects.toThrow(/rate limit/i)
     expect(harness.spawns).toEqual([{ id: 'turn-live-no-failover', provider: 'opencode' }])
-    expect(harness.writes).toHaveLength(1)
+    // Conteúdo + Enter.
+    expect(harness.writes).toHaveLength(2)
     resetTurnQueues()
   })
 

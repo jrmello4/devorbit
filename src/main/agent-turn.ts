@@ -1,5 +1,6 @@
 import type { AgentProviderId, AppConfig } from '../renderer/src/types'
 import type { TerminalEvent } from './terminal-session'
+import type { AgentInstructionInput, AgentInstructionResult } from './agent-instruction'
 import { createAgentResultScanner, type AgentResultInvalidReason } from '../shared/agent-result'
 import { stripAnsiEscapes } from '../shared/ansi'
 import {
@@ -137,10 +138,10 @@ export async function spawnAgentProviderTerminal(
 
 /**
  * Fronteira real de execução do turno (FASE 3): um turno = entregar o prompt,
- * aguardar o marcador DEVORBIT_RESULT (ou erro/saída), classificar o desfecho
- * e só então fazer failover — apenas para erros transitórios. O spawn do
- * processo é só o começo; rate limit reportado pelo CLI DEPOIS do spawn cai
- * aqui, não no caminho de start.
+ * aguardar o marcador DEVORBIT_RESULT (ou erro/saída) e classificar o
+ * desfecho. O spawn do processo é só o começo; rate limit reportado pelo CLI
+ * DEPOIS do spawn cai aqui, não no caminho de start. A classificação de erro
+ * transitório é para mensagem/telemetria: NUNCA troca o provedor do turno.
  *
  * Sem PTYs duplicados: todas as tentativas reutilizam o mesmo terminal id
  * (stop + start), e os turnos do mesmo terminal são serializados.
@@ -200,6 +201,20 @@ export type ResultWaitPromise = Promise<TurnWaiter> & { cancel: () => void }
 export interface TerminalReadyOptions {
   quietMs?: number
   timeoutMs?: number
+  /**
+   * Âncora temporal (epoch ms) da prontidão: só silêncio DEPOIS dela conta.
+   * Spawn novo → timestamp do spawn (exige silêncio pós-boot da TUI); sessão
+   * reutilizada → início do turno.
+   */
+  since?: number
+}
+
+export interface TerminalReadyResult {
+  /**
+   * true = o teto de espera estourou SEM quietude. Não é prontidão: quem
+   * escreveu depois disso estava apostando contra a corrida do boot da TUI.
+   */
+  timedOut: boolean
 }
 
 export interface TurnDependencies {
@@ -216,10 +231,16 @@ export interface TurnDependencies {
   write: (id: string, input: string) => boolean
   waitResult: (id: string, timeouts: { idleMs: number; overallMs: number }) => Promise<TurnWaiter>
   /**
-   * Espera a TUI do CLI ficar pronta depois de um spawn. Sem isso o primeiro
-   * prompt+CR chega durante o boot do OpenCode/Antigravity e fica sem Enter.
+   * Espera a TUI do CLI ficar pronta antes do primeiro write DO TURNO —
+   * inclusive em sessão reutilizada (o cache expira a cada saída nova).
+   * `timedOut: true` não é prontidão e deve abortar o turno sem escrever.
    */
-  waitReady: (id: string, options?: TerminalReadyOptions) => Promise<void>
+  waitReady: (id: string, options?: TerminalReadyOptions) => Promise<TerminalReadyResult>
+  /**
+   * Submissão centralizada da instrução (conteúdo + UM Enter + espera de ack).
+   * A abstração em `agent-instruction.ts` é o único lugar que envia Enter.
+   */
+  sendInstruction: (input: AgentInstructionInput) => Promise<AgentInstructionResult>
   resolveTurn: (provider: AgentProviderId, prompt: string) => Promise<TurnResolution>
   orderProviders: (preferred: AgentProviderId, ready: AgentProviderId[]) => AgentProviderId[]
   readyProviders: () => Promise<AgentProviderId[]>
@@ -237,7 +258,8 @@ function outcomeFromWait(waiter: TurnWaiter): { result?: string; blocked?: strin
   if (waiter.error) return { error: waiter.error }
   if (waiter.invalidResult) return { error: 'O agente devolveu um resultado inválido.' }
   // CLI imprimiu rate limit/indisponibilidade e saiu sem marcador (mesmo com
-  // código 0): texto transitório na cauda também autoriza failover.
+  // código 0): o texto transitório na cauda é CLASSIFICADO para a mensagem de
+  // erro/telemetria — não autoriza troca de provedor.
   const transient = findTransientSnippet(waiter.tail)
   if (transient) return { error: transient }
   if (waiter.timedOut || waiter.idleTimedOut) {
@@ -258,6 +280,8 @@ export async function sendAgentTurn(
     terminalId: string
     provider: AgentProviderId
     prompt: string
+    /** Identificador do turno para telemetria/tracing; default gerado aqui. */
+    turnId?: string
     timeouts?: { idleMs?: number; overallMs?: number }
   }
 ): Promise<TurnOutcome> {
@@ -265,6 +289,7 @@ export async function sendAgentTurn(
   if (!prompt.trim()) throw new Error('A tarefa está vazia.')
   const idleMs = input.timeouts?.idleMs ?? TURN_DEFAULT_IDLE_TIMEOUT_MS
   const overallMs = input.timeouts?.overallMs ?? TURN_DEFAULT_OVERALL_TIMEOUT_MS
+  const turnId = input.turnId ?? `turn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 
   const previous = turnQueues.get(input.terminalId) ?? Promise.resolve()
   let release!: () => void
@@ -272,7 +297,7 @@ export async function sendAgentTurn(
   turnQueues.set(input.terminalId, previous.then(() => gate).catch(() => undefined).then(() => undefined))
   await previous.catch(() => undefined)
   try {
-    return await runTurn(deps, input.terminalId, input.provider, prompt, idleMs, overallMs)
+    return await runTurn(deps, input.terminalId, input.provider, prompt, turnId, idleMs, overallMs)
   } finally {
     release()
   }
@@ -283,6 +308,7 @@ async function runTurn(
   terminalId: string,
   preferred: AgentProviderId,
   prompt: string,
+  turnId: string,
   idleMs: number,
   overallMs: number
 ): Promise<TurnOutcome> {
@@ -319,7 +345,10 @@ async function runTurn(
   const session = deps.getSession(terminalId)
   let effective: AgentProviderId = candidate
   try {
-    let spawnedTerminal = false
+    // Âncora de prontidão por turno: spawn novo → o boot da TUI precisa ficar
+    // quieto DEPOIS daqui; sessão reutilizada → silêncio desde o início do
+    // turno (a TUI pode estar em streaming de um turno anterior).
+    const since = Date.now()
     if (!deps.hasTerminal(terminalId) || !session || session.provider !== candidate || session.model !== turn.model) {
       // Mesmo id: stop + start reutiliza a sessão (sem PTYs duplicados).
       const spawnResult = await deps.spawn(terminalId, { provider: candidate, model: turn.model, tier: turn.tier })
@@ -331,23 +360,39 @@ async function runTurn(
         )
       }
       deps.setSession(terminalId, { provider: effective, model: turn.model })
-      spawnedTerminal = true
     } else {
       effective = session.provider
     }
-    // Primeiro turno: spawn → pronto → waiter → um único prompt+CR. A espera
-    // acontece antes de armar o observador para que a TUI já esteja lendo o
-    // stdin quando o prompt chegar.
-    if (spawnedTerminal) await deps.waitReady(terminalId)
+    // SEMPRE espera a prontidão da TUI antes do primeiro write do turno —
+    // inclusive em sessão reutilizada (spawnedTerminal false). Resolvido por
+    // timeout NÃO é prontidão: falha sem escrever nada.
+    const ready = await deps.waitReady(terminalId, { since })
+    if (ready.timedOut) {
+      throw Object.assign(
+        new Error('A interface do agente não ficou pronta para receber a tarefa.'),
+        { code: 'terminal-not-ready' }
+      )
+    }
     // Arme o observador antes de escrever: alguns CLIs devolvem um resultado
     // no mesmo ciclo de eventos do PTY. Se o waiter fosse criado depois do
     // write, essa resposta seria perdida e o turno ficaria em stall até o
     // timeout.
     const waiterPromise = deps.waitResult(terminalId, { idleMs, overallMs })
-    if (!deps.write(terminalId, prompt + '\r')) {
+    // Submissão centralizada: conteúdo verbatim + UM Enter + espera de ack.
+    const instruction = await deps.sendInstruction({
+      terminalId,
+      turnId,
+      content: prompt,
+      provider: effective,
+      since,
+    })
+    if (!instruction.acked) {
       const cancel = (waiterPromise as Partial<ResultWaitPromise>).cancel
       cancel?.()
-      throw new Error('O terminal recusou a tarefa.')
+      throw Object.assign(
+        new Error(instruction.error || 'O terminal não confirmou o recebimento da tarefa.'),
+        { code: 'instruction-not-acknowledged' }
+      )
     }
     const waiter = await waiterPromise
     const outcome = outcomeFromWait(waiter)
@@ -377,42 +422,64 @@ async function runTurn(
 }
 
 /**
- * Espera central de prontidão da TUI. Depois do spawn, aguarda a primeira
- * saída e uma janela de quietude — o momento em que OpenCode/Antigravity
- * terminam de desenhar e passam a ler o stdin. Resolve também no timeout
- * (melhor esforço: nunca pior que escrever imediatamente) e quando o terminal
- * encerra. Um único observador por turno, removido ao resolver.
+ * Espera central de prontidão da TUI. Depois do spawn, aguarda a última saída
+ * e uma janela de quietude — o momento em que OpenCode/Antigravity terminam
+ * de desenhar e passam a ler o stdin. Resolve por quietude (não é timeout),
+ * por exit/error (CLIs que terminam) e REPORTA COMO resolveu via `timedOut`:
+ * quem chama decide se teto estourado autoriza escrever (a camada de cache
+ * NÃO marca pronto em timeout). Com `since`, o silêncio absoluto desde a
+ * âncora também libera (sessão idle reutilizada não paga o teto inteiro).
+ * Um único observador por turno, removido ao resolver.
  */
 export function createTerminalReadyWaiter(
   subscribe: (listener: (event: TerminalEvent) => void) => () => void
-): (id: string, options?: TerminalReadyOptions) => Promise<void> {
+): (id: string, options?: TerminalReadyOptions) => Promise<TerminalReadyResult> {
   return (id, options) => {
     const quietMs = Math.max(100, options?.quietMs ?? TURN_READY_QUIET_MS)
     const timeoutMs = Math.max(quietMs, options?.timeoutMs ?? TURN_READY_TIMEOUT_MS)
-    return new Promise<void>((resolve) => {
-      const timers: { quiet?: ReturnType<typeof setTimeout>; overall?: ReturnType<typeof setTimeout> } = {}
+    const since = options?.since
+    return new Promise<TerminalReadyResult>((resolve) => {
+      const timers: {
+        quiet?: ReturnType<typeof setTimeout>
+        since?: ReturnType<typeof setTimeout>
+        overall?: ReturnType<typeof setTimeout>
+      } = {}
       let settled = false
       let unsubscribe: () => void = () => undefined
-      const finish = () => {
+      const finish = (timedOut: boolean) => {
         if (settled) return
         settled = true
         if (timers.quiet) clearTimeout(timers.quiet)
+        if (timers.since) clearTimeout(timers.since)
         if (timers.overall) clearTimeout(timers.overall)
         unsubscribe()
-        resolve()
+        resolve({ timedOut })
       }
       unsubscribe = subscribe((event) => {
         if (event.id !== id) return
         if (event.type === 'data') {
-          // A janela só começa depois da primeira saída: uma TUI lenta não é
-          // declarada pronta só porque ainda não desenhou nada.
+          // A janela de quietude recomeça a cada saída: uma TUI em streaming
+          // só é declarada pronta quando para de desenhar. Qualquer saída
+          // também cancela o silêncio-absoluto desde `since` (houve atividade
+          // depois da âncora; passa a valer o silêncio desde a última saída).
+          if (timers.since) {
+            clearTimeout(timers.since)
+            timers.since = undefined
+          }
           if (timers.quiet) clearTimeout(timers.quiet)
-          timers.quiet = setTimeout(finish, quietMs)
+          timers.quiet = setTimeout(() => finish(false), quietMs)
           return
         }
-        if (event.type === 'exit' || event.type === 'error') finish()
+        if (event.type === 'exit' || event.type === 'error') finish(false)
       })
-      timers.overall = setTimeout(finish, timeoutMs)
+      if (since !== undefined) {
+        // Silêncio absoluto desde a âncora (`since + quietMs`) também é
+        // prontidão: cobre sessão idle reutilizada (sem saída nova, sem pagar
+        // o teto) e a condição `now - max(lastOutput, since) >= quietMs`.
+        const remaining = since + quietMs - Date.now()
+        timers.since = setTimeout(() => finish(false), Math.max(0, remaining))
+      }
+      timers.overall = setTimeout(() => finish(true), timeoutMs)
     })
   }
 }

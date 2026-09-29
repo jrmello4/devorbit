@@ -1236,8 +1236,10 @@ export function redactSecrets<T>(value: T): T {
 }
 
 /**
- * Só erros transitórios (rate limit, indisponibilidade, rede, pipe quebrado)
- * autorizam fallback para o próximo provedor. Erros permanentes (auth,
+ * Padrões de erro transitório (rate limit, indisponibilidade, rede, pipe
+ * quebrado). Servem para CLASSIFICAR o erro como transitório na mensagem
+ * exibida e na telemetria — NÃO autorizam trocar de provedor: o turno é
+ * sempre executado pelo provedor explícito. Erros permanentes (auth,
  * requisição inválida, binário ausente) falham direto sem mascarar a causa.
  */
 const TRANSIENT_PATTERNS = [

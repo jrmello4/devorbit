@@ -12,7 +12,7 @@ vi.mock('electron', () => ({
 const { spawnPtyMock } = vi.hoisted(() => ({ spawnPtyMock: vi.fn() }))
 vi.mock('node-pty', () => ({ spawn: spawnPtyMock }))
 
-import { normalizeAgentTurnPrompt } from '../src/main/ipc/terminal-ipc'
+import { normalizeAgentInstructionPayload, normalizeAgentTurnPrompt } from '../src/main/ipc/terminal-ipc'
 import { composeAgentPrompt } from '../src/renderer/src/components/WorkspaceCanvas'
 
 beforeEach(() => {
@@ -52,5 +52,33 @@ describe('normalizeAgentTurnPrompt (canvas → IPC)', () => {
     expect(normalized.indexOf('DEVORBIT_RESULT')).toBeLessThan(200)
     // O corpo excedente foi cortado, não a instrução.
     expect(normalized).not.toContain('a'.repeat(20_000))
+  })
+})
+
+describe('normalizeAgentInstructionPayload (canal devorbit:submitAgentInstruction)', () => {
+  it('aceita payload válido preservando o conteúdo verbatim (multiline incluída)', () => {
+    const payload = normalizeAgentInstructionPayload({
+      turnId: ' task-9 ',
+      content: 'linha 1\nlinha 2\nDEVORBIT_RESULT: ...',
+    })
+    expect(payload.turnId).toBe('task-9')
+    expect(payload.content).toBe('linha 1\nlinha 2\nDEVORBIT_RESULT: ...')
+  })
+
+  it('rejeita payload malformado (não-objeto, turnId vazio, conteúdo vazio)', () => {
+    expect(() => normalizeAgentInstructionPayload(null)).toThrow(/instrução/i)
+    expect(() => normalizeAgentInstructionPayload('tarefa')).toThrow(/instrução/i)
+    expect(() => normalizeAgentInstructionPayload({ content: 'tarefa' })).toThrow(/turnId/i)
+    expect(() => normalizeAgentInstructionPayload({ turnId: 'task-1' })).toThrow(/conteúdo/i)
+    expect(() => normalizeAgentInstructionPayload({ turnId: 'task-1', content: '   ' })).toThrow(/conteúdo/i)
+  })
+
+  it('trunca turnId e conteúdo no mesmo teto do turno', () => {
+    const payload = normalizeAgentInstructionPayload({
+      turnId: 't'.repeat(500),
+      content: 'x'.repeat(20_000),
+    })
+    expect(payload.turnId.length).toBe(128)
+    expect(payload.content.length).toBe(8_000)
   })
 })

@@ -110,10 +110,15 @@ const api: DevOrbitAPI = {
     invoke('devorbit:stopTerminal', id),
   pipeTerminals: (fromId: string, toId: string | null) =>
     invoke('devorbit:pipeTerminals', fromId, toId),
-  sendAgentTurn: (terminalId, provider, projectPath, prompt, timeouts) =>
-    timeouts === undefined
-      ? invoke('devorbit:sendAgentTurn', terminalId, provider, projectPath, prompt)
-      : invoke('devorbit:sendAgentTurn', terminalId, provider, projectPath, prompt, timeouts),
+  sendAgentTurn: (terminalId, provider, projectPath, prompt, timeouts, turnId) => {
+    if (timeouts === undefined && turnId === undefined)
+      return invoke('devorbit:sendAgentTurn', terminalId, provider, projectPath, prompt)
+    if (turnId === undefined)
+      return invoke('devorbit:sendAgentTurn', terminalId, provider, projectPath, prompt, timeouts)
+    return invoke('devorbit:sendAgentTurn', terminalId, provider, projectPath, prompt, timeouts, turnId)
+  },
+  submitAgentInstruction: (terminalId, instruction) =>
+    invoke('devorbit:submitAgentInstruction', terminalId, instruction),
   onTerminalEvent: (callback) => {
     return subscribe<TerminalEvent>('devorbit:terminalEvent', callback)
   },

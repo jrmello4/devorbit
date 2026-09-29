@@ -18,7 +18,8 @@ import {
   resolveAgentProviderWithFallback,
   resolveAgentTurn,
 } from '../agent-providers'
-import { sendAgentTurn, spawnAgentProviderTerminal, TURN_MAX_PROMPT_CHARS, type ResultWaitPromise, type TerminalReadyOptions } from '../agent-turn'
+import { sendAgentTurn, spawnAgentProviderTerminal, TURN_MAX_PROMPT_CHARS, TURN_READY_QUIET_MS, TURN_READY_TIMEOUT_MS, type ResultWaitPromise, type TerminalReadyOptions, type TerminalReadyResult } from '../agent-turn'
+import { sendAgentInstruction } from '../agent-instruction'
 import {
   beginCompanionTerminalStart,
   registerCompanionTerminal,
@@ -33,6 +34,7 @@ import {
   TERMINAL_MIN_COLS,
   TERMINAL_MIN_ROWS,
   hasTerminal,
+  onTerminalEvent,
   resizeTerminal,
   startTerminal,
   stopTerminal,
@@ -59,7 +61,7 @@ export interface TerminalIpcDependencies {
   cancelBridgeTarget: (id: string) => void
   turnSessions: Map<string, { provider: AgentProviderId; model: string }>
   waitTurnResult: (id: string, timeouts: { idleMs: number; overallMs: number }) => ResultWaitPromise
-  waitTerminalReady: (id: string, options?: TerminalReadyOptions) => Promise<void>
+  waitTerminalReady: (id: string, options?: TerminalReadyOptions) => Promise<TerminalReadyResult>
   usage?: UsageRecorder
 }
 
@@ -75,6 +77,31 @@ function assertTerminalId(id: unknown): asserts id is string {
 export function normalizeAgentTurnPrompt(value: unknown): string {
   if (typeof value !== 'string' || !value.trim()) throw new Error('Prompt do turno inválido.')
   return value.slice(0, TURN_MAX_PROMPT_CHARS)
+}
+
+/** Payload do canal `devorbit:submitAgentInstruction` (renderer → main). */
+export interface AgentInstructionPayload {
+  turnId: string
+  content: string
+}
+
+const MAX_AGENT_TURN_ID_CHARS = 128
+
+/**
+ * Valida o payload da submissão centralizada: turnId curto para telemetria e
+ * conteúdo limitado ao mesmo teto do turno. Multiline chega verbatim.
+ */
+export function normalizeAgentInstructionPayload(value: unknown): AgentInstructionPayload {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('Instrução do agente inválida.')
+  }
+  const raw = value as Record<string, unknown>
+  if (typeof raw.turnId !== 'string' || !raw.turnId.trim()) throw new Error('turnId da instrução inválido.')
+  if (typeof raw.content !== 'string' || !raw.content.trim()) throw new Error('Conteúdo da instrução inválido.')
+  return {
+    turnId: raw.turnId.trim().slice(0, MAX_AGENT_TURN_ID_CHARS),
+    content: raw.content.slice(0, TURN_MAX_PROMPT_CHARS),
+  }
 }
 
 /**
@@ -384,6 +411,7 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
     projectPath: string,
     prompt: unknown,
     timeouts?: unknown,
+    turnId?: unknown,
   ) => {
     assertTerminalId(terminalId)
     const safeProvider = validateAgentProvider(provider)
@@ -392,6 +420,11 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
     }
     const safePath = await validateProjectPath(projectPath)
     const safePrompt = normalizeAgentTurnPrompt(prompt)
+    // turnId do renderer (payload do preload): propaga para telemetria/logs de
+    // orquestração; ausente → o próprio turno gera um default.
+    const safeTurnId = turnId === undefined || turnId === null
+      ? undefined
+      : String(turnId).trim().slice(0, 128) || undefined
     let idleMs: number | undefined
     let overallMs: number | undefined
     if (timeouts !== undefined && timeouts !== null) {
@@ -443,6 +476,16 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
           return { provider: spawned.provider }
         },
         write: writeTerminal,
+        sendInstruction: (input) => sendAgentInstruction(
+          {
+            hasTerminal,
+            waitReady: dependencies.waitTerminalReady,
+            write: writeTerminal,
+            subscribe: onTerminalEvent,
+            now: () => Date.now(),
+          },
+          input
+        ),
         waitResult: dependencies.waitTurnResult,
         waitReady: dependencies.waitTerminalReady,
         resolveTurn: async (candidate, taskPrompt) => {
@@ -458,6 +501,7 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
         terminalId,
         provider: safeProvider,
         prompt: safePrompt,
+        ...(safeTurnId !== undefined ? { turnId: safeTurnId } : {}),
         ...(idleMs !== undefined || overallMs !== undefined
           ? { timeouts: { ...(idleMs !== undefined ? { idleMs } : {}), ...(overallMs !== undefined ? { overallMs } : {}) } }
           : {}),
@@ -474,5 +518,35 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
       }, Date.now() - turnStartedAt, 'failed')
       throw error
     }
+  })
+
+  // Submissão centralizada da instrução para o caminho Codex gerenciado no
+  // renderer: o Enter é enviado por `sendAgentInstruction` (prontidão por
+  // turno + ack), nunca por writeTerminal espalhado.
+  register('devorbit:submitAgentInstruction', async (
+    _event,
+    terminalId: unknown,
+    payload: unknown,
+  ) => {
+    assertTerminalId(terminalId)
+    const instruction = normalizeAgentInstructionPayload(payload)
+    const result = await sendAgentInstruction(
+      {
+        hasTerminal,
+        waitReady: dependencies.waitTerminalReady,
+        write: writeTerminal,
+        subscribe: onTerminalEvent,
+        now: () => Date.now(),
+      },
+      {
+        terminalId,
+        turnId: instruction.turnId,
+        content: instruction.content,
+        provider: 'codex',
+        quietMs: TURN_READY_QUIET_MS,
+        timeoutMs: TURN_READY_TIMEOUT_MS,
+      }
+    )
+    return { success: result.acked, ...result }
   })
 }

@@ -55,6 +55,7 @@ const expectedApiKeys = [
   'stopTerminal',
   'pipeTerminals',
   'sendAgentTurn',
+  'submitAgentInstruction',
   'onTerminalEvent',
   'onCompanionEvent',
   'onAgentBridgeEvent',
@@ -187,6 +188,7 @@ describe('preload IPC contract', () => {
       ['devorbit:stopTerminal', 'terminal-1'],
       ['devorbit:pipeTerminals', 'terminal-1', 'terminal-2'],
       ['devorbit:sendAgentTurn', 'terminal-1', 'opencode', 'project', 'revise a arquitetura'],
+      ['devorbit:submitAgentInstruction', 'terminal-1', { turnId: 'task-1', content: 'revise a arquitetura' }],
       ['devorbit:navigateWeb', 'https://example.com/'],
       ['devorbit:getWebState'],
       ['devorbit:goBackWeb'],
@@ -249,7 +251,7 @@ describe('preload IPC contract', () => {
       'deleteProjectEntry', 'syncGit', 'getGitBranches', 'switchGitBranch', 'stashSyncGit',
       'stashSwitchGitBranch', 'pushGit', 'getGitChanges', 'getGitFileDiff', 'syncAllGit', 'getGitInitPreview',
       'initGitRepository', 'cloneGitRepository', 'restoreManagedProject', 'finalizeManagedProject',
-       'startTerminal', 'startCodexTerminal', 'startAgentTerminal', 'resizeTerminal', 'writeTerminal', 'stopTerminal', 'pipeTerminals', 'sendAgentTurn',
+       'startTerminal', 'startCodexTerminal', 'startAgentTerminal', 'resizeTerminal', 'writeTerminal', 'stopTerminal', 'pipeTerminals', 'sendAgentTurn', 'submitAgentInstruction',
       'navigateWeb', 'getWebState', 'goBackWeb', 'goForwardWeb', 'reloadWeb', 'setWebVisible',
       'disposeWebPanel', 'setWebBounds', 'launchTool', 'copyProjectContext', 'getConfig',
       'getUpdateState', 'downloadUpdate',       'installUpdate', 'saveConfig', 'exportConfig',
@@ -322,6 +324,28 @@ describe('preload IPC contract', () => {
       'project',
       'faça algo',
       { idleMs: 60_000 },
+    )
+  })
+
+  it('forwards the turn id for orchestrated submissions', async () => {
+    await exposedApi().sendAgentTurn('terminal-1', 'opencode', 'project', 'faça algo', undefined, 'task-9')
+    expect(ipcInvoke).toHaveBeenCalledWith(
+      'devorbit:sendAgentTurn',
+      'terminal-1',
+      'opencode',
+      'project',
+      'faça algo',
+      undefined,
+      'task-9',
+    )
+  })
+
+  it('forwards the centralized agent instruction submit untouched', async () => {
+    await exposedApi().submitAgentInstruction('terminal-1', { turnId: 'task-1', content: 'revise\nem\nlinhas' })
+    expect(ipcInvoke).toHaveBeenCalledWith(
+      'devorbit:submitAgentInstruction',
+      'terminal-1',
+      { turnId: 'task-1', content: 'revise\nem\nlinhas' },
     )
   })
 

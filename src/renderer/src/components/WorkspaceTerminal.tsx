@@ -738,14 +738,16 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
     const runDelivery = async (): Promise<void> => {
       try {
         // Fronteira real do turno (FASE 3): o main resolve tier/modelo pelo
-        // prompt, garante o CLI com o env do turno, entrega, aguarda o
-        // marcador e só faz failover em erro transitório — mesmo terminal id.
-        // O taskId é registrado ANTES do await: no backend real o marcador
-        // chega pelo evento PTY antes desta Promise resolver, e o listener
-        // precisa do id para entregar ao canvas. O retorno também é entregue
-        // explicitamente (dedup) caso o evento não tenha sido observado.
+        // prompt, garante o CLI com o env do turno, entrega e aguarda o
+        // marcador — SEM trocar de provedor em hipótese alguma (erro
+        // transitório é classificado para a mensagem, nunca roteado a outro
+        // CLI). O taskId é registrado ANTES do await: no backend real o
+        // marcador chega pelo evento PTY antes desta Promise resolver, e o
+        // listener precisa do id para entregar ao canvas. O retorno também é
+        // entregue explicitamente (dedup) caso o evento não tenha sido
+        // observado.
         if (provider !== 'codex') {
-          const turn = await window.devorbit.sendAgentTurn(terminalId, provider, projectPath, agentTask.prompt)
+          const turn = await window.devorbit.sendAgentTurn(terminalId, provider, projectPath, agentTask.prompt, undefined, agentTask.id)
           if (!turn.success) {
             failDelivery(turn.message || 'O agente não executou a tarefa.')
             return
@@ -806,9 +808,14 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
           failDelivery(ready?.message || 'O Codex não ficou disponível para receber a tarefa.')
           return
         }
-        const written = await window.devorbit.writeTerminal(terminalId, agentTask.prompt + '\r')
-        if (!written.success) {
-          failDelivery('O terminal do agente recusou a tarefa.')
+        // Submissão centralizada (main monta prontidão + conteúdo + UM Enter
+        // + ack); o renderer nunca compõe o Enter manualmente.
+        const submission = await window.devorbit.submitAgentInstruction(terminalId, {
+          turnId: agentTask.id,
+          content: agentTask.prompt,
+        })
+        if (!submission.success) {
+          failDelivery(submission.error || 'O terminal do agente não confirmou o recebimento da tarefa.')
           return
         }
         completedTaskRef.current = taskId

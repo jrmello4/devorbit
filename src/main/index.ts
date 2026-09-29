@@ -149,8 +149,11 @@ function sanitizeHitlRequest(request: HitlRequest): HitlRequest {
     .slice(0, 500)
   const metadata = request.metadata
     ? Object.fromEntries(Object.entries(request.metadata).map(([key, value]) => [key, typeof value === 'string'
-      ? value.replace(/(https?:\/\/)([^\s/@]+):([^\s/@]+)@/giu, '$1[REDACTED]@').slice(0, 300)
-      : typeof value === 'number' || typeof value === 'boolean' ? value : String(value).slice(0, 300)]))
+      // Args de diagnóstico chegam já truncados em 4000 chars com marcador
+      // (observability-ipc); o cap aqui é apenas defesa contra metadata
+      // arbitrária de outros chamadores.
+      ? value.replace(/(https?:\/\/)([^\s/@]+):([^\s/@]+)@/giu, '$1[REDACTED]@').slice(0, 4000)
+      : typeof value === 'number' || typeof value === 'boolean' ? value : String(value).slice(0, 4000)]))
     : undefined
   return {
     id: request.id,
@@ -182,9 +185,14 @@ installPtyPipe({
 const turnSessions = new Map<string, { provider: AgentProviderId; model: string }>()
 const waitTurnResult = createResultWaiter(onTerminalEvent)
 // Prontidão central: cacheada por terminal, invalidada em todo restart de PTY.
+// waitReady REPORTA COMO resolveu ({ timedOut }); o Bridge é best-effort
+// (escreve de qualquer forma), então consome a espera sem o resultado.
 const terminalReadiness = createTerminalReadiness(onTerminalEvent)
 onTerminalStart((id) => terminalReadiness.invalidate(id))
 const waitTerminalReady = terminalReadiness.waitReady
+const waitTerminalReadyBestEffort = async (id: string): Promise<void> => {
+  await terminalReadiness.waitReady(id)
+}
 const hitlManager = new HITLManager({ onChange: sendHitlEvent })
 const observabilityLedger = new AuditLedger(path.join(app.getPath('userData'), 'observability.jsonl'))
 const evolutionStore = new EvolutionStore({ dataDirectory: path.join(app.getPath('userData'), 'evolution') })
@@ -467,7 +475,7 @@ const bridgeService = createBridgeService({
   hasTerminal,
   writeTerminal,
   waitTurnResult,
-  waitTerminalReady,
+  waitTerminalReady: waitTerminalReadyBestEffort,
   onEvent: sendAgentBridgeEvent,
   onReflection: rememberBridgeReflection,
   onOutcome: (outcome) => {
