@@ -21,11 +21,6 @@ import { buildAiMemoryHelperEnv } from './ai-memory-process-env'
 import {
   AI_MEMORY_MCP_TOOLS,
 } from '../shared/ai-memory-contract'
-import type {
-  SquadTask,
-  SyncMemoryClient,
-  SyncScope,
-} from './ai-memory-sync'
 import {
   collectRecentBridgeOutcomeHistory,
   extractAiMemoryBriefingText,
@@ -33,7 +28,10 @@ import {
   extractAiMemoryPageBody,
   legacySquadStatePagePath,
   squadStatePagePath,
-} from './ai-memory-sync'
+  type SquadTask,
+  type SyncMemoryClient,
+  type SyncScope,
+} from './ai-memory-squad-state'
 
 const execFileAsync = promisify(execFile)
 
