@@ -4,6 +4,7 @@ dist-electron
 release
 .vite
 .vitest/
+coverage/
 *.local
 .superpowers
 *.log

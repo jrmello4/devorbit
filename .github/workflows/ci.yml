@@ -160,6 +160,31 @@ jobs:
           path: artifacts/ui
           if-no-files-found: ignore
 
+  supply-chain:
+    name: Supply chain (auditoria de dependencias)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22.x
+          cache: npm
+
+      # npm ci valida que o package-lock.json esta em sync com o package.json
+      # e instala exatamente as versoes travadas no lockfile.
+      - name: Install dependencies
+        run: npm ci
+
+      # Limpo no baseline (0 vulnerabilidades high+ em 2026-09-29).
+      # Se comecar a falhar por vulnerabilidades novas, considere
+      # continue-on-error: true + issue de acompanhamento.
+      - name: Npm audit (nivel high ou acima)
+        run: npm audit --audit-level=high
+
   package:
     name: Pacote Windows e smoke de instalacao
     needs: quality

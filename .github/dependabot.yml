@@ -1,0 +1,23 @@
+version: 2
+
+updates:
+  # Dependências npm do repositório (raiz). Patches agrupados em um único PR;
+  # minors/majors continuam em PRs individuais para revisão cuidadosa.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      npm-patch:
+        update-types:
+          - 'patch'
+
+  # Actions usadas nos workflows (.github/workflows).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions-patch:
+        update-types:
+          - 'patch'
