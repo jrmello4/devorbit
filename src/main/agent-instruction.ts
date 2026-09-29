@@ -7,11 +7,16 @@ import { TURN_READY_QUIET_MS, TURN_READY_TIMEOUT_MS, type TerminalReadyOptions }
 import type { TerminalEvent } from './terminal-session'
 
 /**
- * Abstração central de submissão de instruções a um agente (o ÚNICO lugar que
- * envia Enter — AGENT_SUBMIT_SEQUENCE). Fluxo: queued → waiting_ready (timeout
- * de prontidão NÃO escreve nada) → sending (conteúdo verbatim + UM Enter) →
- * submitted → awaiting_ack (qualquer saída do terminal confirma) → acked.
- * Sem ack: re-submete APENAS o Enter (reenviar o conteúdo duplicaria a tarefa).
+ * Abstração central de submissão de instruções a um agente — o único lugar do
+ * CAMINHO DE TURNOS da orquestração que envia Enter (AGENT_SUBMIT_SEQUENCE).
+ * Fluxo: queued → waiting_ready (timeout de prontidão NÃO escreve nada) →
+ * sending (conteúdo verbatim + UM Enter) → submitted → awaiting_ack (qualquer
+ * saída do terminal confirma) → acked. Sem ack: re-submete APENAS o Enter
+ * (reenviar o conteúdo duplicaria a tarefa).
+ *
+ * Pendência conhecida: o Bridge (send/ask best-effort em bridge-service.ts)
+ * ainda escreve direto no PTY com '\r' próprio — migrá-lo para cá é trabalho
+ * futuro; até lá esta doc NÃO vale para o Bridge.
  */
 export interface AgentInstructionDeps {
   hasTerminal: (id: string) => boolean
@@ -129,6 +134,7 @@ export async function sendAgentInstruction(
       // Conteúdo verbatim numa única escrita (multiline intacta); o Enter é
       // uma escrita separada e única no fim.
       if (input.content.length > 0 && !deps.write(input.terminalId, input.content)) {
+        unsubscribeAck()
         const error = 'O terminal recusou o conteúdo da tarefa.'
         emit('failed', attempt, error)
         return { acked: false, attempts: attempt, error }
@@ -139,6 +145,7 @@ export async function sendAgentInstruction(
       emit('retry_submit', attempt)
     }
     if (!deps.write(input.terminalId, AGENT_SUBMIT_SEQUENCE)) {
+      unsubscribeAck()
       const error = 'O terminal recusou o Enter de submissão.'
       emit('failed', attempt, error)
       return { acked: false, attempts: attempt, error }

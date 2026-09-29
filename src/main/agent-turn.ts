@@ -346,10 +346,9 @@ async function runTurn(
   const session = deps.getSession(terminalId)
   let effective: AgentProviderId = candidate
   try {
-    // Âncora de prontidão por turno: spawn novo → o boot da TUI precisa ficar
-    // quieto DEPOIS daqui; sessão reutilizada → silêncio desde o início do
-    // turno (a TUI pode estar em streaming de um turno anterior).
-    const since = Date.now()
+    // Âncora de prontidão por turno: sessão reutilizada → silêncio desde o
+    // início do turno (a TUI pode estar em streaming de um turno anterior).
+    let since = Date.now()
     if (!deps.hasTerminal(terminalId) || !session || session.provider !== candidate || session.model !== turn.model) {
       // Mesmo id: stop + start reutiliza a sessão (sem PTYs duplicados).
       const spawnResult = await deps.spawn(terminalId, { provider: candidate, model: turn.model, tier: turn.tier })
@@ -361,6 +360,12 @@ async function runTurn(
         )
       }
       deps.setSession(terminalId, { provider: effective, model: turn.model })
+      // Âncora DEPOIS do spawn resolver: o pipeline de spawn (loadConfig,
+      // resolução do provider, wrapper ai-memory) pode levar ≥ quietMs, e uma
+      // âncora pré-spawn deixaria o fast-path da prontidão declarar "pronto"
+      // com zero evidência pós-spawn (o invalidate do PTY start já limpou
+      // lastOutputAt) — a mesma classe do bug original, com outro gatilho.
+      since = Date.now()
     } else {
       effective = session.provider
     }

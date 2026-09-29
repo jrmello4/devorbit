@@ -839,8 +839,14 @@ function registerInstalledUpdaterEvents(distribution: UpdateDistribution): void 
     }
 
     installedDownloadedPath = downloadedFile
+    // Fail-closed durante a verificação: enquanto o PowerShell roda (até 30s),
+    // um quit do usuário NÃO pode disparar a instalação silenciosa do
+    // electron-updater com instalador ainda não verificado. Só rearma após a
+    // assinatura validar.
+    autoUpdater.autoInstallOnAppQuit = false
     void verifyAuthenticode(downloadedFile)
       .then(() => {
+        autoUpdater.autoInstallOnAppQuit = true
         setState({
           supported: true,
           status: 'downloaded',
