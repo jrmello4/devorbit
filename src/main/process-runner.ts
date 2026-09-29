@@ -82,14 +82,21 @@ export function resolveProcessInvocation(
   if (platform !== 'win32') {
     return { command, args: [...args], windowsVerbatimArguments: false }
   }
-  const tool = /^(npm|npx)(?:\.(?:cmd|exe))?$/iu.exec(command)?.[1]?.toLowerCase()
+  // O comando pode chegar JÁ RESOLVIDO pela camada confiável (caminho absoluto
+  // ex.: C:\Program Files\nodejs\npm.cmd); a detecção do launcher npm/npx usa o
+  // basename para que esses caminhos continuem sendo lançados via npm-cli.js.
+  const launcher = path.win32.basename(command).toLowerCase()
+  const tool = /^(npm|npx)(?:\.(?:cmd|exe))?$/u.exec(launcher)?.[1]?.toLowerCase()
   let resolvedCommand = command
   if (tool) {
     const cliScript = resolveNpmCli(tool)
     if (cliScript) {
       return { command: process.execPath, args: [cliScript, ...args], windowsVerbatimArguments: false }
     }
-    resolvedCommand = `${tool}.cmd`
+    // Sem npm-cli.js: se o chamador passou um caminho já resolvido, preserva-o
+    // (o wrap via ComSpec executa exatamente aquele launcher); só normaliza
+    // para npm.cmd/npx.cmd quando a entrada era um nome bare sem extensão.
+    resolvedCommand = /[\\/]/u.test(command) ? command : `${tool}.cmd`
   }
   if (/\.(?:cmd|bat)$/iu.test(resolvedCommand)) {
     const commandLine = [resolvedCommand, ...args].map(quoteWindowsCommandLineArg).join(' ')

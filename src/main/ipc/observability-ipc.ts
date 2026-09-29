@@ -1,4 +1,7 @@
+import { execFile } from 'node:child_process'
+import { stat } from 'node:fs/promises'
 import path from 'node:path'
+import { promisify } from 'node:util'
 import { auditProject } from '../audit-engine'
 import type { EvolutionStore } from '../evolution-store'
 import type { HITLManager, HitlRequest } from '../hitl'
@@ -30,15 +33,29 @@ export interface ObservabilityIpcDependencies {
   hitl: HITLManager
   sanitizeHitlRequest: (request: HitlRequest) => HitlRequest
   usageStore: UsageStore
+  /** Injetável para testes: resolução confiável do executável canônico no PATH. */
+  resolveDiagnosticCommand?: (name: string) => Promise<string>
 }
 
-const DIAGNOSTIC_COMMANDS = new Set(['git', 'git.exe', 'npm', 'npm.cmd', 'node', 'node.exe', 'rg', 'rg.exe'])
+/**
+ * Nomes canônicos aceitos para diagnóstico. A validação aceita SOMENTE o nome
+ * bare (com ou sem extensão .exe/.cmd no input, normalizado para o nome sem
+ * extensão). NUNCA aceita caminho: o executável é resolvido pela camada
+ * confiável via PATH (where.exe) no momento da execução — um atacante com
+ * controle do renderer não consegue apontar o diagnóstico para um binário
+ * arbitrário (ex.: C:\evil\git.exe ou \\srv\share\git.exe).
+ */
+const DIAGNOSTIC_COMMAND_PATTERN = /^(?:git|npm|node|rg)(?:\.(?:exe|cmd))?$/u
 
 export function validateDiagnosticRequest(input: unknown): DiagnosticProcessRequest {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Diagnóstico inválido.')
   const value = input as Record<string, unknown>
-  if (typeof value.command !== 'string' || !DIAGNOSTIC_COMMANDS.has(path.basename(value.command).toLowerCase())) {
-    throw new Error('Comando de diagnóstico não permitido.')
+  if (typeof value.command !== 'string') throw new Error('Comando de diagnóstico não permitido.')
+  const canonical = value.command.trim().toLowerCase()
+  // O regex testa a string INTEIRA: qualquer separador de caminho (\ / :), via
+  // absoluta, relativa ou UNC já falha aqui — não há bypass por basename.
+  if (!DIAGNOSTIC_COMMAND_PATTERN.test(canonical)) {
+    throw new Error('Comando de diagnóstico não permitido: informe o nome canônico (git, npm, node ou rg), sem caminho.')
   }
   if (typeof value.projectPath !== 'string') throw new Error('Projeto de diagnóstico inválido.')
   if (value.args !== undefined && (!Array.isArray(value.args) || value.args.length > 32 || value.args.some((item) => typeof item !== 'string' || item.length > 4096))) {
@@ -48,11 +65,145 @@ export function validateDiagnosticRequest(input: unknown): DiagnosticProcessRequ
     throw new Error('Timeout de diagnóstico inválido.')
   }
   return {
-    command: value.command,
+    command: canonical.replace(/\.(?:exe|cmd)$/u, ''),
     ...(Array.isArray(value.args) ? { args: value.args as string[] } : {}),
     projectPath: value.projectPath,
     ...(value.timeoutMs !== undefined ? { timeoutMs: value.timeoutMs as number } : {}),
   }
+}
+
+const execFileAsync = promisify(execFile)
+
+async function diagnosticFileExists(file: string): Promise<boolean> {
+  try {
+    return (await stat(file)).isFile()
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Espelha `findCommandOnPath` (launcher.ts): `where.exe` no Windows, `which`
+ * fora dele. Devolve TODAS as linhas de matches na ordem do PATH — a escolha
+ * do executável (preferência por .exe/.cmd) fica na camada confiável abaixo.
+ */
+async function lookupDiagnosticCommandOnPath(name: string): Promise<readonly string[]> {
+  const isWindows = process.platform === 'win32'
+  try {
+    const { stdout } = await execFileAsync(isWindows ? 'where.exe' : 'which', [name], {
+      timeout: 5000,
+      windowsHide: true,
+    })
+    return String(stdout || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+  } catch {
+    return []
+  }
+}
+
+export interface DiagnosticCommandResolutionOptions {
+  /** Injetável para testes: emula as linhas de saída do where/which. */
+  lookup?: (name: string) => Promise<readonly string[]>
+}
+
+/**
+ * Camada confiável de resolução: recebe o NOME CANÔNICO já validado e devolve
+ * o caminho absoluto do executável encontrado no PATH do momento. `where` pode
+ * devolver vários matches (ex.: npm, npm.cmd, npm.ps1) — prefere um executável
+ * nativo (.exe/.cmd) para não pegar o shim de shell sem extensão. Falha
+ * explicitamente quando não resolve — nunca devolve o nome de volta para o
+ * spawn (que poderia resolver para qualquer coisa).
+ */
+export async function resolveDiagnosticCommandPath(
+  name: string,
+  options: DiagnosticCommandResolutionOptions = {},
+): Promise<string> {
+  const candidates = await (options.lookup ?? lookupDiagnosticCommandOnPath)(name)
+  const native = candidates.filter((candidate) => /\.(?:exe|cmd)$/iu.test(candidate))
+  for (const candidate of [...native, ...candidates]) {
+    if (await diagnosticFileExists(candidate)) return candidate
+  }
+  throw new Error(`${name} não encontrado no PATH.`)
+}
+
+/* ------------------------------------------------------------------ */
+/* Env mínimo do subprocesso de diagnóstico (allowlist + defesa)       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * O processo de diagnóstico NUNCA herda `process.env` integral. Só sobrevivem
+ * as variáveis de execução/OS desta allowlist, mais as pontes npm→node
+ * (npm_execpath/npm_node_execpath) usadas pelo `resolveProcessInvocation` do
+ * process-runner para lançar o npm-cli.js com o node correto.
+ *
+ * Deliberadamente EXCLUÍDOS: NODE_OPTIONS/NODE_EXTRA_CA_CERTS (injeção de
+ * flags/stack no node filho), qualquer *_KEY/*TOKEN/*SECRET (BYOK e credenciais
+ * do DevOrbit nunca vazam para o processo de diagnóstico) e variáveis de
+ * config npm (npm_config_*) que poderiam redirecionar scripts/registry.
+ */
+const DIAGNOSTIC_ENV_ALLOWLIST: ReadonlySet<string> = new Set([
+  // Resolução de executáveis / shell
+  'path',
+  'pathext',
+  'comspec',
+  // Sistema Windows
+  'systemroot',
+  'systemdrive',
+  'windir',
+  'os',
+  'processor_architecture',
+  'number_of_processors',
+  'programdata',
+  'programfiles',
+  'programfiles(x86)',
+  'commonprogramfiles',
+  'commonprogramfiles(x86)',
+  // Usuário / home (git precisa de USERPROFILE/HOME no Windows)
+  'username',
+  'userdomain',
+  'userprofile',
+  'homedrive',
+  'homepath',
+  'home',
+  'appdata',
+  'localappdata',
+  // Temporários / locale
+  'temp',
+  'tmp',
+  'tmpdir',
+  'lang',
+  'lc_all',
+  'lc_ctype',
+  'tz',
+  // Ponte npm → node (resolveNpmCli no process-runner)
+  'npm_execpath',
+  'npm_node_execpath',
+])
+
+/** Defesa em profundidade: nunca deixa passar material de credencial. */
+const SECRETISH_ENV_KEY = /(api[_-]?key|secret|password|passwd|bearer|token)/iu
+
+/** Env filtrado para o subprocesso de diagnóstico (injetável em teste). */
+export function buildDiagnosticEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {}
+  for (const [key, value] of Object.entries(base)) {
+    if (value === undefined) continue
+    const normalized = key.toLowerCase()
+    if (!DIAGNOSTIC_ENV_ALLOWLIST.has(normalized)) continue
+    if (SECRETISH_ENV_KEY.test(normalized)) continue
+    env[key] = value
+  }
+  return env
+}
+
+const DIAGNOSTIC_ARGS_METADATA_LIMIT = 4000
+const DIAGNOSTIC_ARGS_TRUNCATION_MARKER = '…[truncado]'
+
+/** Args completos para a evidência HITL, com truncamento explícito. */
+function formatDiagnosticArgsMetadata(args?: readonly string[]): string {
+  if (!args || args.length === 0) return '[sem argumentos]'
+  const joined = args.join(' ')
+  if (joined.length <= DIAGNOSTIC_ARGS_METADATA_LIMIT) return joined
+  return joined.slice(0, DIAGNOSTIC_ARGS_METADATA_LIMIT - DIAGNOSTIC_ARGS_TRUNCATION_MARKER.length) + DIAGNOSTIC_ARGS_TRUNCATION_MARKER
 }
 
 /** Sequência em-processo: duas completions idênticas no mesmo milissegundo
@@ -116,21 +267,27 @@ export function registerObservabilityIpc(register: IpcRegistrar, dependencies: O
   register('devorbit:runDiagnostic', async (_event, input: unknown): Promise<DiagnosticProcessResult> => {
     const request = validateDiagnosticRequest(input)
     const safePath = await validateProjectPath(request.projectPath)
+    // A camada confiável resolve o executável canônico no PATH do momento; o
+    // caminho resolvido é o que vai ao spawn e à evidência HITL. O renderer
+    // nunca controla o caminho executado.
+    const resolvedPath = await (dependencies.resolveDiagnosticCommand ?? resolveDiagnosticCommandPath)(request.command)
     const approval = await hitl.request({
-      prompt: `Autorizar diagnóstico ${path.basename(request.command)} no projeto ${path.basename(safePath)}?`,
+      prompt: `Autorizar diagnóstico ${request.command} no projeto ${path.basename(safePath)}?`,
       metadata: {
         operation: 'process.run',
-        command: path.basename(request.command),
-        args: request.args?.join(' ').slice(0, 300) || '[sem argumentos]',
+        command: request.command,
+        resolvedPath,
+        args: formatDiagnosticArgsMetadata(request.args),
         project: path.basename(safePath),
       },
     })
     if (approval.state !== 'approved') throw new Error(`Diagnóstico ${approval.state}.`)
     return await runProcess({
-      command: request.command,
+      command: resolvedPath,
       args: request.args,
       cwd: safePath,
       timeoutMs: request.timeoutMs,
+      env: buildDiagnosticEnv(),
     })
   })
 
