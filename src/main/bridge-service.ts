@@ -74,12 +74,20 @@ export interface BridgeInstructionInput {
   provider?: string
   /** Âncora de prontidão (epoch ms) do ciclo do Bridge. */
   since?: number
+  /**
+   * Cancelamento cooperativo (context.signal da requisição): flui para
+   * sendAgentInstruction, que para de escrever/reenviar e devolve
+   * `{ cancelled: true }` em vez de falha.
+   */
+  signal?: AbortSignal
 }
 
 export interface BridgeInstructionResult {
   acked: boolean
   attempts: number
   error?: string
+  /** true = envio interrompido pelo signal (fase `cancelled`, não `failed`). */
+  cancelled?: boolean
 }
 
 export interface BridgeServiceDependencies {
@@ -214,6 +222,14 @@ export function createBridgeService(
     return { status: 'failed', summary: 'O agente terminou sem um resultado estruturado.' }
   }
 
+  /**
+   * Erro de delegação cancelada (code `cancelled`): distinto de falha — o
+   * ciclo é cancelado (waiter descartado, nada pendente) e o cancelamento
+   * NUNCA vira outcome persistido (filtrado pelo prefixo do waiter cancelado).
+   */
+  const delegationCancelledError = (): Error =>
+    Object.assign(new Error('Delegação cancelada.'), { code: 'cancelled' })
+
   /** Cancelamentos de espera não são outcome de delegação: nunca persistir. */
   const cancellationSummaryPrefixes = [
     'a espera da ponte foi cancelada',
@@ -335,6 +351,9 @@ export function createBridgeService(
               content: request.prompt,
               ...(provider !== undefined ? { provider } : {}),
               since: Date.now(),
+              // context.signal flui até sendAgentInstruction: abort para de
+              // escrever/reenviar e devolve cancelled em vez de falha.
+              ...(context?.signal !== undefined ? { signal: context.signal } : {}),
             })
           } catch (error) {
             // Defensivo: a implementação atual não lança, mas se lançar o ciclo
@@ -344,8 +363,10 @@ export function createBridgeService(
           }
           if (!instruction.acked) {
             // Nada foi entregue: cancela o ciclo armado e propaga o erro
-            // explícito em vez de deixar a tarefa pendente.
+            // explícito em vez de deixar a tarefa pendente. Cancelamento é
+            // estado próprio (code `cancelled`), não falha de entrega.
             cycles.cancelPending(id)
+            if (instruction.cancelled) throw delegationCancelledError()
             throw new Error(instruction.error || 'A tarefa não foi entregue ao agente.')
           }
           return { accepted: true, target: id, origin, destination: id }
@@ -393,9 +414,12 @@ export function createBridgeService(
             content: request.prompt,
             ...(provider !== undefined ? { provider } : {}),
             since: Date.now(),
+            // context.signal flui até sendAgentInstruction (mesmo caminho do send).
+            ...(context?.signal !== undefined ? { signal: context.signal } : {}),
           })
           if (!instruction.acked) {
             pending.cancel()
+            if (instruction.cancelled) throw delegationCancelledError()
             throw new Error(instruction.error || 'A tarefa não foi entregue ao agente.')
           }
           const outcome = outcomeFrom(await awaitResult({ promise: pending, persistent: false }, context?.signal))

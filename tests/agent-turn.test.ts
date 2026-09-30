@@ -926,3 +926,80 @@ describe('spawnAgentProviderTerminal', () => {
     }
   })
 })
+
+describe('sendAgentTurn (cancelamento cooperativo via signal)', () => {
+  it('abort durante a instrução: signal flui ao sendInstruction, waiter é cancelado e o turno termina com code cancelled', async () => {
+    resetTurnQueues()
+    const harness = createHarness()
+    const controller = new AbortController()
+    const cancelSpy = vi.fn()
+    let seenSignal: AbortSignal | undefined
+    harness.deps.waitResult = vi.fn(() => {
+      const promise = new Promise<TurnWaiter>(() => undefined) as Awaited<ReturnType<TurnDependencies['waitResult']>> & { cancel?: () => void }
+      promise.cancel = cancelSpy
+      return promise as ReturnType<TurnDependencies['waitResult']>
+    })
+    harness.deps.sendInstruction = vi.fn(async (input: AgentInstructionInput): Promise<AgentInstructionResult> => {
+      // O MESMO signal do turno chega à instrução centralizada.
+      seenSignal = input.signal
+      controller.abort()
+      return { acked: false, attempts: 1, cancelled: true, error: 'Envio da instrução foi cancelado.' }
+    })
+    await expect(
+      sendAgentTurn(harness.deps, {
+        terminalId: 'turn-cancel-instr',
+        provider: 'opencode',
+        prompt: 'tarefa cancelada',
+        signal: controller.signal,
+      })
+    ).rejects.toMatchObject({ code: 'cancelled' })
+    expect(seenSignal).toBeInstanceOf(AbortSignal)
+    // O abort durante a instrução cancela o waiter armado (nada fica pendente).
+    expect(cancelSpy).toHaveBeenCalled()
+    resetTurnQueues()
+  })
+
+  it('abort durante a espera do resultado: waiter cancelado resolve com erro e o turno classifica code cancelled', async () => {
+    resetTurnQueues()
+    const harness = createHarness()
+    const controller = new AbortController()
+    let cancelWaiter!: () => void
+    harness.deps.waitResult = vi.fn(() => {
+      const promise = new Promise<TurnWaiter>((resolve) => {
+        cancelWaiter = () => resolve({ error: 'A espera do resultado foi cancelada.' })
+      }) as Awaited<ReturnType<TurnDependencies['waitResult']>> & { cancel?: () => void }
+      promise.cancel = () => cancelWaiter()
+      return promise as ReturnType<TurnDependencies['waitResult']>
+    })
+    const pending = sendAgentTurn(harness.deps, {
+      terminalId: 'turn-cancel-wait',
+      provider: 'opencode',
+      prompt: 'tarefa cancelada na espera',
+      signal: controller.signal,
+    })
+    // Instrução ackada (stub do harness) → turno aguardando o resultado.
+    await vi.waitFor(() => expect(harness.deps.sendInstruction).toHaveBeenCalled())
+    controller.abort()
+    await expect(pending).rejects.toMatchObject({ code: 'cancelled' })
+    resetTurnQueues()
+  })
+
+  it('abort antes do turno começar: falha estruturada code cancelled sem spawn nem escrita', async () => {
+    resetTurnQueues()
+    const harness = createHarness()
+    const controller = new AbortController()
+    controller.abort()
+    await expect(
+      sendAgentTurn(harness.deps, {
+        terminalId: 'turn-cancel-antes',
+        provider: 'opencode',
+        prompt: 'nunca começa',
+        signal: controller.signal,
+      })
+    ).rejects.toMatchObject({ code: 'cancelled' })
+    expect(harness.spawns).toEqual([])
+    expect(harness.writes).toEqual([])
+    expect(harness.deps.sendInstruction).not.toHaveBeenCalled()
+    resetTurnQueues()
+  })
+})

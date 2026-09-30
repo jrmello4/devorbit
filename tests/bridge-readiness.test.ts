@@ -346,4 +346,198 @@ describe('bridge instruction path — send/ask via sendInstruction (sendAgentIns
       close()
     }
   })
+
+  it('abort durante a INSTRUÇÃO (context.signal via sendInstruction): sem retry, sem outcome, próximo send funciona', async () => {
+    const stack = createInstructionStack()
+    const outcomes: { taskId: string; summary: string }[] = []
+    let waiterStarted = 0
+    let releaseFirstWaiter: (() => void) | undefined
+    let resolveFirstWaiter!: (value: { result?: string; error?: string }) => void
+    const { dependencies } = createDependencies({
+      sendInstruction: stack.sendInstruction,
+      waitTurnResult: () => {
+        waiterStarted += 1
+        if (waiterStarted > 1) {
+          const promise = Promise.resolve({ result: 'CONCLUIDO: segunda' }) as ReturnType<BridgeServiceDependencies['waitTurnResult']>
+          promise.cancel = () => undefined
+          return promise
+        }
+        const promise = new Promise<{ result?: string }>((resolve) => {
+          resolveFirstWaiter = resolve
+        }) as ReturnType<BridgeServiceDependencies['waitTurnResult']>
+        releaseFirstWaiter = () => resolveFirstWaiter({ result: 'CONCLUIDO: tarde' })
+        promise.cancel = () => resolveFirstWaiter({ error: 'A espera do resultado foi cancelada.' })
+        return promise
+      },
+      onOutcome: (outcome) => {
+        outcomes.push({ taskId: outcome.taskId, summary: outcome.summary })
+      },
+    })
+    const { service, close } = await startService(dependencies)
+    const socket = await connect(service.runtime.pipeName)
+    // Fases de orquestração capturadas para auditar a fase `cancelled`.
+    const logs: unknown[][] = []
+    const logSpy = vi.spyOn(console, 'info').mockImplementation((...args: unknown[]) => {
+      logs.push(args)
+    })
+    try {
+      const abortedSend = request(socket, {
+        type: 'send',
+        token: service.runtime.token,
+        sessionId: service.runtime.sessionId,
+        target: 'agent-1',
+        prompt: 'primeira',
+      })
+      void abortedSend.catch(() => undefined)
+      // Prontidão (~100ms de silêncio) → conteúdo + Enter escritos.
+      await expect.poll(() => stack.writes.length, { timeout: 5_000 }).toBe(2)
+      // Desconectar aborta o context.signal do handler DURANTE o awaiting_ack:
+      // sendAgentInstruction para, devolve cancelled e o Bridge propaga o erro
+      // (code `cancelled` no serviço; o fio mantém o HANDLER_ERROR genérico).
+      socket.destroy()
+      // Passado o ack timeout (200ms): NENHUM retry_submit — writes ficam em 2.
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      expect(stack.writes).toEqual(['primeira', '\r'])
+      // Fase `cancelled` (não `failed`/`retry_submit`) nos logs da instrução abortada.
+      expect(logs.some((args) => args.includes('cancelled'))).toBe(true)
+      // Ciclo cancelado: waiter descartado, release tardio ignorado, NADA
+      // persistido como outcome.
+      releaseFirstWaiter?.()
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(outcomes).toEqual([])
+
+      // O ciclo cancelado não trava o alvo: o próximo send no MESMO terminal
+      // executa (lock liberado, sem "já possui uma tarefa aguardando").
+      const nextSocket = await connect(service.runtime.pipeName)
+      try {
+        const secondPromise = request(nextSocket, {
+          type: 'send',
+          token: service.runtime.token,
+          sessionId: service.runtime.sessionId,
+          target: 'agent-1',
+          prompt: 'segunda',
+        })
+        await expect.poll(() => stack.writes.length, { timeout: 5_000 }).toBe(4)
+        expect(stack.writes.slice(2)).toEqual(['segunda', '\r'])
+        await new Promise((resolve) => setTimeout(resolve, 30))
+        stack.emit({ id: 'agent-1', type: 'data', data: 'segunda\r\n> ' })
+        const second = await secondPromise
+        expect(second).toMatchObject({ ok: true, result: { accepted: true, target: 'agent-1' } })
+        // Só o ciclo do segundo send emite outcome.
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        expect(outcomes).toEqual([expect.objectContaining({ summary: 'CONCLUIDO: segunda' })])
+      } finally {
+        nextSocket.destroy()
+      }
+    } finally {
+      logSpy.mockRestore()
+      close()
+    }
+  })
+
+  it('ask com instrução cancelada: signal chega à instrução, waiter cancelado e erro propagado sem outcome', async () => {
+    const outcomes: { taskId: string; summary: string }[] = []
+    let cancelCalls = 0
+    let seenSignal: AbortSignal | undefined
+    let waiterCalls = 0
+    let instructionCalls = 0
+    const { dependencies } = createDependencies({
+      sendInstruction: async (input) => {
+        instructionCalls += 1
+        if (instructionCalls > 1) return { acked: true, attempts: 1 }
+        // O context.signal da requisição flui até a instrução.
+        seenSignal = input.signal
+        return { acked: false, attempts: 1, cancelled: true, error: 'Envio da instrução foi cancelado.' }
+      },
+      waitTurnResult: () => {
+        waiterCalls += 1
+        if (waiterCalls > 1) {
+          const promise = Promise.resolve({ result: 'CONCLUIDO: ok' }) as ReturnType<BridgeServiceDependencies['waitTurnResult']>
+          promise.cancel = () => undefined
+          return promise
+        }
+        const promise = new Promise<{ result?: string }>(() => undefined) as ReturnType<BridgeServiceDependencies['waitTurnResult']>
+        promise.cancel = () => {
+          cancelCalls += 1
+        }
+        return promise
+      },
+      onOutcome: (outcome) => {
+        outcomes.push({ taskId: outcome.taskId, summary: outcome.summary })
+      },
+    })
+    const { service, close } = await startService(dependencies)
+    const socket = await connect(service.runtime.pipeName)
+    try {
+      const response = await request(socket, {
+        type: 'ask',
+        token: service.runtime.token,
+        sessionId: service.runtime.sessionId,
+        target: 'agent-1',
+        prompt: 'vai ser cancelada',
+      })
+      // O cancelamento é erro na resposta (o fio mantém o HANDLER_ERROR genérico
+      // do runtime; o code `cancelled` vive no erro lançado dentro do serviço).
+      expect(response.ok).toBe(false)
+      expect(response.error?.code).toBe('HANDLER_ERROR')
+      // O signal da requisição chegou à instrução e o waiter foi cancelado.
+      expect(seenSignal).toBeInstanceOf(AbortSignal)
+      expect(seenSignal?.aborted).toBe(false)
+      expect(cancelCalls).toBe(1)
+      // Cancelamento nunca vira outcome persistido.
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(outcomes).toEqual([])
+
+      // O alvo não fica travado: o próximo ask no MESMO terminal funciona.
+      const second = await request(socket, {
+        type: 'ask',
+        token: service.runtime.token,
+        sessionId: service.runtime.sessionId,
+        target: 'agent-1',
+        prompt: 'segunda',
+      })
+      expect(second).toMatchObject({ ok: true, result: { status: 'completed', summary: 'CONCLUIDO: ok' } })
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(outcomes).toEqual([expect.objectContaining({ summary: 'CONCLUIDO: ok' })])
+    } finally {
+      socket.destroy()
+      close()
+    }
+  })
+
+  it('send com instrução cancelada: ciclo cancelado e o próximo send não é bloqueado', async () => {
+    let instructionCalls = 0
+    const { dependencies } = createDependencies({
+      sendInstruction: async () => {
+        instructionCalls += 1
+        if (instructionCalls > 1) return { acked: true, attempts: 1 }
+        return { acked: false, attempts: 0, cancelled: true, error: 'Envio da instrução foi cancelado.' }
+      },
+    })
+    const { service, close } = await startService(dependencies)
+    const socket = await connect(service.runtime.pipeName)
+    try {
+      const first = await request(socket, {
+        type: 'send',
+        token: service.runtime.token,
+        sessionId: service.runtime.sessionId,
+        target: 'agent-1',
+        prompt: 'primeira',
+      })
+      expect(first.ok).toBe(false)
+      // O cancelamento não deixa pendência: o próximo send executa em vez de
+      // falhar com "já possui uma tarefa aguardando".
+      const second = await request(socket, {
+        type: 'send',
+        token: service.runtime.token,
+        sessionId: service.runtime.sessionId,
+        target: 'agent-1',
+        prompt: 'segunda',
+      })
+      expect(second).toMatchObject({ ok: true, result: { accepted: true, target: 'agent-1' } })
+    } finally {
+      socket.destroy()
+      close()
+    }
+  })
 })

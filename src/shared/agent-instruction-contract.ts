@@ -24,6 +24,14 @@ export type AgentInstructionPhase =
   | 'acked'
   | 'retry_submit'
   | 'failed'
+  /**
+   * Cancelamento cooperativo (AbortSignal): distinto de `failed` — o envio não
+   * FALHOU, ele foi interrompido a pedido do chamador. Cancelar NÃO reescreve
+   * nem "desfaz" o que já foi escrito no terminal (conteúdo/Enter entregues
+   * permanecem), apenas para observers/retry/continuação local. Nenhum
+   * consumidor deve tratar `cancelled` como gatilho de retry.
+   */
+  | 'cancelled'
 
 export interface AgentInstructionEvent {
   kind: 'instruction'

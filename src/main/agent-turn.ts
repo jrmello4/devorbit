@@ -298,6 +298,13 @@ export async function sendAgentTurn(
     /** Identificador do turno para telemetria/tracing; default gerado aqui. */
     turnId?: string
     timeouts?: { idleMs?: number; overallMs?: number }
+    /**
+     * Cancelamento cooperativo do turno: o MESMO signal flui para
+     * `deps.sendInstruction` (para de escrever/reenviar) e para a espera do
+     * resultado (cancel() do waiter resolve com erro de cancelamento). Nenhum
+     * segundo mecanismo: é um signal só percorrendo os dois pontos.
+     */
+    signal?: AbortSignal
   }
 ): Promise<TurnOutcome> {
   const prompt = input.prompt.slice(0, TURN_MAX_PROMPT_CHARS)
@@ -312,7 +319,7 @@ export async function sendAgentTurn(
   turnQueues.set(input.terminalId, previous.then(() => gate).catch(() => undefined).then(() => undefined))
   await previous.catch(() => undefined)
   try {
-    return await runTurn(deps, input.terminalId, input.provider, prompt, turnId, idleMs, overallMs)
+    return await runTurn(deps, input.terminalId, input.provider, prompt, turnId, idleMs, overallMs, input.signal)
   } finally {
     release()
   }
@@ -325,8 +332,13 @@ async function runTurn(
   prompt: string,
   turnId: string,
   idleMs: number,
-  overallMs: number
+  overallMs: number,
+  signal?: AbortSignal
 ): Promise<TurnOutcome> {
+  // Cancelado antes de começar: falha estruturada sem spawn nem escrita.
+  if (signal?.aborted) {
+    throw Object.assign(new Error('O turno foi cancelado.'), { code: 'cancelled' })
+  }
   const turn = await deps.resolveTurn(preferred, prompt)
   if (turn.available === false) {
     const unavailable = turn.error
@@ -398,24 +410,75 @@ async function runTurn(
     // write, essa resposta seria perdida e o turno ficaria em stall até o
     // timeout.
     const waiterPromise = deps.waitResult(terminalId, { idleMs, overallMs })
+    // Cancelamento do waiter pelo MESMO signal do turno: abort durante a
+    // instrução ou a espera cancela o waiter (resolve com erro de cancelamento,
+    // classificado como code `cancelled` abaixo). Listener removido em todo
+    // caminho de saída (detach no finally das esperas).
+    let detachWaiterAbort: () => void = () => undefined
+    if (signal) {
+      const cancelWaiter = (): void => {
+        ;(waiterPromise as Partial<ResultWaitPromise>).cancel?.()
+      }
+      if (signal.aborted) cancelWaiter()
+      else {
+        const onAbort = (): void => cancelWaiter()
+        signal.addEventListener('abort', onAbort, { once: true })
+        detachWaiterAbort = () => signal.removeEventListener('abort', onAbort)
+      }
+    }
     // Submissão centralizada: conteúdo verbatim + UM Enter + espera de ack.
-    const instruction = await deps.sendInstruction({
-      terminalId,
-      turnId,
-      content: prompt,
-      provider: effective,
-      since,
-    })
+    // O signal flui junto: sendAgentInstruction para de escrever/reenviar no
+    // abort e devolve `cancelled` em vez de falha.
+    let instruction: Awaited<ReturnType<typeof deps.sendInstruction>>
+    try {
+      instruction = await deps.sendInstruction({
+        terminalId,
+        turnId,
+        content: prompt,
+        provider: effective,
+        since,
+        ...(signal !== undefined ? { signal } : {}),
+      })
+    } finally {
+      // O listener do waiter vale enquanto a instrução roda; a espera do
+      // resultado rearma o próprio cancelamento abaixo.
+      detachWaiterAbort()
+    }
     if (!instruction.acked) {
       const cancel = (waiterPromise as Partial<ResultWaitPromise>).cancel
       cancel?.()
       throw Object.assign(
-        new Error(instruction.error || 'O terminal não confirmou o recebimento da tarefa.'),
-        { code: 'instruction-not-acknowledged' }
+        new Error(
+          instruction.cancelled
+            ? 'O turno foi cancelado.'
+            : instruction.error || 'O terminal não confirmou o recebimento da tarefa.'
+        ),
+        { code: instruction.cancelled ? 'cancelled' : 'instruction-not-acknowledged' }
       )
     }
-    const waiter = await waiterPromise
+    // Rearma o cancelamento do waiter para a espera do resultado (o abort pode
+    // chegar a qualquer momento até o turno terminar).
+    if (signal && !signal.aborted) {
+      const onAbort = (): void => {
+        ;(waiterPromise as Partial<ResultWaitPromise>).cancel?.()
+      }
+      signal.addEventListener('abort', onAbort, { once: true })
+      detachWaiterAbort = () => signal.removeEventListener('abort', onAbort)
+    }
+    let waiter: TurnWaiter
+    try {
+      waiter = await waiterPromise
+    } finally {
+      detachWaiterAbort()
+    }
     const outcome = outcomeFromWait(waiter)
+    // Cancelamento pós-escrita: o abort NÃO desfaz o que o agente concluiu —
+    // um resultado legítimo (result/blocked já entregues) vence o cancelamento;
+    // um erro de espera cancelada vira code `cancelled` (nunca retry nem
+    // próxima etapa).
+    if (signal?.aborted && outcome.result === undefined && outcome.blocked === undefined) {
+      throw Object.assign(new Error('O turno foi cancelado.'), { code: 'cancelled' })
+    }
     if (outcome.blocked !== undefined) {
       attempts.push({ provider: effective, ok: true })
       return { provider: effective, model: turn.model, tier: turn.tier, blocked: outcome.blocked, ...(outcome.structured ? { structured: outcome.structured } : {}), attempts, fallback: false }

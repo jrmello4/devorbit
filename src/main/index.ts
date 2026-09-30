@@ -495,6 +495,9 @@ const bridgeService = createBridgeService({
       // → undefined: heurística default de ack + detecção dinâmica de paste).
       hints: resolveProviderInstructionHints(input.provider),
       ...(input.since !== undefined ? { since: input.since } : {}),
+      // context.signal da requisição do Bridge (send/ask) flui até o
+      // sendAgentInstruction: abort para escritas/retries e devolve cancelled.
+      ...(input.signal !== undefined ? { signal: input.signal } : {}),
     },
   ),
   onEvent: sendAgentBridgeEvent,

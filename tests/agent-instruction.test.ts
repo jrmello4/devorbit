@@ -10,12 +10,18 @@ interface InstructionHarness {
   live: Set<string>
   listeners: Set<(event: TerminalEvent) => void>
   emit: (event: TerminalEvent) => void
+  /** Total de subscriptions armadas pela instrução (acumulado). */
+  subscribed: () => number
+  /** Total de unsubscribes efetivados (dispose determinístico). */
+  unsubscribed: () => number
 }
 
 function createInstructionHarness(options: { terminalIds?: string[] } = {}): InstructionHarness {
   const listeners = new Set<(event: TerminalEvent) => void>()
   const writes: Array<{ id: string; data: string }> = []
   const live = new Set<string>(options.terminalIds ?? ['t1'])
+  let subscribedCount = 0
+  let unsubscribedCount = 0
   const deps: AgentInstructionDeps = {
     hasTerminal: (id) => live.has(id),
     waitReady: vi.fn(() => Promise.resolve({ timedOut: false })),
@@ -25,7 +31,10 @@ function createInstructionHarness(options: { terminalIds?: string[] } = {}): Ins
     }),
     subscribe: (listener) => {
       listeners.add(listener)
-      return () => listeners.delete(listener)
+      subscribedCount += 1
+      return () => {
+        if (listeners.delete(listener)) unsubscribedCount += 1
+      }
     },
     now: () => Date.now(),
   }
@@ -35,6 +44,42 @@ function createInstructionHarness(options: { terminalIds?: string[] } = {}): Ins
     live,
     listeners,
     emit: (event) => listeners.forEach((listener) => listener(event)),
+    subscribed: () => subscribedCount,
+    unsubscribed: () => unsubscribedCount,
+  }
+}
+
+/**
+ * AbortSignal real (AbortController) com contadores de listeners: o dispose
+ * determinístico é auditado por `pending()` — 0 após o fim da instrução.
+ */
+function createCountingSignal(): {
+  signal: AbortSignal
+  abort: () => void
+  pending: () => number
+} {
+  const controller = new AbortController()
+  const listeners = new Set<() => void>()
+  const signal = {
+    get aborted(): boolean {
+      return controller.signal.aborted
+    },
+    addEventListener: (type: 'abort', listener: () => void, options?: { once?: boolean }): void => {
+      listeners.add(listener)
+      controller.signal.addEventListener(type, listener, options)
+    },
+    removeEventListener: (type: 'abort', listener: () => void): void => {
+      listeners.delete(listener)
+      controller.signal.removeEventListener(type, listener)
+    },
+    // Membros restantes do tipo AbortSignal: a instrução não os usa.
+    dispatchEvent: (): boolean => false,
+    onabort: null,
+  } as unknown as AbortSignal
+  return {
+    signal,
+    abort: () => controller.abort(),
+    pending: () => listeners.size,
   }
 }
 
@@ -649,6 +694,211 @@ describe('HINTS DE PROVIDER (adapter por provider no sendAgentInstruction)', () 
     harness.emit({ id: 't1', type: 'data', data: 'ack' })
     await expect(pending).resolves.toMatchObject({ acked: true, attempts: 1 })
     expect(harness.writes[0]).toEqual({ id: 't1', data: 'tarefa de uma linha' })
+  })
+})
+
+describe('CANCELAMENTO (AbortSignal em sendAgentInstruction)', () => {
+  it('CASO A: abort durante a espera de prontidão → cancelled, ZERO writes e listeners de abort descartados', async () => {
+    const harness = createInstructionHarness()
+    const counting = createCountingSignal()
+    const readyGate: { resolve: ((result: { timedOut: boolean }) => void) | null } = { resolve: null }
+    harness.deps.waitReady = vi.fn(
+      () => new Promise<{ timedOut: boolean }>((resolve) => { readyGate.resolve = resolve })
+    )
+    const pending = sendAgentInstruction(harness.deps, {
+      terminalId: 't1',
+      turnId: 'task-cancel-ready',
+      content: 'nunca escrito',
+      provider: 'codex',
+      ackTimeoutMs: 5_000,
+      echoSettleMs: 10,
+      signal: counting.signal,
+    })
+    await vi.waitFor(() => expect(harness.deps.waitReady).toHaveBeenCalled())
+    // A corrida com abort está armada durante a espera de prontidão.
+    expect(counting.pending()).toBe(1)
+    counting.abort()
+    const result = await pending
+    expect(result).toMatchObject({ acked: false, cancelled: true, attempts: 0 })
+    expect(result.error).toMatch(/cancelado/i)
+    // Nada foi escrito e o dispose removeu o listener do signal (sem leak).
+    expect(harness.writes).toHaveLength(0)
+    expect(harness.listeners.size).toBe(0)
+    expect(counting.pending()).toBe(0)
+    // Prontidão resolvendo tarde demais: instrução já finalizada, nada escrito.
+    readyGate.resolve?.({ timedOut: false })
+    await waitMs(20)
+    expect(harness.writes).toHaveLength(0)
+  })
+
+  it('CASO B: abort pós-prontidão pré-escrita → conteúdo NÃO enviado, cancelled', async () => {
+    const harness = createInstructionHarness()
+    const counting = createCountingSignal()
+    const readyGate: { resolve: ((result: { timedOut: boolean }) => void) | null } = { resolve: null }
+    harness.deps.waitReady = vi.fn(
+      () => new Promise<{ timedOut: boolean }>((resolve) => { readyGate.resolve = resolve })
+    )
+    const pending = sendAgentInstruction(harness.deps, {
+      terminalId: 't1',
+      turnId: 'task-cancel-preready',
+      content: 'conteúdo não enviado',
+      provider: 'codex',
+      ackTimeoutMs: 5_000,
+      echoSettleMs: 10,
+      signal: counting.signal,
+    })
+    await vi.waitFor(() => expect(harness.deps.waitReady).toHaveBeenCalled())
+    // O resolve só enfileira a continuação pós-prontidão; o abort é síncrono e
+    // vence: o checkpoint pós-waitReady dispara ANTES de qualquer escrita.
+    readyGate.resolve?.({ timedOut: false })
+    counting.abort()
+    const result = await pending
+    expect(result).toMatchObject({ acked: false, cancelled: true, attempts: 0 })
+    expect(harness.writes).toHaveLength(0)
+    expect(harness.listeners.size).toBe(0)
+    expect(counting.pending()).toBe(0)
+  })
+
+  it('CASO C: abort durante awaiting_ack → nenhum retry_submit, observers removidos, fase cancelled (não failed)', async () => {
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    try {
+      const harness = createInstructionHarness()
+      const counting = createCountingSignal()
+      const pending = sendAgentInstruction(harness.deps, {
+        terminalId: 't1',
+        turnId: 'task-cancel-ack',
+        content: 'tarefa em voo',
+        provider: 'codex',
+        ackTimeoutMs: 5_000,
+        echoSettleMs: 10,
+        maxSubmitAttempts: 2,
+        signal: counting.signal,
+      })
+      await vi.waitFor(() => expect(harness.writes).toHaveLength(2))
+      await waitMs(30)
+      // Observador de ack armado (settle passou): 1 subscription no barramento.
+      expect(harness.listeners.size).toBe(1)
+      counting.abort()
+      const result = await pending
+      expect(result).toMatchObject({ acked: false, cancelled: true, attempts: 1 })
+      expect(result.error).toMatch(/cancelado/i)
+      // Nenhum retry: writes permanecem [conteúdo, Enter].
+      expect(harness.writes).toEqual([
+        { id: 't1', data: 'tarefa em voo' },
+        { id: 't1', data: AGENT_SUBMIT_SEQUENCE },
+      ])
+      // Observador do barramento removido e listener de abort descartado.
+      expect(harness.listeners.size).toBe(0)
+      expect(counting.pending()).toBe(0)
+      // Saída tardia do terminal não rearma nada (instrução já terminou).
+      harness.emit({ id: 't1', type: 'data', data: 'ack tardio' })
+      await waitMs(20)
+      expect(harness.writes).toHaveLength(2)
+      // Estado consistente: fase `cancelled` emitida; `retry_submit` nunca.
+      expect(infoSpy.mock.calls.some((call) => call.includes('cancelled'))).toBe(true)
+      expect(infoSpy.mock.calls.some((call) => call.includes('retry_submit'))).toBe(false)
+      expect(infoSpy.mock.calls.some((call) => call.includes('failed'))).toBe(false)
+    } finally {
+      infoSpy.mockRestore()
+    }
+  })
+
+  it('CASO D: abort após o timeout de ack e ANTES do retry → segundo Enter NÃO acontece', async () => {
+    vi.useFakeTimers()
+    try {
+      const harness = createInstructionHarness()
+      const counting = createCountingSignal()
+      const pending = sendAgentInstruction(harness.deps, {
+        terminalId: 't1',
+        turnId: 'task-cancel-retry',
+        content: 'tarefa',
+        provider: 'codex',
+        ackTimeoutMs: 80,
+        echoSettleMs: 20,
+        maxSubmitAttempts: 2,
+        signal: counting.signal,
+      })
+      // Conteúdo + Enter escritos.
+      await vi.advanceTimersByTimeAsync(0)
+      expect(harness.writes).toEqual([
+        { id: 't1', data: 'tarefa' },
+        { id: 't1', data: AGENT_SUBMIT_SEQUENCE },
+      ])
+      // Atravessa o settle: observador de ack armado.
+      await vi.advanceTimersByTimeAsync(20)
+      expect(harness.listeners.size).toBe(1)
+      // 1ms antes do timeout de ack estourar: aborta; ao estourar, o checkpoint
+      // pós-espera de ack converte em cancelled — o retry nunca dispara.
+      await vi.advanceTimersByTimeAsync(79)
+      expect(harness.writes).toHaveLength(2)
+      counting.abort()
+      await vi.advanceTimersByTimeAsync(10_000)
+      const result = await pending
+      expect(result).toMatchObject({ acked: false, cancelled: true, attempts: 1 })
+      expect(harness.writes).toEqual([
+        { id: 't1', data: 'tarefa' },
+        { id: 't1', data: AGENT_SUBMIT_SEQUENCE },
+      ])
+      expect(harness.listeners.size).toBe(0)
+      expect(counting.pending()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('LEAK/SEQUENCIAL: 3 turnos no MESMO terminal sem listeners acumulados; saída do B não re-acka o A', async () => {
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    try {
+      const harness = createInstructionHarness()
+      const start = (turnId: string) =>
+        sendAgentInstruction(harness.deps, {
+          terminalId: 't1',
+          turnId,
+          content: `tarefa ${turnId}`,
+          provider: 'codex',
+          ackTimeoutMs: 5_000,
+          echoSettleMs: 10,
+        })
+
+      // Turno A: completo → barramento volta ao baseline (zero listeners).
+      const a = start('turn-a')
+      await vi.waitFor(() => expect(harness.writes).toHaveLength(2))
+      expect(harness.listeners.size).toBe(1)
+      await waitMs(30)
+      harness.emit({ id: 't1', type: 'data', data: 'ack do A' })
+      await expect(a).resolves.toMatchObject({ acked: true, attempts: 1 })
+      expect(harness.listeners.size).toBe(0)
+
+      // Turno B no MESMO terminal: a saída rotulada "do A" chega durante o B —
+      // só o observador do B está armado; o A já resolvido não reage.
+      const b = start('turn-b')
+      await vi.waitFor(() => expect(harness.writes).toHaveLength(4))
+      expect(harness.listeners.size).toBe(1)
+      await waitMs(30)
+      harness.emit({ id: 't1', type: 'data', data: 'saída tardia rotulada como A' })
+      await expect(b).resolves.toMatchObject({ acked: true, attempts: 1 })
+      expect(harness.listeners.size).toBe(0)
+
+      // Turno C: mesmo padrão, listeners voltam ao baseline.
+      const c = start('turn-c')
+      await vi.waitFor(() => expect(harness.writes).toHaveLength(6))
+      await waitMs(30)
+      harness.emit({ id: 't1', type: 'data', data: 'ack do C' })
+      await expect(c).resolves.toMatchObject({ acked: true, attempts: 1 })
+      expect(harness.listeners.size).toBe(0)
+
+      // Contagem de ack-events por turnId: exatamente UM 'acked' por turno —
+      // a saída do B não gerou segundo ack para o A.
+      const ackedFor = (turnId: string) =>
+        infoSpy.mock.calls.filter((call) => call.includes('acked') && call.includes(turnId)).length
+      expect(ackedFor('turn-a')).toBe(1)
+      expect(ackedFor('turn-b')).toBe(1)
+      expect(ackedFor('turn-c')).toBe(1)
+      // Dispose determinístico: toda subscription foi removida.
+      expect(harness.unsubscribed()).toBe(harness.subscribed())
+    } finally {
+      infoSpy.mockRestore()
+    }
   })
 })
 
