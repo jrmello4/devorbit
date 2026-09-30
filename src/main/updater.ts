@@ -66,6 +66,17 @@ export const PUBLISH_CONFIG = {
 // que a verificação também compare o emissor do certificado.
 export const EXPECTED_UPDATE_PUBLISHER = ''
 
+// Thumbprint (SHA-1 hex) esperado do certificado Authenticode do binário de
+// atualização. Mesmo padrão do EXPECTED_UPDATE_PUBLISHER: enquanto o build não
+// for assinado com um certificado fixo, fica vazio = verificação desativada
+// (apenas Status 'Valid' é exigido). Trade-off: com a constante vazia, um
+// certificado VÁLIDO de outro publisher é aceito pelo updater. Pareamento:
+// preencha com o thumbprint do certificado usado no electron-builder.json
+// (CSC_LINK) — o mesmo valor do secret de CI WINDOWS_CERTIFICATE_THUMBPRINT,
+// validado no job package (passo 'Validar Authenticode dos EXEs') — para que
+// o updater faça pinning do MESMO certificado usado no build oficial.
+export const EXPECTED_UPDATE_CERT_THUMBPRINT = ''
+
 // Timeout da verificação via PowerShell. Timeout/erro de execução = fail-closed.
 export const AUTHENTICODE_TIMEOUT_MS = 30_000
 
@@ -84,19 +95,28 @@ function getPowershellPath(): string {
   )
 }
 
+/** Normaliza thumbprints para comparação: mantém apenas [0-9A-Fa-f] e uppercase.
+ * Tolerante a caixa, espaços e hífens — mesma regra usada pelo job package do
+ * CI no passo 'Validar Authenticode dos EXEs'. */
+function normalizeThumbprint(value: string): string {
+  return (value || '').replace(/[^0-9A-Fa-f]/g, '').toUpperCase()
+}
+
 /**
  * Verifica a assinatura Authenticode de um binário baixado via
  * `Get-AuthenticodeSignature` (PowerShell — zero dependências novas).
  *
  * Fail-closed: qualquer erro de execução, timeout, saída inesperada,
- * Status diferente de 'Valid' ou publisher divergente lança UpdateError.
+ * Status diferente de 'Valid', publisher divergente ou thumbprint divergente
+ * (quando uma expectativa não-vazia é configurada) lança UpdateError.
  * Fora do Windows (process.platform !== 'win32') a verificação de assinatura é
  * pulada (não há Authenticode); a verificação de hash SHA-512 do portable
  * continua obrigatória independentemente de plataforma.
  */
 export async function verifyAuthenticode(
   filePath: string,
-  expectedPublisher: string = EXPECTED_UPDATE_PUBLISHER
+  expectedPublisher: string = EXPECTED_UPDATE_PUBLISHER,
+  expectedThumbprint: string = EXPECTED_UPDATE_CERT_THUMBPRINT
 ): Promise<AuthenticodeVerification> {
   if (process.platform !== 'win32') {
     return { status: 'SkippedNonWindows', signer: null }
@@ -113,6 +133,7 @@ export async function verifyAuthenticode(
     `$sig = Get-AuthenticodeSignature -LiteralPath '${escapedPath}'`,
     'Write-Output ("STATUS={0}" -f $sig.Status)',
     'Write-Output ("SIGNER={0}" -f $sig.SignerCertificate.Subject)',
+    'Write-Output ("THUMBPRINT={0}" -f $sig.SignerCertificate.Thumbprint)',
   ].join('; ')
 
   let result: { stdout: string; stderr: string }
@@ -138,6 +159,7 @@ export async function verifyAuthenticode(
   const stdout = String(result.stdout || '')
   const status = stdout.match(/^STATUS=(.*)$/m)?.[1]?.trim() ?? ''
   const signer = stdout.match(/^SIGNER=(.*)$/m)?.[1]?.trim() ?? ''
+  const thumbprint = stdout.match(/^THUMBPRINT=(.*)$/m)?.[1]?.trim() ?? ''
   if (!status) {
     throw new UpdateError('Saída inesperada da verificação de assinatura Authenticode.')
   }
@@ -152,6 +174,19 @@ export async function verifyAuthenticode(
     }
     if (!signer.toLowerCase().includes(publisher.toLowerCase())) {
       throw new UpdateError('O publisher do certificado da atualização não corresponde ao esperado.')
+    }
+  }
+  // Pinning de certificado: com expectativa não-vazia, compara a forma
+  // normalizada (só hex, uppercase) dos dois lados. Expectativa vazia pula a
+  // checagem (build ainda não assinado com cert fixo). Sem linha THUMBPRINT na
+  // saída com expectativa setada = falha (fail-closed). Mensagens não incluem
+  // os valores de thumbprint (logs não-sensíveis).
+  if (expectedThumbprint.trim()) {
+    if (!thumbprint) {
+      throw new UpdateError('O thumbprint do certificado da atualização não ficou disponível para verificação.')
+    }
+    if (normalizeThumbprint(thumbprint) !== normalizeThumbprint(expectedThumbprint)) {
+      throw new UpdateError('O thumbprint do certificado da atualização não corresponde ao esperado.')
     }
   }
   return { status, signer: signer || null }
@@ -844,7 +879,7 @@ function registerInstalledUpdaterEvents(distribution: UpdateDistribution): void 
     // electron-updater com instalador ainda não verificado. Só rearma após a
     // assinatura validar.
     autoUpdater.autoInstallOnAppQuit = false
-    void verifyAuthenticode(downloadedFile)
+    void verifyAuthenticode(downloadedFile, EXPECTED_UPDATE_PUBLISHER, EXPECTED_UPDATE_CERT_THUMBPRINT)
       .then(() => {
         autoUpdater.autoInstallOnAppQuit = true
         setState({
@@ -1024,7 +1059,7 @@ async function performPortableDownload(): Promise<UpdateState> {
     // verificação de assinatura é pulada dentro de verifyAuthenticode; o hash
     // SHA-512 acima continua obrigatório em qualquer plataforma.
     try {
-      await verifyAuthenticode(temporaryPath)
+      await verifyAuthenticode(temporaryPath, EXPECTED_UPDATE_PUBLISHER, EXPECTED_UPDATE_CERT_THUMBPRINT)
     } catch (error) {
       throw new UpdateError(errorMessage(error), 200, manifest.path)
     }
@@ -1135,7 +1170,7 @@ export async function handleAppQuitPortableUpdate(): Promise<boolean> {
   // imediatamente antes de agendar a substituição do executável. Falha aqui
   // aborta a instalação (o arquivo não é promovido/agendado).
   try {
-    await verifyAuthenticode(portableDownloadPath)
+    await verifyAuthenticode(portableDownloadPath, EXPECTED_UPDATE_PUBLISHER, EXPECTED_UPDATE_CERT_THUMBPRINT)
   } catch (error) {
     const message = errorMessage(error)
     console.warn('Verificação de assinatura falhou; instalação portable abortada.', message)
@@ -1207,7 +1242,7 @@ export async function installUpdate(): Promise<{ success: boolean; message?: str
         return { success: false, message: 'Arquivo da atualização indisponível para verificação de assinatura.' }
       }
       try {
-        await verifyAuthenticode(installedDownloadedPath)
+        await verifyAuthenticode(installedDownloadedPath, EXPECTED_UPDATE_PUBLISHER, EXPECTED_UPDATE_CERT_THUMBPRINT)
       } catch (error) {
         const message = errorMessage(error)
         rejectInstalledUpdate(message)

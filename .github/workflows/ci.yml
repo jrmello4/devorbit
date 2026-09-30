@@ -228,6 +228,18 @@ jobs:
           $hasSecrets = -not [string]::IsNullOrWhiteSpace($env:CSC_LINK) -and -not [string]::IsNullOrWhiteSpace($env:CSC_KEY_PASSWORD) -and -not [string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_THUMBPRINT)
           "signing=$($hasSecrets.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
+      # Push em main e build de desenvolvimento: pode permanecer unsigned.
+      # Em tags oficiais (v*), o release nao pode publicar instalador unsigned
+      # silenciosamente — falha imediatamente se os secrets de assinatura nao
+      # estiverem configurados. Com este fail-fast, o passo 'Validar
+      # Authenticode dos EXEs' (if: signing == 'true') sempre roda em tags.
+      - name: Exigir assinatura em release oficial (tag v*)
+        if: startsWith(github.ref, 'refs/tags/v') && steps.signing.outputs.signing != 'true'
+        shell: pwsh
+        run: |
+          Write-Error 'Release oficial exige certificado de assinatura: configure CSC_LINK/CSC_KEY_PASSWORD/WINDOWS_CERTIFICATE_THUMBPRINT.'
+          exit 1
+
       - name: Preparar ai-usagebar pinado (download verificado por SHA-256)
         run: node scripts/prepare-ai-usagebar.cjs
 
@@ -276,6 +288,9 @@ jobs:
           $expected | ForEach-Object { Write-Host "OK $_" }
 
       - name: Validar Authenticode dos EXEs
+        # Em push de main (unsigned permitido) este passo e pulado; em tags
+        # oficiais o fail-fast acima garante signing == 'true' e a validacao
+        # roda sempre.
         if: steps.signing.outputs.signing == 'true'
         shell: pwsh
         env:

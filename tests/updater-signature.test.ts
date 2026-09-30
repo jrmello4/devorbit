@@ -36,6 +36,7 @@ import {
   _setExecFileRunnerForTest,
   checkPortableForUpdates,
   downloadUpdate,
+  EXPECTED_UPDATE_CERT_THUMBPRINT,
   EXPECTED_UPDATE_PUBLISHER,
   getUpdateState,
   handleAppQuitPortableUpdate,
@@ -253,7 +254,7 @@ describe('verifyAuthenticode', () => {
     expect(signatureCalls).toHaveLength(0)
   })
 
-  it('mantém EXPECTED_UPDATE_PUBLISHER vazio enquanto electron-builder.json não define certificateSubjectName/publisherName', async () => {
+  it('mantém EXPECTED_UPDATE_PUBLISHER e EXPECTED_UPDATE_CERT_THUMBPRINT vazios enquanto electron-builder.json não define certificateSubjectName/publisherName', async () => {
     const builderConfigPath = path.join(process.cwd(), 'electron-builder.json')
     const builderConfig = JSON.parse(await fs.readFile(builderConfigPath, 'utf8')) as {
       win?: { certificateSubjectName?: string; publisherName?: string }
@@ -261,6 +262,102 @@ describe('verifyAuthenticode', () => {
     expect(builderConfig?.win?.certificateSubjectName).toBeUndefined()
     expect(builderConfig?.win?.publisherName).toBeUndefined()
     expect(EXPECTED_UPDATE_PUBLISHER).toBe('')
+    // Pinning de thumbprint também permanece desativado enquanto o build não
+    // é assinado com cert fixo (pareia com o secret WINDOWS_CERTIFICATE_THUMBPRINT).
+    expect(EXPECTED_UPDATE_CERT_THUMBPRINT).toBe('')
+  })
+
+  describe('thumbprint do certificado (EXPECTED_UPDATE_CERT_THUMBPRINT)', () => {
+    // Thumbprints fictícios de 40 hex (SHA-1) para os testes de pinning.
+    const THUMBPRINT_A = 'A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2'
+    const THUMBPRINT_B = '0123456789ABCDEF0123456789ABCDEF01234567'
+
+    async function createUpdateBinary(): Promise<string> {
+      const filePath = path.join(tempDir, 'update.exe')
+      await fs.writeFile(filePath, 'binary')
+      return filePath
+    }
+
+    function stubRunner(): void {
+      _setExecFileRunnerForTest(async (file, args) => {
+        signatureCalls.push({ file, args })
+        return signatureOutput
+      })
+    }
+
+    it('(a) thumbprint esperado igual após normalização (caixa/espaços/hífens) passa', async () => {
+      const filePath = await createUpdateBinary()
+      setSignatureOutput(`STATUS=Valid\r\nSIGNER=CN=DevOrbit\r\nTHUMBPRINT=${THUMBPRINT_A}\r\n`)
+      stubRunner()
+
+      const result = await verifyAuthenticode(
+        filePath,
+        '',
+        ' a1b2-c3d4 e5f6-a1b2 c3d4-e5f6 a1b2-c3d4-e5f6-a1b2 '
+      )
+
+      expect(result).toEqual({ status: 'Valid', signer: 'CN=DevOrbit' })
+      expect(powershellCallCount()).toBe(1)
+      const [call] = signatureCalls
+      const command = call.args[call.args.indexOf('-Command') + 1]
+      // O script PowerShell precisa emitir a linha machine-readable THUMBPRINT=.
+      expect(command).toContain('THUMBPRINT=')
+    })
+
+    it('(b) thumbprint divergente do esperado falha', async () => {
+      const filePath = await createUpdateBinary()
+      setSignatureOutput(`STATUS=Valid\r\nSIGNER=CN=DevOrbit\r\nTHUMBPRINT=${THUMBPRINT_B}\r\n`)
+      stubRunner()
+
+      await expect(verifyAuthenticode(filePath, '', THUMBPRINT_A)).rejects.toThrow(
+        'O thumbprint do certificado da atualização não corresponde ao esperado.'
+      )
+    })
+
+    it('(c) THUMBPRINT ausente na saída do PowerShell com expectativa setada falha (fail-closed)', async () => {
+      const filePath = await createUpdateBinary()
+      stubRunner()
+
+      // Linha THUMBPRINT inteiramente ausente na saída.
+      setSignatureOutput('STATUS=Valid\r\nSIGNER=CN=DevOrbit\r\n')
+      await expect(verifyAuthenticode(filePath, '', THUMBPRINT_A)).rejects.toThrow(
+        'O thumbprint do certificado da atualização não ficou disponível para verificação.'
+      )
+
+      // Linha presente, mas vazia (SignerCertificate sem thumbprint).
+      setSignatureOutput('STATUS=Valid\r\nSIGNER=CN=DevOrbit\r\nTHUMBPRINT=\r\n')
+      await expect(verifyAuthenticode(filePath, '', THUMBPRINT_A)).rejects.toThrow(
+        'O thumbprint do certificado da atualização não ficou disponível para verificação.'
+      )
+    })
+
+    it('(d) expectativa vazia pula a checagem de thumbprint (comportamento atual preservado)', async () => {
+      const filePath = await createUpdateBinary()
+      stubRunner()
+
+      // Sem linha THUMBPRINT na saída e sem expectativa: passa.
+      setSignatureOutput('STATUS=Valid\r\nSIGNER=\r\n')
+      await expect(verifyAuthenticode(filePath, '')).resolves.toEqual({ status: 'Valid', signer: null })
+
+      // THUMBPRINT divergente presente e expectativa vazia: também passa.
+      setSignatureOutput(`STATUS=Valid\r\nSIGNER=CN=Outra Empresa\r\nTHUMBPRINT=${THUMBPRINT_B}\r\n`)
+      await expect(verifyAuthenticode(filePath, '', '')).resolves.toEqual({
+        status: 'Valid',
+        signer: 'CN=Outra Empresa',
+      })
+    })
+
+    it('(e) publisher e thumbprint juntos válidos passam', async () => {
+      const filePath = await createUpdateBinary()
+      setSignatureOutput(
+        `STATUS=Valid\r\nSIGNER=CN=DevOrbit, O=DevOrbit, C=BR\r\nTHUMBPRINT=${THUMBPRINT_A}\r\n`
+      )
+      stubRunner()
+
+      await expect(
+        verifyAuthenticode(filePath, 'DevOrbit', THUMBPRINT_A.toLowerCase())
+      ).resolves.toEqual({ status: 'Valid', signer: 'CN=DevOrbit, O=DevOrbit, C=BR' })
+    })
   })
 })
 
