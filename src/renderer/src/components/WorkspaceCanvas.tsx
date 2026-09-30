@@ -92,9 +92,13 @@ import {
   composeAgentPrompt,
   dispatchAgentTask as dispatchAgentTaskPure,
   dispatchOrchestrationTask as dispatchOrchestrationTaskPure,
+  formatOrchestrationResultsWithinBudget,
   orchestrationResultInstruction,
   orchestrationRunId,
   reportAgentTaskFailure as reportAgentTaskFailurePure,
+  trimHeadWithNote,
+  ORCHESTRATION_NOTES_PROMPT_BUDGET,
+  ORCHESTRATION_PLAN_PROMPT_BUDGET,
 } from "./canvas/agent-dispatch";
 import { agentSendPolicy } from "./agent-send-policy";
 import {
@@ -3231,7 +3235,7 @@ export const WorkspaceCanvas: React.FC<{
             "Não há especialistas conectados. Execute agora todo o plano que você preparou e entregue o resultado final.",
             "Faça as alterações, validações e correções necessárias sem aguardar outro clique.",
             "## Tarefa e contexto conectado",
-            formatOrchestrationNotes(run.notes),
+            trimHeadWithNote(formatOrchestrationNotes(run.notes), ORCHESTRATION_NOTES_PROMPT_BUDGET),
             "## Plano preparado",
             fullResultContent,
           ]);
@@ -3270,11 +3274,11 @@ export const WorkspaceCanvas: React.FC<{
           "Esta é a próxima etapa automática; execute sua parte sem aguardar novos cliques.",
           "Use o plano do coordenador e o contexto da tarefa para produzir uma entrega concreta.",
           "## Tarefa e contexto conectado",
-          formatOrchestrationNotes(specialistNotes),
+          trimHeadWithNote(formatOrchestrationNotes(specialistNotes), ORCHESTRATION_NOTES_PROMPT_BUDGET),
           "## Plano do coordenador",
-          nextRun.plan,
+          trimHeadWithNote(nextRun.plan, ORCHESTRATION_PLAN_PROMPT_BUDGET),
           "## Resultados anteriores",
-          formatOrchestrationResults(nextRun.results),
+          formatOrchestrationResultsWithinBudget(nextRun.results),
         ]);
         const firstSpecialistNode = canvasRef.current.nodes.find(
           (node) => node.id === firstSpecialist.id && node.kind === "agent",
@@ -3343,11 +3347,11 @@ export const WorkspaceCanvas: React.FC<{
             "Esta é a próxima etapa automática; execute sua parte sem aguardar novos cliques.",
             "Considere o plano do coordenador e todos os resultados anteriores antes de trabalhar.",
             "## Tarefa e contexto conectado",
-            formatOrchestrationNotes(specialistNotes),
+            trimHeadWithNote(formatOrchestrationNotes(specialistNotes), ORCHESTRATION_NOTES_PROMPT_BUDGET),
             "## Plano do coordenador",
-            nextRun.plan,
+            trimHeadWithNote(nextRun.plan, ORCHESTRATION_PLAN_PROMPT_BUDGET),
             "## Resultados anteriores",
-            formatOrchestrationResults(nextRun.results),
+            formatOrchestrationResultsWithinBudget(nextRun.results),
           ]);
           const nextSpecialistNode = canvasRef.current.nodes.find(
             (node) => node.id === nextSpecialist.id && node.kind === "agent",

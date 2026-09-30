@@ -128,3 +128,22 @@ describe('createTerminalPasteMode (capability ESC[?2004 no barramento PTY)', () 
     expect(harness.isBracketedPasteEnabled('t1')).toBe(true)
   })
 })
+
+describe('filtro de escopo (shouldTrack)', () => {
+  it('ignora sequências 2004h/l de terminais NÃO rastreados (shell comum)', () => {
+    const listeners: Array<(event: { id: string; type: string; data?: string }) => void> = []
+    const pasteMode = createTerminalPasteMode((listener) => {
+      listeners.push(listener)
+      return () => undefined
+    }, (id) => id.startsWith('agent-'))
+    for (const listener of listeners) listener({ id: 'shell-1', type: 'data', data: '\x1b[?2004h' })
+    expect(pasteMode.isBracketedPasteEnabled('shell-1')).toBe(false)
+    for (const listener of listeners) listener({ id: 'agent-1', type: 'data', data: '\x1b[?2004h' })
+    expect(pasteMode.isBracketedPasteEnabled('agent-1')).toBe(true)
+    // disable ecoado no shell não desabilita o agente (e vice-versa)
+    for (const listener of listeners) listener({ id: 'shell-1', type: 'data', data: '\x1b[?2004l' })
+    expect(pasteMode.isBracketedPasteEnabled('agent-1')).toBe(true)
+    for (const listener of listeners) listener({ id: 'agent-1', type: 'data', data: '\x1b[?2004l' })
+    expect(pasteMode.isBracketedPasteEnabled('agent-1')).toBe(false)
+  })
+})

@@ -90,12 +90,13 @@ export interface AgentInstructionPayload {
 /**
  * Capability dinâmica de bracketed paste (ESC[?2004h/l) observada no barramento
  * PTY — instância única do processo main, compartilhada pelos caminhos de
- * instrução deste módulo (Canvas + canal do Codex).
- * TODO(bridge): o deps.sendInstruction do Bridge é construído em index.ts
- * (arquivo de outro worker) — falta lá a linha
- * `isBracketedPasteEnabled: terminalPasteMode.isBracketedPasteEnabled`.
+ * instrução deste módulo (Canvas + canal do Codex) e pelo Bridge (index.ts).
+ * Só rastreia terminais de AGENTE (sessão de turno registrada em
+ * registerTerminalIpc): em shell, o usuário pode `cat`/`type` um arquivo com
+ * os bytes 2004h/l e o eco seria confundido com anúncio da TUI.
  */
-export const terminalPasteMode = createTerminalPasteMode(onTerminalEvent)
+let shouldTrackPasteMode: (id: string) => boolean = () => false
+export const terminalPasteMode = createTerminalPasteMode(onTerminalEvent, (id) => shouldTrackPasteMode(id))
 
 const MAX_AGENT_TURN_ID_CHARS = 128
 
@@ -146,6 +147,9 @@ function recordTurnUsage(
 }
 
 export function registerTerminalIpc(register: IpcRegistrar, dependencies: TerminalIpcDependencies): void {
+  // Bracketed paste só é observado em terminais de agente (com sessão de
+  // turno); shell comum não é rastreado (evita falso 2004h/l ecoado).
+  shouldTrackPasteMode = (id) => dependencies.turnSessions.has(id)
   register('devorbit:startTerminal', async (
     _event,
     id: unknown,

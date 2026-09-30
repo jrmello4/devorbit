@@ -212,3 +212,62 @@ export function reportAgentTaskFailure(
     agentId,
   );
 }
+
+// ---- Orçamento de montagem do prompt de orquestração -----------------------
+// O teto de envio é TURN_MAX_PROMPT_CHARS (65.536). Quando o contexto total
+// (instrução + notas + plano + resultados) se aproxima dele, o corte cego do
+// IPC fatia a CAUDA — exatamente onde estão os resultados mais recentes.
+// Estes orçamentos montam as seções para que o total caiba, descartando o
+// CONTEÚDO MAIS ANTIGO primeiro (com nota de omissão), nunca o mais novo.
+
+/** Orçamento da seção "Resultados anteriores" no prompt do especialista. */
+export const ORCHESTRATION_RESULTS_PROMPT_BUDGET = 30_000;
+/** Orçamento da seção "Plano do coordenador" no prompt do especialista. */
+export const ORCHESTRATION_PLAN_PROMPT_BUDGET = 20_000;
+/** Orçamento da seção de notas conectadas no prompt do especialista. */
+export const ORCHESTRATION_NOTES_PROMPT_BUDGET = 10_000;
+
+/** Corta mantendo o CABEÇALHO (objetivo/tarefa vivem no início do texto). */
+export function trimHeadWithNote(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, maxChars)}\n(…seção truncada por orçamento de contexto)`;
+}
+
+export interface OrchestrationResultView {
+  role: string;
+  title: string;
+  content: string;
+}
+
+/**
+ * Formata os resultados anteriores dentro do orçamento, priorizando os MAIS
+ * RECENTES (o estado atual da tarefa) — os mais antigos são omitidos com uma
+ * nota visível em vez de serem a única coisa que sobrevive a um corte cego.
+ */
+export function formatOrchestrationResultsWithinBudget(
+  results: OrchestrationResultView[],
+  budgetChars: number = ORCHESTRATION_RESULTS_PROMPT_BUDGET,
+): string {
+  if (!results.length) return "Nenhum resultado de agente foi recebido ainda.";
+  const ordered = [...results].reverse();
+  const included: string[] = [];
+  let used = 0;
+  let omitted = 0;
+  for (const result of ordered) {
+    const block = `\n### ${result.role} — ${result.title}\n${result.content}`;
+    if (used + block.length > budgetChars) {
+      omitted += 1;
+      continue;
+    }
+    included.push(block);
+    used += block.length;
+  }
+  if (included.length === 0) {
+    return `(todos os ${results.length} resultados anteriores excederam o orçamento de contexto; consulte o histórico no canvas)`;
+  }
+  const omissionNote =
+    omitted > 0
+      ? `(${omitted} resultado(s) mais antigo(s) omitido(s) por orçamento de contexto)\n`
+      : "";
+  return omissionNote + included.reverse().join("\n");
+}

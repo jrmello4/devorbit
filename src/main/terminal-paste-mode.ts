@@ -50,9 +50,16 @@ export interface TerminalPasteMode {
  * Fábrica pura: recebe a função de subscrição do barramento (injetável para
  * testes) e devolve o observador de capability. Uma instância por processo é
  * suficiente — o estado é indexado por terminal id.
+ *
+ * `shouldTrack` delimita QUAIS terminais são observados: em terminal de shell
+ * o usuário pode `cat`/`type` um arquivo contendo os bytes ESC[?2004h/l, e o
+ * eco seria confundido com anúncio da TUI (falso-positivo/negativo). Passe um
+ * predicado que reconheça terminais de AGENTE (sessão de turno registrada);
+ * terminais não rastreados ficam sempre sem paste embrujado (fallback plain).
  */
 export function createTerminalPasteMode(
-  subscribe: (listener: (event: TerminalEvent) => void) => () => void
+  subscribe: (listener: (event: TerminalEvent) => void) => () => void,
+  shouldTrack: (id: string) => boolean = () => true
 ): TerminalPasteMode {
   const enabled = new Set<string>()
   const carryByTerminal = new Map<string, string>()
@@ -66,6 +73,7 @@ export function createTerminalPasteMode(
       return
     }
     if (event.type !== 'data' || typeof event.data !== 'string' || event.data.length === 0) return
+    if (!shouldTrack(event.id)) return
 
     // Junta a cauda do chunk anterior (prefixo possível de sequência partida)
     // com o chunk atual, decide pelo LAST match (a última sequência no fluxo

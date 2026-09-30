@@ -17,6 +17,8 @@ import {
   orchestrationResultInstruction,
   orchestrationRunId,
   reportAgentTaskFailure,
+  formatOrchestrationResultsWithinBudget,
+  trimHeadWithNote,
 } from '../src/renderer/src/components/canvas/agent-dispatch'
 
 const readyProviders: AgentProvider[] = [
@@ -399,4 +401,39 @@ describe('resultado estruturado: nó completo vs continuidade curta (handoff ent
     expect(content).toContain('## Handoff para o próximo agente')
     expect(content.length).toBeLessThanOrEqual(AGENT_NODE_CONTENT_MAX_CHARS)
   })
+})
+
+describe('Orçamento de montagem do prompt de orquestração', () => {
+  const result = (role: string, title: string, content: string) => ({ role, title, content });
+
+  it('prioriza os resultados MAIS RECENTES quando o orçamento estoura e anota a omissão', () => {
+    const results = [
+      result('Implementação', 'Etapa 1 (antiga)', 'R'.repeat(2000)),
+      result('Implementação', 'Etapa 2', 'S'.repeat(2000)),
+      result('Revisão', 'Etapa 3 (recente)', 'T'.repeat(2000)),
+    ];
+    const formatted = formatOrchestrationResultsWithinBudget(results, 5000);
+    // Mais recente sempre presente; mais antigo omitido com nota.
+    expect(formatted).toContain('Etapa 3 (recente)');
+    expect(formatted).toContain('Etapa 2');
+    expect(formatted).not.toContain('Etapa 1 (antiga)');
+    expect(formatted).toContain('omitido(s) por orçamento');
+    expect(formatted.length).toBeLessThanOrEqual(5000 + 200);
+  });
+
+  it('sem resultados mantém a mensagem; sem estouro não há nota de omissão', () => {
+    expect(formatOrchestrationResultsWithinBudget([], 1000)).toContain('Nenhum resultado');
+    const small = [result('Implementação', 'Única', 'ok')];
+    const formatted = formatOrchestrationResultsWithinBudget(small, 1000);
+    expect(formatted).toContain('Única');
+    expect(formatted).not.toContain('omitido(s)');
+  });
+
+  it('trimHeadWithNote preserva o cabeçalho (objetivo) e anota o corte', () => {
+    const text = 'OBJETIVO-NO-TOPO\n' + 'x'.repeat(5000);
+    const trimmed = trimHeadWithNote(text, 1000);
+    expect(trimmed.startsWith('OBJETIVO-NO-TOPO')).toBe(true);
+    expect(trimmed).toContain('truncada por orçamento');
+    expect(trimHeadWithNote('curto', 1000)).toBe('curto');
+  });
 })

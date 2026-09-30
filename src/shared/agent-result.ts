@@ -3,12 +3,13 @@ import { stripAnsiEscapes } from './ansi'
 export const AGENT_RESULT_PREFIX = 'DEVORBIT_RESULT:'
 export const AGENT_RESULT_VERSION = 1
 /**
- * Teto do frame físico (uma linha PTY). Precisa acomodar o handoff cheio
- * (AGENT_RESULT_MAX_HANDOFF_CHARS) já escapado para JSON — pior caso 2x,
- * pois \n e \" viram dois caracteres — mais summary e campos opcionais.
- * Frames acima disso são ruído, não resultado.
+ * Teto do frame físico (uma linha PTY). Pior caso legítimo: os TRÊS campos
+ * longos cheios (handoff + testsExecuted + remainingIssues = 3 × 200k) já
+ * escapados para JSON (pior caso 2x, pois \n e \" viram dois caracteres) +
+ * filesChanged (100 × 500) + summary — ≈ 1,3M. Frames acima disso são ruído,
+ * não resultado. (Cap antigo de 512k rejeitava payload legítimo.)
  */
-export const AGENT_RESULT_MAX_FRAME_CHARS = 512_000
+export const AGENT_RESULT_MAX_FRAME_CHARS = 1_600_000
 export const AGENT_RESULT_MAX_SUMMARY_CHARS = 1_000
 /**
  * Cap generoso de proteção para os textos longos do resultado estruturado

@@ -327,13 +327,21 @@ export function createBridgeService(
           // — timeout falha SEM escrever —, conteúdo verbatim + UM Enter, ack e
           // retry que re-envia apenas o Enter. Nunca escreve às cegas.
           const provider = agents.get(id)?.provider
-          const instruction = await dependencies.sendInstruction({
-            terminalId: id,
-            turnId,
-            content: request.prompt,
-            ...(provider !== undefined ? { provider } : {}),
-            since: Date.now(),
-          })
+          let instruction: Awaited<ReturnType<typeof dependencies.sendInstruction>>
+          try {
+            instruction = await dependencies.sendInstruction({
+              terminalId: id,
+              turnId,
+              content: request.prompt,
+              ...(provider !== undefined ? { provider } : {}),
+              since: Date.now(),
+            })
+          } catch (error) {
+            // Defensivo: a implementação atual não lança, mas se lançar o ciclo
+            // armado não pode ficar pendente travando o terminal.
+            cycles.cancelPending(id)
+            throw error
+          }
           if (!instruction.acked) {
             // Nada foi entregue: cancela o ciclo armado e propaga o erro
             // explícito em vez de deixar a tarefa pendente.

@@ -155,10 +155,8 @@ export const TURN_DEFAULT_OVERALL_TIMEOUT_MS = 30 * 60_000
 // descontrolada no canvas), não contra handoffs completos. O writer do PTY
 // fatia escritas grandes (terminal-session, 16k por chunk), então não há
 // limite técnico de entrega neste valor; prompts pequenos demais é que
-// cortavam contexto real do handoff.
-// CUIDADO: writeTerminal ainda rejeita writes > MAX_WRITE_LENGTH (64_000) —
-// prompts no último intervalo (64_000..65_536) falham na escrita até esse
-// teto acompanhar (ver relatório de missão).
+// cortavam contexto real do handoff. MAX_WRITE_LENGTH acompanha este teto
+// (65_536 + folga do wrapper de paste) em terminal-session.ts.
 export const TURN_MAX_PROMPT_CHARS = 65_536
 // Prontidão da TUI no primeiro turno: silêncio após a primeira saída libera o
 // prompt; o teto é melhor esforço para nunca travar um CLI silencioso.
