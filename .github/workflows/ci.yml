@@ -154,7 +154,7 @@ jobs:
 
       - name: Upload UI artifacts on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ui-artifacts-${{ matrix.os }}
           path: artifacts/ui
@@ -318,7 +318,7 @@ jobs:
         run: npm run smoke:package
 
       - name: Enviar pacote validado como artefato
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: devorbit-windows
           path: |
