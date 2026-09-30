@@ -233,12 +233,21 @@ jobs:
       # silenciosamente — falha imediatamente se os secrets de assinatura nao
       # estiverem configurados. Com este fail-fast, o passo 'Validar
       # Authenticode dos EXEs' (if: signing == 'true') sempre roda em tags.
+      # ESCAPE HATCH explícito: variável ALLOW_UNSIGNED_RELEASE=true (Settings →
+      # Secrets and variables → Actions → Variables) publica a release UNSIGNED
+      # com avisos visíveis — decisão consciente, não silenciosa.
       - name: Exigir assinatura em release oficial (tag v*)
-        if: startsWith(github.ref, 'refs/tags/v') && steps.signing.outputs.signing != 'true'
+        if: startsWith(github.ref, 'refs/tags/v') && steps.signing.outputs.signing != 'true' && vars.ALLOW_UNSIGNED_RELEASE != 'true'
         shell: pwsh
         run: |
-          Write-Error 'Release oficial exige certificado de assinatura: configure CSC_LINK/CSC_KEY_PASSWORD/WINDOWS_CERTIFICATE_THUMBPRINT.'
+          Write-Error 'Release oficial exige certificado de assinatura: configure CSC_LINK/CSC_KEY_PASSWORD/WINDOWS_CERTIFICATE_THUMBPRINT. Para publicar unsigned conscientemente, crie ALLOW_UNSIGNED_RELEASE=true nas variáveis do repositório.'
           exit 1
+
+      - name: Avisar release unsigned (ALLOW_UNSIGNED_RELEASE)
+        if: startsWith(github.ref, 'refs/tags/v') && steps.signing.outputs.signing != 'true' && vars.ALLOW_UNSIGNED_RELEASE == 'true'
+        shell: pwsh
+        run: |
+          Write-Host '::warning::Release oficial sendo publicada SEM assinatura de código (ALLOW_UNSIGNED_RELEASE=true). O Windows SmartScreen pode bloquear o download para novos usuários.'
 
       - name: Preparar ai-usagebar pinado (download verificado por SHA-256)
         run: node scripts/prepare-ai-usagebar.cjs

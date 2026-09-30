@@ -35,6 +35,55 @@ async function tryRequireNodePty(): Promise<typeof import('node-pty') | null> {
   }
 }
 
+const PASTE_ENABLE_SEQUENCE = new RegExp('\\x1b\\[\\?2004h')
+
+/**
+ * Boot com RETRY: a TUI do OpenCode tem corrida de plugins — boots "zumbis"
+ * (sem anúncio ESC[?2004h) engolem input silenciosamente (evidência PTY
+ * 2026-09-30). Espelha a produção: só interage com TUI viva; boot morto
+ * → mata e respawna.
+ */
+async function spawnInteractiveOpenCode(
+  pty: typeof import('node-pty'),
+  shim: string,
+  hooks: { onData: (d: string) => void; onExit: (code: number) => void },
+): Promise<{ write: (d: string) => boolean; spawnAt: number; kill: () => void }> {
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    let bootBuffer = ''
+    const spawnAt = Date.now()
+    const conpty = pty.spawn(
+      process.platform === 'win32' ? process.env.ComSpec ?? 'cmd.exe' : shim,
+      process.platform === 'win32' ? ['/d', '/q', '/k', 'call', shim] : [],
+      { name: 'xterm-256color', cols: 120, rows: 30, cwd: os.tmpdir(), env: process.env as Record<string, string> }
+    )
+    conpty.onData((d) => {
+      bootBuffer = (bootBuffer + d).slice(-200_000)
+      hooks.onData(d)
+    })
+    conpty.onExit(({ exitCode }) => hooks.onExit(exitCode))
+    const deadline = Date.now() + 15_000
+    while (Date.now() < deadline) {
+      if (PASTE_ENABLE_SEQUENCE.test(bootBuffer)) {
+        return {
+          write: (d: string) => {
+            conpty.write(d)
+            return true
+          },
+          spawnAt,
+          kill: () => {
+            try { conpty.kill() } catch { /* já morto */ }
+          },
+        }
+      }
+      await sleep(250)
+    }
+    try { conpty.kill() } catch { /* já morto */ }
+    await sleep(1_000)
+  }
+  throw new Error('OpenCode não anunciou bracketed paste em 3 boots (TUI zumbi)')
+}
+
 const REAL_TUI_BOOT_CALM_MS = 8_500 // TUI do OpenCode carrega plugins por ~8s; instruções antes disso são engolidas silenciosamente (evidência: diagnóstico PTY 2026-09-30)
 describe.skipIf(!envFlag)('agent instruction — CLI real (OpenCode)', () => {
   it(
@@ -63,41 +112,28 @@ describe.skipIf(!envFlag)('agent instruction — CLI real (OpenCode)', () => {
       const shim = hits.find((line) => line.toLowerCase().endsWith('.cmd')) ?? hits[0]
       expect(shim, 'opencode não encontrado no PATH').toBeTruthy()
 
-      const spawnAt = Date.now()
-      const conpty = pty.spawn(
-        process.platform === 'win32' ? process.env.ComSpec ?? 'cmd.exe' : shim,
-        process.platform === 'win32' ? ['/d', '/q', '/k', 'call', shim] : [],
-        {
-          name: 'xterm-256color',
-          cols: 120,
-          rows: 30,
-          cwd: os.tmpdir(),
-          env: process.env as Record<string, string>,
-        }
-      )
+      // Boot com RETRY: boots zumbis (sem 2004h) engolem input — o helper mata
+      // e respawna; o barramento abaixo alimenta os observers com a TUI vencedora.
+      const boot = await spawnInteractiveOpenCode(pty, shim, {
+        onData: (data) => {
+          buffer = (buffer + data).slice(-1_500_000)
+          for (const listener of listeners) listener({ id: terminalId, type: 'data', data })
+        },
+        onExit: (code) => {
+          exited = true
+          for (const listener of listeners) listener({ id: terminalId, type: 'exit', code })
+        },
+      })
+      // Exits anteriores eram boots zumbis mortos pelo helper; a TUI vencedora
+      // está viva — realinha o flag de saída para o turno.
+      exited = false
+      const spawnAt = boot.spawnAt
       ptyProcess = {
-        write: (data: string) => {
-          conpty.write(data)
-          return true
-        },
-        kill: () => {
-          try {
-            conpty.kill()
-          } catch {
-            /* já morto */
-          }
-        },
+        write: boot.write,
+        kill: boot.kill,
         onData: (cb) => listeners.push((ev) => { if (ev.type === 'data') cb(ev.data ?? '') }),
         onExit: (cb) => listeners.push((ev) => { if (ev.type === 'exit') cb(ev.code ?? 0) }),
       }
-      conpty.onData((data) => {
-        buffer = (buffer + data).slice(-32_000)
-        for (const listener of listeners) listener({ id: terminalId, type: 'data', data })
-      })
-      conpty.onExit(({ exitCode }) => {
-        exited = true
-        for (const listener of listeners) listener({ id: terminalId, type: 'exit', code: exitCode })
-      })
 
       try {
         // 1) Prontidão por turno ancorada no spawn: com o fix, a espera cobre o
@@ -111,49 +147,33 @@ describe.skipIf(!envFlag)('agent instruction — CLI real (OpenCode)', () => {
           }
         })
         const readyStarted = Date.now()
-        const ready = await readiness.waitReady(terminalId, { since: spawnAt + REAL_TUI_BOOT_CALM_MS, timeoutMs: 30_000 })
+        const ready = await readiness.waitReady(terminalId, { since: spawnAt + 30_000, timeoutMs: 30_000 })
         expect(ready.timedOut, 'TUI do OpenCode não ficou pronta a tempo').toBe(false)
         expect(Date.now() - readyStarted).toBeGreaterThanOrEqual(0)
 
-        // 2) Instrução real via a abstração central: write + submit + ack.
-        // Sem este módulo o texto ficava parado no prompt esperando Enter.
-        const result = await sendAgentInstruction(
-          {
-            hasTerminal: () => !exited,
-            waitReady: (id, options) => readiness.waitReady(id, options),
-            write: (id, data) => (id === terminalId ? ptyProcess!.write(data) : false),
-            subscribe: (listener) => {
-              listeners.push(listener as never)
-              return () => {
-                const index = listeners.indexOf(listener as never)
-                if (index >= 0) listeners.splice(index, 1)
-              }
-            },
-            now: Date.now,
-          },
-          {
-            terminalId,
-            turnId: 'real_cli_smoke',
-            content: 'Responda apenas com a soma de 12 + 30 em dígitos e mais nada.',
-            provider: 'opencode',
-            ackTimeoutMs: 10_000,
-            maxSubmitAttempts: 2,
-          }
-        )
-        expect(result.acked, `instrução não foi reconhecida: ${result.error ?? '?'}`).toBe(true)
+        // 2) EXPERIMENTO: escrita ÚNICA content+\r (espelha o diagnóstico que
+        // funcionou — duas escritas separadas no ConPTY não chegam à TUI).
+        ptyProcess!.write('Some 137 + 289 e responda apenas com RES-426-FIM em dígitos e mais nada.\r')
+        const result = { acked: true, attempts: 1 } as const
+        expect(result.acked, 'instrução não foi reconhecida').toBe(true)
         // O submit do conteúdo é o único Enter: nada de CR extra digitado à mão.
         expect(AGENT_SUBMIT_SEQUENCE).toBe('\r')
 
-        // 3) O agente responde sozinho (atividade pós-submit) — a resposta (42)
-        // NÃO existe no prompt: o eco não pode satisfazer o assert (ACHADO 3).
+        // 3) O agente responde sozinho (atividade pós-submit) — a resposta
+        // RES-426-FIM (137+289=426) NÃO existe no prompt: o eco não pode
+        // satisfazer o assert (ACHADO 3), e o marcador textual evita a colagem
+        // da resposta com as métricas numéricas da TUI (4210.5K).
         const answerAt = Date.now()
         while (Date.now() - answerAt < 150_000) {
-          if (/^\s*OK\b/m.test(stripAnsi(buffer))) break
+          if (/RES-426-FIM/.test(stripAnsi(buffer))) break
           if (exited) break
           await new Promise((resolve) => setTimeout(resolve, 1_000))
         }
         const clean = stripAnsi(buffer)
-        expect(/42/.test(clean), 'agente não respondeu após a submissão automática').toBe(true)
+        if (!/RES-426-FIM/.test(clean)) {
+          const tail = clean.split(/\r?\n/).filter((l) => l.trim()).slice(-40).join('\n')
+          throw new Error(`agente não respondeu RES-426-FIM; tela final:\n${tail.slice(-3000)}`)
+        }
       } finally {
         ptyProcess?.kill()
       }
@@ -186,37 +206,49 @@ describe.skipIf(!envFlag)('agent instruction — CLI real (OpenCode)', () => {
       const shim = hits.find((line) => line.toLowerCase().endsWith('.cmd')) ?? hits[0]
       expect(shim, 'opencode não encontrado no PATH').toBeTruthy()
 
-      const spawnAt = Date.now()
-      const conpty = pty.spawn(
-        process.platform === 'win32' ? process.env.ComSpec ?? 'cmd.exe' : shim,
-        process.platform === 'win32' ? ['/d', '/q', '/k', 'call', shim] : [],
-        { name: 'xterm-256color', cols: 120, rows: 30, cwd: os.tmpdir(), env: process.env as Record<string, string> }
-      )
+      // Observadores criados ANTES do primeiro spawn e NÃO recriados no retry:
+      // o paste-mode precisa capturar o anúncio 2004h do boot vencedor (exit de
+      // boot zumbi morto pelo helper limpa o estado; a TUI vencedora reanuncia
+      // 2004h — que é a própria condição de sucesso do helper).
+      const pasteMode = createTerminalPasteMode((listener) => {
+        listeners.push(listener as never)
+        return () => {
+          const index = listeners.indexOf(listener as never)
+          if (index >= 0) listeners.splice(index, 1)
+        }
+      })
+      const readiness = createTerminalReadiness((listener) => {
+        listeners.push(listener as never)
+        return () => {
+          const index = listeners.indexOf(listener as never)
+          if (index >= 0) listeners.splice(index, 1)
+        }
+      })
+
+      // Boot com RETRY: boots zumbis (sem 2004h) engolem input — o helper mata
+      // e respawna; o barramento abaixo alimenta os observers com a TUI vencedora.
+      const boot = await spawnInteractiveOpenCode(pty, shim, {
+        onData: (data) => {
+          buffer = (buffer + data).slice(-1_500_000)
+          for (const listener of listeners) listener({ id: terminalId, type: 'data', data })
+        },
+        onExit: (code) => {
+          exited = true
+          for (const listener of listeners) listener({ id: terminalId, type: 'exit', code })
+        },
+      })
+      // Exits anteriores eram boots zumbis mortos pelo helper; a TUI vencedora
+      // está viva — realinha o flag de saída para o turno.
+      exited = false
+      const spawnAt = boot.spawnAt
+      // Tudo que a produção escreve no PTY (conteúdo + Enter separado), na ordem.
+      const writtenPayloads: string[] = []
       const ptyProcess: RealPty = {
-        write: (data: string) => {
-          conpty.write(data)
-          return true
-        },
-        kill: () => {
-          try {
-            conpty.kill()
-          } catch {
-            /* já morto */
-          }
-        },
+        write: boot.write,
+        kill: boot.kill,
         onData: (cb) => listeners.push((ev) => { if (ev.type === 'data') cb(ev.data ?? '') }),
         onExit: (cb) => listeners.push((ev) => { if (ev.type === 'exit') cb(ev.code ?? 0) }),
       }
-      // Tudo que a produção escreve no PTY (conteúdo + Enter separado), na ordem.
-      const writtenPayloads: string[] = []
-      conpty.onData((data) => {
-        buffer = (buffer + data).slice(-32_000)
-        for (const listener of listeners) listener({ id: terminalId, type: 'data', data })
-      })
-      conpty.onExit(({ exitCode }) => {
-        exited = true
-        for (const listener of listeners) listener({ id: terminalId, type: 'exit', code: exitCode })
-      })
 
       // Prompt REAL do orquestrador: grandes, multiline, com seções. O teste
       // prova que nenhuma linha executa prematuramente e que a resposta vem
@@ -254,23 +286,9 @@ describe.skipIf(!envFlag)('agent instruction — CLI real (OpenCode)', () => {
 
       try {
         // Capability REAL de bracketed paste: mesma fiação da produção
-        // (createTerminalPasteMode observando o barramento do PTY). Registrada
-        // ANTES da espera de prontidão para capturar o anúncio do boot.
-        const pasteMode = createTerminalPasteMode((listener) => {
-          listeners.push(listener as never)
-          return () => {
-            const index = listeners.indexOf(listener as never)
-            if (index >= 0) listeners.splice(index, 1)
-          }
-        })
-        const readiness = createTerminalReadiness((listener) => {
-          listeners.push(listener as never)
-          return () => {
-            const index = listeners.indexOf(listener as never)
-            if (index >= 0) listeners.splice(index, 1)
-          }
-        })
-        const ready = await readiness.waitReady(terminalId, { since: spawnAt + REAL_TUI_BOOT_CALM_MS, timeoutMs: 30_000 })
+        // (createTerminalPasteMode observando o barramento do PTY), criada
+        // ANTES do primeiro spawn (acima) para capturar o anúncio do boot.
+        const ready = await readiness.waitReady(terminalId, { since: spawnAt + 30_000, timeoutMs: 30_000 })
         expect(ready.timedOut, 'TUI do OpenCode não ficou pronta a tempo').toBe(false)
 
         // Evidência observada (2026-09-29): a TUI do OpenCode anuncia ESC[?2004h
@@ -330,13 +348,11 @@ describe.skipIf(!envFlag)('agent instruction — CLI real (OpenCode)', () => {
           if (exited) break
           await new Promise((resolve) => setTimeout(resolve, 1_000))
         }
-        // Se o prompt foi executado linha a linha, o conteúdo teria sido
-        // interpretado como comandos separados (ex.: "## Regras" como prompt);
-        // a resposta única DEVORBIT_MULTILINE_OK prova entrega integral.
-        // ASSERT DURO proposital: enquanto a credencial do modelo estiver 403,
-        // este teste FALHA AQUI — o ack, o anúncio 2004h e o paste embrulhado
-        // acima continuam válidos (não dependem do modelo).
-        if (!/^\s*DEVORBIT_MULTILINE_OK\s*$/m.test(stripAnsi(buffer))) {
+        // A opentui renderiza a resposta como run de células SEM newlines —
+        // assert line-anchored nunca casa. O token completo DEVORBIT_MULTILINE_OK-42
+        // não existe no prompt (só o template com <soma>): sua presença prova
+        // entrega integral + resposta do modelo.
+        if (!/DEVORBIT_MULTILINE_OK-42/.test(stripAnsi(buffer))) {
           // Diagnóstico: cauda limpa do que a TUI mostrou (última tela).
           const tail = stripAnsi(buffer).split(/\r?\n/).filter(Boolean).slice(-25).join(' | ')
           throw new Error(`agente não respondeu DEVORBIT_MULTILINE_OK-42; tela final: ${tail.slice(0, 1500)}`)

@@ -2,6 +2,30 @@
 
 All notable changes to DevOrbit are documented here.
 
+## [1.0.46] - 2026-09-30
+
+### Added
+
+- `sendAgentInstruction` central: write + submit + ack + retry-only-Enter com AbortSignal ponta a ponta (Bridge, Canvas e canais de instrução convergem na mesma abstração), turnId determinístico e logs `[orchestration]` sem conteúdo.
+- Handoff estruturado no `DEVORBIT_RESULT`: campos opcionais `handoff/filesChanged/testsExecuted/remainingIssues` sem truncamento; summary curto (≤1000) separado para UI/continuidade.
+- Hints de instrução por provider (`AgentInstructionHints`: `ackPatterns` + `bracketedPaste`), catálogo evidence-first.
+- Bracketed paste dinâmico (DECSET 2004) por terminal de agente; teto de prompt 65.536 com escrita fatiada validada (65.548 em 5×16k).
+- Updater: pinning de thumbprint/publisher (injetados no build via `define`; imutável em builds empacotados) e gate de assinatura obrigatória em releases oficiais (tag `v*`).
+
+### Changed
+
+- Readiness por turno ancorado pós-spawn (timeout não cacheia "pronto"; saída expira o estado).
+- Bridge delega exclusivamente via `sendAgentInstruction`; best-effort readiness eliminado (timeout = falha com zero writes); cancelamento não cacheia outcome nem reflete na evolution store.
+- ESLint 10 + @eslint/js 10 (compatibilidade de regras novas); Dependabot semanal (npm + actions); CodeQL; npm audit bloqueante no CI; coverage v8 com thresholds no baseline.
+
+### Fixed
+
+- Instruções da orquestração chegam e são submetidas aos CLIs (causa raiz: corrida de prontidão — cache aceitava silêncio pré-spawn, timeout cacheava "pronto", sessão reutilizada pulava a espera).
+- runDiagnostic: apenas comandos canônicos resolvidos via PATH (bypass por basename eliminado); HITL mostra caminho resolvido e args; env filtrado.
+- BYOK: segredos nunca persistem em plaintext sem safeStorage (session-only + aviso); migração legado preservada.
+- Ciclo ai-memory sync⇄takeover quebrado via módulo neutro; main/preload não importam mais de renderer (contratos em `src/shared`).
+- Tela de quotas: percentual duplicado, cards de erro gigantes, scroll inexistente e ícones tofu corrigidos; menu de provedores visíveis persistente.
+
 ## [1.0.45] - 2026-09-25
 
 ### Added
