@@ -86,6 +86,9 @@ import {
   type SquadCreationSpec,
 } from "./agent-creation-helpers";
 import {
+  AGENT_NODE_CONTENT_MAX_CHARS,
+  agentResultContinuitySummary,
+  agentResultNodeContent,
   composeAgentPrompt,
   dispatchAgentTask as dispatchAgentTaskPure,
   dispatchOrchestrationTask as dispatchOrchestrationTaskPure,
@@ -406,7 +409,7 @@ function sanitizeNode(
     z: Number.isFinite(value.z) ? (value.z as number) : fallback.z,
     content:
       typeof value.content === "string"
-        ? value.content.slice(0, 24000)
+        ? value.content.slice(0, AGENT_NODE_CONTENT_MAX_CHARS)
         : fallback.content,
     role:
       typeof value.role === "string" && value.role.trim()
@@ -874,6 +877,8 @@ export function buildSquadSnapshot(
         title: `${r.role}: ${r.title}`,
         status: "done",
         memberId: r.agentId,
+        // Display (task list da memória): resumo por design — o handoff
+        // completo flui pelo prompt, não pelo snapshot.
         description: r.content.slice(0, 300),
       });
     }
@@ -900,6 +905,8 @@ export function buildSquadSnapshot(
   const snapshot: AiMemorySquadSnapshotView = {
     id: squad.id,
     objective: (squad.objective ?? "").trim() || squad.title,
+    // View de memória (resumo por design): o handoff completo flui pelo
+    // prompt do despacho, não pelo snapshot.
     plan: orchestration?.plan ? orchestration.plan.slice(0, 2000) : undefined,
     members,
     ...(tasks ? { tasks } : {}),
@@ -3138,7 +3145,12 @@ export const WorkspaceCanvas: React.FC<{
   );
   const reportAgentResult = useCallback(
     (agentId: string, result: AgentResult, taskId?: string) => {
-      const normalizedResult = result.summary.trim().slice(0, 1000);
+      // Continuidade/UI fica com o summary curto (≤1000, "summary pequeno" por
+      // design); o contexto completo (handoff + arquivos + pendências) vai no
+      // conteúdo do nó e em run.results — é isso que alimenta a PRÓXIMA
+      // instrução via formatOrchestrationResults, não o resumo de continuidade.
+      const normalizedResult = agentResultContinuitySummary(result);
+      const fullResultContent = agentResultNodeContent(result);
       void window.devorbit
         .reportOrchestrationTurn(project.path, {
           seatId: agentId,
@@ -3151,7 +3163,7 @@ export const WorkspaceCanvas: React.FC<{
           ...current,
           nodes: current.nodes.map((node) =>
             node.id === agentId
-              ? { ...node, content: normalizedResult }
+              ? { ...node, content: fullResultContent }
               : node,
           ),
         }),
@@ -3188,7 +3200,9 @@ export const WorkspaceCanvas: React.FC<{
       if (run.phase === "planning") {
         const planRun = {
           ...run,
-          plan: normalizedResult,
+          // O plano carrega o contexto completo (handoff incluso): ele vira
+          // "## Plano do coordenador" no prompt de cada especialista.
+          plan: fullResultContent,
           lastHandledResult: resultKey,
         };
         setAgentProgress((current) => ({
@@ -3219,7 +3233,7 @@ export const WorkspaceCanvas: React.FC<{
             "## Tarefa e contexto conectado",
             formatOrchestrationNotes(run.notes),
             "## Plano preparado",
-            normalizedResult,
+            fullResultContent,
           ]);
           if (
             !coordinatorNode ||
@@ -3291,7 +3305,9 @@ export const WorkspaceCanvas: React.FC<{
             agentId,
             title: specialist.title,
             role: specialist.role,
-            content: normalizedResult,
+            // Conteúdo completo (handoff incluso): formatOrchestrationResults
+            // entrega isto na seção "## Resultados anteriores" do próximo prompt.
+            content: fullResultContent,
           },
         ];
         const specialistRun = {
@@ -4439,7 +4455,7 @@ export const WorkspaceCanvas: React.FC<{
         onUpdateRole={(id, role) => updateNode(id, { role: sanitizeAgentRole(role) })}
         onUpdateProvider={(id, provider) => updateNode(id, { provider })}
         onUpdateAccount={(id, account) => updateNode(id, { account })}
-        onUpdateContent={(id, content) => updateNode(id, { content: content.slice(0, 24000) })}
+        onUpdateContent={(id, content) => updateNode(id, { content: content.slice(0, AGENT_NODE_CONTENT_MAX_CHARS) })}
         onDeleteNode={(id) => deleteNodes([id])}
         onFocusNode={focusNode}
         onDisconnectLinks={disconnectNodeLinks}

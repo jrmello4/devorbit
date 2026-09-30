@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentProvider } from '../src/renderer/src/types'
+import type { AgentResult } from '../src/shared/agent-result'
 import type {
   AgentProgress,
   CanvasNode,
@@ -7,6 +8,9 @@ import type {
   OrchestrationRun,
 } from '../src/renderer/src/components/WorkspaceCanvas'
 import {
+  AGENT_NODE_CONTENT_MAX_CHARS,
+  agentResultContinuitySummary,
+  agentResultNodeContent,
   composeAgentPrompt,
   dispatchAgentTask,
   dispatchOrchestrationTask,
@@ -86,11 +90,13 @@ describe('composeAgentPrompt (contrato DEVORBIT_RESULT)', () => {
       version: number
       outcome: string
       summary: string
+      handoff?: string
     }
     expect(json).toEqual({
       version: 1,
       outcome: 'completed',
       summary: 'resumo objetivo',
+      handoff: 'contexto técnico completo para o próximo agente continuar a tarefa',
     })
     // Espelho legado presente na instrução.
     expect(lines[0]).toContain('DEVORBIT_RESULT: CONCLUIDO: <resumo>')
@@ -350,5 +356,47 @@ describe('reportAgentTaskFailure (continuidade da orquestração)', () => {
     expect(blockedCountFor(makeRun({ phase: 'blocked', expectedTaskId: 'task-1' }))).toBe(0)
     expect(blockedCountFor(makeRun({ expectedAgentId: 'outro-agente' }))).toBe(0)
     expect(blockedCountFor(makeRun({ expectedTaskId: 'task-2' }))).toBe(0)
+  })
+})
+
+describe('resultado estruturado: nó completo vs continuidade curta (handoff entre agentes)', () => {
+  const tailMarker = 'CAUDA-PRESERVADA-APOS-CARACTERE-1000'
+  const structuredResult: AgentResult = {
+    format: 'json',
+    version: 1,
+    outcome: 'completed',
+    summary: 'Implementado.',
+    handoff: 'h'.repeat(4900) + '|' + tailMarker,
+    filesChanged: ['src/a.ts', 'src/b.ts'],
+    testsExecuted: 'npx vitest run: 12 ok',
+    remainingIssues: 'Nenhuma.',
+  }
+
+  it('nó do agente recebe o resultado COMPLETO com handoff >1000 chars (cauda preservada)', () => {
+    const content = agentResultNodeContent(structuredResult)
+    expect(content.length).toBeGreaterThan(1000)
+    expect(content).toContain('Implementado.')
+    expect(content).toContain('## Handoff para o próximo agente')
+    expect(content).toContain(tailMarker)
+    expect(content).toContain('- src/a.ts')
+    expect(content).toContain('## Pendências')
+    expect(content.length).toBeLessThanOrEqual(AGENT_NODE_CONTENT_MAX_CHARS)
+  })
+
+  it('continuidade (reportOrchestrationTurn) recebe summary curto ≤1000, nunca o handoff', () => {
+    const summary = agentResultContinuitySummary(structuredResult)
+    expect(summary).toBe('Implementado.')
+    expect(summary.length).toBeLessThanOrEqual(1000)
+    expect(summary).not.toContain(tailMarker)
+  })
+
+  it('summary longo (>1000) é cortado em 1000 na continuidade e respeita o cap do nó no conteúdo', () => {
+    const longSummary = 's'.repeat(1400)
+    const legacy = { ...structuredResult, summary: longSummary }
+    expect(agentResultContinuitySummary(legacy).length).toBe(1000)
+    const content = agentResultNodeContent(legacy)
+    expect(content.startsWith('s'.repeat(1000))).toBe(true)
+    expect(content).toContain('## Handoff para o próximo agente')
+    expect(content.length).toBeLessThanOrEqual(AGENT_NODE_CONTENT_MAX_CHARS)
   })
 })

@@ -2,8 +2,25 @@ import { stripAnsiEscapes } from './ansi'
 
 export const AGENT_RESULT_PREFIX = 'DEVORBIT_RESULT:'
 export const AGENT_RESULT_VERSION = 1
-export const AGENT_RESULT_MAX_FRAME_CHARS = 4_096
+/**
+ * Teto do frame físico (uma linha PTY). Precisa acomodar o handoff cheio
+ * (AGENT_RESULT_MAX_HANDOFF_CHARS) já escapado para JSON — pior caso 2x,
+ * pois \n e \" viram dois caracteres — mais summary e campos opcionais.
+ * Frames acima disso são ruído, não resultado.
+ */
+export const AGENT_RESULT_MAX_FRAME_CHARS = 512_000
 export const AGENT_RESULT_MAX_SUMMARY_CHARS = 1_000
+/**
+ * Cap generoso de proteção para os textos longos do resultado estruturado
+ * (handoff/testsExecuted/remainingIssues). NÃO é truncamento de negócio: o
+ * handoff viaja íntegro até aqui; quem consome aplica o cap do próprio
+ * destino (ex.: nó do canvas, 24k) priorizando o handoff.
+ */
+export const AGENT_RESULT_MAX_HANDOFF_CHARS = 200_000
+/** Teto de itens de filesChanged (proteção contra payload descontrolado). */
+export const AGENT_RESULT_MAX_FILES_CHANGED_ITEMS = 100
+/** Teto por caminho em filesChanged (caminhos reais nunca chegam perto). */
+export const AGENT_RESULT_MAX_FILE_PATH_CHARS = 500
 
 export type AgentResultOutcome = 'completed' | 'blocked' | 'failed'
 
@@ -12,6 +29,14 @@ export interface AgentResult {
   version: 1 | 0
   outcome: AgentResultOutcome
   summary: string
+  /**
+   * Contexto completo para o PRÓXIMO agente (decisões, estado, próximos
+   * passos). Sem truncamento até o cap de proteção — o summary curto é só UI.
+   */
+  handoff?: string
+  filesChanged?: string[]
+  testsExecuted?: string
+  remainingIssues?: string
 }
 
 export type AgentResultInvalidReason =
@@ -54,6 +79,47 @@ function parseSummary(value: unknown): string | undefined {
   return value.trim()
 }
 
+class AgentResultSchemaError extends Error {}
+
+const jsonAllowedKeys = new Set([
+  'version',
+  'outcome',
+  'summary',
+  'handoff',
+  'filesChanged',
+  'testsExecuted',
+  'remainingIssues',
+])
+
+/**
+ * Campo de texto longo opcional (handoff/testsExecuted/remainingIssues).
+ * Diferente do summary (1 linha de UI), aceita caracteres de controle vindos
+ * de escapes JSON válidos (\n, \t) — o frame físico continua sendo 1 linha,
+ * e um controle cru dentro da string quebraria o JSON.parse de qualquer forma.
+ * Ausente/vazio → undefined; tipo errado → schema inválido.
+ */
+function parseOptionalLongText(value: unknown): string | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== 'string') throw new AgentResultSchemaError()
+  const trimmed = value.trim()
+  if (!trimmed) return undefined
+  return trimmed.slice(0, AGENT_RESULT_MAX_HANDOFF_CHARS)
+}
+
+function parseFilesChanged(value: unknown): string[] | undefined {
+  if (value === undefined) return undefined
+  if (!Array.isArray(value)) throw new AgentResultSchemaError()
+  const items = value
+    .map((item) => {
+      if (typeof item !== 'string') throw new AgentResultSchemaError()
+      return item.trim()
+    })
+    .filter(Boolean)
+    .map((item) => item.slice(0, AGENT_RESULT_MAX_FILE_PATH_CHARS))
+  if (!items.length) return undefined
+  return items.slice(0, AGENT_RESULT_MAX_FILES_CHANGED_ITEMS)
+}
+
 function parseJsonBody(body: string): AgentResultParse {
   let value: unknown
   try {
@@ -68,7 +134,10 @@ function parseJsonBody(body: string): AgentResultParse {
   if (record.version !== AGENT_RESULT_VERSION) {
     return { kind: 'invalid', reason: 'invalid-version' }
   }
-  if (Object.keys(record).some((key) => !['version', 'outcome', 'summary'].includes(key))) {
+  // Allowlist estendida: campos estruturados do handoff entre agentes são
+  // OPCIONAIS — payloads antigos (só version/outcome/summary) continuam
+  // parseando (tolerância retroativa dentro da mesma versão do schema).
+  if (Object.keys(record).some((key) => !jsonAllowedKeys.has(key))) {
     return { kind: 'invalid', reason: 'invalid-schema' }
   }
   if (typeof record.outcome !== 'string' || !outcomes.has(record.outcome as AgentResultOutcome)) {
@@ -76,10 +145,30 @@ function parseJsonBody(body: string): AgentResultParse {
   }
   const summary = parseSummary(record.summary)
   if (!summary) return { kind: 'invalid', reason: 'invalid-summary' }
-  return {
-    kind: 'result',
-    result: { format: 'json', version: AGENT_RESULT_VERSION, outcome: record.outcome as AgentResultOutcome, summary },
+  let handoff: string | undefined
+  let filesChanged: string[] | undefined
+  let testsExecuted: string | undefined
+  let remainingIssues: string | undefined
+  try {
+    handoff = parseOptionalLongText(record.handoff)
+    filesChanged = parseFilesChanged(record.filesChanged)
+    testsExecuted = parseOptionalLongText(record.testsExecuted)
+    remainingIssues = parseOptionalLongText(record.remainingIssues)
+  } catch (error) {
+    if (error instanceof AgentResultSchemaError) return { kind: 'invalid', reason: 'invalid-schema' }
+    throw error
   }
+  const result: AgentResult = {
+    format: 'json',
+    version: AGENT_RESULT_VERSION,
+    outcome: record.outcome as AgentResultOutcome,
+    summary,
+  }
+  if (handoff !== undefined) result.handoff = handoff
+  if (filesChanged !== undefined) result.filesChanged = filesChanged
+  if (testsExecuted !== undefined) result.testsExecuted = testsExecuted
+  if (remainingIssues !== undefined) result.remainingIssues = remainingIssues
+  return { kind: 'result', result }
 }
 
 function parseLegacyBody(body: string): AgentResultParse {
@@ -114,6 +203,37 @@ export function parseAgentResultLine(line: string): AgentResultParse {
 export function createLegacyAgentResult(outcome: AgentResultOutcome, summary: string): AgentResult {
   const normalized = summary.trim().slice(0, AGENT_RESULT_MAX_SUMMARY_CHARS) || 'Resultado sem resumo.'
   return { format: 'legacy', version: 0, outcome, summary: normalized }
+}
+
+/**
+ * Serializa o resultado estruturado no bloco de texto COMPLETO destinado ao
+ * PRÓXIMO agente: summary + handoff + arquivos alterados + testes + pendências.
+ * `cap` é o limite do DESTINO (ex.: conteúdo do nó do canvas). Quando o bloco
+ * estoura, o handoff tem prioridade: campos secundários são descartados antes
+ * de qualquer corte no handoff. Resultado legado (só summary) sai idêntico.
+ */
+export function composeAgentResultContent(result: AgentResult, cap: number): string {
+  const summary = result.summary?.trim() ?? ''
+  const parts: string[] = summary ? [summary] : []
+  const secondary: string[] = []
+  if (result.handoff?.trim()) parts.push(`## Handoff para o próximo agente\n${result.handoff.trim()}`)
+  if (result.filesChanged?.length) {
+    secondary.push(
+      `## Arquivos alterados\n${result.filesChanged.map((file) => `- ${file}`).join('\n')}`,
+    )
+  }
+  if (result.testsExecuted?.trim()) secondary.push(`## Testes executados\n${result.testsExecuted.trim()}`)
+  if (result.remainingIssues?.trim()) secondary.push(`## Pendências\n${result.remainingIssues.trim()}`)
+  const base = parts.join('\n\n')
+  const full = [base, ...secondary].filter(Boolean).join('\n\n')
+  if (full.length <= cap) return full
+  let content = base
+  for (const section of secondary) {
+    const candidate = content ? `${content}\n\n${section}` : section
+    if (candidate.length > cap) break
+    content = candidate
+  }
+  return content.slice(0, cap)
 }
 
 export interface AgentResultScanner {

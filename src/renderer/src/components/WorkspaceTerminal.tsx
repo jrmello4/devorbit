@@ -757,7 +757,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
             // Se o listener já entregou o texto bloqueado como resultado, o
             // canvas marcou o bloqueio; reportTaskFailure duplicaria o toast.
             if (!deliveredTaskResultsRef.current.has(taskId)) {
-              deliverTaskResult(taskId, createLegacyAgentResult('blocked', turn.blocked))
+              deliverTaskResult(taskId, turn.structured ?? createLegacyAgentResult('blocked', turn.blocked))
             }
             clearAgentTaskResult(terminalId, taskId)
             completedTaskRef.current = taskId
@@ -767,7 +767,8 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
           if (turn.result) {
             // No backend real o listener normalmente já entregou (marcador
             // antes da resolução); deliverTaskResult deduplica por tarefa.
-            deliverTaskResult(taskId, createLegacyAgentResult('completed', turn.result))
+            // Preferir o resultado estruturado (preserva o handoff completo).
+            deliverTaskResult(taskId, turn.structured ?? createLegacyAgentResult('completed', turn.result))
             clearAgentTaskResult(terminalId, taskId)
           } else if (deliveredTaskResultsRef.current.has(taskId)) {
             clearAgentTaskResult(terminalId, taskId)

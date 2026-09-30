@@ -2,7 +2,7 @@ import type { AgentProviderId } from '../shared/agent-provider-contract'
 import type { AppConfig } from '../shared/app-config'
 import type { TerminalEvent } from './terminal-session'
 import type { AgentInstructionInput, AgentInstructionResult } from './agent-instruction'
-import { createAgentResultScanner, type AgentResultInvalidReason } from '../shared/agent-result'
+import { createAgentResultScanner, type AgentResult, type AgentResultInvalidReason } from '../shared/agent-result'
 import { stripAnsiEscapes } from '../shared/ansi'
 import {
   buildAgentTurnEnv,
@@ -187,6 +187,8 @@ export interface TurnOutcome {
   tier: ModelTier
   result?: string
   blocked?: string
+  /** Resultado estruturado completo (handoff etc.) quando o marcador JSON foi parseado. */
+  structured?: AgentResult
   attempts: TurnAttemptRecord[]
   /** Contrato: o provedor executado é sempre o explícito. */
   fallback: false
@@ -203,6 +205,12 @@ export interface TurnWaiter {
   invalidResult?: AgentResultInvalidReason
   /** Cauda de saída para classificar texto transitório sem marcador. */
   tail?: string
+  /**
+   * Resultado estruturado completo (summary + handoff/filesChanged/etc.)
+   * quando o marcador DEVORBIT_RESULT JSON foi parseado — o fallback pós-turno
+   * usa isso em vez de perder o handoff.
+   */
+  structured?: AgentResult
 }
 
 export type ResultWaitPromise = Promise<TurnWaiter> & { cancel: () => void }
@@ -261,9 +269,9 @@ export function resetTurnQueues(): void {
   turnQueues.clear()
 }
 
-function outcomeFromWait(waiter: TurnWaiter): { result?: string; blocked?: string; error?: string } {
-  if (waiter.blocked) return { blocked: waiter.blocked }
-  if (waiter.result) return { result: waiter.result }
+function outcomeFromWait(waiter: TurnWaiter): { result?: string; blocked?: string; error?: string; structured?: AgentResult } {
+  if (waiter.blocked) return { blocked: waiter.blocked, ...(waiter.structured ? { structured: waiter.structured } : {}) }
+  if (waiter.result) return { result: waiter.result, ...(waiter.structured ? { structured: waiter.structured } : {}) }
   if (waiter.error) return { error: waiter.error }
   if (waiter.invalidResult) return { error: 'O agente devolveu um resultado inválido.' }
   // CLI imprimiu rate limit/indisponibilidade e saiu sem marcador (mesmo com
@@ -412,11 +420,11 @@ async function runTurn(
     const outcome = outcomeFromWait(waiter)
     if (outcome.blocked !== undefined) {
       attempts.push({ provider: effective, ok: true })
-      return { provider: effective, model: turn.model, tier: turn.tier, blocked: outcome.blocked, attempts, fallback: false }
+      return { provider: effective, model: turn.model, tier: turn.tier, blocked: outcome.blocked, ...(outcome.structured ? { structured: outcome.structured } : {}), attempts, fallback: false }
     }
     if (outcome.result !== undefined) {
       attempts.push({ provider: effective, ok: true })
-      return { provider: effective, model: turn.model, tier: turn.tier, result: outcome.result, attempts, fallback: false }
+      return { provider: effective, model: turn.model, tier: turn.tier, result: outcome.result, ...(outcome.structured ? { structured: outcome.structured } : {}), attempts, fallback: false }
     }
     throw new Error((outcome as { error: string }).error)
   } catch (error) {
@@ -537,11 +545,11 @@ export function createResultWaiter(
           }
           if (parsed.kind !== 'result') continue
           if (parsed.result.outcome === 'blocked') {
-            finish({ blocked: parsed.result.summary })
+            finish({ blocked: parsed.result.summary, structured: parsed.result })
           } else if (parsed.result.outcome === 'completed') {
-            finish({ result: parsed.result.summary })
+            finish({ result: parsed.result.summary, structured: parsed.result })
           } else {
-            finish({ error: `O agente reportou falha: ${parsed.result.summary}` })
+            finish({ error: `O agente reportou falha: ${parsed.result.summary}`, structured: parsed.result })
           }
         }
         return
@@ -555,11 +563,11 @@ export function createResultWaiter(
           if (parsed.kind === 'invalid') invalidResult = invalidResult || parsed.reason
           if (parsed.kind !== 'result') continue
           if (parsed.result.outcome === 'blocked') {
-            finish({ blocked: parsed.result.summary })
+            finish({ blocked: parsed.result.summary, structured: parsed.result })
           } else if (parsed.result.outcome === 'completed') {
-            finish({ result: parsed.result.summary })
+            finish({ result: parsed.result.summary, structured: parsed.result })
           } else {
-            finish({ error: `O agente reportou falha: ${parsed.result.summary}` })
+            finish({ error: `O agente reportou falha: ${parsed.result.summary}`, structured: parsed.result })
           }
         }
         if (settled) return

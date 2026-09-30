@@ -7,6 +7,7 @@
  * de projeto) também moram aqui.
  */
 import type { AgentProviderId } from './agent-provider-contract'
+import type { AgentResult } from './agent-result'
 import type { CodexAccountId } from './codex-session'
 import type { AppConfig, OtherDir, Project } from './app-config'
 import type {
@@ -114,6 +115,8 @@ export interface AgentTurnResult {
   tier: 'fast' | 'deep'
   result?: string
   blocked?: string
+  /** Resultado estruturado completo (handoff/filesChanged/...) quando o marcador JSON foi parseado. */
+  structured?: AgentResult
   attempts: AgentTurnAttempt[]
   message?: string
 }

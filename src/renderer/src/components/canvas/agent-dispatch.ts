@@ -8,6 +8,11 @@
  * comportamento).
  */
 import type { AgentProvider } from "../../types";
+import type { AgentResult } from "../../../../shared/agent-result";
+import {
+  AGENT_RESULT_MAX_SUMMARY_CHARS,
+  composeAgentResultContent,
+} from "../../../../shared/agent-result";
 import type {
   AgentProgress,
   CanvasNode,
@@ -19,7 +24,28 @@ import { agentNodeBlockedLabel, isAgentNodeConfigured } from "../agent-creation-
 const legacyOrchestrationResultInstruction =
   "Esta etapa faz parte de uma orquestração automática. Ao concluir, imprima uma única linha iniciada por DEVORBIT_RESULT: e seguida de um resumo objetivo. Use DEVORBIT_RESULT: CONCLUIDO: para uma etapa concluída; se não puder continuar, use DEVORBIT_RESULT: BLOQUEADO: e explique o motivo. Não aguarde outro clique para encaminhar a próxima etapa.";
 export const orchestrationResultInstruction = legacyOrchestrationResultInstruction &&
-  'Emita primeiro uma única linha com JSON compacto: DEVORBIT_RESULT: {"version":1,"outcome":"completed","summary":"resumo objetivo"}. Use outcome completed, blocked ou failed e summary objetivo, sem quebras de linha e com no máximo 1000 caracteres. Emita imediatamente depois o espelho legado DEVORBIT_RESULT: CONCLUIDO: <resumo>, DEVORBIT_RESULT: BLOQUEADO: <motivo> ou DEVORBIT_RESULT: FALHA: <motivo>. O JSON vem primeiro e não aguarde outro clique para encaminhar a próxima etapa.';
+  'Emita primeiro uma única linha com JSON compacto: DEVORBIT_RESULT: {"version":1,"outcome":"completed","summary":"resumo objetivo","handoff":"contexto técnico completo para o próximo agente continuar a tarefa"}. Use outcome completed, blocked ou failed e summary objetivo, sem quebras de linha e com no máximo 1000 caracteres. Inclua opcionalmente no mesmo JSON: handoff (contexto detalhado para o próximo agente — decisões, estado atual, próximos passos; pode ser longo, escapado para caber em uma linha), filesChanged (array de caminhos de arquivo alterados), testsExecuted (o que foi testado e o resultado) e remainingIssues (pendências conhecidas). Emita imediatamente depois o espelho legado DEVORBIT_RESULT: CONCLUIDO: <resumo>, DEVORBIT_RESULT: BLOQUEADO: <motivo> ou DEVORBIT_RESULT: FALHA: <motivo>. O JSON vem primeiro e não aguarde outro clique para encaminhar a próxima etapa.';
+
+/** Cap do conteúdo do nó agente no canvas (mesmo teto da edição manual). */
+export const AGENT_NODE_CONTENT_MAX_CHARS = 24_000;
+
+/**
+ * Summary CURTO (≤1000) para reportOrchestrationTurn (continuidade/UI).
+ * Este é o "summary pequeno" por design: o contexto completo entre
+ * especialistas viaja pelo handoff no conteúdo do nó/resultados.
+ */
+export function agentResultContinuitySummary(result: AgentResult): string {
+  return result.summary.trim().slice(0, AGENT_RESULT_MAX_SUMMARY_CHARS);
+}
+
+/**
+ * Conteúdo COMPLETO do resultado (summary + handoff + arquivos + pendências)
+ * para o nó do agente e para run.results — é isto que alimenta a próxima
+ * instrução; nunca substituir por agentResultContinuitySummary aqui.
+ */
+export function agentResultNodeContent(result: AgentResult): string {
+  return composeAgentResultContent(result, AGENT_NODE_CONTENT_MAX_CHARS);
+}
 
 /**
  * A instrução de resultado SEMPRE vem primeiro no prompt do agente. Assim
