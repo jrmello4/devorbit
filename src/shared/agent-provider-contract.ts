@@ -22,3 +22,18 @@ export const AGENT_PROVIDER_ID_LIST = [
 
 /** Tipo derivado do tuple — garante que AgentProviderId e a lista estão sincronizados. */
 export type AgentProviderId = (typeof AGENT_PROVIDER_ID_LIST)[number]
+
+/**
+ * Hints por provider para a submissão central (agent-instruction).
+ */
+export interface AgentInstructionHints {
+  /**
+   * Fontes de regex (string) casadas contra a saída CRU pós-settle: a primeira
+   * que casar confirma o ack. Vazio/ausente = heurística default (qualquer
+   * saída confirma). Padrões NÃO observados em CLI real NÃO devem ser
+   * preenchidos — mecanismo primeiro, evidência depois.
+   */
+  ackPatterns?: string[]
+  /** 'auto' (default): usa a detecção dinâmica do terminal. */
+  bracketedPaste?: 'auto' | 'on' | 'off'
+}

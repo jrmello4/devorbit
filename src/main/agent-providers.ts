@@ -8,7 +8,7 @@ import { choice, TypeSafeClient } from '@typesafe-ai/sdk'
 import type { Fetch } from '@typesafe-ai/sdk'
 import { stripAnsiEscapes } from '../shared/ansi'
 import type { AgentProvider } from '../shared/tool-health-contract'
-import type { AgentProviderId } from '../shared/agent-provider-contract'
+import type { AgentProviderId, AgentInstructionHints } from '../shared/agent-provider-contract'
 import type { AppConfig } from '../shared/app-config'
 import { AGENT_PROVIDER_ID_LIST } from '../shared/agent-provider-contract'
 
@@ -24,6 +24,12 @@ export interface AgentCliDefinition {
   label: string
   aliases: readonly string[]
   defaultCommand: string
+  /**
+   * Adapter de instrução por provider (hints para `sendAgentInstruction`):
+   * padrões de ack observados na saída real do CLI e/ou política de bracketed
+   * paste. Ausente = heurística default + detecção dinâmica de paste.
+   */
+  instruction?: AgentInstructionHints
 }
 
 export type AgentCliResolution = Pick<
@@ -37,6 +43,26 @@ export type AgentCliConfiguredCommands = Partial<
 
 export const AGENT_CLI_PROVIDER_IDS = AGENT_PROVIDER_ID_LIST
 
+/**
+ * HINTS DE INSTRUÇÃO (adapter por provider): cada entry do catálogo pode
+ * declarar `instruction: AgentInstructionHints` com padrões de ack OBSERVADOS
+ * na saída real do CLI e/ou a política de bracketed paste verificada no
+ * terminal. O catálogo está deliberadamente VAZIO de hints: nenhum padrão de
+ * ack foi observado/em catálogo até agora e nenhum CLI tem comportamento de
+ * paste documentado aqui — mecanismo primeiro, evidência depois (a heurística
+ * default e a detecção dinâmica ESC[?2004h permanecem valendo). Ao observar um
+ * padrão REAL, preencha a entry correspondente; exemplo da FORMA (não ativar
+ * sem evidência):
+ *
+ *   codex: {
+ *     id: 'codex',
+ *     ...
+ *     instruction: {
+ *       // ackPatterns: ['<regex do padrão REAL observado na saída do CLI>'],
+ *       // bracketedPaste: 'on' | 'off',  // só com comportamento verificado
+ *     },
+ *   },
+ */
 export const AGENT_CLI_PROVIDERS = {
   codex: {
     id: 'codex',
@@ -110,6 +136,33 @@ export const AGENT_CLI_PROVIDERS = {
 
 export const AGENT_PROVIDER_IDS = AGENT_CLI_PROVIDER_IDS
 export const AGENT_PROVIDERS = AGENT_CLI_PROVIDERS
+
+/**
+ * Mapa O(1) id → hints de instrução, derivado do catálogo (só providers COM
+ * hints entram; hoje, nenhum — ver comentário de AGENT_CLI_PROVIDERS).
+ */
+const PROVIDER_INSTRUCTION_HINTS: ReadonlyMap<string, AgentInstructionHints> = new Map(
+  AGENT_CLI_PROVIDER_IDS.flatMap((id) => {
+    // Acesso tipado pela interface (as const não declara instruction nas
+    // entries que não a usam).
+    const definition: AgentCliDefinition = AGENT_CLI_PROVIDERS[id]
+    return definition.instruction ? ([[id, definition.instruction] as const]) : []
+  })
+)
+
+/**
+ * Resolve os hints de instrução do provider da sessão para a submissão
+ * central (`sendAgentInstruction`). Lookup O(1); aceita string livre porque o
+ * provider pode chegar como 'unknown' (Bridge sem sessão) — id inválido,
+ * vazio ou sem hints devolve `undefined` (heurística default, sem erro).
+ */
+export function resolveProviderInstructionHints(
+  provider: string | undefined | null
+): AgentInstructionHints | undefined {
+  if (typeof provider !== 'string' || provider.length === 0) return undefined
+  if (!(AGENT_PROVIDER_ID_LIST as readonly string[]).includes(provider)) return undefined
+  return PROVIDER_INSTRUCTION_HINTS.get(provider)
+}
 
 /**
  * Roteador de modelos por turno (FASE 3, padrão Elyra/BYOK).

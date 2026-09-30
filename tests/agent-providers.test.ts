@@ -11,6 +11,8 @@ import {
   providerUnavailableError,
   buildAgentTurnEnv,
   resolveProviderInvocation,
+  resolveProviderInstructionHints,
+  type AgentCliDefinition,
 } from '../src/main/agent-providers'
 
 const temporaryDirectories: string[] = []
@@ -61,6 +63,49 @@ describe('provider catalog completeness', () => {
     expect(AGENT_CLI_PROVIDERS.aider.label).toBe('Aider')
     expect(AGENT_CLI_PROVIDERS.agy.label).toBe('Antigravity')
     expect(AGENT_CLI_PROVIDERS.custom.label).toBe('Outro CLI')
+  })
+})
+
+describe('instruction hints (adapter por provider)', () => {
+  it('catálogo inicia SEM hints: nenhum provider tem ackPatterns/bracketedPaste catalogados', () => {
+    // Guarda evidência-primeiro: preencher `instruction` de um provider exige
+    // padrão/comportamento REAL observado no CLI — e a atualização deste teste
+    // junto (o comentário do catálogo em agent-providers.ts documenta a forma).
+    for (const id of AGENT_CLI_PROVIDER_IDS) {
+      // Acesso tipado pela interface: o literal `as const` não declara a
+      // propriedade opcional nas entries que não a usam.
+      const definition: AgentCliDefinition = AGENT_CLI_PROVIDERS[id]
+      expect(definition.instruction).toBeUndefined()
+    }
+  })
+
+  it('hints catalogados (quando existirem) respeitam o formato do contrato', () => {
+    for (const id of AGENT_CLI_PROVIDER_IDS) {
+      const definition: AgentCliDefinition = AGENT_CLI_PROVIDERS[id]
+      const hints = definition.instruction
+      if (!hints) continue
+      if (hints.ackPatterns !== undefined) {
+        expect(Array.isArray(hints.ackPatterns)).toBe(true)
+        for (const source of hints.ackPatterns) expect(typeof source).toBe('string')
+      }
+      if (hints.bracketedPaste !== undefined) {
+        expect(['auto', 'on', 'off']).toContain(hints.bracketedPaste)
+      }
+    }
+  })
+
+  it('resolveProviderInstructionHints não lança para nenhum id válido', () => {
+    for (const id of AGENT_CLI_PROVIDER_IDS) {
+      expect(() => resolveProviderInstructionHints(id)).not.toThrow()
+    }
+  })
+
+  it("resolveProviderInstructionHints('unknown') e entradas inválidas → undefined (sem hints, sem erro)", () => {
+    expect(resolveProviderInstructionHints('unknown')).toBeUndefined()
+    expect(resolveProviderInstructionHints('nao-existe')).toBeUndefined()
+    expect(resolveProviderInstructionHints('')).toBeUndefined()
+    expect(resolveProviderInstructionHints(undefined)).toBeUndefined()
+    expect(resolveProviderInstructionHints(null)).toBeUndefined()
   })
 })
 

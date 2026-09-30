@@ -17,6 +17,7 @@ import {
   orderProvidersForTask,
   resolveAgentProviderWithFallback,
   resolveAgentTurn,
+  resolveProviderInstructionHints,
 } from '../agent-providers'
 import { sendAgentTurn, spawnAgentProviderTerminal, TURN_MAX_PROMPT_CHARS, TURN_READY_QUIET_MS, TURN_READY_TIMEOUT_MS, type ResultWaitPromise, type TerminalReadyOptions, type TerminalReadyResult } from '../agent-turn'
 import { sendAgentInstruction } from '../agent-instruction'
@@ -504,7 +505,9 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
             now: () => Date.now(),
             isBracketedPasteEnabled: terminalPasteMode.isBracketedPasteEnabled,
           },
-          input
+          // Hints do provider efetivo do turno (catálogo em agent-providers):
+          // 'unknown'/sem hints → undefined (heurística default).
+          { ...input, hints: resolveProviderInstructionHints(input.provider) }
         ),
         waitResult: dependencies.waitTurnResult,
         waitReady: dependencies.waitTerminalReady,
@@ -564,6 +567,8 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
         turnId: instruction.turnId,
         content: instruction.content,
         provider: 'codex',
+        // Hints do provider fixo deste canal (resolução O(1) no catálogo).
+        hints: resolveProviderInstructionHints('codex'),
         quietMs: TURN_READY_QUIET_MS,
         timeoutMs: TURN_READY_TIMEOUT_MS,
       }

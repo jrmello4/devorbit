@@ -416,6 +416,242 @@ describe('sendAgentInstruction (submissão centralizada)', () => {
   })
 })
 
+describe('HINTS DE PROVIDER (adapter por provider no sendAgentInstruction)', () => {
+  it('ACK PATTERNS: saída que casa o padrão confirma; o log carrega ack=pattern[i], nunca o trecho casado', async () => {
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    try {
+      const harness = createInstructionHarness()
+      const pending = sendAgentInstruction(harness.deps, {
+        terminalId: 't1',
+        turnId: 'task-pattern-ack',
+        content: 'tarefa',
+        provider: 'codex',
+        ackTimeoutMs: 5_000,
+        echoSettleMs: 10,
+        hints: { ackPatterns: ['AGENTE\\s+PRONTO'] },
+      })
+      await vi.waitFor(() => expect(harness.writes).toHaveLength(2))
+      await waitMs(30)
+      harness.emit({ id: 't1', type: 'data', data: '\r\nAGENTE PRONTO para executar\r\n> ' })
+      await expect(pending).resolves.toMatchObject({ acked: true, attempts: 1 })
+
+      const ackedCall = infoSpy.mock.calls.find((call) => call.includes('acked'))
+      expect(ackedCall).toBeTruthy()
+      // Só o ÍNDICE do padrão vai ao log — o trecho casado da saída, nunca.
+      expect(ackedCall?.some((part) => String(part) === ' ack=pattern[0]')).toBe(true)
+      for (const call of infoSpy.mock.calls) {
+        for (const part of call) {
+          expect(String(part)).not.toContain('AGENTE PRONTO')
+        }
+      }
+    } finally {
+      infoSpy.mockRestore()
+    }
+  })
+
+  it('ACK PATTERNS: saída que NÃO casa não confirma → retry só do Enter → padrão na tentativa seguinte acka', async () => {
+    const harness = createInstructionHarness()
+    const pending = sendAgentInstruction(harness.deps, {
+      terminalId: 't1',
+      turnId: 'task-pattern-retry',
+      content: 'tarefa única',
+      provider: 'codex',
+      ackTimeoutMs: 40,
+      echoSettleMs: 10,
+      maxSubmitAttempts: 2,
+      hints: { ackPatterns: ['MARCA-DE-ACK'] },
+    })
+    await vi.waitFor(() => expect(harness.writes).toHaveLength(2))
+    await waitMs(30)
+    // Saída pós-settle que NÃO casa o padrão: não confirma.
+    harness.emit({ id: 't1', type: 'data', data: 'ruído sem marcador' })
+    // Tentativa 1 expira → retry de APENAS o Enter (buffer da tentativa morre).
+    await vi.waitFor(() => expect(harness.writes).toHaveLength(3))
+    expect(harness.writes[2]).toEqual({ id: 't1', data: AGENT_SUBMIT_SEQUENCE })
+    await waitMs(30)
+    harness.emit({ id: 't1', type: 'data', data: 'MARCA-DE-ACK processando' })
+    await expect(pending).resolves.toMatchObject({ acked: true, attempts: 2 })
+    expect(harness.writes).toEqual([
+      { id: 't1', data: 'tarefa única' },
+      { id: 't1', data: AGENT_SUBMIT_SEQUENCE },
+      { id: 't1', data: AGENT_SUBMIT_SEQUENCE },
+    ])
+  })
+
+  it('ACK PATTERNS: padrão que casa DENTRO do settle não confirma (a janela de settle continua valendo)', async () => {
+    const harness = createInstructionHarness()
+    const pending = sendAgentInstruction(harness.deps, {
+      terminalId: 't1',
+      turnId: 'task-pattern-settle',
+      content: 'tarefa',
+      provider: 'codex',
+      ackTimeoutMs: 100,
+      echoSettleMs: 300,
+      maxSubmitAttempts: 1,
+      hints: { ackPatterns: ['MARCA-DE-ACK'] },
+    })
+    // Poll curto: a escrita é confirmada em poucos ms, bem DENTRO do settle de
+    // 300ms — o emit simula o redraw imediato pós-Enter.
+    await vi.waitFor(() => expect(harness.writes).toHaveLength(2), { interval: 5 })
+    // Chega ainda na janela de settle (redraw pós-Enter): descartada mesmo casando.
+    harness.emit({ id: 't1', type: 'data', data: 'MARCA-DE-ACK no redraw' })
+    await expect(pending).resolves.toMatchObject({ acked: false, attempts: 1 })
+  })
+
+  it('ACK PATTERNS: fonte inválida é ignorada com UM warn (sem a fonte no log) e as válidas seguem valendo', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    try {
+      const harness = createInstructionHarness()
+      const pending = sendAgentInstruction(harness.deps, {
+        terminalId: 't1',
+        turnId: 'task-pattern-invalid',
+        content: 'tarefa',
+        provider: 'codex',
+        ackTimeoutMs: 5_000,
+        echoSettleMs: 10,
+        hints: { ackPatterns: ['[colchete-sem-fechar', 'ACK-VALIDO'] },
+      })
+      await vi.waitFor(() => expect(harness.writes).toHaveLength(2))
+      await waitMs(30)
+      harness.emit({ id: 't1', type: 'data', data: 'recebido ACK-VALIDO' })
+      await expect(pending).resolves.toMatchObject({ acked: true, attempts: 1 })
+
+      const warns = warnSpy.mock.calls.filter((call) => call.some((part) => String(part).includes('ackPatterns inválidos')))
+      expect(warns).toHaveLength(1)
+      for (const call of warnSpy.mock.calls) {
+        for (const part of call) {
+          expect(String(part)).not.toContain('colchete-sem-fechar')
+        }
+      }
+    } finally {
+      warnSpy.mockRestore()
+      infoSpy.mockRestore()
+    }
+  })
+
+  it('ACK PATTERNS: TODAS as fontes inválidas → cai na heurística default (qualquer saída confirma)', async () => {
+    const harness = createInstructionHarness()
+    const pending = sendAgentInstruction(harness.deps, {
+      terminalId: 't1',
+      turnId: 'task-pattern-all-invalid',
+      content: 'tarefa',
+      provider: 'codex',
+      ackTimeoutMs: 5_000,
+      echoSettleMs: 10,
+      hints: { ackPatterns: ['[primeira-inválida', '(segunda-inválida'] },
+    })
+    await vi.waitFor(() => expect(harness.writes).toHaveLength(2))
+    await waitMs(30)
+    harness.emit({ id: 't1', type: 'data', data: 'saída qualquer sem marcador' })
+    await expect(pending).resolves.toMatchObject({ acked: true, attempts: 1 })
+  })
+
+  it('ACK PATTERNS: buffer da tentativa é limitado pela CAUDA — padrão antigo (evictado) não confirma; recente sim', async () => {
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    try {
+      const harness = createInstructionHarness()
+      const pending = sendAgentInstruction(harness.deps, {
+        terminalId: 't1',
+        turnId: 'task-pattern-buffer',
+        content: 'tarefa',
+        provider: 'codex',
+        ackTimeoutMs: 5_000,
+        echoSettleMs: 10,
+        hints: { ackPatterns: ['MARCA-ANTIGA', 'MARCA-NOVA'] },
+      })
+      await vi.waitFor(() => expect(harness.writes).toHaveLength(2))
+      await waitMs(30)
+      // 17k com MARCA-ANTIGA no início: o teto de 16k (cauda) evicta o padrão.
+      harness.emit({ id: 't1', type: 'data', data: `MARCA-ANTIGA${'a'.repeat(17_000)}` })
+      await waitMs(60)
+      harness.emit({ id: 't1', type: 'data', data: 'depois MARCA-NOVA' })
+      await expect(pending).resolves.toMatchObject({ acked: true, attempts: 1 })
+      const ackedCall = infoSpy.mock.calls.find((call) => call.includes('acked'))
+      expect(ackedCall?.some((part) => String(part) === ' ack=pattern[1]')).toBe(true)
+    } finally {
+      infoSpy.mockRestore()
+    }
+  })
+
+  it("PASTE 'on': multiline é embrulhado MESMO SEM a detecção dinâmica (dep ausente)", async () => {
+    const harness = createInstructionHarness()
+    const content = 'linha 1\nlinha 2'
+    const pending = sendAgentInstruction(harness.deps, {
+      terminalId: 't1',
+      turnId: 'task-paste-hint-on',
+      content,
+      provider: 'codex',
+      ackTimeoutMs: 5_000,
+      echoSettleMs: 10,
+      hints: { bracketedPaste: 'on' },
+    })
+    await vi.waitFor(() => expect(harness.writes).toHaveLength(2))
+    await waitMs(30)
+    harness.emit({ id: 't1', type: 'data', data: 'ack' })
+    await expect(pending).resolves.toMatchObject({ acked: true, attempts: 1 })
+    expect(harness.writes[0]).toEqual({ id: 't1', data: `${BRACKETED_PASTE_START}${content}${BRACKETED_PASTE_END}` })
+  })
+
+  it("PASTE 'off': capability anunciada NÃO embrulha (verbatim)", async () => {
+    const harness = createInstructionHarness()
+    harness.deps.isBracketedPasteEnabled = () => true
+    const content = 'linha 1\nlinha 2'
+    const pending = sendAgentInstruction(harness.deps, {
+      terminalId: 't1',
+      turnId: 'task-paste-hint-off',
+      content,
+      provider: 'codex',
+      ackTimeoutMs: 5_000,
+      echoSettleMs: 10,
+      hints: { bracketedPaste: 'off' },
+    })
+    await vi.waitFor(() => expect(harness.writes).toHaveLength(2))
+    await waitMs(30)
+    harness.emit({ id: 't1', type: 'data', data: 'ack' })
+    await expect(pending).resolves.toMatchObject({ acked: true, attempts: 1 })
+    expect(harness.writes[0]).toEqual({ id: 't1', data: content })
+  })
+
+  it("PASTE 'auto': detecção dinâmica é mantida (capability ativa → embrulha)", async () => {
+    const harness = createInstructionHarness()
+    harness.deps.isBracketedPasteEnabled = () => true
+    const content = 'linha 1\nlinha 2'
+    const pending = sendAgentInstruction(harness.deps, {
+      terminalId: 't1',
+      turnId: 'task-paste-hint-auto',
+      content,
+      provider: 'codex',
+      ackTimeoutMs: 5_000,
+      echoSettleMs: 10,
+      hints: { bracketedPaste: 'auto' },
+    })
+    await vi.waitFor(() => expect(harness.writes).toHaveLength(2))
+    await waitMs(30)
+    harness.emit({ id: 't1', type: 'data', data: 'ack' })
+    await expect(pending).resolves.toMatchObject({ acked: true, attempts: 1 })
+    expect(harness.writes[0]).toEqual({ id: 't1', data: `${BRACKETED_PASTE_START}${content}${BRACKETED_PASTE_END}` })
+  })
+
+  it("PASTE 'on': conteúdo de 1 linha continua verbatim (wrapper só protege multiline)", async () => {
+    const harness = createInstructionHarness()
+    const pending = sendAgentInstruction(harness.deps, {
+      terminalId: 't1',
+      turnId: 'task-paste-hint-oneline',
+      content: 'tarefa de uma linha',
+      provider: 'codex',
+      ackTimeoutMs: 5_000,
+      echoSettleMs: 10,
+      hints: { bracketedPaste: 'on' },
+    })
+    await vi.waitFor(() => expect(harness.writes).toHaveLength(2))
+    await waitMs(30)
+    harness.emit({ id: 't1', type: 'data', data: 'ack' })
+    await expect(pending).resolves.toMatchObject({ acked: true, attempts: 1 })
+    expect(harness.writes[0]).toEqual({ id: 't1', data: 'tarefa de uma linha' })
+  })
+})
+
 afterEach(() => {
   vi.useRealTimers()
 })

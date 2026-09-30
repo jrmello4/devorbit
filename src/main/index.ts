@@ -19,7 +19,7 @@ import { scanUsageAdapters, resolveUsageSourceDirs } from './usage-adapters'
 import { createClaudeQuotaPoller, defaultClaudeCredentialsPath } from './claude-usage-quota'
 import { createBridgeService, type BridgeCycleOutcome } from './bridge-service'
 import { createHeadlessTurnRunner, drainHeadlessFinalizers, drainHeadlessRuns } from './bridge-headless'
-import { getAgentProviderHealth, resolveAgentProviderWithFallback } from './agent-providers'
+import { getAgentProviderHealth, resolveAgentProviderWithFallback, resolveProviderInstructionHints } from './agent-providers'
 import { loadAiMemoryConfig, loadConfig, setAiMemoryProjectEnabled } from './config'
 import { createAiMemoryService, type AiMemoryService } from './ai-memory-service'
 import { AiMemoryBridgeSync, syncScopeOf } from './ai-memory-sync'
@@ -491,6 +491,9 @@ const bridgeService = createBridgeService({
       content: input.content,
       // Provider é só para logs de orquestração; sem sessão conhecida, 'unknown'.
       provider: input.provider ?? 'unknown',
+      // Hints do provider da sessão quando conhecido ('unknown'/desconhecido
+      // → undefined: heurística default de ack + detecção dinâmica de paste).
+      hints: resolveProviderInstructionHints(input.provider),
       ...(input.since !== undefined ? { since: input.since } : {}),
     },
   ),
