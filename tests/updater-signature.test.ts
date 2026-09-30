@@ -267,6 +267,30 @@ describe('verifyAuthenticode', () => {
     expect(EXPECTED_UPDATE_CERT_THUMBPRINT).toBe('')
   })
 
+  it('reflete DEVORBIT_UPDATE_THUMBPRINT/PUBLISHER do ambiente (injeção no build); unset volta a vazio', async () => {
+    // As constantes são avaliadas na carga do módulo: stub de env + reset do
+    // registry de módulos antes do import dinâmico dão uma instância fresca
+    // (o módulo já está carregado pelo import estático do topo do arquivo).
+    vi.stubEnv('DEVORBIT_UPDATE_THUMBPRINT', ' A1b2C3d4E5f6A1b2C3d4E5f6A1b2C3d4E5f6A1b2 ')
+    vi.stubEnv('DEVORBIT_UPDATE_PUBLISHER', '  DevOrbit  ')
+    vi.resetModules()
+    try {
+      const mod = await import('../src/main/updater')
+      // Env vence o baked: o valor é refletido com trim (a normalização de
+      // caixa/hífens fica na comparação do verifyAuthenticode).
+      expect(mod.EXPECTED_UPDATE_CERT_THUMBPRINT).toBe('A1b2C3d4E5f6A1b2C3d4E5f6A1b2C3d4E5f6A1b2')
+      expect(mod.EXPECTED_UPDATE_PUBLISHER).toBe('DevOrbit')
+    } finally {
+      vi.unstubAllEnvs()
+      vi.resetModules()
+    }
+    // Env unset (condição atual dos testes/CI sem secret): vazio, o que mantém
+    // o test-guard acima e o comportamento de pinning desativado.
+    const fresh = await import('../src/main/updater')
+    expect(fresh.EXPECTED_UPDATE_CERT_THUMBPRINT).toBe('')
+    expect(fresh.EXPECTED_UPDATE_PUBLISHER).toBe('')
+  })
+
   describe('thumbprint do certificado (EXPECTED_UPDATE_CERT_THUMBPRINT)', () => {
     // Thumbprints fictícios de 40 hex (SHA-1) para os testes de pinning.
     const THUMBPRINT_A = 'A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2'

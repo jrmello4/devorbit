@@ -55,6 +55,20 @@ export const PUBLISH_CONFIG = {
   private: true,
 }
 
+// Valores "assados" no build (baked): o vite.config.ts injeta via define no
+// entry do main (__DEVORBIT_UPDATE_THUMBPRINT__ / __DEVORBIT_UPDATE_PUBLISHER__)
+// a partir dos envs DEVORBIT_UPDATE_* no momento do build. No CI, o passo
+// 'Production build' do job package recebe DEVORBIT_UPDATE_THUMBPRINT do
+// secret WINDOWS_CERTIFICATE_THUMBPRINT — quando o certificado for configurado,
+// o pinning do updater ativa sozinho no binário empacotado, sem edição manual.
+// O env vence o baked (útil em dev/e2e); build assinado no CI injeta via define.
+declare const __DEVORBIT_UPDATE_THUMBPRINT__: string | undefined
+declare const __DEVORBIT_UPDATE_PUBLISHER__: string | undefined
+const BAKED_UPDATE_THUMBPRINT =
+  typeof __DEVORBIT_UPDATE_THUMBPRINT__ === 'string' ? __DEVORBIT_UPDATE_THUMBPRINT__.trim() : ''
+const BAKED_UPDATE_PUBLISHER =
+  typeof __DEVORBIT_UPDATE_PUBLISHER__ === 'string' ? __DEVORBIT_UPDATE_PUBLISHER__.trim() : ''
+
 // Publisher esperado no certificado Authenticode do binário de atualização.
 // Derivado de electron-builder.json → win.certificateSubjectName / win.publisherName.
 // O electron-builder.json atual NÃO define nenhum desses campos (o build ainda
@@ -62,9 +76,10 @@ export const PUBLISH_CONFIG = {
 // Trade-off com publisher vazio: a verificação exige apenas Status 'Valid', ou
 // seja, qualquer certificado com cadeia confiável no Windows é aceito —
 // inclusive um de outro publisher. Quando o build passar a ser assinado,
-// preencha esta constante com o subject do certificado (ex.: 'DevOrbit') para
-// que a verificação também compare o emissor do certificado.
-export const EXPECTED_UPDATE_PUBLISHER = ''
+// configure DEVORBIT_UPDATE_PUBLISHER (env no build ou no runtime) com o
+// subject do certificado (ex.: 'DevOrbit') para que a verificação também
+// compare o emissor do certificado.
+export const EXPECTED_UPDATE_PUBLISHER = process.env.DEVORBIT_UPDATE_PUBLISHER?.trim() || BAKED_UPDATE_PUBLISHER
 
 // Thumbprint (SHA-1 hex) esperado do certificado Authenticode do binário de
 // atualização. Mesmo padrão do EXPECTED_UPDATE_PUBLISHER: enquanto o build não
@@ -73,9 +88,10 @@ export const EXPECTED_UPDATE_PUBLISHER = ''
 // certificado VÁLIDO de outro publisher é aceito pelo updater. Pareamento:
 // preencha com o thumbprint do certificado usado no electron-builder.json
 // (CSC_LINK) — o mesmo valor do secret de CI WINDOWS_CERTIFICATE_THUMBPRINT,
-// validado no job package (passo 'Validar Authenticode dos EXEs') — para que
-// o updater faça pinning do MESMO certificado usado no build oficial.
-export const EXPECTED_UPDATE_CERT_THUMBPRINT = ''
+// validado no job package (passo 'Validar Authenticode dos EXEs') e injetado
+// no build via DEVORBIT_UPDATE_THUMBPRINT — para que o updater faça pinning do
+// MESMO certificado usado no build oficial.
+export const EXPECTED_UPDATE_CERT_THUMBPRINT = process.env.DEVORBIT_UPDATE_THUMBPRINT?.trim() || BAKED_UPDATE_THUMBPRINT
 
 // Timeout da verificação via PowerShell. Timeout/erro de execução = fail-closed.
 export const AUTHENTICODE_TIMEOUT_MS = 30_000

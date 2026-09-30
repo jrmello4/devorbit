@@ -13,6 +13,16 @@ export default defineConfig({
       {
         entry: 'src/main/index.ts',
         vite: {
+          // Pinning do updater: valores "assados" no bundle do main a partir do
+          // ambiente no momento do build. No CI, o passo 'Production build' do
+          // job package injeta DEVORBIT_UPDATE_THUMBPRINT do secret
+          // WINDOWS_CERTIFICATE_THUMBPRINT — com o certificado configurado, o
+          // pinning do updater ativa sozinho no binário empacotado. Sem env, os
+          // dois ficam '' (verificação de thumbprint/publisher desativada).
+          define: {
+            __DEVORBIT_UPDATE_THUMBPRINT__: JSON.stringify(process.env.DEVORBIT_UPDATE_THUMBPRINT ?? ''),
+            __DEVORBIT_UPDATE_PUBLISHER__: JSON.stringify(process.env.DEVORBIT_UPDATE_PUBLISHER ?? ''),
+          },
           build: {
             outDir: 'dist-electron/main',
             rollupOptions: {

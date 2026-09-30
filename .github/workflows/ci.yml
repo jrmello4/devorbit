@@ -244,6 +244,12 @@ jobs:
         run: node scripts/prepare-ai-usagebar.cjs
 
       - name: Production build
+        # Pinning do updater: quando o certificado for configurado (secret
+        # WINDOWS_CERTIFICATE_THUMBPRINT), o thumbprint é assado no bundle do
+        # main via vite define e o pinning do updater ativa automaticamente no
+        # binário empacotado. Sem o secret, fica vazio = pinning desativado.
+        env:
+          DEVORBIT_UPDATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
         run: npm run build
 
       - name: Empacotar NSIS e portable (runner Windows obrigatorio; sem publicar)

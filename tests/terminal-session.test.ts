@@ -96,6 +96,38 @@ describe('terminal-session', () => {
     unsubscribe()
   })
 
+  it('writeTerminal aceita payload de 65.548 chars (teto 64k + wrapper) fatiado em chunks ≤16.000 e recusa acima do limite', async () => {
+    const terminal = createFakeTerminal(4101)
+    spawnMock.mockReturnValue(terminal)
+    const { startTerminal, writeTerminal } = await import('../src/main/terminal-session')
+
+    await startTerminal('big-write', 'C:\\workspace')
+    const writeMock = terminal.write as unknown as ReturnType<typeof vi.fn>
+    const writtenChunks = (): string[] => writeMock.mock.calls.map((call) => call[0] as string)
+
+    // 65_536 (teto do prompt de turno) + 12 do wrapper de bracketed paste
+    // (ESC[200~ / ESC[201~): o maior payload legítimo enviado pela camada.
+    const payload = 'A'.repeat(65_548)
+    expect(payload.length).toBe(65_548)
+    expect(writeTerminal('big-write', payload)).toBe(true)
+
+    const chunks = writtenChunks()
+    expect(chunks.length).toBeGreaterThan(1)
+    for (const chunk of chunks) {
+      expect(chunk.length).toBeLessThanOrEqual(16_000)
+    }
+    // Fatiamento preserva conteúdo e ordem: concatenação igual à original.
+    expect(chunks.join('')).toBe(payload)
+
+    // Limite exato (MAX_WRITE_LENGTH = 65_536 + 16 = 65_552) passa; um char a
+    // mais é recusado sem atingir o PTY.
+    expect(writeTerminal('big-write', 'B'.repeat(65_552))).toBe(true)
+    const writesAfterBoundary = writtenChunks().length
+    expect(writeTerminal('big-write', 'C'.repeat(65_553))).toBe(false)
+    expect(writeTerminal('big-write', 'D'.repeat(80_000))).toBe(false)
+    expect(writtenChunks().length).toBe(writesAfterBoundary)
+  })
+
   it('ignora eventos atrasados de uma sessão substituída', async () => {
     const first = createFakeTerminal(501)
     const second = createFakeTerminal(502)
