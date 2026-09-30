@@ -1,3 +1,4 @@
+/* eslint-disable no-control-regex -- o alvo das regex abaixo É o caractere ESC (escape ANSI) */
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -19,6 +20,11 @@ interface RealPty {
   kill(): void
   onData(cb: (data: string) => void): void
   onExit(cb: (code: number) => void): void
+}
+
+/** Remove sequências CSI (cores/movimento) para inspecionar o texto da TUI. */
+function stripAnsi(text: string): string {
+  return text.replace(new RegExp('\\x1b\\[[0-9;?]*[A-Za-z]', 'g'), '')
 }
 
 async function tryRequireNodePty(): Promise<typeof import('node-pty') | null> {
@@ -141,11 +147,11 @@ describe.skipIf(!envFlag)('agent instruction — CLI real (OpenCode)', () => {
         // resposta "OK" aparecendo no buffer em até ~150s.
         const answerAt = Date.now()
         while (Date.now() - answerAt < 150_000) {
-          if (/^\s*OK\b/m.test(buffer.replace(new RegExp('\\x1b\\[[0-9;?]*[A-Za-z]', 'g'), ''))) break
+          if (/^\s*OK\b/m.test(stripAnsi(buffer))) break
           if (exited) break
           await new Promise((resolve) => setTimeout(resolve, 1_000))
         }
-        const clean = buffer.replace(new RegExp('\\x1b\\[[0-9;?]*[A-Za-z]', 'g'), '')
+        const clean = stripAnsi(buffer)
         expect(/OK/i.test(clean), 'agente não respondeu após a submissão automática').toBe(true)
       } finally {
         ptyProcess?.kill()
@@ -273,18 +279,17 @@ describe.skipIf(!envFlag)('agent instruction — CLI real (OpenCode)', () => {
 
         // Agente responde DEVORBIT_OK sem Enter manual (até ~200s).
         const answerAt = Date.now()
-        const strip = (text: string) => text.replace(new RegExp('\\x1b\\[[0-9;?]*[A-Za-z]', 'g'), '')
         while (Date.now() - answerAt < 200_000) {
-          if (/DEVORBIT_OK/.test(strip(buffer))) break
+          if (/DEVORBIT_OK/.test(stripAnsi(buffer))) break
           if (exited) break
           await new Promise((resolve) => setTimeout(resolve, 1_000))
         }
         // Se o prompt foi executado linha a linha, o conteúdo teria sido
         // interpretado como comandos separados (ex.: "## Regras" como prompt);
         // a resposta única DEVORBIT_OK prova entrega integral.
-        if (!/DEVORBIT_OK/.test(strip(buffer))) {
+        if (!/DEVORBIT_OK/.test(stripAnsi(buffer))) {
           // Diagnóstico: cauda limpa do que a TUI mostrou (última tela).
-          const tail = strip(buffer).split(/\r?\n/).filter(Boolean).slice(-25).join(' | ')
+          const tail = stripAnsi(buffer).split(/\r?\n/).filter(Boolean).slice(-25).join(' | ')
           throw new Error(`agente não respondeu DEVORBIT_OK; tela final: ${tail.slice(0, 1500)}`)
         }
       } finally {
