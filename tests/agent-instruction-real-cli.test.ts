@@ -141,11 +141,11 @@ describe.skipIf(!envFlag)('agent instruction — CLI real (OpenCode)', () => {
         // resposta "OK" aparecendo no buffer em até ~150s.
         const answerAt = Date.now()
         while (Date.now() - answerAt < 150_000) {
-          if (/^\s*OK\b/m.test(buffer.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, ''))) break
+          if (/^\s*OK\b/m.test(buffer.replace(new RegExp('\\x1b\\[[0-9;?]*[A-Za-z]', 'g'), ''))) break
           if (exited) break
           await new Promise((resolve) => setTimeout(resolve, 1_000))
         }
-        const clean = buffer.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')
+        const clean = buffer.replace(new RegExp('\\x1b\\[[0-9;?]*[A-Za-z]', 'g'), '')
         expect(/OK/i.test(clean), 'agente não respondeu após a submissão automática').toBe(true)
       } finally {
         ptyProcess?.kill()
@@ -273,7 +273,7 @@ describe.skipIf(!envFlag)('agent instruction — CLI real (OpenCode)', () => {
 
         // Agente responde DEVORBIT_OK sem Enter manual (até ~200s).
         const answerAt = Date.now()
-        const strip = (text: string) => text.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')
+        const strip = (text: string) => text.replace(new RegExp('\\x1b\\[[0-9;?]*[A-Za-z]', 'g'), '')
         while (Date.now() - answerAt < 200_000) {
           if (/DEVORBIT_OK/.test(strip(buffer))) break
           if (exited) break
