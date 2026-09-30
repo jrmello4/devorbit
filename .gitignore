@@ -25,3 +25,4 @@ artifacts/ui/
 
 # AI usagebar pinned binary prepared before packaging (downloaded, verified)
 /build/ai-usagebar/
+.tmp-*.cjs
