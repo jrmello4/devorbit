@@ -131,7 +131,7 @@ describe('createTerminalPasteMode (capability ESC[?2004 no barramento PTY)', () 
 
 describe('filtro de escopo (shouldTrack)', () => {
   it('ignora sequências 2004h/l de terminais NÃO rastreados (shell comum)', () => {
-    const listeners: Array<(event: { id: string; type: string; data?: string }) => void> = []
+    const listeners: Array<(event: TerminalEvent) => void> = []
     const pasteMode = createTerminalPasteMode((listener) => {
       listeners.push(listener)
       return () => undefined

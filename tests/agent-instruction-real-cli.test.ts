@@ -282,7 +282,11 @@ describe.skipIf(!envFlag)('agent instruction — CLI real (OpenCode)', () => {
         // Se o prompt foi executado linha a linha, o conteúdo teria sido
         // interpretado como comandos separados (ex.: "## Regras" como prompt);
         // a resposta única DEVORBIT_OK prova entrega integral.
-        expect(/DEVORBIT_OK/.test(strip(buffer)), 'agente não respondeu DEVORBIT_OK ao prompt multiline').toBe(true)
+        if (!/DEVORBIT_OK/.test(strip(buffer))) {
+          // Diagnóstico: cauda limpa do que a TUI mostrou (última tela).
+          const tail = strip(buffer).split(/\r?\n/).filter(Boolean).slice(-25).join(' | ')
+          throw new Error(`agente não respondeu DEVORBIT_OK; tela final: ${tail.slice(0, 1500)}`)
+        }
       } finally {
         ptyProcess.kill()
       }
