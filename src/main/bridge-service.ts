@@ -147,6 +147,7 @@ export function createBridgeService(
   const agents = new Map<string, BridgeAgentRegistration>()
   const targetLocks = new Map<string, Promise<unknown>>()
   const cycles = new BridgeTaskCycles<ResultWaitPromise>()
+  console.error('[tmp-create] keys=', Object.keys(dependencies).join(','), '| hasTerminal=', typeof dependencies.hasTerminal)
   /** Sequência de ciclos one-shot `run` (taskId estável por chamada). */
   let runSequence = 0
 
@@ -224,13 +225,8 @@ export function createBridgeService(
 
   /**
    * Erro de delegação cancelada (code `cancelled`): distinto de falha — o
-   * ciclo é cancelado (waiter descartado, nada pendente).
-   *
-   * LIMITAÇÃO conhecida: `onOutcome` filtra o summary do waiter cancelado,
-   * mas `trackCycle → complete()` ainda cacheia `{failed, cancelado}` por
-   * TTL e `reflect()` persiste essa reflexão na evolution store — herança
-   * do caminho pré-AbortSignal, mais alcançável agora. Migração futura:
-   * filtrar cancelamentos em `reflect`/`cacheOutcome`.
+   * ciclo é cancelado (waiter descartado, nada pendente). Cancelamento não
+   * cacheia outcome nem reflete na evolution store (ver `trackCycle`).
    */
   const delegationCancelledError = (): Error =>
     Object.assign(new Error('Delegação cancelada.'), { code: 'cancelled' })
@@ -283,6 +279,13 @@ export function createBridgeService(
     cycles.setPending(id, generation, promise, { cancel: () => promise.cancel() }, persistent)
     void promise.then((waiter) => {
       const outcome = outcomeFrom(waiter)
+      // Migração da pendência do AbortSignal: cancelamento NÃO cacheia outcome
+      // (um `wait` seguinte não recebe "tarefa cancelada" como resultado) NEM
+      // reflete na evolution store — apenas limpa o ciclo pendente.
+      if (isCancellationOutcome(outcome)) {
+        cycles.cancelPending(id)
+        return
+      }
       cycles.complete(id, generation, outcome)
       if (reflectOnComplete) reflect(id, outcome)
       // Ponto ÚNICO de emissão para ciclos rastreados: send cria o ciclo e o
@@ -331,6 +334,7 @@ export function createBridgeService(
         status: dependencies.hasTerminal(id) ? 'active' : 'stopped',
       })),
       send: async (request, context) => {
+        console.error('[tmp-send] typeof dependencies.hasTerminal =', typeof dependencies.hasTerminal)
         const id = resolveTarget(request.target)
         assertAllowed(id, request)
         const origin = originOf(request)

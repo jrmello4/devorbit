@@ -422,7 +422,10 @@ describe('bridge instruction path — send/ask via sendInstruction (sendAgentIns
         await new Promise((resolve) => setTimeout(resolve, 30))
         stack.emit({ id: 'agent-1', type: 'data', data: 'segunda\r\n> ' })
         const second = await secondPromise
-        expect(second).toMatchObject({ ok: true, result: { accepted: true, target: 'agent-1' } })
+        const errs = vi.spyOn(console, 'error').mockImplementation(() => {})
+      console.log('SECOND_RESPONSE:', JSON.stringify(second))
+      errs.mockRestore()
+      expect(second).toMatchObject({ ok: true, result: { accepted: true, target: 'agent-1' } })
         // Só o ciclo do segundo send emite outcome.
         await new Promise((resolve) => setTimeout(resolve, 20))
         expect(outcomes).toEqual([expect.objectContaining({ summary: 'CONCLUIDO: segunda' })])
@@ -535,6 +538,81 @@ describe('bridge instruction path — send/ask via sendInstruction (sendAgentIns
         prompt: 'segunda',
       })
       expect(second).toMatchObject({ ok: true, result: { accepted: true, target: 'agent-1' } })
+    } finally {
+      socket.destroy()
+      close()
+    }
+  })
+})
+
+
+describe('cancelamento não contamina cache/reflexão (migração AbortSignal)', () => {
+  const CANCELsummary = 'A espera do resultado foi cancelada.'
+
+  it('outcome de cancelamento NÃO é cacheado nem refletido; wait seguinte recebe resultado fresco', async () => {
+    const reflections: Array<{ target: string; outcome: { status: string; summary: string } }> = []
+    const waiters: Array<(w: { result?: string; error?: string }) => void> = []
+    let mode: 'cancelled' | 'ok' = 'cancelled'
+    const { dependencies } = createDependencies({
+      hasTerminal: (id) => id === 'agent-1',
+      waitTurnResult: () => {
+        const promise = new Promise<{ result?: string; error?: string }>((resolve) => {
+          waiters.push((w) => resolve(w))
+        }) as Promise<{ result?: string; error?: string }> & { cancel: () => void }
+        promise.cancel = () => waiters.at(-1)?.({ error: CANCELsummary })
+        return promise as never
+      },
+      sendInstruction: (input) => {
+        void input
+        if (mode === 'cancelled') {
+          return Promise.resolve({ acked: false, attempts: 0, cancelled: true, error: 'Envio da instrução foi cancelado.' })
+        }
+        return Promise.resolve({ acked: true, attempts: 1 })
+      },
+      onReflection: (target, outcome) => {
+        reflections.push({ target, outcome })
+      },
+    })
+    const { service, close } = await startService(dependencies)
+    const socket = await connect(service.runtime.pipeName)
+    try {
+      // Send #1: instrução cancelada → ciclo descartado; waiter fica armado.
+      const first = await request(socket, {
+        type: 'send',
+        token: service.runtime.token,
+        sessionId: service.runtime.sessionId,
+        target: 'agent-1',
+        prompt: 'tarefa cancelada',
+      })
+      expect(first).toMatchObject({ ok: false })
+      // Waiter resolve com o ERRO DE CANCELAMENTO (padrão do pending.cancel):
+      // a migração não pode cachear nem refletir esse outcome.
+      waiters.at(-1)?.({ error: CANCELsummary })
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      expect(reflections).toHaveLength(0)
+
+      // Um wait seguinte NÃO pode receber o cancelamento do cache: com mode
+      // 'ok' e o waiter ainda pendente, o wait NÃO resolve imediatamente com o
+      // summary cancelado (cache serviria na hora).
+      mode = 'ok'
+      const waitPromise = request(socket, {
+        type: 'wait',
+        token: service.runtime.token,
+        sessionId: service.runtime.sessionId,
+        target: 'agent-1',
+        timeoutMs: 400,
+      })
+      const raced = await Promise.race([
+        waitPromise.then(() => 'resolved'),
+        new Promise((resolve) => setTimeout(() => resolve('pending'), 150)),
+      ])
+      expect(raced).toBe('pending')
+      // Resolve o waiter real: sucesso fresco é o que deve voltar.
+      waiters.at(-1)?.({ result: 'CONCLUIDO: fresco' })
+      const settled = await waitPromise
+      expect(settled).toMatchObject({ ok: true, result: { summary: 'CONCLUIDO: fresco' } })
+      expect(reflections).toHaveLength(1)
+      expect(reflections[0].outcome.summary).toBe('CONCLUIDO: fresco')
     } finally {
       socket.destroy()
       close()

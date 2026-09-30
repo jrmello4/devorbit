@@ -76,8 +76,12 @@ export const AGENT_CLI_PROVIDER_IDS = AGENT_PROVIDER_ID_LIST
  *   - Codex: boot anuncia ESC[?2004h (1x), mas o pós-submit é stateful (session
  *     picker, "Waiting for startup") e o fluxo DevOrbit do Codex não passa por
  *     sendAgentInstruction — ackPatterns NOT TESTED/insuficiente.
- *   - Antigravity (agy) e command-code: CLIs ausentes no PATH da máquina de
- *     investigação — NOT TESTED.
+ *   - Antigravity (agy): CLI ausente no PATH da máquina de investigação —
+ *     NOT TESTED.
+ *   - CommandCode (command-code/cmdc): CLI instalado e FUNCIONAL para o
+ *     usuário; investigação de ack/bracketed paste em andamento (teste gated
+ *     tests/agent-instruction-real-cli-commandcode.test.ts) — enquanto não
+ *     houver padrão 100% estável observado, permanece SEM ackPatterns.
  */
 export const AGENT_CLI_PROVIDERS = {
   codex: {
