@@ -99,8 +99,8 @@ function createInstructionStack(): {
       now: () => Date.now(),
     },
     // Tempos curtos apenas para o teste: quietude 100ms (módulo impõe mínimo),
-    // prontidão em 500ms e ack em 200ms.
-    { ...input, provider: input.provider ?? 'unknown', quietMs: 100, timeoutMs: 500, ackTimeoutMs: 200 },
+    // prontidão em 500ms, settle de eco 20ms e ack em 200ms.
+    { ...input, provider: input.provider ?? 'unknown', quietMs: 100, timeoutMs: 500, ackTimeoutMs: 200, echoSettleMs: 20 },
   )
   const emit = (event: TerminalEvent): void => {
     for (const listener of [...listeners]) listener(event)
@@ -200,7 +200,9 @@ describe('bridge instruction path — send/ask via sendInstruction (sendAgentIns
       // Prontidão por silêncio desde a âncora (~100ms), depois conteúdo + Enter.
       await expect.poll(() => stack.writes.length, { timeout: 5_000 }).toBe(2)
       expect(stack.writes).toEqual(['faça algo', '\r'])
-      // O eco/redraw da TUI confirma o ack; o waiter (fake) já devolve o resultado.
+      // O eco/redraw da TUI confirma o ack (emitido após o settle de 20ms);
+      // o waiter (fake) já devolve o resultado.
+      await new Promise((resolve) => setTimeout(resolve, 30))
       stack.emit({ id: 'agent-1', type: 'data', data: 'faça algo\r\n> ' })
       const response = await responsePromise
       expect(response).toMatchObject({ ok: true })
@@ -229,7 +231,8 @@ describe('bridge instruction path — send/ask via sendInstruction (sendAgentIns
       // somente o Enter — reenviar o conteúdo duplicaria a tarefa.
       await expect.poll(() => stack.writes.length, { timeout: 5_000 }).toBe(3)
       expect(stack.writes).toEqual(['faça algo', '\r', '\r'])
-      // Ack chega na 2ª tentativa.
+      // Ack chega na 2ª tentativa (após o settle de eco).
+      await new Promise((resolve) => setTimeout(resolve, 30))
       stack.emit({ id: 'agent-1', type: 'data', data: '> ' })
       const response = await responsePromise
       expect(response.result).toMatchObject({ status: 'completed', summary: 'CONCLUIDO: ok' })
@@ -264,9 +267,11 @@ describe('bridge instruction path — send/ask via sendInstruction (sendAgentIns
         target: 'agent-1',
         prompt: 'segunda',
       })
-      // Agora pronta (silêncio): conteúdo + Enter escritos; o eco confirma o ack.
+      // Agora pronta (silêncio): conteúdo + Enter escritos; o eco (após o
+      // settle) confirma o ack.
       await expect.poll(() => stack.writes.length, { timeout: 5_000 }).toBe(2)
       expect(stack.writes).toEqual(['segunda', '\r'])
+      await new Promise((resolve) => setTimeout(resolve, 30))
       stack.emit({ id: 'agent-1', type: 'data', data: 'segunda\r\n> ' })
       const second = await secondPromise
       expect(second).toMatchObject({ ok: true, result: { accepted: true } })

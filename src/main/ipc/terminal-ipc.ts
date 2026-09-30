@@ -20,6 +20,7 @@ import {
 } from '../agent-providers'
 import { sendAgentTurn, spawnAgentProviderTerminal, TURN_MAX_PROMPT_CHARS, TURN_READY_QUIET_MS, TURN_READY_TIMEOUT_MS, type ResultWaitPromise, type TerminalReadyOptions, type TerminalReadyResult } from '../agent-turn'
 import { sendAgentInstruction } from '../agent-instruction'
+import { createTerminalPasteMode } from '../terminal-paste-mode'
 import {
   beginCompanionTerminalStart,
   registerCompanionTerminal,
@@ -71,8 +72,9 @@ function assertTerminalId(id: unknown): asserts id is string {
 
 /**
  * O canvas monta o prompt a partir das notas conectadas e pode exceder o teto
- * do turno. A fronteira IPC trunca no mesmo limite que `agent-turn` aplica,
- * em vez de rejeitar a tarefa inteira.
+ * do turno. A fronteira IPC trunca no mesmo limite que `agent-turn` aplica
+ * (64 KiB — protege contra acidentes, não contra handoffs completos), em vez
+ * de rejeitar a tarefa inteira.
  */
 export function normalizeAgentTurnPrompt(value: unknown): string {
   if (typeof value !== 'string' || !value.trim()) throw new Error('Prompt do turno inválido.')
@@ -84,6 +86,16 @@ export interface AgentInstructionPayload {
   turnId: string
   content: string
 }
+
+/**
+ * Capability dinâmica de bracketed paste (ESC[?2004h/l) observada no barramento
+ * PTY — instância única do processo main, compartilhada pelos caminhos de
+ * instrução deste módulo (Canvas + canal do Codex).
+ * TODO(bridge): o deps.sendInstruction do Bridge é construído em index.ts
+ * (arquivo de outro worker) — falta lá a linha
+ * `isBracketedPasteEnabled: terminalPasteMode.isBracketedPasteEnabled`.
+ */
+export const terminalPasteMode = createTerminalPasteMode(onTerminalEvent)
 
 const MAX_AGENT_TURN_ID_CHARS = 128
 
@@ -386,6 +398,9 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
     // kill), então fechamos a sessão de uso aqui para não perder a duração.
     dependencies.usage?.endUsageSession(id)
     stopTerminal(id)
+    // Capability dinâmica morre com o PTY (exit/error também limpam; o stop
+    // pode preceder o evento de exit).
+    terminalPasteMode.reset(id)
     clearPipesFor(id)
     dependencies.turnSessions.delete(id)
     dependencies.cancelBridgeTarget(id)
@@ -483,6 +498,7 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
             write: writeTerminal,
             subscribe: onTerminalEvent,
             now: () => Date.now(),
+            isBracketedPasteEnabled: terminalPasteMode.isBracketedPasteEnabled,
           },
           input
         ),
@@ -537,6 +553,7 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
         write: writeTerminal,
         subscribe: onTerminalEvent,
         now: () => Date.now(),
+        isBracketedPasteEnabled: terminalPasteMode.isBracketedPasteEnabled,
       },
       {
         terminalId,

@@ -291,6 +291,23 @@ describe('sendAgentTurn', () => {
     resetTurnQueues()
   })
 
+  it('prompt de 10k passa INTEIRO (o teto de 64 KiB protege contra acidentes, não contra handoffs completos)', async () => {
+    resetTurnQueues()
+    const harness = createHarness({ waiters: [{ result: 'ok' }] })
+    const prompt = 'x'.repeat(10_000)
+    await sendAgentTurn(harness.deps, {
+      terminalId: 'turn-long-prompt',
+      provider: 'opencode',
+      prompt,
+    })
+    // Antes do teto novo, este prompt era cortado em 8k; hoje chega verbatim
+    // ao caminho de instrução (o writer do PTY fatia em 16k/chunk).
+    const input = vi.mocked(harness.deps.sendInstruction).mock.calls[0][0]
+    expect(input.content).toBe(prompt)
+    expect(input.content).toHaveLength(10_000)
+    resetTurnQueues()
+  })
+
   it('reused session still waits for per-turn readiness before writing', async () => {
     resetTurnQueues()
     const harness = createHarness({ waiters: [{ result: 'ok' }] })

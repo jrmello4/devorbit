@@ -29,7 +29,7 @@ import { createOrchestrationService } from './orchestration-service'
 import { registerOrchestrationIpc } from './ipc/orchestration-ipc'
 import { registerProjectIpc } from './ipc/project-ipc'
 import { registerWorkspaceIpc } from './ipc/workspace-ipc'
-import { registerTerminalIpc } from './ipc/terminal-ipc'
+import { registerTerminalIpc, terminalPasteMode } from './ipc/terminal-ipc'
 import { registerWebIpc } from './ipc/web-ipc'
 import { registerConfigIpc } from './ipc/config-ipc'
 import { registerObservabilityIpc } from './ipc/observability-ipc'
@@ -482,6 +482,7 @@ const bridgeService = createBridgeService({
       waitReady: terminalReadiness.waitReady,
       write: writeTerminal,
       subscribe: onTerminalEvent,
+      isBracketedPasteEnabled: terminalPasteMode.isBracketedPasteEnabled,
       now: () => Date.now(),
     },
     {

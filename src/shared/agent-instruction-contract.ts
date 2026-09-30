@@ -6,12 +6,20 @@
  * '\r'), e a submissão única no fim do conteúdo é o que dispara o turno.
  */
 
-/** Fases observáveis de uma instrução (logs de orquestração, sem conteúdo). */
+/**
+ * Fases observáveis de uma instrução (logs de orquestração, sem conteúdo).
+ *
+ * `content_written` substitui a antiga `sending` e `submit_sent` substitui a
+ * antiga `submitted`: a distinção agora é LOAD-BEARING — o observador de ack
+ * só é armado NO `submit_sent` (depois do Enter), então o eco do conteúdo
+ * deixa de confirmar recebimento. Consumidores de telemetria que filtravam
+ * pelas fases antigas devem acompanhar.
+ */
 export type AgentInstructionPhase =
   | 'queued'
   | 'waiting_ready'
-  | 'sending'
-  | 'submitted'
+  | 'content_written'
+  | 'submit_sent'
   | 'awaiting_ack'
   | 'acked'
   | 'retry_submit'
@@ -26,6 +34,13 @@ export interface AgentInstructionEvent {
   at: number
   attempt: number
   error?: string
+  /**
+   * Modo de escrita do conteúdo — somente na fase `content_written`. Telemetria
+   * apenas: NUNCA coloque o conteúdo (ou trecho dele) aqui.
+   */
+  paste?: 'bracketed' | 'plain'
+  /** Tamanho do conteúdo em caracteres — somente na fase `content_written`. */
+  length?: number
 }
 
 /**

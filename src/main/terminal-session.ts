@@ -31,7 +31,9 @@ export const TERMINAL_MIN_ROWS = 5
 export const TERMINAL_MAX_ROWS = 200
 const DEFAULT_COLS = 120
 const DEFAULT_ROWS = 32
-const MAX_WRITE_LENGTH = 64_000
+// 65_536 (teto do prompt de turno) + folga para o wrapper de bracketed paste
+// (ESC[200~ / ESC[201~ = 12 chars) usado em prompts multiline.
+const MAX_WRITE_LENGTH = 65_536 + 16
 
 /**
  * Coalescing de chunks de saída do PTY: bursts de output viram poucos eventos

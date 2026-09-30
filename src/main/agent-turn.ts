@@ -151,7 +151,15 @@ export const TURN_RESULT_PATTERN = /DEVORBIT_RESULT:[ \t]*([^\r\n]+)/i
 export const TURN_BLOCKED_PATTERN = /BLOQUEADO/i
 export const TURN_DEFAULT_IDLE_TIMEOUT_MS = 5 * 60_000
 export const TURN_DEFAULT_OVERALL_TIMEOUT_MS = 30 * 60_000
-export const TURN_MAX_PROMPT_CHARS = 8_000
+// Teto do prompt do turno: 64 KiB — protege contra ACIDENTES (montagem
+// descontrolada no canvas), não contra handoffs completos. O writer do PTY
+// fatia escritas grandes (terminal-session, 16k por chunk), então não há
+// limite técnico de entrega neste valor; prompts pequenos demais é que
+// cortavam contexto real do handoff.
+// CUIDADO: writeTerminal ainda rejeita writes > MAX_WRITE_LENGTH (64_000) —
+// prompts no último intervalo (64_000..65_536) falham na escrita até esse
+// teto acompanhar (ver relatório de missão).
+export const TURN_MAX_PROMPT_CHARS = 65_536
 // Prontidão da TUI no primeiro turno: silêncio após a primeira saída libera o
 // prompt; o teto é melhor esforço para nunca travar um CLI silencioso.
 export const TURN_READY_QUIET_MS = 1_200
