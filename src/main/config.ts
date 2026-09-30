@@ -903,7 +903,8 @@ export async function loadAiMemoryConfig(): Promise<AiMemoryConfig> {
     // Arquivo ausente é o default; qualquer outra falha é reportada.
     if (isFileNotFoundError(error)) return { ...DEFAULT_AI_MEMORY_CONFIG, projects: {} }
     throw new Error(
-      `Falha ao ler a configuração do ai-memory: ${error instanceof Error ? error.message : String(error)}`
+      `Falha ao ler a configuração do ai-memory: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error }
     )
   }
   try {

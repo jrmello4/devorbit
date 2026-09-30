@@ -38,7 +38,7 @@ async function evaluate(window, expression) {
     return await window.webContents.executeJavaScript(`(${expression})`, true)
   } catch (error) {
     const consoleContext = rendererErrors.slice(-8).join('\n')
-    throw new Error(`Renderer evaluation failed: ${expression} (${error && error.message ? error.message : error})${consoleContext ? `\nRecent renderer errors:\n${consoleContext}` : ''}`)
+    throw new Error(`Renderer evaluation failed: ${expression} (${error && error.message ? error.message : error})${consoleContext ? `\nRecent renderer errors:\n${consoleContext}` : ''}`, { cause: error })
   }
 }
 

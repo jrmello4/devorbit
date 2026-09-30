@@ -41,6 +41,13 @@ export interface AgentInstructionEvent {
   paste?: 'bracketed' | 'plain'
   /** Tamanho do conteúdo em caracteres — somente na fase `content_written`. */
   length?: number
+  /**
+   * Índice do padrão (em `hints.ackPatterns` do provider) que confirmou o ack —
+   * somente na fase `acked` e somente quando o ack veio de um padrão do
+   * catálogo. NUNCA carrega o trecho casado da saída do terminal (sem
+   * conteúdo), só o índice para auditoria.
+   */
+  ackPattern?: number
 }
 
 /**

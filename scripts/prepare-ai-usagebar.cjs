@@ -205,7 +205,7 @@ async function downloadPinnedAsset(options = {}) {
     if (buffer.length === 0) throw new Error('Download do ai-usagebar veio vazio.')
     return buffer
   } catch (error) {
-    if (controller.signal.aborted) throw new Error('Download do ai-usagebar excedeu o timeout.')
+    if (controller.signal.aborted) throw new Error('Download do ai-usagebar excedeu o timeout.', { cause: error })
     throw error
   } finally {
     clearTimeout(timer)

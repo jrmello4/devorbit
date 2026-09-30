@@ -501,7 +501,7 @@ async function fetchWithTimeout(
   try {
     return await fetch(url, { ...init, signal: controller.signal })
   } catch (error: unknown) {
-    if (controller.signal.aborted) throw new Error('tempo limite excedido')
+    if (controller.signal.aborted) throw new Error('tempo limite excedido', { cause: error })
     throw error
   } finally {
     clearTimeout(timer)

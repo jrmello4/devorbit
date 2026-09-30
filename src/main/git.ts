@@ -244,7 +244,7 @@ async function resolveGitPushTarget(repoPath: string, branch: string): Promise<{
     }
   }
   const remoteName = (await config(`branch.${branch}.pushRemote`)) || (await config('remote.pushDefault')) || (await config(`branch.${branch}.remote`)) || 'origin'
-  let remoteUrls: string[] = []
+  let remoteUrls: string[]
   try {
     remoteUrls = (await execFileAsync('git', ['remote', 'get-url', '--push', '--all', remoteName], { cwd: repoPath, timeout: 8000, windowsHide: true })).stdout.split(/\r?\n/u).map((value) => value.trim()).filter(Boolean)
   } catch {
@@ -424,7 +424,7 @@ export async function getGitBranches(
       return a.name.localeCompare(b.name)
     })
   } catch (error: any) {
-    throw new Error(`Não foi possível listar as branches: ${error.stderr || error.message || 'falha no Git'}`)
+    throw new Error(`Não foi possível listar as branches: ${error.stderr || error.message || 'falha no Git'}`, { cause: error })
   }
 }
 

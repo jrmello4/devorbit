@@ -318,7 +318,7 @@ async function syncAiUsagebarAccountsInner(
   const env = config.env ?? process.env
   const maxProfiles = Math.min(config.maxProfiles ?? MAX_PROFILES, MAX_PROFILES)
 
-  let existingContent = ''
+  let existingContent: string
   try {
     existingContent = await fs.readFile(config.configPath, 'utf8')
   } catch {

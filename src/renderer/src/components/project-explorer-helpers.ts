@@ -262,7 +262,7 @@ export function groupProjectsByParent(
   for (const group of groupsMap.values()) {
     // Ordenação determinística e estável dos projetos dentro do grupo
     const sortedProjects = [...group.projects].sort((a, b) => {
-      let diff = 0
+      let diff: number
       if (projectSortBy === 'recent') {
         const timeA = a.lastModified || 0
         const timeB = b.lastModified || 0

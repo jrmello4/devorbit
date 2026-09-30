@@ -195,7 +195,7 @@ function compileValidationContract() {
 async function waitFor(window, expression, label, timeoutMs = 10_000) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    let result = null
+    let result
     try {
       result = await window.webContents.executeJavaScript(`(${expression})`, true)
     } catch {

@@ -203,8 +203,8 @@ async function fetchJsonWithTimeout(
       throw new Error('resposta JSON da OpenAI inválida')
     }
   } catch (error: unknown) {
-    if (timeoutTriggered) throw new Error('tempo limite excedido')
-    if (sizeLimitTriggered) throw new Error('resposta da OpenAI excede o limite permitido')
+    if (timeoutTriggered) throw new Error('tempo limite excedido', { cause: error })
+    if (sizeLimitTriggered) throw new Error('resposta da OpenAI excede o limite permitido', { cause: error })
     throw error
   } finally {
     clearTimeout(timer)

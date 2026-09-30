@@ -858,7 +858,7 @@ async function scanJsonlSource(
   let malformed = 0
   let skippedLarge = 0
   let unreadableFiles = 0
-  let unreadableDirs = 0
+  let unreadableDirs: number
   try {
     const walk = await walkRegularFiles(path.join(sourceDir, walkSubdir))
     unreadableDirs = walk.unreadableDirs

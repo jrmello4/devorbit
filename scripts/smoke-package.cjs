@@ -356,7 +356,7 @@ async function readMarker(file, timeoutMs) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     if (fs.existsSync(file)) {
-      let parsed = null
+      let parsed
       try {
         parsed = JSON.parse(fs.readFileSync(file, 'utf8'))
       } catch {
