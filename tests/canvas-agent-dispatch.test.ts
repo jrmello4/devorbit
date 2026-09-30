@@ -362,7 +362,7 @@ describe('reportAgentTaskFailure (continuidade da orquestração)', () => {
 })
 
 describe('resultado estruturado: nó completo vs continuidade curta (handoff entre agentes)', () => {
-  const tailMarker = 'CAUDA-PRESERVADA-APOS-CARACTERE-1000'
+  const tailMarker = 'HANDOFF_TAIL_MARKER'
   const structuredResult: AgentResult = {
     format: 'json',
     version: 1,

@@ -62,6 +62,22 @@ export const AGENT_CLI_PROVIDER_IDS = AGENT_PROVIDER_ID_LIST
  *       // bracketedPaste: 'on' | 'off',  // só com comportamento verificado
  *     },
  *   },
+ *
+ * EVIDÊNCIA COLETADA (investigação PTY real, 2026-09-29, 2 execuções por CLI):
+ *   - OpenCode: boot anuncia ESC[?2004h 11x (zero 2004l) → a detecção dinâmica
+ *     cobre o bracketed paste (hint 'on'/'off' desnecessário). Pós-submit a
+ *     saída é redraw caótico de TUI (echo, pares ESC[?2026h/l, spinner,
+ *     animação de progresso, restore do placeholder "Ask anything…"): nenhum
+ *     padrão casou 100% das janelas (reancoragem de cursor OSC12+ESC[1 q:
+ *     3/4; placeholder: 4/4 mas em ~116ms, dentro do settle de 150ms → ack não
+ *     confiável). DECISÃO: SEM ackPatterns para opencode — a heurística default
+ *     (qualquer saída pós-settle confirma) é o sinal estável, pois a TUI sempre
+ *     segue animando após o Enter.
+ *   - Codex: boot anuncia ESC[?2004h (1x), mas o pós-submit é stateful (session
+ *     picker, "Waiting for startup") e o fluxo DevOrbit do Codex não passa por
+ *     sendAgentInstruction — ackPatterns NOT TESTED/insuficiente.
+ *   - Antigravity (agy) e command-code: CLIs ausentes no PATH da máquina de
+ *     investigação — NOT TESTED.
  */
 export const AGENT_CLI_PROVIDERS = {
   codex: {

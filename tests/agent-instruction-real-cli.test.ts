@@ -160,13 +160,16 @@ describe.skipIf(!envFlag)('agent instruction — CLI real (OpenCode)', () => {
   )
 
   it(
-    'prompt MULTILINE real (estilo orquestrador) chega integral e responde sem Enter manual',
+    'prompt MULTILINE real (estilo orquestrador) chega integral via bracketed paste e responde sem Enter manual',
     { timeout: 240_000 },
-    async () => {
+    async (ctx) => {
       const pty = await tryRequireNodePty()
       if (!pty) throw new Error('node-pty indisponível neste runtime (ABI).')
       const { createTerminalReadiness } = await import('../src/main/terminal-readiness')
       const { sendAgentInstruction } = await import('../src/main/agent-instruction')
+      const { createTerminalPasteMode, BRACKETED_PASTE_START, BRACKETED_PASTE_END } = await import(
+        '../src/main/terminal-paste-mode'
+      )
 
       const terminalId = 'real-opencode-multiline'
       const listeners: Array<(ev: { id: string; type: string; data?: string; code?: number }) => void> = []
@@ -203,6 +206,8 @@ describe.skipIf(!envFlag)('agent instruction — CLI real (OpenCode)', () => {
         onData: (cb) => listeners.push((ev) => { if (ev.type === 'data') cb(ev.data ?? '') }),
         onExit: (cb) => listeners.push((ev) => { if (ev.type === 'exit') cb(ev.code ?? 0) }),
       }
+      // Tudo que a produção escreve no PTY (conteúdo + Enter separado), na ordem.
+      const writtenPayloads: string[] = []
       conpty.onData((data) => {
         buffer = (buffer + data).slice(-32_000)
         for (const listener of listeners) listener({ id: terminalId, type: 'data', data })
@@ -225,9 +230,9 @@ describe.skipIf(!envFlag)('agent instruction — CLI real (OpenCode)', () => {
         '',
         '## Tarefa',
         '',
-        'Responda exatamente com:',
+        'Responda exatamente com a linha abaixo e mais nada:',
         '',
-        'DEVORBIT_OK',
+        'DEVORBIT_MULTILINE_OK',
         '',
         '## Regras',
         '',
@@ -237,11 +242,21 @@ describe.skipIf(!envFlag)('agent instruction — CLI real (OpenCode)', () => {
         '',
         '## Critérios de aceitação',
         '',
-        '- A resposta final deve ser exatamente DEVORBIT_OK.',
+        '- A resposta final deve ser exatamente DEVORBIT_MULTILINE_OK.',
       ].join('\n')
       expect(multilinePrompt.split('\n').length).toBeGreaterThan(20)
 
       try {
+        // Capability REAL de bracketed paste: mesma fiação da produção
+        // (createTerminalPasteMode observando o barramento do PTY). Registrada
+        // ANTES da espera de prontidão para capturar o anúncio do boot.
+        const pasteMode = createTerminalPasteMode((listener) => {
+          listeners.push(listener as never)
+          return () => {
+            const index = listeners.indexOf(listener as never)
+            if (index >= 0) listeners.splice(index, 1)
+          }
+        })
         const readiness = createTerminalReadiness((listener) => {
           listeners.push(listener as never)
           return () => {
@@ -252,11 +267,23 @@ describe.skipIf(!envFlag)('agent instruction — CLI real (OpenCode)', () => {
         const ready = await readiness.waitReady(terminalId, { since: spawnAt, timeoutMs: 30_000 })
         expect(ready.timedOut, 'TUI do OpenCode não ficou pronta a tempo').toBe(false)
 
+        // Evidência observada (2026-09-29): a TUI do OpenCode anuncia ESC[?2004h
+        // no boot. Se uma versão futura deixar de anunciar, pule com mensagem
+        // explícita — NUNCA force pass nem embrulhe sem capability.
+        if (!pasteMode.isBracketedPasteEnabled(terminalId)) {
+          ctx.skip('OpenCode não anuncia bracketed paste nesta versão')
+        }
+        expect(pasteMode.isBracketedPasteEnabled(terminalId), 'capability 2004h deve estar ativa antes do submit multiline').toBe(true)
+
         const result = await sendAgentInstruction(
           {
             hasTerminal: () => !exited,
             waitReady: (id, options) => readiness.waitReady(id, options),
-            write: (id, data) => (id === terminalId ? ptyProcess.write(data) : false),
+            write: (id, data) => {
+              if (id !== terminalId) return false
+              writtenPayloads.push(data)
+              return ptyProcess.write(data)
+            },
             subscribe: (listener) => {
               listeners.push(listener as never)
               return () => {
@@ -264,6 +291,9 @@ describe.skipIf(!envFlag)('agent instruction — CLI real (OpenCode)', () => {
                 if (index >= 0) listeners.splice(index, 1)
               }
             },
+            // Mesma fiação da produção (index.ts): a capability observada no
+            // barramento decide entre paste embrulhado e verbatim.
+            isBracketedPasteEnabled: pasteMode.isBracketedPasteEnabled,
             now: Date.now,
           },
           {
@@ -277,20 +307,33 @@ describe.skipIf(!envFlag)('agent instruction — CLI real (OpenCode)', () => {
         )
         expect(result.acked, `instrução multiline não foi reconhecida: ${result.error ?? '?'}`).toBe(true)
 
-        // Agente responde DEVORBIT_OK sem Enter manual (até ~200s).
+        // Com a capability anunciada e conteúdo multiline, o conteúdo entra
+        // EMBRULHADO em ESC[200~ … ESC[201~ (uma escrita; Enter é separado) —
+        // asserção de TUI, válida mesmo sem resposta do modelo.
+        expect(writtenPayloads.length).toBeGreaterThanOrEqual(2)
+        expect(writtenPayloads[0]?.startsWith(BRACKETED_PASTE_START), 'conteúdo multiline deveria entrar embrulhado em ESC[200~').toBe(true)
+        expect(writtenPayloads[0]?.endsWith(BRACKETED_PASTE_END), 'fechamento ESC[201~ ausente no payload').toBe(true)
+        expect(writtenPayloads[0]).toContain(multilinePrompt)
+        expect(writtenPayloads.slice(1)).toEqual(['\r'])
+
+        // Agente responde DEVORBIT_MULTILINE_OK sem Enter manual (até ~200s).
+        // Regex âncora: a linha EXATA no buffer limpo (não trecho de eco).
         const answerAt = Date.now()
         while (Date.now() - answerAt < 200_000) {
-          if (/DEVORBIT_OK/.test(stripAnsi(buffer))) break
+          if (/^\s*DEVORBIT_MULTILINE_OK\s*$/m.test(stripAnsi(buffer))) break
           if (exited) break
           await new Promise((resolve) => setTimeout(resolve, 1_000))
         }
         // Se o prompt foi executado linha a linha, o conteúdo teria sido
         // interpretado como comandos separados (ex.: "## Regras" como prompt);
-        // a resposta única DEVORBIT_OK prova entrega integral.
-        if (!/DEVORBIT_OK/.test(stripAnsi(buffer))) {
+        // a resposta única DEVORBIT_MULTILINE_OK prova entrega integral.
+        // ASSERT DURO proposital: enquanto a credencial do modelo estiver 403,
+        // este teste FALHA AQUI — o ack, o anúncio 2004h e o paste embrulhado
+        // acima continuam válidos (não dependem do modelo).
+        if (!/^\s*DEVORBIT_MULTILINE_OK\s*$/m.test(stripAnsi(buffer))) {
           // Diagnóstico: cauda limpa do que a TUI mostrou (última tela).
           const tail = stripAnsi(buffer).split(/\r?\n/).filter(Boolean).slice(-25).join(' | ')
-          throw new Error(`agente não respondeu DEVORBIT_OK; tela final: ${tail.slice(0, 1500)}`)
+          throw new Error(`agente não respondeu DEVORBIT_MULTILINE_OK; tela final: ${tail.slice(0, 1500)}`)
         }
       } finally {
         ptyProcess.kill()
