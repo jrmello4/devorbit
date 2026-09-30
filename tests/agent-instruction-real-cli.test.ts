@@ -243,7 +243,7 @@ describe.skipIf(!envFlag)('agent instruction — CLI real (OpenCode)', () => {
         '',
         '## Critérios de aceitação',
         '',
-        '- A resposta final deve ser exatamente DEVORBIT_MULTILINE_OK-42.',
+        '- A resposta final deve seguir exatamente o formato indicado em Tarefa.',
       ].join('\n')
       // A resposta (DEVORBIT_MULTILINE_OK-42) NÃO existe no prompt: o eco do
       // próprio prompt (paste/redraw) não pode satisfazer o assert — só o
