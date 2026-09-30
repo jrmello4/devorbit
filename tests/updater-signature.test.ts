@@ -267,28 +267,85 @@ describe('verifyAuthenticode', () => {
     expect(EXPECTED_UPDATE_CERT_THUMBPRINT).toBe('')
   })
 
-  it('reflete DEVORBIT_UPDATE_THUMBPRINT/PUBLISHER do ambiente (injeção no build); unset volta a vazio', async () => {
+  it('reflete DEVORBIT_UPDATE_THUMBPRINT/PUBLISHER do ambiente em DEV (não empacotado); unset/vazio volta ao baked', async () => {
     // As constantes são avaliadas na carga do módulo: stub de env + reset do
     // registry de módulos antes do import dinâmico dão uma instância fresca
     // (o módulo já está carregado pelo import estático do topo do arquivo).
+    // Em dev o mock do electron precisa reportar isPackaged = false para que
+    // o env vence o baked.
+    electronAppMock.isPackaged = false
     vi.stubEnv('DEVORBIT_UPDATE_THUMBPRINT', ' A1b2C3d4E5f6A1b2C3d4E5f6A1b2C3d4E5f6A1b2 ')
     vi.stubEnv('DEVORBIT_UPDATE_PUBLISHER', '  DevOrbit  ')
     vi.resetModules()
     try {
       const mod = await import('../src/main/updater')
-      // Env vence o baked: o valor é refletido com trim (a normalização de
-      // caixa/hífens fica na comparação do verifyAuthenticode).
+      // Env vence o baked em dev: o valor é refletido com trim (a normalização
+      // de caixa/hífens fica na comparação do verifyAuthenticode).
       expect(mod.EXPECTED_UPDATE_CERT_THUMBPRINT).toBe('A1b2C3d4E5f6A1b2C3d4E5f6A1b2C3d4E5f6A1b2')
       expect(mod.EXPECTED_UPDATE_PUBLISHER).toBe('DevOrbit')
     } finally {
       vi.unstubAllEnvs()
       vi.resetModules()
+      electronAppMock.isPackaged = true
     }
-    // Env unset (condição atual dos testes/CI sem secret): vazio, o que mantém
-    // o test-guard acima e o comportamento de pinning desativado.
+    // Env unset (condição atual dos testes/CI sem secret): cai no baked, que em
+    // teste é vazio — mantém o test-guard acima e o pinning desativado.
     const fresh = await import('../src/main/updater')
     expect(fresh.EXPECTED_UPDATE_CERT_THUMBPRINT).toBe('')
     expect(fresh.EXPECTED_UPDATE_PUBLISHER).toBe('')
+
+    // Fail-closed preservado em dev: env só de espaços → trim → vazio → baked.
+    vi.stubEnv('DEVORBIT_UPDATE_THUMBPRINT', '   ')
+    vi.stubEnv('DEVORBIT_UPDATE_PUBLISHER', '   ')
+    vi.resetModules()
+    try {
+      const whitespace = await import('../src/main/updater')
+      expect(whitespace.EXPECTED_UPDATE_CERT_THUMBPRINT).toBe('')
+      expect(whitespace.EXPECTED_UPDATE_PUBLISHER).toBe('')
+    } finally {
+      vi.unstubAllEnvs()
+      vi.resetModules()
+      electronAppMock.isPackaged = true
+    }
+  })
+
+  it('empacotado IGNORA DEVORBIT_UPDATE_THUMBPRINT/PUBLISHER do runtime (só o baked vale)', async () => {
+    // Release oficial (app.isPackaged = true): um runtime comprometido não
+    // pode redefinir a identidade confiável de updates via env — mesmo com o
+    // env setado, a expectativa resolve para o baked (em teste o define não
+    // existe, então '').
+    electronAppMock.isPackaged = true
+    vi.stubEnv('DEVORBIT_UPDATE_THUMBPRINT', 'A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2')
+    vi.stubEnv('DEVORBIT_UPDATE_PUBLISHER', 'PublisherDoAtacante')
+    vi.resetModules()
+    try {
+      const mod = await import('../src/main/updater')
+      expect(mod.EXPECTED_UPDATE_CERT_THUMBPRINT).toBe('')
+      expect(mod.EXPECTED_UPDATE_PUBLISHER).toBe('')
+
+      // Comportamental: verifyAuthenticode com os defaults do módulo empacotado
+      // (baked '') exige apenas Status Valid — o "certificado do atacante"
+      // (publisher/thumbprint divergentes do env setado) é irrelevante porque o
+      // env NÃO entrou na comparação. O runner precisa ser setado na instância
+      // fresca (vi.resetModules cria um novo escopo de módulo).
+      const filePath = path.join(tempDir, 'update.exe')
+      await fs.writeFile(filePath, 'binary')
+      mod._setExecFileRunnerForTest(async () => ({
+        stdout:
+          'STATUS=Valid\r\nSIGNER=CN=PublisherDoAtacante\r\nTHUMBPRINT=0123456789ABCDEF0123456789ABCDEF01234567\r\n',
+        stderr: '',
+      }))
+      await expect(mod.verifyAuthenticode(filePath)).resolves.toEqual({
+        status: 'Valid',
+        signer: 'CN=PublisherDoAtacante',
+      })
+    } finally {
+      // (O runner da instância fresca morre com o vi.resetModules; o afterEach
+      // reseta o runner da instância estática.)
+      vi.unstubAllEnvs()
+      vi.resetModules()
+      electronAppMock.isPackaged = true
+    }
   })
 
   describe('thumbprint do certificado (EXPECTED_UPDATE_CERT_THUMBPRINT)', () => {

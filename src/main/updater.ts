@@ -61,13 +61,38 @@ export const PUBLISH_CONFIG = {
 // 'Production build' do job package recebe DEVORBIT_UPDATE_THUMBPRINT do
 // secret WINDOWS_CERTIFICATE_THUMBPRINT — quando o certificado for configurado,
 // o pinning do updater ativa sozinho no binário empacotado, sem edição manual.
-// O env vence o baked (útil em dev/e2e); build assinado no CI injeta via define.
+// Em dev (não empacotado) o env vence o baked (útil para testes/e2e); já no
+// build empacotado o env é IGNORADO (ver resolveExpectedThumbprint).
 declare const __DEVORBIT_UPDATE_THUMBPRINT__: string | undefined
 declare const __DEVORBIT_UPDATE_PUBLISHER__: string | undefined
 const BAKED_UPDATE_THUMBPRINT =
   typeof __DEVORBIT_UPDATE_THUMBPRINT__ === 'string' ? __DEVORBIT_UPDATE_THUMBPRINT__.trim() : ''
 const BAKED_UPDATE_PUBLISHER =
   typeof __DEVORBIT_UPDATE_PUBLISHER__ === 'string' ? __DEVORBIT_UPDATE_PUBLISHER__.trim() : ''
+
+/** Mesma fonte de verdade de getUpdateDistribution para decidir dev vs empacotado. */
+function isAppPackaged(): boolean {
+  return Boolean(app?.isPackaged)
+}
+
+/**
+ * Segurança do pinning: em binário EMPACOTADO (release oficial) a identidade
+ * confiável de updates vem SOMENTE dos valores assados no build — o runtime
+ * NÃO pode redefinir via env, senão um ambiente comprometido poderia apontar
+ * DEVORBIT_UPDATE_THUMBPRINT/PUBLISHER para o próprio certificado do atacante
+ * e o updater aceitaria updates maliciosos como legítimos. Em dev (não
+ * empacotado) o env vence o baked para permitir teste/e2e do pinning.
+ */
+function resolveExpectedThumbprint(): string {
+  if (isAppPackaged()) return BAKED_UPDATE_THUMBPRINT
+  return process.env.DEVORBIT_UPDATE_THUMBPRINT?.trim() || BAKED_UPDATE_THUMBPRINT
+}
+
+/** Mesma regra do resolveExpectedThumbprint, para o publisher do certificado. */
+function resolveExpectedPublisher(): string {
+  if (isAppPackaged()) return BAKED_UPDATE_PUBLISHER
+  return process.env.DEVORBIT_UPDATE_PUBLISHER?.trim() || BAKED_UPDATE_PUBLISHER
+}
 
 // Publisher esperado no certificado Authenticode do binário de atualização.
 // Derivado de electron-builder.json → win.certificateSubjectName / win.publisherName.
@@ -76,10 +101,12 @@ const BAKED_UPDATE_PUBLISHER =
 // Trade-off com publisher vazio: a verificação exige apenas Status 'Valid', ou
 // seja, qualquer certificado com cadeia confiável no Windows é aceito —
 // inclusive um de outro publisher. Quando o build passar a ser assinado,
-// configure DEVORBIT_UPDATE_PUBLISHER (env no build ou no runtime) com o
-// subject do certificado (ex.: 'DevOrbit') para que a verificação também
-// compare o emissor do certificado.
-export const EXPECTED_UPDATE_PUBLISHER = process.env.DEVORBIT_UPDATE_PUBLISHER?.trim() || BAKED_UPDATE_PUBLISHER
+// configure DEVORBIT_UPDATE_PUBLISHER no BUILD (secret de CI injetado via
+// define no empacotado; env só tem efeito em dev) com o subject do
+// certificado (ex.: 'DevOrbit') para que a verificação também compare o
+// emissor do certificado.
+// Avaliadas na carga do módulo: app.isPackaged não muda em runtime.
+export const EXPECTED_UPDATE_PUBLISHER = resolveExpectedPublisher()
 
 // Thumbprint (SHA-1 hex) esperado do certificado Authenticode do binário de
 // atualização. Mesmo padrão do EXPECTED_UPDATE_PUBLISHER: enquanto o build não
@@ -90,8 +117,9 @@ export const EXPECTED_UPDATE_PUBLISHER = process.env.DEVORBIT_UPDATE_PUBLISHER?.
 // (CSC_LINK) — o mesmo valor do secret de CI WINDOWS_CERTIFICATE_THUMBPRINT,
 // validado no job package (passo 'Validar Authenticode dos EXEs') e injetado
 // no build via DEVORBIT_UPDATE_THUMBPRINT — para que o updater faça pinning do
-// MESMO certificado usado no build oficial.
-export const EXPECTED_UPDATE_CERT_THUMBPRINT = process.env.DEVORBIT_UPDATE_THUMBPRINT?.trim() || BAKED_UPDATE_THUMBPRINT
+// MESMO certificado usado no build oficial. No empacotado o env de runtime é
+// ignorado (ver resolveExpectedThumbprint).
+export const EXPECTED_UPDATE_CERT_THUMBPRINT = resolveExpectedThumbprint()
 
 // Timeout da verificação via PowerShell. Timeout/erro de execução = fail-closed.
 export const AUTHENTICODE_TIMEOUT_MS = 30_000
