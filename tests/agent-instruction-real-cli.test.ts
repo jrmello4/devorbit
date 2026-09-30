@@ -133,7 +133,7 @@ describe.skipIf(!envFlag)('agent instruction — CLI real (OpenCode)', () => {
           {
             terminalId,
             turnId: 'real_cli_smoke',
-            content: 'Responda apenas com OK e mais nada.',
+            content: 'Responda apenas com a soma de 12 + 30 em dígitos e mais nada.',
             provider: 'opencode',
             ackTimeoutMs: 10_000,
             maxSubmitAttempts: 2,
@@ -143,8 +143,8 @@ describe.skipIf(!envFlag)('agent instruction — CLI real (OpenCode)', () => {
         // O submit do conteúdo é o único Enter: nada de CR extra digitado à mão.
         expect(AGENT_SUBMIT_SEQUENCE).toBe('\r')
 
-        // 3) O agente responde sozinho (atividade pós-submit) — aqui com a
-        // resposta "OK" aparecendo no buffer em até ~150s.
+        // 3) O agente responde sozinho (atividade pós-submit) — a resposta (42)
+        // NÃO existe no prompt: o eco não pode satisfazer o assert (ACHADO 3).
         const answerAt = Date.now()
         while (Date.now() - answerAt < 150_000) {
           if (/^\s*OK\b/m.test(stripAnsi(buffer))) break
@@ -152,7 +152,7 @@ describe.skipIf(!envFlag)('agent instruction — CLI real (OpenCode)', () => {
           await new Promise((resolve) => setTimeout(resolve, 1_000))
         }
         const clean = stripAnsi(buffer)
-        expect(/OK/i.test(clean), 'agente não respondeu após a submissão automática').toBe(true)
+        expect(/42/.test(clean), 'agente não respondeu após a submissão automática').toBe(true)
       } finally {
         ptyProcess?.kill()
       }
@@ -230,9 +230,10 @@ describe.skipIf(!envFlag)('agent instruction — CLI real (OpenCode)', () => {
         '',
         '## Tarefa',
         '',
-        'Responda exatamente com a linha abaixo e mais nada:',
+        'Some 17 + 25 e responda exatamente com a linha abaixo, substituindo',
+        '<soma> pelo resultado, e mais nada:',
         '',
-        'DEVORBIT_MULTILINE_OK',
+        'DEVORBIT_MULTILINE_OK-<soma>',
         '',
         '## Regras',
         '',
@@ -242,8 +243,12 @@ describe.skipIf(!envFlag)('agent instruction — CLI real (OpenCode)', () => {
         '',
         '## Critérios de aceitação',
         '',
-        '- A resposta final deve ser exatamente DEVORBIT_MULTILINE_OK.',
+        '- A resposta final deve ser exatamente DEVORBIT_MULTILINE_OK-42.',
       ].join('\n')
+      // A resposta (DEVORBIT_MULTILINE_OK-42) NÃO existe no prompt: o eco do
+      // próprio prompt (paste/redraw) não pode satisfazer o assert — só o
+      // modelo processando a instrução a produz. (Revisor, ACHADO 3.)
+      expect(multilinePrompt).not.toContain('DEVORBIT_MULTILINE_OK-42')
       expect(multilinePrompt.split('\n').length).toBeGreaterThan(20)
 
       try {

@@ -224,8 +224,13 @@ export function createBridgeService(
 
   /**
    * Erro de delegação cancelada (code `cancelled`): distinto de falha — o
-   * ciclo é cancelado (waiter descartado, nada pendente) e o cancelamento
-   * NUNCA vira outcome persistido (filtrado pelo prefixo do waiter cancelado).
+   * ciclo é cancelado (waiter descartado, nada pendente).
+   *
+   * LIMITAÇÃO conhecida: `onOutcome` filtra o summary do waiter cancelado,
+   * mas `trackCycle → complete()` ainda cacheia `{failed, cancelado}` por
+   * TTL e `reflect()` persiste essa reflexão na evolution store — herança
+   * do caminho pré-AbortSignal, mais alcançável agora. Migração futura:
+   * filtrar cancelamentos em `reflect`/`cacheOutcome`.
    */
   const delegationCancelledError = (): Error =>
     Object.assign(new Error('Delegação cancelada.'), { code: 'cancelled' })
@@ -408,15 +413,23 @@ export function createBridgeService(
           // Mesmo padrão do send: waiter armado antes da submissão centralizada;
           // sem ack, o waiter é cancelado e o erro explícito é propagado.
           const provider = agents.get(id)?.provider
-          const instruction = await dependencies.sendInstruction({
-            terminalId: id,
-            turnId,
-            content: request.prompt,
-            ...(provider !== undefined ? { provider } : {}),
-            since: Date.now(),
-            // context.signal flui até sendAgentInstruction (mesmo caminho do send).
-            ...(context?.signal !== undefined ? { signal: context.signal } : {}),
-          })
+          let instruction: Awaited<ReturnType<typeof dependencies.sendInstruction>>
+          try {
+            instruction = await dependencies.sendInstruction({
+              terminalId: id,
+              turnId,
+              content: request.prompt,
+              ...(provider !== undefined ? { provider } : {}),
+              since: Date.now(),
+              // context.signal flui até sendAgentInstruction (mesmo caminho do send).
+              ...(context?.signal !== undefined ? { signal: context.signal } : {}),
+            })
+          } catch (error) {
+            // Simetria com o send: se a instrução lançar, o waiter armado não
+            // fica órfão subscrito no barramento até o próprio timeout.
+            pending.cancel()
+            throw error
+          }
           if (!instruction.acked) {
             pending.cancel()
             if (instruction.cancelled) throw delegationCancelledError()
