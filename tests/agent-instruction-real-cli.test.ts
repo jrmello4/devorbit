@@ -338,7 +338,7 @@ describe.skipIf(!envFlag)('agent instruction — CLI real (OpenCode)', () => {
         if (!/^\s*DEVORBIT_MULTILINE_OK\s*$/m.test(stripAnsi(buffer))) {
           // Diagnóstico: cauda limpa do que a TUI mostrou (última tela).
           const tail = stripAnsi(buffer).split(/\r?\n/).filter(Boolean).slice(-25).join(' | ')
-          throw new Error(`agente não respondeu DEVORBIT_MULTILINE_OK; tela final: ${tail.slice(0, 1500)}`)
+          throw new Error(`agente não respondeu DEVORBIT_MULTILINE_OK-42; tela final: ${tail.slice(0, 1500)}`)
         }
       } finally {
         ptyProcess.kill()
