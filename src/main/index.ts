@@ -14,6 +14,7 @@ import {
   setGlobalAiMemoryService,
 } from './ai-memory-launcher'
 import { createTerminalReadiness } from './terminal-readiness'
+import { sendAgentInstruction } from './agent-instruction'
 import { scanUsageAdapters, resolveUsageSourceDirs } from './usage-adapters'
 import { createClaudeQuotaPoller, defaultClaudeCredentialsPath } from './claude-usage-quota'
 import { createBridgeService, type BridgeCycleOutcome } from './bridge-service'
@@ -187,14 +188,11 @@ installPtyPipe({
 const turnSessions = new Map<string, { provider: AgentProviderId; model: string }>()
 const waitTurnResult = createResultWaiter(onTerminalEvent)
 // Prontidão central: cacheada por terminal, invalidada em todo restart de PTY.
-// waitReady REPORTA COMO resolveu ({ timedOut }); o Bridge é best-effort
-// (escreve de qualquer forma), então consome a espera sem o resultado.
+// waitReady REPORTA COMO resolveu ({ timedOut }): o consumidor decide — timeout
+// NÃO autoriza escrita (Bridge, turnos e instruções usam a mesma regra).
 const terminalReadiness = createTerminalReadiness(onTerminalEvent)
 onTerminalStart((id) => terminalReadiness.invalidate(id))
 const waitTerminalReady = terminalReadiness.waitReady
-const waitTerminalReadyBestEffort = async (id: string): Promise<void> => {
-  await terminalReadiness.waitReady(id)
-}
 const hitlManager = new HITLManager({ onChange: sendHitlEvent })
 const observabilityLedger = new AuditLedger(path.join(app.getPath('userData'), 'observability.jsonl'))
 const evolutionStore = new EvolutionStore({ dataDirectory: path.join(app.getPath('userData'), 'evolution') })
@@ -475,9 +473,26 @@ async function drainBridgeOutcomeWrites(timeoutMs = AI_MEMORY_SHUTDOWN_DRAIN_TIM
 const bridgeService = createBridgeService({
   cliDirectory: app.isPackaged ? process.resourcesPath : (process.env.APP_ROOT || path.resolve(__dirname, '../..')),
   hasTerminal,
-  writeTerminal,
   waitTurnResult,
-  waitTerminalReady: waitTerminalReadyBestEffort,
+  // O Bridge usa a MESMA submissão do Canvas: prontidão real (timeout não
+  // escreve), conteúdo verbatim + UM Enter, ack e retry apenas do Enter.
+  sendInstruction: (input) => sendAgentInstruction(
+    {
+      hasTerminal,
+      waitReady: terminalReadiness.waitReady,
+      write: writeTerminal,
+      subscribe: onTerminalEvent,
+      now: () => Date.now(),
+    },
+    {
+      terminalId: input.terminalId,
+      turnId: input.turnId,
+      content: input.content,
+      // Provider é só para logs de orquestração; sem sessão conhecida, 'unknown'.
+      provider: input.provider ?? 'unknown',
+      ...(input.since !== undefined ? { since: input.since } : {}),
+    },
+  ),
   onEvent: sendAgentBridgeEvent,
   onReflection: rememberBridgeReflection,
   onOutcome: (outcome) => {

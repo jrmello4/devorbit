@@ -32,13 +32,12 @@ function createDependencies(overrides: Partial<BridgeServiceDependencies> = {}):
   return {
     cliDirectory: '/cli',
     hasTerminal: (id) => id === 'agent-1' || id === 'agent-2',
-    writeTerminal: () => true,
     waitTurnResult: () => {
       const promise = Promise.resolve({ result: 'CONCLUIDO: ok' }) as WaiterPromise
       promise.cancel = () => undefined
       return promise
     },
-    waitTerminalReady: async () => undefined,
+    sendInstruction: async () => ({ acked: true, attempts: 1 }),
     onEvent: () => undefined,
     ...overrides,
   }

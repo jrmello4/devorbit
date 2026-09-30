@@ -14,9 +14,9 @@ import type { TerminalEvent } from './terminal-session'
  * saída do terminal confirma) → acked. Sem ack: re-submete APENAS o Enter
  * (reenviar o conteúdo duplicaria a tarefa).
  *
- * Pendência conhecida: o Bridge (send/ask best-effort em bridge-service.ts)
- * ainda escreve direto no PTY com '\r' próprio — migrá-lo para cá é trabalho
- * futuro; até lá esta doc NÃO vale para o Bridge.
+ * Consumidores: os turnos da orquestração (sendAgentTurn) e o Bridge
+ * (send/ask do bridge-service, via dep `sendInstruction` injetada em index.ts)
+ * — não há mais caminho que escreva prompt + Enter direto no PTY.
  */
 export interface AgentInstructionDeps {
   hasTerminal: (id: string) => boolean

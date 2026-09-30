@@ -64,13 +64,35 @@ export interface BridgeCycleOutcome {
   artifacts?: string[]
 }
 
+/** Entrada da submissão centralizada do Bridge (delega a sendAgentInstruction). */
+export interface BridgeInstructionInput {
+  terminalId: string
+  /** Turno determinístico do ciclo (`bridge_<terminal>_<generation>`), só para logs. */
+  turnId: string
+  /** Conteúdo enviado VERBATIM; o Enter de submissão é responsabilidade do módulo. */
+  content: string
+  provider?: string
+  /** Âncora de prontidão (epoch ms) do ciclo do Bridge. */
+  since?: number
+}
+
+export interface BridgeInstructionResult {
+  acked: boolean
+  attempts: number
+  error?: string
+}
+
 export interface BridgeServiceDependencies {
   cliDirectory: string
   hasTerminal: (id: string) => boolean
-  writeTerminal: (id: string, input: string) => boolean
   waitTurnResult: (id: string, timeouts: { idleMs: number; overallMs: number }) => ResultWaitPromise
-  /** Prontidão cacheada do PTY atual; invalida em restart (ver terminal-readiness). */
-  waitTerminalReady: (id: string) => Promise<void>
+  /**
+   * Submissão centralizada da tarefa — a MESMA infraestrutura do Canvas
+   * (sendAgentInstruction): espera prontidão real (timeout falha SEM escrever),
+   * escreve o conteúdo verbatim + UM Enter, espera ack de saída do terminal e,
+   * sem ack, re-envia APENAS o Enter (máx. 2 tentativas).
+   */
+  sendInstruction: (input: BridgeInstructionInput) => Promise<BridgeInstructionResult>
   onEvent: (event: AgentBridgeEvent) => void
   onReflection?: (target: string, outcome: { status: string; summary: string }) => void
   /** Outcome consolidado por ciclo lógico; falha do consumidor nunca quebra o Bridge. */
@@ -193,8 +215,15 @@ export function createBridgeService(
   }
 
   /** Cancelamentos de espera não são outcome de delegação: nunca persistir. */
-  const isCancellationOutcome = (outcome: { summary: string }): boolean =>
-    outcome.summary.trim().toLowerCase().startsWith('a espera da ponte foi cancelada')
+  const cancellationSummaryPrefixes = [
+    'a espera da ponte foi cancelada',
+    // Mensagem do cancel() do waiter real (createResultWaiter em agent-turn).
+    'a espera do resultado foi cancelada',
+  ]
+  const isCancellationOutcome = (outcome: { summary: string }): boolean => {
+    const summary = outcome.summary.trim().toLowerCase()
+    return cancellationSummaryPrefixes.some((prefix) => summary.startsWith(prefix))
+  }
 
   /** Emissão de outcome uma única vez por ciclo lógico (taskId estável). */
   const emittedCycles = new Set<string>()
@@ -287,14 +316,29 @@ export function createBridgeService(
         return runTargetSerial(id, async () => {
           if (cycles.hasPending(id)) throw new Error('O terminal já possui uma tarefa aguardando resultado.')
           const generation = cycles.begin(id)
-          // A sessão PTY atual precisa estar pronta antes de armar o waiter e
-          // escrever; terminais já prontos resolvem imediatamente.
-          await dependencies.waitTerminalReady(id)
+          const turnId = `bridge_${id}_${generation}`
+          // Waiter armado ANTES do sendInstruction: o ack (eco/redraw) e o
+          // DEVORBIT_RESULT são observadores independentes sobre o MESMO
+          // barramento do PTY, e o resultado pode chegar no mesmo ciclo de
+          // eventos do ack (mesmo padrão do sendAgentTurn).
           const pending = dependencies.waitTurnResult(id, { idleMs: sendIdleMs, overallMs: sendOverallMs })
           trackCycle(id, generation, pending, true, true)
-          if (!dependencies.writeTerminal(id, request.prompt + '\r')) {
+          // Submissão centralizada (sendAgentInstruction): espera prontidão REAL
+          // — timeout falha SEM escrever —, conteúdo verbatim + UM Enter, ack e
+          // retry que re-envia apenas o Enter. Nunca escreve às cegas.
+          const provider = agents.get(id)?.provider
+          const instruction = await dependencies.sendInstruction({
+            terminalId: id,
+            turnId,
+            content: request.prompt,
+            ...(provider !== undefined ? { provider } : {}),
+            since: Date.now(),
+          })
+          if (!instruction.acked) {
+            // Nada foi entregue: cancela o ciclo armado e propaga o erro
+            // explícito em vez de deixar a tarefa pendente.
             cycles.cancelPending(id)
-            throw new Error('O terminal recusou a delegação.')
+            throw new Error(instruction.error || 'A tarefa não foi entregue ao agente.')
           }
           return { accepted: true, target: id, origin, destination: id }
         }, context?.signal)
@@ -327,14 +371,24 @@ export function createBridgeService(
         return runTargetSerial(id, async () => {
           if (cycles.hasPending(id)) throw new Error('O terminal já possui uma tarefa aguardando resultado.')
           const generation = cycles.begin(id)
-          await dependencies.waitTerminalReady(id)
+          const turnId = `bridge_${id}_${generation}`
           const pending = dependencies.waitTurnResult(id, {
             idleMs: request.timeoutMs || askTimeoutMs,
             overallMs: request.timeoutMs || askTimeoutMs,
           })
-          if (!dependencies.writeTerminal(id, request.prompt + '\r')) {
+          // Mesmo padrão do send: waiter armado antes da submissão centralizada;
+          // sem ack, o waiter é cancelado e o erro explícito é propagado.
+          const provider = agents.get(id)?.provider
+          const instruction = await dependencies.sendInstruction({
+            terminalId: id,
+            turnId,
+            content: request.prompt,
+            ...(provider !== undefined ? { provider } : {}),
+            since: Date.now(),
+          })
+          if (!instruction.acked) {
             pending.cancel()
-            throw new Error('O terminal recusou a delegação.')
+            throw new Error(instruction.error || 'A tarefa não foi entregue ao agente.')
           }
           const outcome = outcomeFrom(await awaitResult({ promise: pending, persistent: false }, context?.signal))
           if (!context?.signal?.aborted) cycles.cacheOutcome(id, generation, outcome)
