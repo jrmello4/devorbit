@@ -35,6 +35,7 @@ async function tryRequireNodePty(): Promise<typeof import('node-pty') | null> {
   }
 }
 
+const REAL_TUI_BOOT_CALM_MS = 8_500 // TUI do OpenCode carrega plugins por ~8s; instruções antes disso são engolidas silenciosamente (evidência: diagnóstico PTY 2026-09-30)
 describe.skipIf(!envFlag)('agent instruction — CLI real (OpenCode)', () => {
   it(
     'espera prontidão real da TUI, submete a instrução e recebe ack sem Enter manual',
@@ -110,7 +111,7 @@ describe.skipIf(!envFlag)('agent instruction — CLI real (OpenCode)', () => {
           }
         })
         const readyStarted = Date.now()
-        const ready = await readiness.waitReady(terminalId, { since: spawnAt, timeoutMs: 30_000 })
+        const ready = await readiness.waitReady(terminalId, { since: spawnAt + REAL_TUI_BOOT_CALM_MS, timeoutMs: 30_000 })
         expect(ready.timedOut, 'TUI do OpenCode não ficou pronta a tempo').toBe(false)
         expect(Date.now() - readyStarted).toBeGreaterThanOrEqual(0)
 
@@ -269,7 +270,7 @@ describe.skipIf(!envFlag)('agent instruction — CLI real (OpenCode)', () => {
             if (index >= 0) listeners.splice(index, 1)
           }
         })
-        const ready = await readiness.waitReady(terminalId, { since: spawnAt, timeoutMs: 30_000 })
+        const ready = await readiness.waitReady(terminalId, { since: spawnAt + REAL_TUI_BOOT_CALM_MS, timeoutMs: 30_000 })
         expect(ready.timedOut, 'TUI do OpenCode não ficou pronta a tempo').toBe(false)
 
         // Evidência observada (2026-09-29): a TUI do OpenCode anuncia ESC[?2004h

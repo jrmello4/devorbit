@@ -67,6 +67,7 @@ async function tryRequireNodePty(): Promise<typeof import('node-pty') | null> {
   }
 }
 
+const REAL_TUI_BOOT_CALM_MS = 8_500 // TUI do OpenCode carrega plugins por ~8s; instruções antes disso são engolidas silenciosamente (evidência: diagnóstico PTY 2026-09-30)
 describe.skipIf(process.env.DEVORBIT_REAL_CLI !== '1')('agent instruction — CLI real, prompt ~60k (I4)', () => {
   it(
     'prompt de ~60 mil caracteres chega inteiro: a instrução final (cauda) é executada e responde DEVORBIT_OK',
@@ -149,7 +150,7 @@ describe.skipIf(process.env.DEVORBIT_REAL_CLI !== '1')('agent instruction — CL
         // 1) Prontidão por turno ancorada no spawn (mesmo contrato do teste
         // original: readiness cobre o boot da TUI, não o silêncio do cmd).
         const readiness = createTerminalReadiness(subscribeBus as never)
-        const ready = await readiness.waitReady(terminalId, { since: spawnAt, timeoutMs: 30_000 })
+        const ready = await readiness.waitReady(terminalId, { since: spawnAt + REAL_TUI_BOOT_CALM_MS, timeoutMs: 30_000 })
         expect(ready.timedOut, 'TUI do OpenCode não ficou pronta a tempo').toBe(false)
 
         // 2) Instrução real via a abstração central: paste grande fatiado +
