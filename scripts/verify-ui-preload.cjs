@@ -194,6 +194,27 @@ const syncResult = (message = 'Fixture operation completed') => ({
 let _aiMemoryEnabled = false
 let _aiMemoryMigrated = false
 
+// --- Emulação do contrato de submissão (devorbit:submitAgentInstruction) ----
+// O main real (src/main/agent-instruction.ts + terminal-readiness.ts) só
+// escreve a instrução depois da prontidão da TUI (silêncio de 1,2s após a
+// última saída; teto de 12s falha SEM escrever) e aguarda ack (qualquer saída
+// após 150ms de settle; sem ack reenvia APENAS o Enter uma vez). A fixture
+// reproduz esse contrato sobre os MESMOS eventos emitidos por
+// emitTerminalEvent — a atividade que destrava prontidão/ack vem do pump do
+// harness (verify-ui.cjs), que injeta frames neutros nos terminais de agente.
+const SUBMIT_QUIET_MS = 1_200
+const SUBMIT_TIMEOUT_MS = 12_000
+const SUBMIT_SETTLE_MS = 150
+const SUBMIT_ACK_TIMEOUT_MS = 3_000
+const SUBMIT_MAX_ATTEMPTS = 2
+
+// Última saída por terminal (eventos 'data'): âncora da prontidão fake.
+const lastOutputAt = new Map()
+
+const noteOutput = (event) => {
+  if (event && typeof event.id === 'string' && event.type === 'data') lastOutputAt.set(event.id, Date.now())
+}
+
 const api = {
   getProjects: async () => {
     record('getProjects')
@@ -372,6 +393,7 @@ const api = {
       // Race real do backend: o marcador chega pelo evento PTY ANTES desta
       // Promise resolver. O renderer precisa entregar o resultado mesmo assim.
       const payload = { id: terminalId, type: 'data', data: `\r\nDEVORBIT_RESULT: ${result}\r\n` }
+      noteOutput(payload)
       for (const listener of terminalListeners) listener(copy(payload))
     }
     return {
@@ -382,6 +404,86 @@ const api = {
       result,
       blocked: null,
       attempts: [{ provider, ok: true }],
+    }
+  },
+  submitAgentInstruction: async (terminalId, payload) => {
+    record('submitAgentInstruction', terminalId, payload)
+    const id = String(terminalId)
+    const content = payload && typeof payload.content === 'string' ? payload.content : ''
+    const subscribe = (listener) => {
+      terminalListeners.add(listener)
+      return () => terminalListeners.delete(listener)
+    }
+    // Prontidão: silêncio desde a última saída (ou desde agora, sem saída
+    // registrada, espera a PRIMEIRA saída) por SUBMIT_QUIET_MS; teto de
+    // SUBMIT_TIMEOUT_MS reporta timedOut e o turno falha SEM escrever.
+    const waitReady = () => new Promise((resolve) => {
+      let settled = false
+      let quietTimer = null
+      const finish = (timedOut) => {
+        if (settled) return
+        settled = true
+        if (quietTimer) clearTimeout(quietTimer)
+        clearTimeout(overallTimer)
+        unsubscribe()
+        resolve({ timedOut })
+      }
+      const unsubscribe = subscribe((event) => {
+        if (event.id !== id || event.type !== 'data') return
+        if (quietTimer) clearTimeout(quietTimer)
+        quietTimer = setTimeout(() => finish(false), SUBMIT_QUIET_MS)
+      })
+      const overallTimer = setTimeout(() => finish(true), SUBMIT_TIMEOUT_MS)
+      const last = lastOutputAt.get(id)
+      if (last !== undefined) {
+        const remaining = last + SUBMIT_QUIET_MS - Date.now()
+        if (remaining <= 0) finish(false)
+        else quietTimer = setTimeout(() => finish(false), remaining)
+      }
+    })
+    // Ack: descarta a saída do settle (redraw do próprio Enter) e confirma com
+    // QUALQUER saída depois; sem ack reenvia APENAS o Enter (uma vez).
+    const waitAck = () => new Promise((resolve) => {
+      let settled = false
+      let ackTimer = null
+      let unsubscribeAck = () => undefined
+      const finish = (acked) => {
+        if (settled) return
+        settled = true
+        clearTimeout(settleTimer)
+        if (ackTimer) clearTimeout(ackTimer)
+        unsubscribeAck()
+        resolve(acked)
+      }
+      const settleTimer = setTimeout(() => {
+        unsubscribeAck = subscribe((event) => {
+          if (event.id === id && event.type === 'data') finish(true)
+        })
+        ackTimer = setTimeout(() => finish(false), SUBMIT_ACK_TIMEOUT_MS)
+      }, SUBMIT_SETTLE_MS)
+    })
+    const ready = await waitReady()
+    if (ready.timedOut) {
+      return { success: false, acked: false, attempts: 0, error: 'A interface do agente não ficou pronta; nada foi escrito no terminal.' }
+    }
+    for (let attempt = 1; attempt <= SUBMIT_MAX_ATTEMPTS; attempt += 1) {
+      // Contrato observável do harness: UMA escrita por envio (conteúdo +
+      // Enter combinados, como o sendAgentTurn registra) — as asserções do
+      // verify-ui contam writeTerminal por etapa. O retry (sem ack) registra
+      // apenas o Enter, espelhando agent-instruction.ts.
+      record('writeTerminal', id, attempt === 1 ? `${content}\r` : '\r')
+      if (writeTerminalFailure) {
+        return { success: false, acked: false, attempts: attempt, error: 'Fixture write failure', message: 'Fixture write failure' }
+      }
+      if (await waitAck()) {
+        return { success: true, acked: true, attempts: attempt, provider: 'codex', model: 'fixture-model', tier: 'fast' }
+      }
+    }
+    return {
+      success: false,
+      acked: false,
+      attempts: SUBMIT_MAX_ATTEMPTS,
+      error: `O terminal não confirmou o recebimento da tarefa após ${SUBMIT_MAX_ATTEMPTS} tentativa(s) de Enter.`,
     }
   },
   onTerminalEvent: (callback) => {
@@ -615,6 +717,7 @@ contextBridge.exposeInMainWorld('__devorbitVerifyFixture', {
     calls.length = 0
   },
   emitTerminalEvent: (event) => {
+    noteOutput(event)
     for (const listener of terminalListeners) listener(copy(event))
   },
   setWriteTerminalFailure: (value) => {

@@ -128,6 +128,70 @@ async function confirmCreationDialog(window, label) {
   await waitFor(window, `!document.querySelector('[role="dialog"] #agent-creation-dialog-title')`, `${label} diálogo fechado`)
 }
 
+// ---- Bomba de atividade da TUI fake (pumpAgentTerminalActivity) -------------
+// O app só submete a instrução depois da prontidão da TUI (qualquer saída +
+// 1,2s de quietude, teto de 12s) e confirma o submit com um ack (saída após o
+// settle de 150ms). Terminais fake do fixture nunca produzem saída sozinhos,
+// então os cenários que clicam [data-agent-send] precisam desta bomba: frames
+// `data` NEUTROS ("[devorbit-tui] frame N" — nunca DEVORBIT_RESULT/BLOQUEADO)
+// em TODOS os terminais de agente conhecidos (ids `agent-*` coletados das
+// calls startTerminal/startCodexTerminal/startAgentTerminal, com semente
+// extraIds para sobreviver ao resetCalls). Ciclo: 2 frames a cada 250ms +
+// 6 ticks (1,5s) de silêncio — o silêncio (>1,2s) resolve a prontidão e o
+// frame seguinte (≤2s depois do submit) confirma o ack sem retry de Enter.
+// `paused` mantém a bomba longe das injeções de resultado (emitResult), que
+// quebram linhas DEVORBIT_RESULT ao meio e não podem ser intercaladas.
+const TERMINAL_PUMP_INTERVAL_MS = 250
+const TERMINAL_PUMP_QUIET_TICKS = 6
+
+async function startAgentTerminalPump(window, extraIds = []) {
+  const started = await evaluate(window, `(function () {
+    if (window.__devorbitTerminalPump) return false
+    const known = new Set(${JSON.stringify(extraIds)})
+    let tick = 0
+    let frame = 0
+    const timer = setInterval(() => {
+      const pump = window.__devorbitTerminalPump
+      if (!pump) return
+      const phase = tick % ${2 + TERMINAL_PUMP_QUIET_TICKS}
+      tick += 1
+      if (phase >= 2 || pump.paused) return
+      frame += 1
+      try {
+        for (const call of window.__devorbitVerifyFixture.getCalls()) {
+          if (['startTerminal', 'startCodexTerminal', 'startAgentTerminal'].includes(call.name) && String(call.args[0]).startsWith('agent-')) {
+            known.add(String(call.args[0]))
+          }
+        }
+      } catch (_) { /* fixture indisponível: segue com os ids conhecidos */ }
+      for (const id of known) {
+        window.__devorbitVerifyFixture.emitTerminalEvent({ id, type: 'data', data: '[devorbit-tui] frame ' + frame })
+      }
+    }, ${TERMINAL_PUMP_INTERVAL_MS})
+    window.__devorbitTerminalPump = { timer, paused: false }
+    return true
+  })()`)
+  return Boolean(started)
+}
+
+async function stopAgentTerminalPump(window) {
+  const stopped = await evaluate(window, `(function () {
+    const pump = window.__devorbitTerminalPump
+    if (!pump) return false
+    clearInterval(pump.timer)
+    delete window.__devorbitTerminalPump
+    return true
+  })()`)
+  return Boolean(stopped)
+}
+
+async function setTerminalPumpPaused(window, paused) {
+  await evaluate(window, `(() => {
+    if (window.__devorbitTerminalPump) window.__devorbitTerminalPump.paused = ${paused ? 'true' : 'false'}
+    return true
+  })()`)
+}
+
 
 async function verifyCoordinatorOrchestration(window, viewport) {
   const taskContent = SQUAD_OBJECTIVE
@@ -160,6 +224,16 @@ async function verifyCoordinatorOrchestration(window, viewport) {
   assert(providerChanged, `${viewport.label}: não foi possível selecionar OpenCode no agente de Implementação`)
   recordPass(viewport.label, 'canvas detecta OpenCode e permite escolher o provedor por agente')
 
+  // Prontidão/ack da TUI fake: semente de ids ANTES do resetCalls (o histórico
+  // de start não volta após o reset e os terminais vivos não são re-registrados).
+  const pumpSeedIds = await evaluate(window, `(() => {
+    const ids = new Set()
+    for (const call of window.__devorbitVerifyFixture.getCalls()) {
+      if (['startTerminal', 'startCodexTerminal', 'startAgentTerminal'].includes(call.name) && String(call.args[0]).startsWith('agent-')) ids.add(String(call.args[0]))
+    }
+    return Array.from(ids)
+  })()`)
+  await startAgentTerminalPump(window, pumpSeedIds)
   await evaluate(window, `window.__devorbitVerifyFixture.resetCalls()`)
   const clickedCoordinator = await evaluate(window, `(() => {
     const card = Array.from(document.querySelectorAll('.workspace-canvas [data-canvas-card="agent"]'))
@@ -177,7 +251,7 @@ async function verifyCoordinatorOrchestration(window, viewport) {
     .find((call) => String(call.args[1]).includes('Você atua como Coordenador neste projeto') && String(call.args[1]).includes('primeira etapa automática')))()`, `${viewport.label} prompt de planejamento do Coordenador`)
   assert(String(planning.args[1]).includes(taskContent), `${viewport.label}: planejamento não recebeu a nota da tarefa`)
 
-  const emitResult = async (terminalId, result, label, fragmented = false) => {
+  const emitResultRaw = async (terminalId, result, label, fragmented = false) => {
     if (fragmented) {
       const splitAt = Math.max(1, Math.floor(result.length / 2))
       const firstEvent = JSON.stringify({ id: terminalId, type: 'data', data: `\r\nDEVORBIT_RESULT: ${result.slice(0, splitAt)}` })
@@ -203,6 +277,17 @@ async function verifyCoordinatorOrchestration(window, viewport) {
       return true
     })()`)
     assert(emitted, `${viewport.label}: não foi possível emitir ${label}`)
+  }
+  // A bomba fica pausada durante a injeção: um frame entre as duas metades de
+  // um DEVORBIT_RESULT fragmentado entraria na MESMA linha e corromperia o
+  // summary observado pelo próximo agente.
+  const emitResult = async (terminalId, result, label, fragmented = false) => {
+    await setTerminalPumpPaused(window, true)
+    try {
+      return await emitResultRaw(terminalId, result, label, fragmented)
+    } finally {
+      await setTerminalPumpPaused(window, false)
+    }
   }
 
   const planResult = 'plano coordenado aprovado'
@@ -322,6 +407,7 @@ async function verifyCoordinatorOrchestration(window, viewport) {
   recordPass(viewport.label, 'turno não-Codex entrega resultado emitido antes da resolução e avança a fila')
   await emitResult(raceAdvance.args[0], 'BLOQUEADO: encerrando teste de race', 'the race halt')
   await waitFor(window, `document.querySelector('.workspace-canvas-orchestration-status[data-orchestration-phase="blocked"]')`, `${viewport.label} race run halted`)
+  await stopAgentTerminalPump(window)
 }
 
 async function verifyManualAgentSend(window, viewport) {
