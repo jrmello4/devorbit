@@ -133,7 +133,15 @@ describe('validateDiagnosticRequest · aceita somente nomes canônicos', () => {
 })
 
 describe('resolveDiagnosticCommandPath · resolução confiável via PATH', () => {
-  it('devolve o caminho absoluto resolvido pelo lookup (where mockado)', async () => {
+  // A preferência por executável nativo (.exe/.cmd) e os caminhos fake são
+  // específicos do Windows (branch isWindows da implementação); no POSIX o
+  // lookup devolve o caminho tal qual.
+  const isWin = process.platform === 'win32'
+  const fakeGitPath = isWin
+    ? path.join('C:', 'Program Files', 'Git', 'cmd', 'git.exe')
+    : '/usr/bin/git'
+
+  it('devolve o caminho absoluto resolvido pelo lookup (where/which mockado)', async () => {
     const resolved = await resolveDiagnosticCommandPath('git', {
       lookup: async () => [fakeGitPath],
     })
@@ -141,7 +149,7 @@ describe('resolveDiagnosticCommandPath · resolução confiável via PATH', () =
     expect(path.isAbsolute(resolved)).toBe(true)
   })
 
-  it('prefere um executável nativo (.exe/.cmd) quando o where devolve shims primeiro', async () => {
+  it.skipIf(!isWin)('prefere um executável nativo (.exe/.cmd) quando o where devolve shims primeiro', async () => {
     const resolved = await resolveDiagnosticCommandPath('git', {
       // Simula a saída de `where npm`: shim sem extensão (inexistente) antes do .exe real.
       lookup: async () => ['C:\\tools\\missing\\git', fakeGitPath],

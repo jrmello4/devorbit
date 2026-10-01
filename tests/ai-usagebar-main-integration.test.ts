@@ -338,11 +338,15 @@ describe('ai-usagebar main integration & composition', () => {
     // No network download was attempted during startup registration or initial snapshot
     expect(downloadMock).not.toHaveBeenCalled()
 
-    // Refresh fails open with error state instead of throwing unhandled exception
+    // Refresh fails open with error state instead of throwing unhandled exception.
+    // Em não-Windows o serviço declara 'unavailable' ANTES (binário pinado é
+    // Windows x64-only) — o fail-open é o mesmo, só muda o estado declarado.
     const refreshHandler = ipcHandlers.get(AI_USAGEBAR_IPC_CHANNELS.refresh)
     const refreshResult = (await refreshHandler!({})) as { ok: boolean; data: AiUsagebarSnapshot }
     expect(refreshResult.ok).toBe(true)
-    expect(refreshResult.data.state).toBe('error')
+    expect(refreshResult.data.state).toBe(
+      process.platform === 'win32' ? 'error' : 'unavailable',
+    )
   })
 
   it('supports generic vendor toggle and keeps detect explicit-only', async () => {

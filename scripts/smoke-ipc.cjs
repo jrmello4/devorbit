@@ -86,6 +86,7 @@ const EXPECTED_METHODS = [
   'stopTerminal',
   'pipeTerminals',
   'sendAgentTurn',
+  'submitAgentInstruction',
   'onTerminalEvent',
   'onCompanionEvent',
   'onAgentBridgeEvent',
