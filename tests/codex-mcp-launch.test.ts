@@ -243,13 +243,13 @@ describe('prepareDevOrbitCodexLaunch', () => {
     electronRuntime.appPath = 'C:\\DevOrbit\\app'
     electronRuntime.packaged = false
     const development = prepareDevOrbitCodexLaunch({ terminalId: 'codex-dev', runtime: { executablePath: runtime.executablePath } })
-    expect(development.mcp.args[0]).toBe('C:\\DevOrbit\\app\\scripts\\devorbit-mcp.cjs')
+    expect(development.mcp.args[0].replaceAll('/', '\\')).toBe('C:\\DevOrbit\\app\\scripts\\devorbit-mcp.cjs')
 
     electronRuntime.packaged = true
     const packaged = prepareDevOrbitCodexLaunch({
       terminalId: 'codex-packaged',
       runtime: { executablePath: runtime.executablePath, resourcesPath: 'C:\\DevOrbit\\resources' },
     })
-    expect(packaged.mcp.args[0]).toBe('C:\\DevOrbit\\resources\\scripts\\devorbit-mcp.cjs')
+    expect(packaged.mcp.args[0].replaceAll('/', '\\')).toBe('C:\\DevOrbit\\resources\\scripts\\devorbit-mcp.cjs')
   })
 })
