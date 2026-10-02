@@ -87,6 +87,7 @@ export interface ProjectFileContent {
 }
 
 export interface CodexTerminalStartResult {
+  bridgeHealth?: import('./codex-bridge-health').CodexBridgeHealth
   success: boolean
   id?: string
   pid?: number
@@ -190,6 +191,7 @@ export interface DevOrbitAPI {
     account: 'account1' | 'account2',
     cols?: number,
     rows?: number,
+    baseArgs?: string[],
   ) => Promise<CodexTerminalStartResult>
   startAgentTerminal: (
     id: string,
@@ -219,6 +221,8 @@ export interface DevOrbitAPI {
   onTerminalEvent: (callback: (event: TerminalEvent) => void) => () => void
   onCompanionEvent: (callback: (summary: CompanionSummary) => void) => () => void
   onAgentBridgeEvent: (callback: (event: AgentBridgeEvent) => void) => () => void
+  getCodexBridgeHealth: (terminalId: string) => Promise<import('./codex-bridge-health').CodexBridgeHealth | undefined>
+  onCodexBridgeHealth: (callback: (health: import('./codex-bridge-health').CodexBridgeHealth) => void) => () => void
   onHitlEvent: (callback: (request: HitlRequestView) => void) => () => void
   navigateWeb: (url: string) => Promise<{ success: boolean; url?: string; message?: string }>
   getWebState: () => Promise<WebPanelEvent>

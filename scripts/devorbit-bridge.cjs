@@ -118,7 +118,7 @@ function serializeRequest(request) {
   return `${json}\n`
 }
 
-function callBridge(pipeName, token, sessionId, request) {
+function callBridge(pipeName, token, sessionId, request, timeoutMs) {
   return new Promise((resolve, reject) => {
     const socket = net.createConnection(pipeName)
     let pending = Buffer.alloc(0)
@@ -129,8 +129,19 @@ function callBridge(pipeName, token, sessionId, request) {
       socket.destroy()
       reject(error)
     }
-    socket.setTimeout(request.timeoutMs ? request.timeoutMs + 1000 : 30000, () => fail(new Error('Bridge request timed out.')))
-    socket.on('error', () => fail(new Error('Could not connect to the DevOrbit bridge.')))
+    const boundedTimeout = Number.isSafeInteger(timeoutMs) && timeoutMs > 0
+      ? timeoutMs
+      : (request.timeoutMs ? request.timeoutMs + 1000 : 30000)
+    socket.setTimeout(boundedTimeout, () => {
+      const error = new Error('DevOrbit bridge request timed out.')
+      error.code = 'BRIDGE_UNREACHABLE'
+      fail(error)
+    })
+    socket.on('error', () => {
+      const error = new Error('Could not connect to the DevOrbit bridge.')
+      error.code = 'BRIDGE_UNREACHABLE'
+      fail(error)
+    })
     socket.on('data', (chunk) => {
       if (settled) return
       pending = Buffer.concat([pending, chunk])
@@ -144,7 +155,9 @@ function callBridge(pipeName, token, sessionId, request) {
         socket.end()
         resolve(response)
       } catch {
-        fail(new Error('Bridge returned an invalid response.'))
+        const error = new Error('Bridge returned an invalid response.')
+        error.code = 'BRIDGE_UNREACHABLE'
+        fail(error)
       }
     })
     socket.on('connect', () => {
@@ -162,7 +175,9 @@ function printResponse(response, json) {
     const message = response && response.error && typeof response.error.message === 'string'
       ? response.error.message
       : 'Bridge request failed.'
-    throw new Error(message)
+    const error = new Error(message)
+    if (response && response.error && typeof response.error.code === 'string') error.code = response.error.code
+    throw error
   }
   if (json) {
     process.stdout.write(`${JSON.stringify(response.result)}\n`)

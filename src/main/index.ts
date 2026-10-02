@@ -18,6 +18,8 @@ import { sendAgentInstruction } from './agent-instruction'
 import { scanUsageAdapters, resolveUsageSourceDirs } from './usage-adapters'
 import { createClaudeQuotaPoller, defaultClaudeCredentialsPath } from './claude-usage-quota'
 import { createBridgeService, type BridgeCycleOutcome } from './bridge-service'
+import { CodexBridgeHealthStore } from './codex-bridge-health'
+import { CODEX_BRIDGE_MESSAGES, type CodexBridgeErrorCode } from '../shared/codex-bridge-health'
 import { createHeadlessTurnRunner, drainHeadlessFinalizers, drainHeadlessRuns } from './bridge-headless'
 import { getAgentProviderHealth, resolveAgentProviderWithFallback, resolveProviderInstructionHints } from './agent-providers'
 import { loadAiMemoryConfig, loadConfig, setAiMemoryProjectEnabled } from './config'
@@ -145,6 +147,12 @@ function sendAgentBridgeEvent(event: AgentBridgeEvent): void {
   window.webContents.send('devorbit:agentBridgeEvent', event)
 }
 
+const codexBridgeHealth = new CodexBridgeHealthStore((health) => {
+  const window = mainWindow
+  if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return
+  window.webContents.send('devorbit:codexBridgeHealth', health)
+})
+
 function sanitizeHitlRequest(request: HitlRequest): HitlRequest {
   const prompt = request.prompt
     .replace(/Bearer\s+[A-Za-z0-9._-]+/giu, 'Bearer [REDACTED]')
@@ -191,7 +199,16 @@ const waitTurnResult = createResultWaiter(onTerminalEvent)
 // waitReady REPORTA COMO resolveu ({ timedOut }): o consumidor decide — timeout
 // NÃO autoriza escrita (Bridge, turnos e instruções usam a mesma regra).
 const terminalReadiness = createTerminalReadiness(onTerminalEvent)
-onTerminalStart((id) => terminalReadiness.invalidate(id))
+onTerminalStart((id) => {
+  terminalReadiness.invalidate(id)
+  // Correlação de geração: só o start do launch gerenciado recém-configurado
+  // preserva a saúde (expectativa armada por configure/connecting); start
+  // genérico reutilizando o id encerra o estado antigo — saída velha
+  // flushada no restart nunca pertence à nova saúde.
+  if (codexBridgeHealth.consumeManagedStart(id)) return
+  const health = codexBridgeHealth.get(id)
+  if (health && health.state !== 'stopped') codexBridgeHealth.stop(id)
+})
 const waitTerminalReady = terminalReadiness.waitReady
 const hitlManager = new HITLManager({ onChange: sendHitlEvent })
 const observabilityLedger = new AuditLedger(path.join(app.getPath('userData'), 'observability.jsonl'))
@@ -471,35 +488,55 @@ async function drainBridgeOutcomeWrites(timeoutMs = AI_MEMORY_SHUTDOWN_DRAIN_TIM
 }
 
 const bridgeService = createBridgeService({
+  onMcpHandshake: (handshake) => {
+    const accepted = codexBridgeHealth.handshake(handshake)
+    if (accepted) {
+      codexBridgeHealth.registryChanged(bridgeService.listAgents().filter((agent) => agent.status === 'active').length)
+    }
+    return accepted
+  },
+  onRegistryChanged: () => codexBridgeHealth.registryChanged(bridgeService.listAgents().filter((agent) => agent.status === 'active').length),
   cliDirectory: app.isPackaged ? process.resourcesPath : (process.env.APP_ROOT || path.resolve(__dirname, '../..')),
   hasTerminal,
   waitTurnResult,
   // O Bridge usa a MESMA submissão do Canvas: prontidão real (timeout não
   // escreve), conteúdo verbatim + UM Enter, ack e retry apenas do Enter.
-  sendInstruction: (input) => sendAgentInstruction(
-    {
-      hasTerminal,
-      waitReady: terminalReadiness.waitReady,
-      write: writeTerminal,
-      subscribe: onTerminalEvent,
-      isBracketedPasteEnabled: terminalPasteMode.isBracketedPasteEnabled,
-      now: () => Date.now(),
-    },
-    {
-      terminalId: input.terminalId,
-      turnId: input.turnId,
-      content: input.content,
-      // Provider é só para logs de orquestração; sem sessão conhecida, 'unknown'.
-      provider: input.provider ?? 'unknown',
-      // Hints do provider da sessão quando conhecido ('unknown'/desconhecido
-      // → undefined: heurística default de ack + detecção dinâmica de paste).
-      hints: resolveProviderInstructionHints(input.provider),
-      ...(input.since !== undefined ? { since: input.since } : {}),
-      // context.signal da requisição do Bridge (send/ask) flui até o
-      // sendAgentInstruction: abort para escritas/retries e devolve cancelled.
-      ...(input.signal !== undefined ? { signal: input.signal } : {}),
-    },
-  ),
+  sendInstruction: async (input) => {
+    // Gate da automação: um terminal Codex gerenciado só recebe instrução
+    // após handshake MCP + registry real (agents_available). Entrada stopped
+    // (stop manual ou reuso genérico) não é mais uma sessão gerenciada e não
+    // gateia; terminais sem entrada de saúde (demais providers / harness BYOK
+    // legado) seguem sem este gate. A espera é bounded e a falha usa só
+    // códigos fixos — nunca token, pipe ou saída crua do CLI.
+    const health = codexBridgeHealth.get(input.terminalId)
+    if (health && health.state !== 'stopped') {
+      await codexBridgeHealth.waitReady(input.terminalId)
+    }
+    return sendAgentInstruction(
+      {
+        hasTerminal,
+        waitReady: terminalReadiness.waitReady,
+        write: writeTerminal,
+        subscribe: onTerminalEvent,
+        isBracketedPasteEnabled: terminalPasteMode.isBracketedPasteEnabled,
+        now: () => Date.now(),
+      },
+      {
+        terminalId: input.terminalId,
+        turnId: input.turnId,
+        content: input.content,
+        // Provider é só para logs de orquestração; sem sessão conhecida, 'unknown'.
+        provider: input.provider ?? 'unknown',
+        // Hints do provider da sessão quando conhecido ('unknown'/desconhecido
+        // → undefined: heurística default de ack + detecção dinâmica de paste).
+        hints: resolveProviderInstructionHints(input.provider),
+        ...(input.since !== undefined ? { since: input.since } : {}),
+        // context.signal da requisição do Bridge (send/ask) flui até o
+        // sendAgentInstruction: abort para escritas/retries e devolve cancelled.
+        ...(input.signal !== undefined ? { signal: input.signal } : {}),
+      },
+    )
+  },
   onEvent: sendAgentBridgeEvent,
   onReflection: rememberBridgeReflection,
   onOutcome: (outcome) => {
@@ -532,6 +569,28 @@ const bridgeService = createBridgeService({
 })
 const agentBridgeRuntime = bridgeService.runtime
 bridgeEnv = () => agentBridgeRuntime.env()
+
+onTerminalEvent((event) => {
+  if (event.type === 'exit' || event.type === 'error') {
+    const health = codexBridgeHealth.get(event.id)
+    if (health) {
+      if (health.state === 'configuring' || health.state === 'connecting') {
+        // Sessão gerenciada morreu antes do handshake: startup failure real.
+        codexBridgeHealth.fail(event.id, 'MCP_STARTUP_FAILED')
+      } else if (health.state === 'connected' || health.state === 'agents_available') {
+        // Sessão confirmada que terminou é fim normal de ciclo, não startup failure.
+        codexBridgeHealth.stop(event.id)
+      }
+    }
+    bridgeService.unregisterAgent(event.id)
+  } else if (event.type === 'data' && codexBridgeHealth.get(event.id)?.state === 'connecting') {
+    // Only recognize our fixed error identifiers; raw CLI output never enters health/UI.
+    const code = Object.keys(CODEX_BRIDGE_MESSAGES).find((candidate) =>
+      candidate !== 'NO_AGENTS_REGISTERED' && event.data?.includes(candidate),
+    ) as CodexBridgeErrorCode | undefined
+    if (code) codexBridgeHealth.fail(event.id, code)
+  }
+})
 
 // Continuidade multi-provedor: estado/eleição no main; o renderer despacha.
 const providerReadiness = new Map<AgentProviderId, boolean>()
@@ -803,7 +862,16 @@ if (isSmokeRun) {
     // Configuração local rápida; não aguarda download/saúde do sidecar para abrir a UI.
     await initializeAiMemoryService()
     setupIpcHandlers()
-    agentBridgeRuntime.start()
+    // O pipe precisa estar listening antes da UI e de qualquer agente nascer:
+    // o handshake MCP do Codex não pode correr contra o bind da Bridge.
+    try {
+      await agentBridgeRuntime.ready()
+    } catch (error) {
+      console.warn(
+        '[DevOrbit] Agent Bridge não pôde abrir o pipe antes da UI:',
+        (error as NodeJS.ErrnoException | undefined)?.code || 'erro desconhecido',
+      )
+    }
     // Depois do bridge e da janela: o sidecar não atrasa o primeiro paint.
     void bootstrapAiMemory()
     createWindow()
@@ -840,6 +908,7 @@ app.on('before-quit', (event) => {
       providerReadinessTimer = null
     }
     agentBridgeRuntime.stop()
+    codexBridgeHealth.dispose()
 
     // Rejeita novos starts antes de encerrar os PTYs; cada stop inicia a
     // finalização ai-memory correspondente enquanto o sidecar ainda está vivo.
@@ -965,11 +1034,17 @@ function setupIpcHandlers() {
   })
 
   registerTerminalIpc(registerIpcHandler, {
+    codexBridgeHealth,
     getTerminalLifecycleGeneration: () => terminalLifecycleGeneration,
     assertTerminalLifecycle,
     bridgeEnv: () => agentBridgeRuntime.env(),
     registerBridgeAgent: (id, agent) => bridgeService.registerAgent(id, agent),
-    cancelBridgeTarget: (id) => bridgeService.cancelTarget(id),
+    cancelBridgeTarget: (id) => {
+      bridgeService.cancelTarget(id)
+      // Stop manual pelo IPC: o agente sai do registry e o health store
+      // reflete o novo total (onRegistryChanged já dispara o emit).
+      bridgeService.unregisterAgent(id)
+    },
     turnSessions,
     waitTurnResult,
     waitTerminalReady,

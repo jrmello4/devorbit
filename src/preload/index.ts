@@ -14,6 +14,7 @@ import type {
 import type { IpcEventChannel, IpcInvokeChannel, IpcSendChannel } from '../shared/ipc-channels'
 import type { DevOrbitAPI } from '../shared/devorbit-api'
 import type { AgentBridgeEvent } from '../shared/agent-bridge-event'
+import type { CodexBridgeHealth } from '../shared/codex-bridge-health'
 import type { DiagnosticProcessRequest, DiagnosticProcessResult } from '../shared/diagnostic-process'
 import type { TelemetrySpanView } from '../shared/telemetry-contract'
 import type { UsageShareState } from '../shared/usage-contract'
@@ -42,6 +43,8 @@ const send = (channel: IpcSendChannel, ...args: unknown[]): void => {
 }
 
 const api: DevOrbitAPI = {
+  getCodexBridgeHealth: (id) => invoke('devorbit:getCodexBridgeHealth', id),
+  onCodexBridgeHealth: (callback) => subscribe<CodexBridgeHealth>('devorbit:codexBridgeHealth', callback),
   getProjects: () => invoke('devorbit:getProjects'),
   refreshProjects: () => invoke('devorbit:refreshProjects'),
   getOtherDirs: () => invoke('devorbit:getOtherDirs'),
@@ -94,8 +97,10 @@ const api: DevOrbitAPI = {
       : cols === undefined && rows === undefined
         ? invoke('devorbit:startTerminal', id, projectPath)
         : invoke('devorbit:startTerminal', id, projectPath, cols, rows),
-  startCodexTerminal: (id, projectPath, account, cols, rows) =>
-    invoke('devorbit:startCodexTerminal', id, projectPath, account, cols, rows),
+  startCodexTerminal: (id, projectPath, account, cols, rows, baseArgs) =>
+    baseArgs === undefined
+      ? invoke('devorbit:startCodexTerminal', id, projectPath, account, cols, rows)
+      : invoke('devorbit:startCodexTerminal', id, projectPath, account, cols, rows, baseArgs),
   startAgentTerminal: (id, projectPath, provider, cols, rows, task) =>
     task === undefined
       ? invoke('devorbit:startAgentTerminal', id, projectPath, provider, cols, rows)

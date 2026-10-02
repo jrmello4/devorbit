@@ -9,10 +9,13 @@ export const MAX_AGENT_BRIDGE_DEPTH = 8
 export const MAX_AGENT_BRIDGE_VISITED = 32
 export const MAX_AGENT_BRIDGE_ALLOWLIST = 64
 export const MAX_AGENT_BRIDGE_RUN_OPTION_CHARS = 200
+export const MAX_AGENT_BRIDGE_TERMINAL_ID_CHARS = 128
+export const MAX_AGENT_BRIDGE_LAUNCH_ID_CHARS = 128
+export const MAX_AGENT_BRIDGE_PID = 2_147_483_647
 export const DEFAULT_AGENT_BRIDGE_TIMEOUT_MS = 5 * 60 * 1000
 export const MAX_AGENT_BRIDGE_TIMEOUT_MS = 60 * 60 * 1000
 
-type AgentBridgeRequestType = 'list' | 'send' | 'wait' | 'ask' | 'run'
+type AgentBridgeRequestType = 'ping' | 'mcp-handshake' | 'list' | 'send' | 'wait' | 'ask' | 'run'
 
 export interface AgentBridgeRequestBase {
   type: AgentBridgeRequestType
@@ -27,6 +30,17 @@ export interface AgentBridgeRequestBase {
 
 export interface AgentBridgeListRequest extends AgentBridgeRequestBase {
   type: 'list'
+}
+
+export interface AgentBridgePingRequest extends AgentBridgeRequestBase {
+  type: 'ping'
+}
+
+export interface AgentBridgeMcpHandshakeRequest extends AgentBridgeRequestBase {
+  type: 'mcp-handshake'
+  terminalId: string
+  launchId: string
+  pid: number
 }
 
 export interface AgentBridgeSendRequest extends AgentBridgeRequestBase {
@@ -65,6 +79,8 @@ export interface AgentBridgeRunRequest extends AgentBridgeRequestBase {
 }
 
 export type AgentBridgeRequest =
+  | AgentBridgePingRequest
+  | AgentBridgeMcpHandshakeRequest
   | AgentBridgeListRequest
   | AgentBridgeSendRequest
   | AgentBridgeWaitRequest
@@ -108,6 +124,7 @@ export type AgentBridgeHandler<T extends AgentBridgeRequest = AgentBridgeRequest
 ) => unknown | Promise<unknown>
 
 export interface AgentBridgeHandlers {
+  mcpHandshake?: AgentBridgeHandler<AgentBridgeMcpHandshakeRequest>
   list?: AgentBridgeHandler<AgentBridgeListRequest>
   send?: AgentBridgeHandler<AgentBridgeSendRequest>
   wait?: AgentBridgeHandler<AgentBridgeWaitRequest>
@@ -170,6 +187,30 @@ export function validatePrompt(value: unknown): string {
     return protocolError('INVALID_PROMPT', 'Prompt contains unsupported characters.')
   }
   return value
+}
+
+function validateHandshakeIdentifier(value: unknown, field: string, maxChars: number): string {
+  if (typeof value !== 'string') return protocolError('INVALID_REQUEST', `Invalid ${field}.`)
+  const normalized = value.trim()
+  if (normalized.length === 0 || normalized.length > maxChars || hasControlCharacters(normalized)) {
+    return protocolError('INVALID_REQUEST', `Invalid ${field}.`)
+  }
+  return normalized
+}
+
+export function validateTerminalId(value: unknown): string {
+  return validateHandshakeIdentifier(value, 'terminalId', MAX_AGENT_BRIDGE_TERMINAL_ID_CHARS)
+}
+
+export function validateLaunchId(value: unknown): string {
+  return validateHandshakeIdentifier(value, 'launchId', MAX_AGENT_BRIDGE_LAUNCH_ID_CHARS)
+}
+
+export function validateBridgePid(value: unknown): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1 || (value as number) > MAX_AGENT_BRIDGE_PID) {
+    return protocolError('INVALID_REQUEST', 'Invalid pid.')
+  }
+  return value as number
 }
 
 function validateRunOption(value: unknown, field: string): string {
@@ -312,7 +353,7 @@ export function validateAgentBridgeRequest(value: unknown): AgentBridgeRequest {
   if (!isRecord(value)) return protocolError('INVALID_REQUEST', 'Request must be a JSON object.')
 
   const type = value.type
-  if (type !== 'list' && type !== 'send' && type !== 'wait' && type !== 'ask' && type !== 'run') {
+  if (type !== 'ping' && type !== 'mcp-handshake' && type !== 'list' && type !== 'send' && type !== 'wait' && type !== 'ask' && type !== 'run') {
     return protocolError('INVALID_REQUEST', 'Unknown request type.')
   }
 
@@ -324,6 +365,21 @@ export function validateAgentBridgeRequest(value: unknown): AgentBridgeRequest {
   const visited = validateVisited(value.visited)
   const originField = origin === undefined ? {} : { origin }
 
+  if (type === 'ping') return { type, token, sessionId, id, depth, visited, ...originField }
+  if (type === 'mcp-handshake') {
+    return {
+      type,
+      token,
+      sessionId,
+      id,
+      depth,
+      visited,
+      terminalId: validateTerminalId(value.terminalId),
+      launchId: validateLaunchId(value.launchId),
+      pid: validateBridgePid(value.pid),
+      ...originField,
+    }
+  }
   if (type === 'list') return { type, token, sessionId, id, depth, visited, ...originField }
 
   const guard = validateDelegationGuard(value.target, depth, visited)
@@ -422,10 +478,15 @@ async function dispatchRequest(
   handlers: AgentBridgeHandlers,
   signal: AbortSignal,
 ): Promise<AgentBridgeSuccessResponse | AgentBridgeErrorResponse> {
-  const handler = handlers[request.type] as AgentBridgeHandler | undefined
+  if (request.type === 'ping') {
+    return { ok: true, ...(request.id === undefined ? {} : { id: request.id }), result: { connected: true } }
+  }
+  const handler = request.type === 'mcp-handshake'
+    ? handlers.mcpHandshake
+    : handlers[request.type] as AgentBridgeHandler | undefined
   if (!handler) return responseError('NOT_IMPLEMENTED', 'This bridge operation is unavailable.', request.id)
   try {
-    const result = await handler(request, { signal })
+    const result = await handler(request as never, { signal })
     return { ok: true, ...(request.id === undefined ? {} : { id: request.id }), result }
   } catch {
     return responseError('HANDLER_ERROR', 'The bridge operation failed.', request.id)
@@ -454,8 +515,12 @@ function handleSocket(socket: Socket, options: AgentBridgeServerOptions): void {
       closeInvalid(error instanceof AgentBridgeProtocolError ? error : new AgentBridgeProtocolError('INVALID_REQUEST', 'Invalid request.'))
       return
     }
-    if (!credentialsMatch(request.token, options.token) || !credentialsMatch(request.sessionId, options.sessionId)) {
-      closeInvalid(new AgentBridgeProtocolError('UNAUTHORIZED', 'Bridge authentication failed.'), request.id)
+    if (!credentialsMatch(request.token, options.token)) {
+      closeInvalid(new AgentBridgeProtocolError('BRIDGE_AUTH_REJECTED', 'Bridge authentication failed.'), request.id)
+      return
+    }
+    if (!credentialsMatch(request.sessionId, options.sessionId)) {
+      closeInvalid(new AgentBridgeProtocolError('BRIDGE_SESSION_MISMATCH', 'Bridge session mismatch.'), request.id)
       return
     }
     queue = queue.then(async () => {

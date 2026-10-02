@@ -6,6 +6,7 @@ const crypto = require('node:crypto')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
+const net = require('node:net')
 
 const projectRoot = path.resolve(__dirname, '..')
 const releaseDir = path.join(projectRoot, 'release')
@@ -232,11 +233,12 @@ const BRIDGE_RESOURCE_FILES = [
   path.join('ai-usagebar', 'ATTRIBUTION-ai-usagebar.txt'),
 ]
 
-function runLauncherProbe(command, args, input, timeoutMs = 30_000, windowsVerbatimArguments = false) {
+function runLauncherProbe(command, args, input, timeoutMs = 30_000, windowsVerbatimArguments = false, env = process.env) {
   return new Promise((resolve) => {
     const child = spawn(command, args, {
       windowsHide: true,
       windowsVerbatimArguments,
+      env,
       stdio: ['pipe', 'pipe', 'pipe'],
     })
     let stdout = ''
@@ -306,22 +308,46 @@ async function verifyBridgeResources() {
     }
   }
   const initialize = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} })
-  const direct = await runLauncherProbe(process.execPath, [mcpCjs], initialize)
-  if (direct.timedOut || direct.code !== 0 || !direct.stdout.includes('DevOrbit MCP')) {
-    return { label, ok: false, detail: `mcp.cjs empacotado nao respondeu initialize (${direct.timedOut ? 'timeout' : direct.code})` }
+  const pipeName = `\\\\.\\pipe\\devorbit-package-mcp-${process.pid}-${crypto.randomBytes(8).toString('hex')}`
+  const token = crypto.randomBytes(32).toString('hex')
+  const sessionId = crypto.randomBytes(12).toString('hex')
+  const bridge = net.createServer((socket) => {
+    let pending = ''
+    socket.on('error', () => undefined)
+    socket.on('data', (chunk) => {
+      pending += chunk.toString()
+      const newline = pending.indexOf('\n')
+      if (newline < 0) return
+      try {
+        const request = JSON.parse(pending.slice(0, newline))
+        const ok = request.token === token && request.sessionId === sessionId
+        socket.end(JSON.stringify(ok
+          ? { ok: true, result: request.type === 'list' ? [] : { connected: true } }
+          : { ok: false, error: { code: 'BRIDGE_AUTH_REJECTED', message: 'Authentication rejected.' } }) + '\n')
+      } catch { socket.destroy() }
+    })
+  })
+  await new Promise((resolve, reject) => { bridge.once('error', reject); bridge.listen(pipeName, resolve) })
+  const runtimeEnv = { ...process.env, ELECTRON_RUN_AS_NODE: '1', DEVORBIT_BRIDGE_PIPE: pipeName, DEVORBIT_BRIDGE_TOKEN: token, DEVORBIT_SESSION_ID: sessionId }
+  const runtimeExe = path.join(releaseDir, 'win-unpacked', 'DevOrbit.exe')
+  try {
+    if (!fs.existsSync(runtimeExe) || !fs.statSync(runtimeExe).isFile()) {
+      return { label, ok: false, detail: `executavel empacotado ausente: ${runtimeExe}` }
+    }
+    // Exercise the bundled runtime used by managed launches, without a Node PATH dependency.
+    const direct = await runLauncherProbe(runtimeExe, [mcpCjs], initialize, 30_000, false, runtimeEnv)
+    const response = JSON.parse(direct.stdout.trim().split('\n')[0] || '{}')
+    if (direct.timedOut || response.result?.serverInfo?.name !== 'DevOrbit MCP') {
+      return { label, ok: false, detail: 'Electron empacotado nao inicializou o MCP com Bridge autenticada' }
+    }
+    const missingEnv = { ...runtimeEnv }
+    delete missingEnv.DEVORBIT_BRIDGE_TOKEN
+    const missing = await runLauncherProbe(runtimeExe, [mcpCjs], initialize, 30_000, false, missingEnv)
+    if (!missing.stdout.includes('BRIDGE_ENV_MISSING')) return { label, ok: false, detail: 'MCP aceitou initialize sem ambiente completo' }
+    return { label, ok: true, detail: 'Recursos fora do ASAR; Electron empacotado executa MCP, autentica Bridge e rejeita ambiente incompleto' }
+  } finally {
+    await new Promise((resolve) => bridge.close(resolve))
   }
-  const mcpCmd = path.join(resourcesDir, 'devorbit-mcp.cmd')
-  const launcher = await runLauncherProbe(
-    process.env.ComSpec || 'cmd.exe',
-    ['/d', '/s', '/c', `"${mcpCmd}"`],
-    initialize,
-    30_000,
-    true
-  )
-  if (launcher.timedOut || launcher.code !== 0 || !launcher.stdout.includes('DevOrbit MCP')) {
-    return { label, ok: false, detail: `launcher fisico devorbit-mcp.cmd nao respondeu initialize (${launcher.timedOut ? 'timeout' : launcher.code})` }
-  }
-  return { label, ok: true, detail: '7 arquivos fora do ASAR (bridge + sidecar); initialize OK via mcp.cjs e devorbit-mcp.cmd' }
 }
 
 function runProcess(exePath, args, timeoutMs) {

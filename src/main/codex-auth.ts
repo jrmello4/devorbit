@@ -18,6 +18,7 @@ import {
   resolveBrowserPath,
   type AccountId,
 } from './account-profiles'
+import { scrubBridgeEnvironment } from './env-scrub'
 
 export interface CodexAccountStatus {
   account1: { connected: boolean; label: string; path: string; browserOk: boolean; browserPath: string }
@@ -204,7 +205,9 @@ export async function startCodexDeviceLogin(
 
   const invocation = getCodexLoginInvocation(codexCmd)
   const child = spawn(invocation.command, invocation.args, {
-    env: { ...process.env, ...getCodexAccountEnvironment(account) },
+    // O processo de login nunca herda credenciais temporárias da Bridge nem o
+    // fuse ELECTRON_RUN_AS_NODE; CODEX_HOME da conta sobrevive ao scrub.
+    env: scrubBridgeEnvironment({ ...process.env, ...getCodexAccountEnvironment(account) }),
     windowsHide: true,
     windowsVerbatimArguments: invocation.windowsVerbatimArguments,
   })

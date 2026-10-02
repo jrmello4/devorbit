@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import type { Server } from 'node:net'
 import {
   createAgentBridgeServer,
+  type AgentBridgeMcpHandshakeRequest,
   type AgentBridgeHandlers,
 } from './agent-bridge'
 import {
@@ -16,6 +17,13 @@ export interface AgentBridgeRuntimeOptions {
   handlers: AgentBridgeHandlers
   cliDirectory: string
   onEvent?: (event: AgentBridgeEvent) => void
+  onMcpHandshake?: (input: {
+    terminalId: string
+    launchId: string
+    pid: number
+    sessionId: string
+    connectedAt: number
+  }) => boolean | void
 }
 
 export interface AgentBridgeRuntime {
@@ -24,6 +32,7 @@ export interface AgentBridgeRuntime {
   readonly sessionId: string
   env: () => NodeJS.ProcessEnv
   start: () => Server
+  ready: () => Promise<Server>
   stop: () => void
 }
 
@@ -34,6 +43,7 @@ export function createAgentBridgeRuntime(options: AgentBridgeRuntimeOptions): Ag
     ? `\\\\.\\pipe\\devorbit-${process.pid}-${sessionId}`
     : `/tmp/devorbit-${process.pid}-${sessionId}.sock`
   let server: Server | undefined
+  let readyPromise: Promise<Server> | undefined
   let requestSequence = 0
 
   const emitEvent = (event: AgentBridgeEvent): void => {
@@ -121,6 +131,35 @@ export function createAgentBridgeRuntime(options: AgentBridgeRuntimeOptions): Ag
   }
 
   const handlers: AgentBridgeHandlers = { ...options.handlers }
+  handlers.mcpHandshake = async (request: AgentBridgeMcpHandshakeRequest, context) => {
+    // A handshake is accepted only after the same authenticated bridge path
+    // proves that the registry handler is reachable. An empty registry is a
+    // valid state and must not block the session handshake.
+    const list = options.handlers.list
+    if (list) {
+      await list({
+        type: 'list',
+        token: request.token,
+        sessionId: request.sessionId,
+        ...(request.id === undefined ? {} : { id: request.id }),
+        ...(request.origin === undefined ? {} : { origin: request.origin }),
+        depth: request.depth,
+        visited: request.visited,
+      }, context)
+    }
+    const connectedAt = Date.now()
+    const accepted = options.onMcpHandshake?.({
+      terminalId: request.terminalId,
+      launchId: request.launchId,
+      pid: request.pid,
+      sessionId,
+      connectedAt,
+    })
+    if (accepted === false) {
+      throw new Error('The managed MCP launch handshake was rejected.')
+    }
+    return { connected: true, terminalId: request.terminalId, launchId: request.launchId, pid: request.pid }
+  }
   for (const type of ['send', 'wait', 'ask', 'run'] as const) {
     const handler = options.handlers[type]
     if (!handler) continue
@@ -186,12 +225,44 @@ export function createAgentBridgeRuntime(options: AgentBridgeRuntimeOptions): Ag
     start: () => {
       if (server) return server
       server = createAgentBridgeServer({ pipeName, token, sessionId, handlers })
+      readyPromise = new Promise<Server>((resolve, reject) => {
+        const current = server as Server
+        if (current.listening) {
+          resolve(current)
+          return
+        }
+        current.once('listening', () => resolve(current))
+        current.once('error', reject)
+      })
+      // The Electron bootstrap historically starts the bridge without
+      // awaiting it. Attach a rejection observer so an early bind failure is
+      // surfaced through ready() without becoming an unhandled rejection.
+      void readyPromise.catch(() => undefined)
       return server
+    },
+    ready: () => {
+      const current = server ?? (() => {
+        const started = createAgentBridgeServer({ pipeName, token, sessionId, handlers })
+        server = started
+        readyPromise = new Promise<Server>((resolve, reject) => {
+          if (started.listening) {
+            resolve(started)
+            return
+          }
+          started.once('listening', () => resolve(started))
+          started.once('error', reject)
+        })
+        void readyPromise.catch(() => undefined)
+        return started
+      })()
+      if (current.listening) return Promise.resolve(current)
+      return readyPromise as Promise<Server>
     },
     stop: () => {
       if (!server) return
       server.close()
       server = undefined
+      readyPromise = undefined
     },
   }
 }

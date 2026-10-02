@@ -5,6 +5,7 @@ import { createBridgeService, type BridgeInstructionInput, type BridgeServiceDep
 import { sendAgentInstruction } from '../src/main/agent-instruction'
 import { createTerminalReadiness } from '../src/main/terminal-readiness'
 import type { TerminalEvent } from '../src/main/terminal-session'
+import { AGENT_RESULT_PROTOCOL_INSTRUCTION } from '../src/shared/agent-result'
 
 interface BridgeResponse {
   ok: boolean
@@ -138,9 +139,11 @@ describe('bridge instruction path — send/ask via sendInstruction (sendAgentIns
       expect(instructions[0]).toMatchObject({
         terminalId: 'agent-1',
         turnId: 'bridge_agent-1_1',
-        content: 'faça algo',
         provider: 'opencode',
       })
+      // Contrato DEVORBIT_RESULT instruído; a tarefa permanece íntegra.
+      expect(instructions[0].content.startsWith(AGENT_RESULT_PROTOCOL_INSTRUCTION)).toBe(true)
+      expect(instructions[0].content.endsWith('faça algo')).toBe(true)
       expect(typeof instructions[0].since).toBe('number')
     } finally {
       socket.destroy()
@@ -199,7 +202,9 @@ describe('bridge instruction path — send/ask via sendInstruction (sendAgentIns
       })
       // Prontidão por silêncio desde a âncora (~100ms), depois conteúdo + Enter.
       await expect.poll(() => stack.writes.length, { timeout: 5_000 }).toBe(2)
-      expect(stack.writes).toEqual(['faça algo', '\r'])
+      expect(stack.writes[1]).toBe('\r')
+      expect(stack.writes[0].startsWith(AGENT_RESULT_PROTOCOL_INSTRUCTION)).toBe(true)
+      expect(stack.writes[0].endsWith('faça algo')).toBe(true)
       // O eco/redraw da TUI confirma o ack (emitido após o settle de 20ms);
       // o waiter (fake) já devolve o resultado.
       await new Promise((resolve) => setTimeout(resolve, 30))
@@ -230,7 +235,10 @@ describe('bridge instruction path — send/ask via sendInstruction (sendAgentIns
       // Sem eco na 1ª tentativa: após o timeout de ack (200ms) o retry envia
       // somente o Enter — reenviar o conteúdo duplicaria a tarefa.
       await expect.poll(() => stack.writes.length, { timeout: 5_000 }).toBe(3)
-      expect(stack.writes).toEqual(['faça algo', '\r', '\r'])
+      expect(stack.writes[1]).toBe('\r')
+      expect(stack.writes[2]).toBe('\r')
+      expect(stack.writes[0].startsWith(AGENT_RESULT_PROTOCOL_INSTRUCTION)).toBe(true)
+      expect(stack.writes[0].endsWith('faça algo')).toBe(true)
       // Ack chega na 2ª tentativa (após o settle de eco).
       await new Promise((resolve) => setTimeout(resolve, 30))
       stack.emit({ id: 'agent-1', type: 'data', data: '> ' })
@@ -270,7 +278,9 @@ describe('bridge instruction path — send/ask via sendInstruction (sendAgentIns
       // Agora pronta (silêncio): conteúdo + Enter escritos; o eco (após o
       // settle) confirma o ack.
       await expect.poll(() => stack.writes.length, { timeout: 5_000 }).toBe(2)
-      expect(stack.writes).toEqual(['segunda', '\r'])
+      expect(stack.writes[1]).toBe('\r')
+      expect(stack.writes[0].startsWith(AGENT_RESULT_PROTOCOL_INSTRUCTION)).toBe(true)
+      expect(stack.writes[0].endsWith('segunda')).toBe(true)
       await new Promise((resolve) => setTimeout(resolve, 30))
       stack.emit({ id: 'agent-1', type: 'data', data: 'segunda\r\n> ' })
       const second = await secondPromise
@@ -397,7 +407,9 @@ describe('bridge instruction path — send/ask via sendInstruction (sendAgentIns
       socket.destroy()
       // Passado o ack timeout (200ms): NENHUM retry_submit — writes ficam em 2.
       await new Promise((resolve) => setTimeout(resolve, 300))
-      expect(stack.writes).toEqual(['primeira', '\r'])
+      expect(stack.writes[1]).toBe('\r')
+      expect(stack.writes[0].startsWith(AGENT_RESULT_PROTOCOL_INSTRUCTION)).toBe(true)
+      expect(stack.writes[0].endsWith('primeira')).toBe(true)
       // Fase `cancelled` (não `failed`/`retry_submit`) nos logs da instrução abortada.
       expect(logs.some((args) => args.includes('cancelled'))).toBe(true)
       // Ciclo cancelado: waiter descartado, release tardio ignorado, NADA
@@ -418,7 +430,9 @@ describe('bridge instruction path — send/ask via sendInstruction (sendAgentIns
           prompt: 'segunda',
         })
         await expect.poll(() => stack.writes.length, { timeout: 5_000 }).toBe(4)
-        expect(stack.writes.slice(2)).toEqual(['segunda', '\r'])
+        expect(stack.writes[3]).toBe('\r')
+        expect(stack.writes[2].startsWith(AGENT_RESULT_PROTOCOL_INSTRUCTION)).toBe(true)
+        expect(stack.writes[2].endsWith('segunda')).toBe(true)
         await new Promise((resolve) => setTimeout(resolve, 30))
         stack.emit({ id: 'agent-1', type: 'data', data: 'segunda\r\n> ' })
         const second = await secondPromise

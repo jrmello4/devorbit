@@ -10,6 +10,9 @@
     "node_modules/@koromix/koffi-win32-x64/**/*"
   ],
   "electronUpdaterCompatibility": ">=2.16",
+  "electronFuses": {
+    "runAsNode": true
+  },
   "publish": {
     "provider": "github",
     "owner": "jrmello4",

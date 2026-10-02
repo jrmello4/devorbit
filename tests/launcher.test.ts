@@ -246,6 +246,101 @@ describe('launchTool', () => {
     expect(spawnMock).not.toHaveBeenCalled()
   })
 
+  it('remove o ambiente do Bridge ao abrir o Codex Desktop externo', async () => {
+    const codexPath = path.join(temporaryUserData, 'codex.exe')
+    await fs.writeFile(codexPath, 'fixture')
+    await fs.writeFile(
+      path.join(temporaryUserData, 'config.json'),
+      JSON.stringify({ customPaths: { codex: codexPath } })
+    )
+    mockVisibleSpawn()
+    const previous = {
+      pipe: process.env.DEVORBIT_BRIDGE_PIPE,
+      token: process.env.DEVORBIT_BRIDGE_TOKEN,
+      session: process.env.DEVORBIT_SESSION_ID,
+      electronRunAsNode: process.env.ELECTRON_RUN_AS_NODE,
+    }
+    process.env.DEVORBIT_BRIDGE_PIPE = 'stale-pipe'
+    process.env.DEVORBIT_BRIDGE_TOKEN = 'stale-token'
+    process.env.DEVORBIT_SESSION_ID = 'stale-session'
+    process.env.ELECTRON_RUN_AS_NODE = '1'
+    try {
+      const result = await launchTool('codex-desktop', projectPath)
+
+      expect(result).toMatchObject({ success: true })
+      const options = spawnMock.mock.calls[0]?.[2] as { env?: Record<string, string> } | undefined
+      expect(options?.env).toEqual(expect.not.objectContaining({
+        DEVORBIT_BRIDGE_PIPE: expect.anything(),
+        DEVORBIT_BRIDGE_TOKEN: expect.anything(),
+        DEVORBIT_SESSION_ID: expect.anything(),
+        ELECTRON_RUN_AS_NODE: expect.anything(),
+      }))
+    } finally {
+      if (previous.pipe === undefined) delete process.env.DEVORBIT_BRIDGE_PIPE
+      else process.env.DEVORBIT_BRIDGE_PIPE = previous.pipe
+      if (previous.token === undefined) delete process.env.DEVORBIT_BRIDGE_TOKEN
+      else process.env.DEVORBIT_BRIDGE_TOKEN = previous.token
+      if (previous.session === undefined) delete process.env.DEVORBIT_SESSION_ID
+      else process.env.DEVORBIT_SESSION_ID = previous.session
+      if (previous.electronRunAsNode === undefined) delete process.env.ELECTRON_RUN_AS_NODE
+      else process.env.ELECTRON_RUN_AS_NODE = previous.electronRunAsNode
+    }
+  })
+
+  it('fallback do Explorer no Codex Desktop recebe o ambiente já higienizado', async () => {
+    const codexPath = path.join(temporaryUserData, 'codex.exe')
+    await fs.writeFile(codexPath, 'fixture')
+    await fs.writeFile(
+      path.join(temporaryUserData, 'config.json'),
+      JSON.stringify({ customPaths: { codex: codexPath } })
+    )
+    // Primeiro spawn (codex.exe) falha; o segundo (explorer.exe) sucede.
+    spawnMock
+      .mockImplementationOnce(() => {
+        const failing: { once: ReturnType<typeof vi.fn>; unref: ReturnType<typeof vi.fn> } = {
+          once: vi.fn((event: string, callback: () => void) => {
+            if (event === 'error') callback()
+            return failing
+          }),
+          unref: vi.fn(),
+        }
+        return failing
+      })
+      .mockImplementationOnce(() => {
+        const child: { once: ReturnType<typeof vi.fn>; unref: ReturnType<typeof vi.fn> } = {
+          once: vi.fn((event: string, callback: () => void) => {
+            if (event === 'spawn') callback()
+            return child
+          }),
+          unref: vi.fn(),
+        }
+        return child
+      })
+    const previous = {
+      token: process.env.DEVORBIT_BRIDGE_TOKEN,
+      electronRunAsNode: process.env.ELECTRON_RUN_AS_NODE,
+    }
+    process.env.DEVORBIT_BRIDGE_TOKEN = 'stale-token'
+    process.env.ELECTRON_RUN_AS_NODE = '1'
+    try {
+      const result = await launchTool('codex-desktop', projectPath)
+
+      expect(result).toMatchObject({ success: true })
+      expect(spawnMock).toHaveBeenCalledTimes(2)
+      expect(spawnMock.mock.calls[1]?.[0]).toBe('explorer.exe')
+      const options = spawnMock.mock.calls[1]?.[2] as { env?: Record<string, string> } | undefined
+      expect(options?.env).toEqual(expect.not.objectContaining({
+        DEVORBIT_BRIDGE_TOKEN: expect.anything(),
+        ELECTRON_RUN_AS_NODE: expect.anything(),
+      }))
+    } finally {
+      if (previous.token === undefined) delete process.env.DEVORBIT_BRIDGE_TOKEN
+      else process.env.DEVORBIT_BRIDGE_TOKEN = previous.token
+      if (previous.electronRunAsNode === undefined) delete process.env.ELECTRON_RUN_AS_NODE
+      else process.env.ELECTRON_RUN_AS_NODE = previous.electronRunAsNode
+    }
+  })
+
   it('ignora um caminho antigo do Brave quando encontra a instalação padrão atual', async () => {
     const previousProgramFiles = process.env.ProgramFiles
     const defaultBrowser = path.join(

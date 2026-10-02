@@ -23,7 +23,7 @@ interface McpMessage {
     structuredContent?: unknown
     content?: Array<{ type?: string; text?: string }>
   }
-  error?: { code?: number; message?: string }
+  error?: { code?: number; message?: string; data?: { code?: string } }
 }
 
 interface McpClient {
@@ -45,12 +45,12 @@ const mcpClients: McpClient[] = []
 const bridgeServers: Array<{ close: () => Promise<void> }> = []
 let pipeSequence = 0
 
-function startMcp(env: Record<string, string> = {}): McpClient {
+function startMcp(env: Record<string, string> = {}, args: string[] = []): McpClient {
   const childEnv: NodeJS.ProcessEnv = { ...process.env, ...env }
   for (const name of ['DEVORBIT_BRIDGE_PIPE', 'DEVORBIT_BRIDGE_TOKEN', 'DEVORBIT_SESSION_ID']) {
     if (!(name in env)) delete childEnv[name]
   }
-  const child: ChildProcess = spawn(process.execPath, [mcpScript], {
+  const child: ChildProcess = spawn(process.execPath, [mcpScript, ...args], {
     stdio: ['pipe', 'pipe', 'pipe'],
     env: childEnv,
     windowsHide: true,
@@ -132,6 +132,15 @@ function startMcp(env: Record<string, string> = {}): McpClient {
   return client
 }
 
+async function initializeMcp(mcp: McpClient, id = 1): Promise<McpMessage> {
+  return mcp.request({
+    jsonrpc: '2.0',
+    id,
+    method: 'initialize',
+    params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'conformance', version: '1.0.0' } },
+  })
+}
+
 async function startBridge(
   handlers: AgentBridgeHandlers,
   credentials: { token?: string; sessionId?: string } = {},
@@ -186,23 +195,30 @@ describe('devorbit-mcp conformance', () => {
   })
 
   it('answers initialize with protocol version, tools capability and server info', async () => {
-    const mcp = startMcp()
-    const response = await mcp.request({
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'initialize',
-      params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'conformance', version: '1.0.0' } },
-    })
+    const bridge = await startBridge({})
+    const mcp = startMcp(bridgeEnv(bridge))
+    const response = await initializeMcp(mcp)
 
     expect(response).toMatchObject({ jsonrpc: '2.0', id: 1 })
     expect(response.result?.protocolVersion).toBe('2025-06-18')
     expect(response.result?.capabilities?.tools?.listChanged).toBe(false)
     expect(response.result?.serverInfo?.name).toBe('DevOrbit MCP')
-    expect(response.result?.serverInfo?.version).toBeTruthy()
+    expect(response.result?.serverInfo?.version).toBe('1.0.47')
+  })
+
+  it('exposes a coherent preflight timeout below 10s and guaranteed version 1.0.47', () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { BRIDGE_PING_TIMEOUT_MS, getMcpVersion } = require('../scripts/devorbit-mcp.cjs')
+    expect(BRIDGE_PING_TIMEOUT_MS).toBe(8_000)
+    expect(BRIDGE_PING_TIMEOUT_MS).toBeLessThan(10_000)
+    expect(BRIDGE_PING_TIMEOUT_MS).toBeGreaterThanOrEqual(5_000)
+    expect(getMcpVersion()).toBe('1.0.47')
   })
 
   it('lists the four agent tools with their input schemas', async () => {
-    const mcp = startMcp()
+    const bridge = await startBridge({})
+    const mcp = startMcp(bridgeEnv(bridge))
+    await initializeMcp(mcp)
     const response = await mcp.request({ jsonrpc: '2.0', id: 2, method: 'tools/list' })
 
     expect(response.result?.tools?.map((tool) => tool.name)).toEqual([
@@ -221,7 +237,9 @@ describe('devorbit-mcp conformance', () => {
   })
 
   it('treats tools/list without an id as a notification and stays responsive', async () => {
-    const mcp = startMcp()
+    const bridge = await startBridge({})
+    const mcp = startMcp(bridgeEnv(bridge))
+    await initializeMcp(mcp)
     mcp.notify({ jsonrpc: '2.0', method: 'tools/list' })
     await mcp.expectSilence(300)
 
@@ -231,7 +249,9 @@ describe('devorbit-mcp conformance', () => {
   })
 
   it('answers malformed JSON with parse error -32700 and keeps the loop alive', async () => {
-    const mcp = startMcp()
+    const bridge = await startBridge({})
+    const mcp = startMcp(bridgeEnv(bridge))
+    await initializeMcp(mcp)
     const response = await mcp.sendRaw('{ isto nao e json')
 
     expect(response).toMatchObject({ jsonrpc: '2.0', id: null, error: { code: -32700 } })
@@ -258,6 +278,7 @@ describe('devorbit-mcp conformance', () => {
       },
     })
     const mcp = startMcp(bridgeEnv(bridge))
+    await initializeMcp(mcp)
 
     const response = await mcp.request({
       jsonrpc: '2.0',
@@ -281,6 +302,7 @@ describe('devorbit-mcp conformance', () => {
   it('returns text-only content for string results', async () => {
     const bridge = await startBridge({ send: async () => 'texto simples' })
     const mcp = startMcp(bridgeEnv(bridge))
+    await initializeMcp(mcp)
 
     const response = await mcp.request({
       jsonrpc: '2.0',
@@ -292,6 +314,31 @@ describe('devorbit-mcp conformance', () => {
     expect(response.result?.isError).toBeUndefined()
     expect(response.result?.content).toEqual([{ type: 'text', text: JSON.stringify('texto simples') }])
     expect(response.result?.structuredContent).toBeUndefined()
+  })
+
+  it('calls the authenticated agent.list tool after initialize', async () => {
+    const calls: AgentBridgeRequest[] = []
+    const bridge = await startBridge({
+      list: async (request) => {
+        calls.push(request)
+        return [{ id: 'agy', status: 'active' }]
+      },
+    })
+    const mcp = startMcp(bridgeEnv(bridge))
+    await initializeMcp(mcp)
+
+    const response = await mcp.request({
+      jsonrpc: '2.0',
+      id: 15,
+      method: 'tools/call',
+      params: { name: 'agent.list', arguments: {} },
+    })
+
+    expect(response.result?.isError).toBeUndefined()
+    expect(response.result?.content?.[0]?.text).toBe(JSON.stringify([{ id: 'agy', status: 'active' }]))
+    expect(response.result?.structuredContent).toBeUndefined()
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toMatchObject({ type: 'list', token: bridge.token, sessionId: bridge.sessionId })
   })
 
   it('maps agent.run options to the bridge run request and returns structured content', async () => {
@@ -309,6 +356,7 @@ describe('devorbit-mcp conformance', () => {
       },
     })
     const mcp = startMcp(bridgeEnv(bridge))
+    await initializeMcp(mcp)
 
     const response = await mcp.request({
       jsonrpc: '2.0',
@@ -349,6 +397,9 @@ describe('devorbit-mcp conformance', () => {
     )
     const mcp = startMcp(bridgeEnv(bridge, { DEVORBIT_BRIDGE_TOKEN: 'd'.repeat(64) }))
 
+    const initialize = await initializeMcp(mcp)
+    expect(initialize.error?.data).toMatchObject({ code: 'BRIDGE_AUTH_REJECTED' })
+
     const response = await mcp.request({
       jsonrpc: '2.0',
       id: 9,
@@ -357,11 +408,13 @@ describe('devorbit-mcp conformance', () => {
     })
 
     expect(response.result?.isError).toBe(true)
-    expect(response.result?.content?.[0]?.text).toContain('authentication failed')
+    expect(response.result?.content?.[0]?.text).toContain('initialize')
   })
 
-  it('reports a missing bridge environment without calling the pipe', async () => {
+  it('rejects initialize when the bridge environment is missing', async () => {
     const mcp = startMcp()
+    const initialize = await initializeMcp(mcp)
+    expect(initialize.error?.data).toMatchObject({ code: 'BRIDGE_ENV_MISSING' })
     const response = await mcp.request({
       jsonrpc: '2.0',
       id: 10,
@@ -370,7 +423,104 @@ describe('devorbit-mcp conformance', () => {
     })
 
     expect(response.result?.isError).toBe(true)
-    expect(response.result?.content?.[0]?.text).toContain('não configurado')
+    expect(response.result?.content?.[0]?.text).toContain('initialize')
+  })
+
+  it('distinguishes a rejected token from a mismatched session during initialize', async () => {
+    const bridge = await startBridge({}, { token: 'c'.repeat(64), sessionId: 's'.repeat(24) })
+
+    const wrongToken = startMcp(bridgeEnv(bridge, { DEVORBIT_BRIDGE_TOKEN: 'd'.repeat(64) }))
+    const auth = await initializeMcp(wrongToken)
+    expect(auth.error?.data).toMatchObject({ code: 'BRIDGE_AUTH_REJECTED' })
+    expect(auth.error?.message).not.toContain(bridge.token)
+    expect(JSON.stringify(auth)).not.toContain(bridge.pipeName)
+
+    const wrongSession = startMcp(bridgeEnv(bridge, { DEVORBIT_SESSION_ID: 't'.repeat(24) }))
+    const session = await initializeMcp(wrongSession)
+    expect(session.error?.data).toMatchObject({ code: 'BRIDGE_SESSION_MISMATCH' })
+    expect(session.error?.message).not.toContain(bridge.sessionId)
+    expect(JSON.stringify(session)).not.toContain(bridge.pipeName)
+  })
+
+  it('completes managed initialize only after the authenticated launch handshake', async () => {
+    const handshakes: AgentBridgeRequest[] = []
+    const bridge = await startBridge({
+      mcpHandshake: async (request) => {
+        handshakes.push(request)
+        return { connected: true }
+      },
+    })
+    const mcp = startMcp(bridgeEnv(bridge), ['--terminal-id', 'terminal-1', '--launch-id', 'launch-1'])
+    const initialized = await initializeMcp(mcp)
+    expect(initialized.result?.serverInfo?.name).toBe('DevOrbit MCP')
+    expect(handshakes).toHaveLength(1)
+    expect(handshakes[0]).toMatchObject({ type: 'mcp-handshake', terminalId: 'terminal-1', launchId: 'launch-1', pid: expect.any(Number) })
+    const listing = await mcp.request({ jsonrpc: '2.0', id: 17, method: 'tools/list' })
+    expect(listing.result?.tools?.length).toBe(5)
+
+    const standalone = startMcp(bridgeEnv(bridge))
+    await initializeMcp(standalone, 13)
+    standalone.notify({ jsonrpc: '2.0', method: 'notifications/initialized' })
+    await new Promise((resolve) => setTimeout(resolve, 250))
+    expect(handshakes).toHaveLength(1)
+  })
+
+  it('keeps managed tools gated when the launch handshake is rejected', async () => {
+    const bridge = await startBridge({})
+    const mcp = startMcp(bridgeEnv(bridge), ['--terminal-id', 'terminal-2', '--launch-id', 'launch-2'])
+    const initialize = await initializeMcp(mcp)
+    expect(initialize.error?.data).toMatchObject({ code: 'MCP_STARTUP_FAILED' })
+
+    const listing = await mcp.request({ jsonrpc: '2.0', id: 18, method: 'tools/list' })
+    expect(listing.error?.data).toMatchObject({ code: 'MCP_NOT_INITIALIZED' })
+  })
+
+  it('waits for a managed handshake before returning initialize', async () => {
+    let resolveHandshake!: (value: unknown) => void
+    const handshakeHold = new Promise((resolve) => {
+      resolveHandshake = resolve
+    })
+    const handshakes: AgentBridgeRequest[] = []
+    const bridge = await startBridge({
+      mcpHandshake: async (request) => {
+        handshakes.push(request)
+        await handshakeHold
+        return { connected: true }
+      },
+    })
+    const mcp = startMcp(bridgeEnv(bridge), ['--terminal-id', 'terminal-pipe', '--launch-id', 'launch-pipe'])
+    const responsePromise = initializeMcp(mcp, 20)
+
+    await expect.poll(() => handshakes.length, { timeout: 5_000 }).toBe(1)
+    expect(handshakes[0]).toMatchObject({ type: 'mcp-handshake', terminalId: 'terminal-pipe', launchId: 'launch-pipe' })
+
+    resolveHandshake({ connected: true })
+
+    const response = await responsePromise
+    expect(response.result?.serverInfo?.name).toBe('DevOrbit MCP')
+  })
+
+  it('returns a sanitized startup failure when the managed handshake fails', async () => {
+    let releaseHandshake!: () => void
+    const handshakeHold = new Promise<void>((resolve) => {
+      releaseHandshake = resolve
+    })
+    const handshakes: AgentBridgeRequest[] = []
+    const bridge = await startBridge({
+      mcpHandshake: async (request) => {
+        handshakes.push(request)
+        await handshakeHold
+        throw new Error('Handshake rejected')
+      },
+    })
+    const mcp = startMcp(bridgeEnv(bridge), ['--terminal-id', 'terminal-pipe-fail', '--launch-id', 'launch-pipe-fail'])
+    const responsePromise = initializeMcp(mcp, 21)
+    await expect.poll(() => handshakes.length, { timeout: 5_000 }).toBe(1)
+    releaseHandshake()
+
+    const response = await responsePromise
+    expect(response.error?.data).toMatchObject({ code: 'MCP_STARTUP_FAILED' })
+    expect(response.error?.message).toBe('MCP bridge initialization failed.')
   })
 
   it('defaults agent.wait timeout to the bridge default when the caller omits it', async () => {
@@ -382,6 +532,7 @@ describe('devorbit-mcp conformance', () => {
       },
     })
     const mcp = startMcp(bridgeEnv(bridge))
+    await initializeMcp(mcp)
 
     const withoutTimeout = await mcp.request({
       jsonrpc: '2.0',
@@ -416,6 +567,7 @@ describe('devorbit-mcp conformance', () => {
       },
     })
     const mcp = startMcp(bridgeEnv(bridge))
+    await initializeMcp(mcp)
 
     mcp.notify({
       jsonrpc: '2.0',

@@ -51,6 +51,8 @@ const PRODUCTION_WEB_PREFERENCES = {
 }
 
 const EXPECTED_METHODS = [
+  'getCodexBridgeHealth',
+  'onCodexBridgeHealth',
   'getProjects',
   'refreshProjects',
   'getOtherDirs',

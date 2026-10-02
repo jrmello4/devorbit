@@ -311,6 +311,10 @@ export function stopTerminal(id: string, options?: { keepPipes?: boolean }): voi
   void finalizeAiMemorySession({ terminalId: id })
   terminateProcessTree(record.terminal.pid, {
     onFailure: ({ pid, reason }) => {
+      // taskkill é assíncrono: a falha tardia pertence à árvore ANTIGA. Se o
+      // id já foi reutilizado por uma nova sessão, o evento não a atinge.
+      const current = sessions.get(id)
+      if (current && current.terminal !== record.terminal) return
       emit({ id, type: 'error', data: `Falha ao encerrar a árvore do processo ${pid}: ${reason}` })
     },
   })
@@ -343,6 +347,10 @@ export async function stopTerminalAsync(
 
   terminateProcessTree(record.terminal.pid, {
     onFailure: ({ pid, reason }) => {
+      // Mesma correlação do stopTerminal: falha tardia de uma árvore antiga
+      // nunca atinge uma nova geração com o mesmo id.
+      const current = sessions.get(id)
+      if (current && current.terminal !== record.terminal) return
       emit({ id, type: 'error', data: `Falha ao encerrar a árvore do processo ${pid}: ${reason}` })
     },
   })

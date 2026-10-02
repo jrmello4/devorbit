@@ -1,6 +1,7 @@
-import { createAgentBridgeRuntime, type AgentBridgeRuntime } from './agent-bridge-runtime'
+import { createAgentBridgeRuntime, type AgentBridgeRuntime, type AgentBridgeRuntimeOptions } from './agent-bridge-runtime'
 import { BridgeTaskCycles } from './bridge-task-cycles'
 import { buildDelegationAudit, evaluateDelegationGuard, type AgentBridgeRunRequest } from './agent-bridge'
+import { withAgentResultProtocol } from '../shared/agent-result'
 import type { HeadlessOutcome } from './bridge-headless'
 import type { ResultWaitPromise, TurnWaiter } from './agent-turn'
 import type { AgentProviderId } from '../shared/agent-provider-contract'
@@ -91,6 +92,8 @@ export interface BridgeInstructionResult {
 }
 
 export interface BridgeServiceDependencies {
+  onMcpHandshake?: AgentBridgeRuntimeOptions['onMcpHandshake']
+  onRegistryChanged?: () => void
   cliDirectory: string
   hasTerminal: (id: string) => boolean
   waitTurnResult: (id: string, timeouts: { idleMs: number; overallMs: number }) => ResultWaitPromise
@@ -147,7 +150,6 @@ export function createBridgeService(
   const agents = new Map<string, BridgeAgentRegistration>()
   const targetLocks = new Map<string, Promise<unknown>>()
   const cycles = new BridgeTaskCycles<ResultWaitPromise>()
-  console.error('[tmp-create] keys=', Object.keys(dependencies).join(','), '| hasTerminal=', typeof dependencies.hasTerminal)
   /** Sequência de ciclos one-shot `run` (taskId estável por chamada). */
   let runSequence = 0
 
@@ -324,6 +326,7 @@ export function createBridgeService(
 
   const runtime = createAgentBridgeRuntime({
     cliDirectory: dependencies.cliDirectory,
+    onMcpHandshake: dependencies.onMcpHandshake,
     onEvent: dependencies.onEvent,
     handlers: {
       list: async () => Array.from(agents.entries()).map(([id, agent]) => ({
@@ -334,7 +337,6 @@ export function createBridgeService(
         status: dependencies.hasTerminal(id) ? 'active' : 'stopped',
       })),
       send: async (request, context) => {
-        console.error('[tmp-send] typeof dependencies.hasTerminal =', typeof dependencies.hasTerminal)
         const id = resolveTarget(request.target)
         assertAllowed(id, request)
         const origin = originOf(request)
@@ -352,12 +354,16 @@ export function createBridgeService(
           // — timeout falha SEM escrever —, conteúdo verbatim + UM Enter, ack e
           // retry que re-envia apenas o Enter. Nunca escreve às cegas.
           const provider = agents.get(id)?.provider
+          // Contrato DEVORBIT_RESULT instruído automaticamente: o waiter do
+          // resultado só resolve no marcador; sem a instrução, projetos sem
+          // AGENTS/.codex respondem texto puro e o ciclo expira. A tarefa
+          // (request.prompt) permanece íntegra após a instrução.
           let instruction: Awaited<ReturnType<typeof dependencies.sendInstruction>>
           try {
             instruction = await dependencies.sendInstruction({
               terminalId: id,
               turnId,
-              content: request.prompt,
+              content: withAgentResultProtocol(request.prompt),
               ...(provider !== undefined ? { provider } : {}),
               since: Date.now(),
               // context.signal flui até sendAgentInstruction: abort para de
@@ -422,7 +428,7 @@ export function createBridgeService(
             instruction = await dependencies.sendInstruction({
               terminalId: id,
               turnId,
-              content: request.prompt,
+              content: withAgentResultProtocol(request.prompt),
               ...(provider !== undefined ? { provider } : {}),
               since: Date.now(),
               // context.signal flui até sendAgentInstruction (mesmo caminho do send).
@@ -485,9 +491,11 @@ export function createBridgeService(
     runtime,
     registerAgent: (id, agent) => {
       agents.set(id, agent)
+      dependencies.onRegistryChanged?.()
     },
     unregisterAgent: (id) => {
       agents.delete(id)
+      dependencies.onRegistryChanged?.()
     },
     cancelTarget: (id) => {
       cycles.cancelPending(id)

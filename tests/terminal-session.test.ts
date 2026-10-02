@@ -147,6 +147,27 @@ describe('terminal-session', () => {
     ])
   })
 
+  it('restart flusha dados pendentes da sessão antiga como eventos durante o start', async () => {
+    const first = createFakeTerminal(9101)
+    const second = createFakeTerminal(9102)
+    spawnMock.mockReturnValueOnce(first).mockReturnValueOnce(second)
+    const { onTerminalEvent, startTerminal } = await import('../src/main/terminal-session')
+    const events: Array<{ id: string; type: string; data?: string }> = []
+    const unsubscribe = onTerminalEvent((event) => events.push(event))
+    await startTerminal('flush-race', 'C:\\workspace')
+    // Primeiro chunk sai síncrono; o segundo bufferiza (janela de 16ms).
+    first.emitData('chunk-1')
+    first.emitData('stale-MCP_STARTUP_FAILED')
+    events.length = 0
+    // Restart síncrono: o flush da sessão antiga emite ANTES do novo spawn —
+    // vetor de risco que a correlação de geração (markConnecting após o spawn)
+    // mantém fora da janela 'connecting' da saúde nova.
+    await startTerminal('flush-race', 'C:\\workspace')
+    const flushed = events.filter((event) => event.type === 'data')
+    expect(flushed.some((event) => event.data?.includes('stale-MCP_STARTUP_FAILED'))).toBe(true)
+    unsubscribe()
+  })
+
   it('encerra todos os PTYs e ignora operaÃ§Ãµes posteriores', async () => {
     const first = createFakeTerminal(601)
     const second = createFakeTerminal(602)
@@ -291,6 +312,31 @@ describe('terminal-session', () => {
     expect(failure?.data).toContain('ENOENT')
     expect(failure?.data).not.toContain('super-secret-value')
     expect(failure?.data).not.toContain('token=')
+    unsubscribe()
+  })
+
+  it('falha tardia do taskkill nao atinge uma nova geracao com o mesmo id', async () => {
+    const first = createFakeTerminal(8101)
+    const second = createFakeTerminal(8102)
+    spawnMock.mockReturnValueOnce(first).mockReturnValueOnce(second)
+    const childA = createFakeChildProcess()
+    const childB = createFakeChildProcess()
+    childSpawnMock.mockReturnValueOnce(childA).mockReturnValueOnce(childB)
+    const { onTerminalEvent, startTerminal, stopTerminal } = await import('../src/main/terminal-session')
+
+    const events: Array<{ id: string; type: string; data?: string }> = []
+    const unsubscribe = onTerminalEvent((event) => events.push(event))
+    await startTerminal('gen-race', 'C:\\workspace')
+    stopTerminal('gen-race')
+    await startTerminal('gen-race', 'C:\\workspace')
+
+    childA.emitError(Object.assign(new Error('spawn EPERM'), { code: 'EPERM' }))
+    expect(events.filter((event) => event.type === 'error')).toEqual([])
+
+    // Sem nova geração, a falha tardia continua visível.
+    stopTerminal('gen-race')
+    childB.emitError(Object.assign(new Error('spawn EPERM'), { code: 'EPERM' }))
+    expect(events.filter((event) => event.type === 'error')).toHaveLength(1)
     unsubscribe()
   })
 

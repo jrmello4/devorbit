@@ -8,6 +8,7 @@ import type { CustomTerminalPreset, ResolvedTerminalLaunch, TerminalNodeRuntimeC
 import { resolveTerminalLaunch, resolveTerminalTheme } from '../../../shared/terminal-presets'
 import { createAgentResultScanner, createLegacyAgentResult, type AgentResult } from '../../../shared/agent-result'
 import { canReuseCodexSession } from '../../../shared/codex-session'
+import type { CodexBridgeHealth } from '../../../shared/codex-bridge-health'
 import {
   armAgentTaskResult,
   claimAgentTaskDelivery,
@@ -124,6 +125,20 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
   onAgentResultRef.current = onAgentResult
   onAgentTaskFailureRef.current = onAgentTaskFailure
   const [terminalState, setTerminalState] = useState<TerminalState>('starting')
+  const [bridgeHealth, setBridgeHealth] = useState<CodexBridgeHealth>()
+
+  useEffect(() => {
+    const api = window.devorbit
+    if (!api?.onCodexBridgeHealth) return
+    let active = true
+    const unsubscribe = api.onCodexBridgeHealth((health) => {
+      if (health.terminalId === terminalId) setBridgeHealth(health)
+    })
+    void api.getCodexBridgeHealth(terminalId).then((health) => {
+      if (active) setBridgeHealth((current) => current ?? health)
+    }).catch(() => undefined)
+    return () => { active = false; unsubscribe() }
+  }, [terminalId])
   const [terminalMode, setTerminalMode] = useState<TerminalMode>('shell')
   const [isStartingCodex, setIsStartingCodex] = useState(false)
   const [lastDetectedUrl, setLastDetectedUrl] = useState('')
@@ -275,7 +290,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
     }
   }, [projectPath, resetActivity, scheduleFitFrame, terminalId])
 
-  const startCodex = useCallback(async (accountOverride?: 'account1' | 'account2') => {
+  const startCodex = useCallback(async (accountOverride?: 'account1' | 'account2', baseArgs?: string[]) => {
     const account = accountOverride ?? codexAccount
     if (!account) {
       onNotifyRef.current('Configure a conta Codex deste agente para iniciar o Codex.', 'error')
@@ -300,6 +315,7 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
         account,
         terminalRef.current?.cols,
         terminalRef.current?.rows,
+        baseArgs,
       )
       if (!result.success) {
         readySignal.cancel()
@@ -312,6 +328,14 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
         if (result.message) onNotifyRef.current(result.message, result.needsAuth ? 'info' : 'error')
         if (result.needsAuth) onRequestCodexAuthRef.current?.(account)
         return result
+      }
+      if (result.bridgeHealth) {
+        const incoming = result.bridgeHealth
+        setBridgeHealth((current) =>
+          current && current.launchId === incoming.launchId && current.updatedAt >= incoming.updatedAt
+            ? current
+            : incoming,
+        )
       }
       await readySignal.promise
       if (startToken === terminalStartTokenRef.current) {
@@ -477,7 +501,14 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
       return null
     }
     if (resolved.kind === 'provider') {
-      if (resolved.providerId === 'codex') return startCodex()
+      if (resolved.providerId === 'codex') {
+        // Resume/reopen do Codex gerenciado: o par configurado no preset só
+        // entra no Reinício explícito com restartBehavior 'resume'.
+        const resumeBaseArgs = allowResume && resolved.restartBehavior === 'resume' && resolved.resumeArgs?.length
+          ? resolved.resumeArgs
+          : undefined
+        return startCodex(undefined, resumeBaseArgs)
+      }
       return startAgent(undefined, resolved.providerId)
     }
     return startCommand(resolved, allowResume)
@@ -889,11 +920,16 @@ export const WorkspaceTerminal: React.FC<WorkspaceTerminalProps> = ({
   const themeDefinition = resolveTerminalTheme(runtimeConfig?.theme)
   // Um indicador de status por superfície: ponto colorido + tooltip com o
   // texto de estado (a pill "● PRONTO" saiu no clean pass).
-  const statusClass = missingPreset ? 'missing' : terminalState
+  const codexCommunication = terminalMode === 'codex' || (terminalState === 'starting' && activeProviderRef.current === 'codex')
+  const statusClass = missingPreset ? 'missing' : codexCommunication
+    ? bridgeHealth?.state === 'failed' ? 'error'
+      : bridgeHealth?.state === 'agents_available' || bridgeHealth?.state === 'connected' ? terminalState : 'starting'
+    : terminalState
   const statusText = missingPreset
     ? 'Preset não encontrado'
+    : codexCommunication ? bridgeHealth?.message ?? 'Aguardando confirmação do MCP DevOrbit.'
     : terminalState === 'ready'
-      ? (terminalMode === 'codex' ? 'Codex ativo' : terminalMode === 'agent' ? providerLabels[provider] + ' ativo' : 'Pronto')
+      ? (terminalMode === 'agent' ? providerLabels[provider] + ' ativo' : 'Pronto')
       : terminalState === 'starting' ? 'Iniciando'
         : terminalState === 'error' ? 'Erro' : 'Encerrado'
   const statusDot = (

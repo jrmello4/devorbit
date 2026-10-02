@@ -22,10 +22,18 @@ import {
   type AccountId,
 } from './account-profiles'
 import { getAgentProviderHealth, resolveAgentProviderCommand } from './agent-providers'
+import { scrubBridgeEnvironment } from './env-scrub'
 
 const execFileAsync = promisify(execFile)
 
 const MAX_CONTEXT_CHARS = 8000
+
+function externalToolEnvironment(account?: 'account1' | 'account2'): NodeJS.ProcessEnv {
+  return scrubBridgeEnvironment({
+    ...process.env,
+    ...(account ? getCodexAccountEnvironment(account) : {}),
+  })
+}
 
 async function getLastCommitLine(projectPath: string): Promise<string> {
   try {
@@ -372,10 +380,11 @@ export async function launchTool(
     switch (tool) {
       case 'codex-desktop': {
         const codexCmd = await resolveCodexCommand(custom.codex)
+        const env = externalToolEnvironment()
         try {
-          await spawnDetached(codexCmd, ['app', projectPath])
+          await spawnDetached(codexCmd, ['app', projectPath], { env })
         } catch {
-          await spawnDetached('explorer.exe', ['shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App'])
+          await spawnDetached('explorer.exe', ['shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App'], { env })
         }
         return { success: true, message: 'OpenAI Codex Desktop aberto no projeto!' }
       }
@@ -422,13 +431,13 @@ export async function launchTool(
         }
         // A conta escolhida define o perfil: o PTY nasce com o CODEX_HOME da
         // conta, sem reaproveitar autenticação de outra sessão.
-        const env = { ...process.env, ...getCodexAccountEnvironment(account) }
+        const env = externalToolEnvironment(account)
         await openCmdSession(wtCmd, projectPath, codexCmd, env)
         return {
           success: true,
           account,
           fallback: false,
-          message: `Codex CLI iniciado no terminal (${accountLabel})!`,
+          message: `Codex CLI iniciado em uma sessão externa (${accountLabel}); esta sessão não tem Agent Bridge do DevOrbit.`,
         }
       }
 

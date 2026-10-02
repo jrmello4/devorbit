@@ -21,6 +21,7 @@ const openFixtures: Fixture[] = []
 function createFixture(
   handlers: AgentBridgeHandlers,
   onEvent?: (event: AgentBridgeEvent) => void,
+  onMcpHandshake?: (input: { terminalId: string; launchId: string; pid: number; sessionId: string; connectedAt: number }) => void,
 ): Fixture {
   const events: AgentBridgeEvent[] = []
   const sockets: net.Socket[] = []
@@ -33,6 +34,7 @@ function createFixture(
       events.push(event)
       onEvent?.(event)
     },
+    onMcpHandshake,
   })
 
   const fixture: Fixture = {
@@ -114,6 +116,7 @@ describe('createAgentBridgeRuntime', () => {
     const fixture = createFixture({ ask: async () => ({ status: 'completed' }) })
     const first = await fixture.start()
     expect(fixture.runtime.start()).toBe(first)
+    expect(await fixture.runtime.ready()).toBe(first)
 
     await fixture.close()
     expect(first.listening).toBe(false)
@@ -237,6 +240,69 @@ describe('createAgentBridgeRuntime', () => {
 
     expect(response).toMatchObject({ ok: false, error: { code: 'NOT_IMPLEMENTED' } })
     expect(fixture.events).toEqual([])
+  })
+
+  it('answers authenticated ping independently and handshakes after an authenticated registry preflight', async () => {
+    const listCalls: string[] = []
+    const handshakes: Array<{ terminalId: string; launchId: string; pid: number; sessionId: string; connectedAt: number }> = []
+    const fixture = createFixture({
+      list: async (request) => {
+        listCalls.push(request.type)
+        return []
+      },
+    }, undefined, (input) => {
+      handshakes.push(input)
+    })
+    await fixture.start()
+
+    const ping = await fixture.request({ type: 'ping', token: fixture.runtime.token, sessionId: fixture.runtime.sessionId })
+    expect(ping).toMatchObject({ ok: true, result: { connected: true } })
+
+    const handshake = await fixture.request({
+      type: 'mcp-handshake',
+      token: fixture.runtime.token,
+      sessionId: fixture.runtime.sessionId,
+      terminalId: 'terminal-1',
+      launchId: 'launch-1',
+      pid: 1234,
+    })
+    expect(handshake).toMatchObject({ ok: true, result: { connected: true, terminalId: 'terminal-1', launchId: 'launch-1', pid: 1234 } })
+    expect(listCalls).toEqual(['list'])
+    expect(handshakes).toHaveLength(1)
+    expect(handshakes[0]).toMatchObject({ terminalId: 'terminal-1', launchId: 'launch-1', pid: 1234, sessionId: fixture.runtime.sessionId })
+    expect(handshakes[0].connectedAt).toBeGreaterThan(0)
+  })
+
+  it('rejects a managed MCP handshake when the main process does not accept its launch identity', async () => {
+    const fixture = createFixture({ list: async () => [] }, undefined, () => false)
+    await fixture.start()
+
+    const response = await fixture.request({
+      type: 'mcp-handshake',
+      token: fixture.runtime.token,
+      sessionId: fixture.runtime.sessionId,
+      terminalId: 'terminal-stale',
+      launchId: 'launch-stale',
+      pid: 1234,
+    })
+
+    expect(response).toMatchObject({ ok: false, error: { code: 'HANDLER_ERROR' } })
+    expect(JSON.stringify(response)).not.toContain(fixture.runtime.token)
+    expect(JSON.stringify(response)).not.toContain(fixture.runtime.pipeName)
+  })
+
+  it('returns distinct sanitized authentication and session errors', async () => {
+    const fixture = createFixture({})
+    await fixture.start()
+
+    const rejected = await fixture.request({ type: 'ping', token: 'wrong-token', sessionId: fixture.runtime.sessionId })
+    expect(rejected).toMatchObject({ ok: false, error: { code: 'BRIDGE_AUTH_REJECTED' } })
+    expect(JSON.stringify(rejected)).not.toContain(fixture.runtime.token)
+    expect(JSON.stringify(rejected)).not.toContain(fixture.runtime.pipeName)
+
+    const mismatch = await fixture.request({ type: 'ping', token: fixture.runtime.token, sessionId: 'wrong-session' })
+    expect(mismatch).toMatchObject({ ok: false, error: { code: 'BRIDGE_SESSION_MISMATCH' } })
+    expect(JSON.stringify(mismatch)).not.toContain(fixture.runtime.sessionId)
   })
 
   it('keeps serving when the onEvent telemetry callback throws', async () => {

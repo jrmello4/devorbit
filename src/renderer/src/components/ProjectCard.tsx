@@ -759,7 +759,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                     Terminal,
                     'Codex ' + (projectAccount === 'account2' ? '#2' : '#1'),
                     'CLI · ' + activeAccountLabel,
-                    'Abrir Codex CLI no terminal conectado com ' + activeAccountLabel
+                    'Abrir Codex CLI externo com ' + activeAccountLabel + ' (fora da coordenação da Agent Bridge)'
                   )}
                   {renderToolButton(
                     'agy',

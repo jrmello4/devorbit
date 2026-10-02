@@ -99,6 +99,52 @@ describe('Codex login process lifecycle', () => {
     expect(progress).not.toContain('success')
   })
 
+  it('scrubs Bridge and ELECTRON_RUN_AS_NODE (case-insensitive) from the login spawn env, keeping CODEX_HOME', async () => {
+    const child = new FakeChild()
+    spawnMock.mockReturnValue(child)
+    execFileMock.mockImplementation((_command: string, _args: string[], _options: unknown, callback: (error: Error | null, result?: unknown) => void) => {
+      callback(null, { stdout: '', stderr: '' })
+    })
+    const previous = {
+      pipe: process.env.DEVORBIT_BRIDGE_PIPE,
+      token: process.env.DEVORBIT_BRIDGE_TOKEN,
+      session: process.env.DEVORBIT_SESSION_ID,
+      runAsNode: process.env.ELECTRON_RUN_AS_NODE,
+      runAsNodeLower: process.env.electron_run_as_node,
+    }
+    process.env.DEVORBIT_BRIDGE_PIPE = 'stale-pipe'
+    process.env.DEVORBIT_BRIDGE_TOKEN = 'stale-token'
+    process.env.DEVORBIT_SESSION_ID = 'stale-session'
+    process.env.ELECTRON_RUN_AS_NODE = '1'
+    process.env.electron_run_as_node = '1'
+    try {
+      const startup = startCodexDeviceLogin('account1', () => undefined)
+      await vi.waitFor(() => expect(spawnMock).toHaveBeenCalled())
+      child.emit('spawn')
+      await startup
+      const options = spawnMock.mock.calls[0]?.[2] as { env?: Record<string, string> }
+      expect(options.env).toEqual(expect.not.objectContaining({
+        DEVORBIT_BRIDGE_PIPE: expect.anything(),
+        DEVORBIT_BRIDGE_TOKEN: expect.anything(),
+        DEVORBIT_SESSION_ID: expect.anything(),
+        ELECTRON_RUN_AS_NODE: expect.anything(),
+        electron_run_as_node: expect.anything(),
+      }))
+      expect(options.env?.CODEX_HOME).toBe('C:/devorbit/account1')
+    } finally {
+      if (previous.pipe === undefined) delete process.env.DEVORBIT_BRIDGE_PIPE
+      else process.env.DEVORBIT_BRIDGE_PIPE = previous.pipe
+      if (previous.token === undefined) delete process.env.DEVORBIT_BRIDGE_TOKEN
+      else process.env.DEVORBIT_BRIDGE_TOKEN = previous.token
+      if (previous.session === undefined) delete process.env.DEVORBIT_SESSION_ID
+      else process.env.DEVORBIT_SESSION_ID = previous.session
+      if (previous.runAsNode === undefined) delete process.env.ELECTRON_RUN_AS_NODE
+      else process.env.ELECTRON_RUN_AS_NODE = previous.runAsNode
+      if (previous.runAsNodeLower === undefined) delete process.env.electron_run_as_node
+      else process.env.electron_run_as_node = previous.runAsNodeLower
+    }
+  })
+
   it('does not let an older login resume after a newer request starts', async () => {
     const firstChild = new FakeChild()
     const newestChild = new FakeChild()

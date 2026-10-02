@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { AgentProviderId } from '../shared/agent-provider-contract'
 import type { AppConfig } from '../shared/app-config'
 import type { TerminalEvent } from './terminal-session'
@@ -68,6 +69,12 @@ export async function spawnAgentProviderTerminal(
   },
   config: AppConfig
 ): Promise<{ started: SpawnAgentTerminal; provider: AgentProviderId; command: string }> {
+  if (input.candidate === 'codex') {
+    throw Object.assign(
+      new Error('O Codex usa o lançador gerenciado por conta; use startCodexTerminal.'),
+      { code: 'codex-managed-launch-required', provider: 'codex' },
+    )
+  }
   const resolved = await deps.resolveWithFallback(config, input.candidate)
   if (!resolved.path) throw new Error(resolved.message)
   if (resolved.provider !== input.candidate) {
@@ -91,6 +98,7 @@ export async function spawnAgentProviderTerminal(
   deps.assertLive()
 
   const effectiveCwd = input.cwd ?? process.cwd()
+  const launchReservationId = randomUUID()
 
   const launchPlan = await prepareAiMemoryLaunch({
     provider: resolved.provider,
@@ -99,7 +107,14 @@ export async function spawnAgentProviderTerminal(
     env: invocation.env,
     cwd: effectiveCwd,
     terminalId: input.id,
+    reservationId: launchReservationId,
   })
+  try {
+    deps.assertLive()
+  } catch (error) {
+    releaseAiMemoryReservation(input.id, launchReservationId)
+    throw error
+  }
 
   let started: SpawnAgentTerminal
   if (launchPlan.wrapped) {
@@ -112,20 +127,24 @@ export async function spawnAgentProviderTerminal(
         rows: input.rows,
         cwd: effectiveCwd,
       })
+      deps.assertLive()
       if (launchPlan.metadata) {
         if (deps.hasTerminal && !deps.hasTerminal(input.id)) {
-          rollbackAiMemoryLaunch(input.id)
+          rollbackAiMemoryLaunch(input.id, launchReservationId)
         } else {
           registerActiveAiMemorySession(launchPlan.metadata)
         }
       }
       return { started, provider: resolved.provider, command: resolved.path }
     } catch (error) {
-      rollbackAiMemoryLaunch(input.id)
+      rollbackAiMemoryLaunch(input.id, launchReservationId)
+      // A superseded attempt must never recover by spawning over the newer PTY.
+      deps.assertLive()
       console.warn('[DevOrbit] Falha ao iniciar agente com wrapper ai-memory; fallback direto:', error)
     }
   }
 
+  deps.assertLive()
   started = await deps.startTerminal(input.id, {
     command: invocation.command,
     args: invocation.args,
@@ -134,6 +153,7 @@ export async function spawnAgentProviderTerminal(
     rows: input.rows,
     cwd: effectiveCwd,
   })
+  deps.assertLive()
   return { started, provider: resolved.provider, command: resolved.path }
 }
 
@@ -307,6 +327,12 @@ export async function sendAgentTurn(
     signal?: AbortSignal
   }
 ): Promise<TurnOutcome> {
+  if (input.provider === 'codex') {
+    throw Object.assign(
+      new Error('O Codex usa o lançador gerenciado por conta; use startCodexTerminal.'),
+      { code: 'codex-managed-launch-required', provider: 'codex', attempts: [] },
+    )
+  }
   const prompt = input.prompt.slice(0, TURN_MAX_PROMPT_CHARS)
   if (!prompt.trim()) throw new Error('A tarefa está vazia.')
   const idleMs = input.timeouts?.idleMs ?? TURN_DEFAULT_IDLE_TIMEOUT_MS

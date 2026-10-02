@@ -2,6 +2,18 @@
 
 All notable changes to DevOrbit are documented here.
 
+## [1.0.47] - 2026-10-02
+
+### Added
+
+- Runtime-only Codex MCP Bridge setup with authenticated health reporting and agent availability status.
+- Codex terminal launch, resume, and instruction submission through managed IPC with environment scrubbing and account isolation.
+- Structured agent result and handoff parsing, with focused bridge verification coverage.
+
+### Fixed
+
+- MCP startup coordination, bridge readiness, PTY instruction delivery, and Codex authentication edge cases.
+
 ## [1.0.46] - 2026-09-30
 
 ### Added

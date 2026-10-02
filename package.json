@@ -1,6 +1,6 @@
 {
   "name": "devorbit",
-  "version": "1.0.46",
+  "version": "1.0.47",
   "description": "Developer Workspace Hub & AI Launcher",
   "author": "DevOrbit contributors",
   "main": "dist-electron/main/index.js",
@@ -26,6 +26,7 @@
     "verify:runtime": "electron scripts/verify-runtime.cjs",
     "smoke:ipc": "electron scripts/smoke-ipc.cjs",
     "smoke:package": "node scripts/smoke-package.cjs",
+    "verify:codex-bridge": "electron --in-process-gpu scripts/verify-codex-bridge.cjs",
     "verify:bridge": "vitest run tests/agent-bridge.test.ts tests/agent-bridge-event.test.ts tests/agent-bridge-runtime.test.ts tests/process-runner.test.ts tests/ripgrep-indexer.test.ts",
     "verify:bridge:e2e": "electron --in-process-gpu scripts/verify-bridge.cjs",
     "mcp": "node scripts/devorbit-mcp.cjs",

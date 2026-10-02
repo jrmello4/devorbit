@@ -128,6 +128,12 @@ Conta 1, que grava as credenciais no home isolado. Veja o passo a passo e o
 motivo de não copiar `auth.json` em
 [docs/codex-account-profiles.md](docs/codex-account-profiles.md).
 
+No terminal Codex gerenciado do canvas, o DevOrbit injeta o MCP da Agent
+Bridge por execução, em qualquer projeto. Não é necessário criar
+`.codex/config.toml`. A comunicação só fica disponível após um handshake
+autenticado com a sessão atual. O Codex CLI externo é uma sessão independente
+da coordenação. Veja [Agent Bridge](docs/agent-bridge.md).
+
 O Codex Desktop continua usando a sessão gerenciada pelo próprio aplicativo,
 que não oferece isolamento de perfis por `CODEX_HOME`.
 

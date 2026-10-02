@@ -690,7 +690,7 @@ describe('spawnAgentProviderTerminal', () => {
       id: 't1',
       args: ['/d', '/q', '/k', 'call', 'C:\\cli\\agent.cmd', '--model', 'gpt-4o-mini'],
     })
-    expect(deps.assertLive).toHaveBeenCalledOnce()
+    expect(deps.assertLive).toHaveBeenCalled()
   })
 
   it('surfaces missing binaries without spawning', async () => {
@@ -703,6 +703,57 @@ describe('spawnAgentProviderTerminal', () => {
       )
     ).rejects.toThrow()
     expect(starts).toHaveLength(0)
+  })
+
+  it('does not spawn an obsolete provider after ai-memory preparation is overtaken', async () => {
+    const {
+      clearActiveAiMemorySessions,
+      setAiMemorySetupOverrideForTest,
+      setGlobalAiMemoryService,
+      getPendingScopeReservation,
+    } = await import('../src/main/ai-memory-launcher')
+    clearActiveAiMemorySessions()
+    let signalScopeStarted!: () => void
+    let resolveScope!: (scope: { workspace: string; project: string; identity: string; root: string; source: 'path' }) => void
+    const scopeStarted = new Promise<void>((resolve) => { signalScopeStarted = resolve })
+    const scope = new Promise<{ workspace: string; project: string; identity: string; root: string; source: 'path' }>((resolve) => { resolveScope = resolve })
+    const service = {
+      status: vi.fn(() => ({ state: 'running' as const, owned: true, binaryPath: 'C:\\bin\\ai-memory.exe' })),
+      health: vi.fn(async () => ({ ok: true })),
+      resolveScope: vi.fn(async () => {
+        signalScopeStarted()
+        return await scope
+      }),
+      ensureProjectMarker: vi.fn(async () => ({ configured: true, status: 'unchanged' as const, path: 'C:\\work\\.ai-memory.toml' })),
+      isProjectEnabled: vi.fn(() => true),
+    }
+    setGlobalAiMemoryService(service as any)
+    setAiMemorySetupOverrideForTest(async () => ({ status: 'already-installed', mcp: 'skipped', hooks: 'skipped' }))
+
+    let current = true
+    const { deps, starts } = createSpawnDeps({ healthProvider: 'opencode', healthPath: 'C:\\cli\\opencode.cmd' })
+    deps.assertLive = vi.fn(() => {
+      if (!current) throw Object.assign(new Error('launch overtaken by Codex'), { code: 'TERMINAL_LAUNCH_CANCELLED' })
+    })
+
+    try {
+      const pending = spawnAgentProviderTerminal(
+        deps,
+        { id: 'cross-provider-overtake', candidate: 'opencode', model: 'claude-sonnet', tier: 'deep', cols: 120, rows: 32 },
+        config,
+      )
+      await scopeStarted
+      // Simulate a newer managed Codex launch taking ownership of this terminal.
+      current = false
+      resolveScope({ workspace: 'devorbit', project: 'p-overtake', identity: 'id-overtake', root: 'C:\\work', source: 'path' })
+      await expect(pending).rejects.toMatchObject({ code: 'TERMINAL_LAUNCH_CANCELLED' })
+      expect(starts).toHaveLength(0)
+      expect(getPendingScopeReservation('cross-provider-overtake')).toBeUndefined()
+    } finally {
+      setGlobalAiMemoryService(null)
+      setAiMemorySetupOverrideForTest(null)
+      clearActiveAiMemorySessions()
+    }
   })
 
   it('preserva flag --model em originalArgs para scripts Windows .cmd ao usar wrapper ai-memory', async () => {

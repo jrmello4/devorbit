@@ -15,6 +15,7 @@ export type IpcInvokeChannel =
   | 'devorbit:initGitRepository' | 'devorbit:cloneGitRepository' | 'devorbit:restoreManagedProject'
   | 'devorbit:finalizeManagedProject' | 'devorbit:startTerminal' | 'devorbit:startCodexTerminal'
   | 'devorbit:startAgentTerminal'
+  | 'devorbit:getCodexBridgeHealth'
   | 'devorbit:createAgentWorktree'
   | 'devorbit:integrateAgentWorktree'
   | 'devorbit:resizeTerminal' | 'devorbit:writeTerminal' | 'devorbit:stopTerminal'
@@ -58,5 +59,6 @@ export type IpcEventChannel =
   | 'devorbit:syncProgress' | 'devorbit:terminalEvent' | 'devorbit:webEvent'
   | 'devorbit:updateStatus' | 'devorbit:codexAuthProgress' | 'devorbit:companionEvent'
   | 'devorbit:agentBridgeEvent' | 'devorbit:hitlEvent' | 'devorbit:orchestrationEvent'
+  | 'devorbit:codexBridgeHealth'
 
 export type IpcSendChannel = 'devorbit:windowControl'

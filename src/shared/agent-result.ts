@@ -2,6 +2,26 @@ import { stripAnsiEscapes } from './ansi'
 
 export const AGENT_RESULT_PREFIX = 'DEVORBIT_RESULT:'
 export const AGENT_RESULT_VERSION = 1
+
+/**
+ * Instrução de protocolo de resultado para delegações do Bridge (send/ask).
+ * Prosa deliberadamente: NENHUMA linha começa com o prefixo e NÃO há exemplo
+ * JSON válido — o eco do PTY do prompt nunca pode ser parseado como resultado
+ * (parseAgentResultLine só aceita linhas que COMEÇAM com o prefixo).
+ */
+export const AGENT_RESULT_PROTOCOL_INSTRUCTION =
+  'Contrato de resultado desta sessão: ao concluir (ou bloquear) a tarefa, imprima uma única linha iniciada pelo prefixo DEVORBIT_RESULT: e traga um objeto JSON com os campos version (número 1), outcome (completed, blocked ou failed) e summary (resumo objetivo em uma linha, sem quebras de linha); opcionalmente inclua no mesmo JSON handoff (contexto completo para o próximo agente), filesChanged (caminhos alterados), testsExecuted (o que foi testado) e remainingIssues (pendências). Em seguida, repita o desfecho em uma linha legada iniciada por DEVORBIT_RESULT: CONCLUIDO:, DEVORBIT_RESULT: BLOQUEADO: ou DEVORBIT_RESULT: FALHA:, seguida do resumo. Não aguarde confirmação adicional para emitir o resultado.'
+
+/**
+ * Wrapper idempotente do protocolo de resultado: a instrução é SEMPRE aplicada
+ * (a palavra DEVORBIT_RESULT pode fazer parte da tarefa — nunca é bypass);
+ * um prompt que já começa com a instrução não é reembrulhado.
+ */
+export function withAgentResultProtocol(prompt: string): string {
+  if (prompt.startsWith(AGENT_RESULT_PROTOCOL_INSTRUCTION)) return prompt
+  return `${AGENT_RESULT_PROTOCOL_INSTRUCTION}\n\n${prompt}`
+}
+
 /**
  * Teto do frame físico (uma linha PTY). Pior caso legítimo: os TRÊS campos
  * longos cheios (handoff + testsExecuted + remainingIssues = 3 × 200k) já

@@ -1,5 +1,48 @@
 # Orquestração entre agentes no DevOrbit (Agent Bridge)
 
+## Codex gerenciado: MCP por execução (2026-10-01)
+
+O Agent Bridge MCP é uma capacidade do DevOrbit. Cada lançamento Codex do
+terminal interno injeta `mcp_servers.devorbit.*` por `--config`, com sintaxe
+TOML, caminhos absolutos, `enabled=true`, `required=true` e timeout limitado.
+Não é necessário instalar o MCP em cada projeto, confiar na configuração
+local `.codex` ou editar a configuração global. Os demais MCPs, modelos,
+profiles, sandbox e políticas do usuário continuam nas suas camadas originais.
+
+`prepareDevOrbitCodexLaunch` combina o `CODEX_HOME` da conta selecionada com
+o ambiente da Bridge atual e os argumentos MCP. Esses mesmos argumentos são
+entregues ao Codex direto, ao `originalArgs` do ai-memory e ao fallback direto.
+Reabrir/reiniciar o terminal gera um novo lançamento com a sessão atual.
+
+O MCP usa o próprio executável Electron como runtime Node. Apenas o processo
+MCP recebe `ELECTRON_RUN_AS_NODE=1`, pela configuração desse servidor. Em
+desenvolvimento o script vem da raiz do aplicativo; no pacote, de
+`resources/scripts`, fora do ASAR. O fuse `RunAsNode` precisa permanecer
+habilitado e o smoke do pacote verifica esse runtime sem depender de Node no PATH.
+
+As variáveis `DEVORBIT_BRIDGE_PIPE`, `DEVORBIT_BRIDGE_TOKEN` e
+`DEVORBIT_SESSION_ID` percorrem DevOrbit → Codex → MCP exclusivamente pelo
+ambiente. A configuração contém somente seus nomes em `env_vars`. Token e
+sessão são renovados a cada runtime; nenhum token é escrito em argv, projetos,
+config global, Registry ou variáveis permanentes do Windows.
+
+`initialize` exige ambiente completo e um `ping` autenticado à Bridge. Token
+inválido, sessão incorreta ou pipe indisponível produzem falha antes de expor
+as ferramentas. O ping aceita uma Bridge sem agentes, evitando a corrida entre
+spawn e registro. Após `notifications/initialized`, o MCP confirma terminal,
+identificador único de lançamento e PID à Bridge autenticada. A UI distingue
+`configuring`, `connecting`, `connected`, `agents_available`, `failed` e
+`stopped`; nascer um PTY não comprova comunicação. O envio automático ao Codex
+aguarda esse handshake e um registro de agentes disponível.
+
+O botão **Codex CLI externo** abre uma sessão independente, sem PTY registrado
+e sem coordenação pela Bridge. Codex Desktop e login OAuth também são fluxos
+independentes. Para coordenar agentes, use o terminal Codex gerenciado no canvas.
+A `.codex/config.toml` deste repositório permanece apenas como conveniência de
+desenvolvimento, sem ser requisito do produto.
+
+As seções abaixo registram a arquitetura e os critérios anteriores da Bridge.
+
 **Data:** 2026-09-17 · **Atualizado:** 2026-09-19
 **Status:** Núcleo da bridge implementado (delegação estruturada + headless agy)
 **Contexto:** problema identificado ao tentar orquestrar o Antigravity (`agy`) de dentro de um terminal do DevOrbit.

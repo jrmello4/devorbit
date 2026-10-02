@@ -29,6 +29,14 @@ describe('agent bridge protocol', () => {
   })
 
   it('validates each operation and normalizes timeout values', () => {
+    expect(validateAgentBridgeRequest({ type: 'ping', ...credentials })).toMatchObject({ type: 'ping' })
+    expect(validateAgentBridgeRequest({
+      type: 'mcp-handshake',
+      ...credentials,
+      terminalId: 'terminal-1',
+      launchId: 'launch-1',
+      pid: 42,
+    })).toMatchObject({ type: 'mcp-handshake', terminalId: 'terminal-1', launchId: 'launch-1', pid: 42 })
     expect(validateAgentBridgeRequest({ type: 'list', ...credentials })).toMatchObject({ type: 'list' })
     expect(validateAgentBridgeRequest({ type: 'wait', ...credentials, target: 'worker', timeoutMs: '5m' })).toMatchObject({
       type: 'wait',
@@ -63,6 +71,15 @@ describe('agent bridge protocol', () => {
     expect(parseAgentBridgeTimeout(1000)).toBe(1000)
     expect(() => parseAgentBridgeTimeout('0m')).toThrowError(/timeout/i)
     expect(() => parseAgentBridgeTimeout('2h')).toThrowError(/timeout/i)
+  })
+
+  it('bounds MCP handshake identity and process fields', () => {
+    const base = { type: 'mcp-handshake', ...credentials, terminalId: 'terminal', launchId: 'launch', pid: 42 }
+    expect(() => validateAgentBridgeRequest({ ...base, terminalId: '' })).toThrowError(/terminalId/)
+    expect(() => validateAgentBridgeRequest({ ...base, launchId: 'l'.repeat(129) })).toThrowError(/launchId/)
+    expect(() => validateAgentBridgeRequest({ ...base, pid: 0 })).toThrowError(/pid/)
+    expect(() => validateAgentBridgeRequest({ ...base, pid: 2_147_483_648 })).toThrowError(/pid/)
+    expect(() => validateAgentBridgeRequest({ ...base, pid: 1.5 })).toThrowError(/pid/)
   })
 })
 

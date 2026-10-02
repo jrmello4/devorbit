@@ -20,6 +20,8 @@ vi.mock('electron', () => {
 })
 
 const expectedApiKeys = [
+  'getCodexBridgeHealth',
+  'onCodexBridgeHealth',
   'getProjects',
   'refreshProjects',
   'getOtherDirs',
@@ -273,6 +275,32 @@ describe('preload IPC contract', () => {
     exposedApi().windowControl('maximize')
     expect(ipcSend).toHaveBeenCalledWith('devorbit:windowControl', 'maximize')
     expect(ipcInvoke).not.toHaveBeenCalled()
+  })
+
+  it('reads and subscribes to the managed MCP health without runtime credentials', async () => {
+    const api = exposedApi()
+    await api.getCodexBridgeHealth('terminal-1')
+    expect(ipcInvoke).toHaveBeenCalledWith('devorbit:getCodexBridgeHealth', 'terminal-1')
+    const callback = vi.fn()
+    const unsubscribe = api.onCodexBridgeHealth(callback) as () => void
+    expect(typeof unsubscribe).toBe('function')
+    unsubscribe()
+  })
+
+  it('forwards Codex base args as the seventh argument only when provided', async () => {
+    const api = exposedApi()
+    await api.startCodexTerminal('terminal-1', 'project', 'account1', 120, 40, ['resume', '--last'])
+    expect(ipcInvoke).toHaveBeenCalledWith(
+      'devorbit:startCodexTerminal',
+      'terminal-1',
+      'project',
+      'account1',
+      120,
+      40,
+      ['resume', '--last'],
+    )
+    await api.startCodexTerminal('terminal-1', 'project', 'account1', 120, 40)
+    expect(ipcInvoke).toHaveBeenLastCalledWith('devorbit:startCodexTerminal', 'terminal-1', 'project', 'account1', 120, 40)
   })
 
   it('forwards the reviewed Git push selection as a separate option', async () => {

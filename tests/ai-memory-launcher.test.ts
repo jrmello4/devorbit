@@ -570,6 +570,64 @@ describe('ai-memory-launcher', () => {
 
       releaseAiMemoryReservation('term-fallback')
       expect(getPendingScopeReservation('term-fallback')).toBeUndefined()
+
+      const activePlan = await prepareAiMemoryLaunch({ ...baseContext, terminalId: 'term-cancelled-prepare' }, deps)
+      registerActiveAiMemorySession(activePlan.metadata!)
+      const replacementPlan = await prepareAiMemoryLaunch({ ...baseContext, terminalId: 'term-cancelled-prepare' }, deps)
+      expect(replacementPlan.wrapped).toBe(true)
+      expect(getPendingScopeReservation('term-cancelled-prepare')).toBeDefined()
+      releaseAiMemoryReservation('term-cancelled-prepare')
+      expect(getPendingScopeReservation('term-cancelled-prepare')).toBeUndefined()
+      expect(getActiveAiMemorySession('term-cancelled-prepare')).toEqual(activePlan.metadata)
+    })
+
+    it('cleanup de uma tentativa ai-memory não remove a reserva mais nova do mesmo terminal', async () => {
+      const service = createHealthyService()
+      const deps: AiMemoryLauncherDeps = {
+        setupAgent: async () => ({ status: 'already-installed', mcp: 'skipped', hooks: 'skipped' }),
+        getService: () => service,
+        getDataDir: () => 'C:\\devorbit\\data',
+        getUserDataDir: () => 'C:\\devorbit\\userdata',
+      }
+      const terminalId = 'overlapping-provider-preparation'
+      const oldContext = { ...baseContext, terminalId, reservationId: 'launch-old' }
+      const newContext = { ...baseContext, terminalId, reservationId: 'launch-new' }
+
+      const oldPlan = await prepareAiMemoryLaunch(oldContext, deps)
+      expect(oldPlan.wrapped).toBe(true)
+      const newPlan = await prepareAiMemoryLaunch(newContext, deps)
+      expect(newPlan.wrapped).toBe(true)
+      expect(getPendingScopeReservation(terminalId)?.reservationId).toBe('launch-new')
+
+      // A stale attempt can fail later or be canceled after a provider switch.
+      await prepareAiMemoryLaunch(oldContext, { getService: () => null })
+      releaseAiMemoryReservation(terminalId, 'launch-old')
+      rollbackAiMemoryLaunch(terminalId, 'launch-old')
+
+      expect(getPendingScopeReservation(terminalId)?.reservationId).toBe('launch-new')
+      expect(newPlan.metadata?.reservationId).toBe('launch-new')
+    })
+
+    it('rollback antigo preserva marcador de sessao ativa nova no mesmo terminal', async () => {
+      const service = createHealthyService()
+      const deps: AiMemoryLauncherDeps = {
+        setupAgent: async () => ({ status: 'already-installed', mcp: 'skipped', hooks: 'skipped' }),
+        getService: () => service,
+        getDataDir: () => 'C:\\devorbit\\data',
+        getUserDataDir: () => 'C:\\devorbit\\userdata',
+      }
+      const terminalId = 'active-session-owner'
+      const activePlan = await prepareAiMemoryLaunch({ ...baseContext, terminalId, reservationId: 'active-new' }, deps)
+      expect(registerActiveAiMemorySession(activePlan.metadata!)).toBe(true)
+      const pendingPlan = await prepareAiMemoryLaunch({ ...baseContext, terminalId, reservationId: 'pending-old' }, deps)
+      expect(pendingPlan.wrapped).toBe(true)
+
+      rollbackAiMemoryLaunch(terminalId, 'pending-old')
+
+      expect(getActiveAiMemorySession(terminalId)?.reservationId).toBe('active-new')
+      expect(getPendingScopeReservation(terminalId)).toBeUndefined()
+      // A terminal-wide exited marker from the stale rollback would reject this registration.
+      expect(registerActiveAiMemorySession({ ...activePlan.metadata!, reservationId: 'active-next' })).toBe(true)
     })
 
     it('sessões simultâneas não compartilham workstream e sessão sequencial posterior cross-harness retoma o default', async () => {

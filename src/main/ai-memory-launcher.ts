@@ -82,6 +82,7 @@ export type AiMemoryDegradedReason =
 
 export interface ScopeReservation {
   terminalId: string
+  reservationId?: string
   scopeKey: string
   workspace: string
   project: string
@@ -92,6 +93,7 @@ export interface ScopeReservation {
 
 export interface AiMemorySessionMetadata {
   terminalId: string
+  reservationId?: string
   provider: string
   harness: string
   workstream: string
@@ -126,6 +128,8 @@ export interface AiMemoryLaunchContext {
   env: NodeJS.ProcessEnv
   cwd: string
   terminalId: string
+  /** Identifies the launch that owns a pending scope reservation for this terminal. */
+  reservationId?: string
   account?: 'account1' | 'account2'
   sessionId?: string
 }
@@ -356,7 +360,7 @@ function fallbackPlan(
   context: AiMemoryLaunchContext,
   degradedReason: AiMemoryDegradedReason
 ): AiMemoryLaunchPlan {
-  pendingScopeReservations.delete(context.terminalId)
+  clearPendingScopeReservation(context.terminalId, context.reservationId)
   return directPlan(context, degradedReason)
 }
 
@@ -567,6 +571,7 @@ export async function prepareAiMemoryLaunch(
 
     pendingScopeReservations.set(context.terminalId, {
       terminalId: context.terminalId,
+      ...(context.reservationId ? { reservationId: context.reservationId } : {}),
       scopeKey: `${scope.workspace}::${scope.project}`,
       workspace: scope.workspace,
       project: scope.project,
@@ -604,6 +609,7 @@ export async function prepareAiMemoryLaunch(
 
     const metadata: AiMemorySessionMetadata = {
       terminalId: context.terminalId,
+      ...(context.reservationId ? { reservationId: context.reservationId } : {}),
       provider: context.provider,
       harness,
       workstream,
@@ -628,7 +634,7 @@ export async function prepareAiMemoryLaunch(
       metadata,
     }
   } catch (error) {
-    pendingScopeReservations.delete(context.terminalId)
+    clearPendingScopeReservation(context.terminalId, context.reservationId)
     console.warn(
       `[DevOrbit ai-memory-launcher] Falha ao preparar lançamento gerenciado para ${context.provider}:`,
       error
@@ -650,6 +656,15 @@ const lastFinalizedSessionKeyByTerminal = new Map<string, string>()
 const overlappingAntigravitySessions = new Set<string>()
 const overlappingCommandCodeSessions = new Set<string>()
 const exitedBeforeRegistration = new Set<string>()
+
+function clearPendingScopeReservation(terminalId: string, reservationId?: string): boolean {
+  const reservation = pendingScopeReservations.get(terminalId)
+  if (!reservation) return false
+  // Launch-scoped cleanup must not release a newer provider's reservation for
+  // the same reusable terminal id. Unowned legacy plans may only clear each other.
+  if (reservation.reservationId !== reservationId) return false
+  return pendingScopeReservations.delete(terminalId)
+}
 
 export function isScopeActiveOrPreparing(
   workspace: string,
@@ -678,9 +693,20 @@ export function isScopeActiveOrPreparing(
  * Garante que nenhuma reserva pendente ou sessão ativa zumbi permaneça bloqueando
  * o escopo (workspace::project), liberando o workstream default para os próximos lançamentos.
  */
-export function rollbackAiMemoryLaunch(terminalId: string): void {
-  pendingScopeReservations.delete(terminalId)
-  activeSessions.delete(terminalId)
+export function rollbackAiMemoryLaunch(terminalId: string, reservationId?: string): void {
+  if (reservationId !== undefined) {
+    const pendingMatches = pendingScopeReservations.get(terminalId)?.reservationId === reservationId
+    const activeMatches = activeSessions.get(terminalId)?.reservationId === reservationId
+    if (!pendingMatches && !activeMatches) return
+    if (pendingMatches) pendingScopeReservations.delete(terminalId)
+    if (activeMatches) activeSessions.delete(terminalId)
+    // Side effects below are terminal-wide lifecycle markers. Preserve them
+    // while another launch still owns an active session or pending reservation.
+    if (activeSessions.has(terminalId) || pendingScopeReservations.has(terminalId)) return
+  } else {
+    pendingScopeReservations.delete(terminalId)
+    activeSessions.delete(terminalId)
+  }
   overlappingAntigravitySessions.delete(terminalId)
   overlappingCommandCodeSessions.delete(terminalId)
   exitedBeforeRegistration.add(terminalId)
@@ -689,8 +715,15 @@ export function rollbackAiMemoryLaunch(terminalId: string): void {
 
 export const rollbackAiMemorySession = rollbackAiMemoryLaunch
 
-export function releaseAiMemoryReservation(terminalId: string): void {
-  rollbackAiMemoryLaunch(terminalId)
+export function releaseAiMemoryReservation(terminalId: string, reservationId?: string): void {
+  // A canceled launch that never spawned a PTY only owns its pending scope
+  // reservation. Keep a pre-existing active session intact.
+  if (reservationId === undefined) {
+    // Backward-compatible lifecycle cleanup for callers that have no attempt id.
+    pendingScopeReservations.delete(terminalId)
+  } else {
+    clearPendingScopeReservation(terminalId, reservationId)
+  }
 }
 
 export function getPendingScopeReservation(terminalId: string): ScopeReservation | undefined {
@@ -699,7 +732,7 @@ export function getPendingScopeReservation(terminalId: string): ScopeReservation
 
 export function registerActiveAiMemorySession(metadata: AiMemorySessionMetadata): boolean {
   // Transfere a reserva de escopo pendente para a sessão ativa
-  pendingScopeReservations.delete(metadata.terminalId)
+  clearPendingScopeReservation(metadata.terminalId, metadata.reservationId)
 
   // Proteção contra corrida de encerramento imediato:
   // Se o PTY já saiu (onExit) ou sofreu rollback/finalização antes do registro,

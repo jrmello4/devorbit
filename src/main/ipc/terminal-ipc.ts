@@ -5,6 +5,8 @@ import {
   hasValidCodexAuth,
   resolveCodexCommand,
 } from '../account-profiles'
+import { prepareDevOrbitCodexLaunch } from '../codex-mcp-launch'
+import type { CodexBridgeHealthStore } from '../codex-bridge-health'
 import {
   prepareAiMemoryLaunch,
   registerActiveAiMemorySession,
@@ -64,6 +66,8 @@ export interface TerminalIpcDependencies {
   turnSessions: Map<string, { provider: AgentProviderId; model: string }>
   waitTurnResult: (id: string, timeouts: { idleMs: number; overallMs: number }) => ResultWaitPromise
   waitTerminalReady: (id: string, options?: TerminalReadyOptions) => Promise<TerminalReadyResult>
+  /** Main-process store for managed Codex MCP launch health. */
+  codexBridgeHealth?: CodexBridgeHealthStore
   usage?: UsageRecorder
 }
 
@@ -118,6 +122,18 @@ export function normalizeAgentInstructionPayload(value: unknown): AgentInstructi
   }
 }
 
+function isManagedCodexCommand(command: string): boolean {
+  const leaf = command.replaceAll('\\', '/').split('/').at(-1)?.toLowerCase() || ''
+  const stem = leaf.replace(/\.(?:cmd|bat|exe)$/i, '')
+  return stem === 'codex' || /(?:^[-_.]|[-_.])codex(?:[-_.]|$)/i.test(stem)
+}
+
+async function validateCodexBaseArgs(value: unknown): Promise<string[]> {
+  if (value === undefined || value === null) return []
+  const options = await validateTerminalStartOptions({ args: value })
+  return options ? [...(options.args || [])] : []
+}
+
 /**
  * Registro do turno no store de uso — sempre best-effort: falha alguma aqui
  * pode quebrar o caminho do turno (o resultado segue intacto para a UI).
@@ -148,6 +164,40 @@ function recordTurnUsage(
 }
 
 export function registerTerminalIpc(register: IpcRegistrar, dependencies: TerminalIpcDependencies): void {
+  const terminalLaunchAttempts = new Map<string, symbol>()
+  const beginTerminalLaunch = (id: string): symbol => {
+    const attempt = Symbol(id)
+    terminalLaunchAttempts.set(id, attempt)
+    return attempt
+  }
+  const isCurrentTerminalLaunch = (id: string, attempt: symbol, generation: number): boolean => {
+    if (terminalLaunchAttempts.get(id) !== attempt) return false
+    try {
+      dependencies.assertTerminalLifecycle(generation)
+      return true
+    } catch {
+      return false
+    }
+  }
+  const assertCurrentTerminalLaunch = (id: string, attempt: symbol, generation: number): void => {
+    if (!isCurrentTerminalLaunch(id, attempt, generation)) {
+      throw Object.assign(new Error('O lançamento do terminal foi cancelado ou substituído.'), { code: 'TERMINAL_LAUNCH_CANCELLED' })
+    }
+  }
+  const codexLaunchLockTails = new Map<string, Promise<void>>()
+  const acquireCodexLaunchLock = async (id: string): Promise<() => void> => {
+    const previous = codexLaunchLockTails.get(id) ?? Promise.resolve()
+    let unlockCurrent!: () => void
+    const held = new Promise<void>((resolve) => { unlockCurrent = resolve })
+    const tail = previous.catch(() => undefined).then(() => held)
+    codexLaunchLockTails.set(id, tail)
+    await previous.catch(() => undefined)
+    return () => {
+      unlockCurrent()
+      if (codexLaunchLockTails.get(id) === tail) codexLaunchLockTails.delete(id)
+    }
+  }
+
   // Bracketed paste só é observado em terminais de agente (com sessão de
   // turno); shell comum não é rastreado (evita falso 2004h/l ecoado).
   shouldTrackPasteMode = (id) => dependencies.turnSessions.has(id)
@@ -161,9 +211,11 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
   ) => {
     assertTerminalId(id)
     const generation = dependencies.getTerminalLifecycleGeneration()
+    const attempt = beginTerminalLaunch(id)
     const safePath = await validateProjectPath(projectPath)
+    assertCurrentTerminalLaunch(id, attempt, generation)
     const startOptions = await validateTerminalStartOptions(options)
-    dependencies.assertTerminalLifecycle(generation)
+    assertCurrentTerminalLaunch(id, attempt, generation)
     const safeCols = cols === undefined ? undefined : validateFiniteNumber(cols, 'Colunas do terminal', { minimum: TERMINAL_MIN_COLS, maximum: TERMINAL_MAX_COLS, integer: true })
     const safeRows = rows === undefined ? undefined : validateFiniteNumber(rows, 'Linhas do terminal', { minimum: TERMINAL_MIN_ROWS, maximum: TERMINAL_MAX_ROWS, integer: true })
     // O comando do Smart Terminal roda no diretório próprio quando definido;
@@ -175,6 +227,9 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
     // .cmd/.bat não executa direto pelo node-pty: passa pelo cmd.exe; o helper
     // rejeita metacaracteres do cmd no caminho embrulhado (defesa extra —
     // %/! e controles já caíram no validador).
+    if (startOptions?.command !== undefined && isManagedCodexCommand(startOptions.command)) {
+      throw new Error('O Codex usa o lançador gerenciado por conta; use o terminal Codex da conta selecionada.')
+    }
     const launch = startOptions?.command !== undefined
       ? resolveWindowsScriptLaunch(startOptions.command, startOptions.args ?? [])
       : undefined
@@ -185,6 +240,7 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
       ...(safeCols !== undefined ? { cols: safeCols } : {}),
       ...(safeRows !== undefined ? { rows: safeRows } : {}),
     })
+    assertCurrentTerminalLaunch(id, attempt, generation)
     registerCompanionTerminal(id, { projectPath: safePath })
     return started
   })
@@ -196,19 +252,36 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
     account: unknown,
     cols?: unknown,
     rows?: unknown,
+    baseArgs?: unknown,
   ) => {
     assertTerminalId(id)
     const generation = dependencies.getTerminalLifecycleGeneration()
     const safeAccount = validateCodexAccount(account)
+    const attempt = beginTerminalLaunch(id)
+    const isCurrentLaunch = (): boolean => {
+      return isCurrentTerminalLaunch(id, attempt, generation)
+    }
+    const assertCurrentLaunch = (): void => {
+      if (!isCurrentLaunch()) {
+        throw Object.assign(new Error('O lançamento Codex foi cancelado ou substituído.'), { code: 'CODEX_LAUNCH_CANCELLED' })
+      }
+    }
     const safePath = await validateProjectPath(projectPath)
+    assertCurrentLaunch()
+    const safeBaseArgs = await validateCodexBaseArgs(baseArgs)
+    assertCurrentLaunch()
     const config = await loadConfig()
-    dependencies.assertTerminalLifecycle(generation)
+    assertCurrentLaunch()
     const { codexHome } = await ensureAccountDirectories(safeAccount)
+    assertCurrentLaunch()
     const accountLabel = getAccountLabel(safeAccount, {
       account1: config.chatGptAccount1Name,
       account2: config.chatGptAccount2Name,
     })
-    if (!(await hasValidCodexAuth(codexHome))) {
+    const hasAuth = await hasValidCodexAuth(codexHome)
+    assertCurrentLaunch()
+    if (!hasAuth) {
+      if (terminalLaunchAttempts.get(id) === attempt) terminalLaunchAttempts.delete(id)
       return {
         success: false,
         needsAuth: true,
@@ -221,32 +294,82 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
     const safeCols = cols === undefined ? 120 : validateFiniteNumber(cols, 'Colunas do terminal', { minimum: TERMINAL_MIN_COLS, maximum: TERMINAL_MAX_COLS, integer: true })
     const safeRows = rows === undefined ? 32 : validateFiniteNumber(rows, 'Linhas do terminal', { minimum: TERMINAL_MIN_ROWS, maximum: TERMINAL_MAX_ROWS, integer: true })
     const codexCommand = await resolveCodexCommand(config.customPaths.codex)
-    dependencies.assertTerminalLifecycle(generation)
+    assertCurrentLaunch()
     if (/[%!]/.test(codexCommand)) {
+      if (terminalLaunchAttempts.get(id) === attempt) terminalLaunchAttempts.delete(id)
       return { success: false, fallback: false, account: safeAccount, message: 'O caminho configurado do Codex contém caracteres que o terminal não pode executar com segurança.' }
     }
     const isScript = /\.(?:cmd|bat)$/i.test(codexCommand)
-    const command = isScript ? (process.env.ComSpec || 'cmd.exe') : codexCommand
-    // `call` e o caminho separados: arg único com aspas vira \" no node-pty
-    // (literal para o cmd — shim "não reconhecido").
-    const args = isScript ? ['/d', '/q', '/k', 'call', codexCommand] : []
-    dependencies.assertTerminalLifecycle(generation)
+    // The managed wrapper uses cmd /c so a failed Codex process cannot leave
+    // an idle shell in the registered PTY.
+    assertCurrentLaunch()
     beginCompanionTerminalStart(id)
-    const initialEnv = { ...getCodexAccountEnvironment(safeAccount), ...dependencies.bridgeEnv() }
-
-    const launchPlan = await prepareAiMemoryLaunch({
-      provider: 'codex',
-      resolvedCommand: codexCommand,
-      originalArgs: [],
-      env: initialEnv,
-      cwd: safePath,
+    const bridgeHealth = dependencies.codexBridgeHealth
+    const accountEnvironment = getCodexAccountEnvironment(safeAccount)
+    const bridgeEnvironment = dependencies.bridgeEnv()
+    const runtimeArgs = (prepared: ReturnType<typeof prepareDevOrbitCodexLaunch>): { command: string; args: string[] } => {
+      if (!isScript) return { command: codexCommand, args: prepared.args }
+      // Keep each config override as a node-pty argument. Embedded TOML
+      // quotes must reach `cmd /c call` unchanged.
+      const wrapped = resolveWindowsScriptLaunch(codexCommand, prepared.args, { allowQuotedArguments: true, keepShellOpen: false })
+      return { command: wrapped.command, args: wrapped.args }
+    }
+    const prepareLaunch = () => prepareDevOrbitCodexLaunch({
+      accountEnvironment,
+      bridgeEnv: bridgeEnvironment,
       terminalId: id,
-      account: safeAccount,
+      baseArgs: safeBaseArgs,
     })
+    const configureHealth = (prepared: ReturnType<typeof prepareDevOrbitCodexLaunch>): void => {
+      bridgeHealth?.configure(id, prepared.mcp.launchId, prepared.env.DEVORBIT_SESSION_ID || '')
+    }
+    const markConnecting = (prepared: ReturnType<typeof prepareDevOrbitCodexLaunch>): void => {
+      bridgeHealth?.connecting(id, prepared.mcp.launchId)
+    }
+    const markStartFailure = (prepared: ReturnType<typeof prepareDevOrbitCodexLaunch>): void => {
+      bridgeHealth?.fail(id, 'MCP_STARTUP_FAILED', prepared.mcp.launchId)
+    }
+
+    let prepared = prepareLaunch()
+    configureHealth(prepared)
+    let direct: { command: string; args: string[] }
+    let launchPlan: Awaited<ReturnType<typeof prepareAiMemoryLaunch>>
+    let releaseLaunchLock: (() => void) | undefined = await acquireCodexLaunchLock(id)
+    const unlockLaunch = (): void => {
+      const release = releaseLaunchLock
+      releaseLaunchLock = undefined
+      release?.()
+    }
+    try {
+    try {
+      assertCurrentLaunch()
+      direct = runtimeArgs(prepared)
+      launchPlan = await prepareAiMemoryLaunch({
+        provider: 'codex',
+        resolvedCommand: codexCommand,
+        // ai-memory invokes the same Codex argv after `--` as direct execution.
+        originalArgs: prepared.args,
+        env: prepared.env,
+        cwd: safePath,
+        terminalId: id,
+        reservationId: prepared.mcp.launchId,
+        account: safeAccount,
+      })
+      assertCurrentLaunch()
+    } catch (error) {
+      // No PTY exists yet. Release only the pending scope reservation and
+      // leave any older active ai-memory session untouched.
+      releaseAiMemoryReservation(id, prepared.mcp.launchId)
+      if (isCurrentLaunch()) markStartFailure(prepared)
+      unlockLaunch()
+      throw error
+    }
 
     let result: { id: string; pid: number | undefined }
+    let usedWrapper = false
     if (launchPlan.wrapped) {
       try {
+        usedWrapper = true
         result = await startTerminal(id, safePath, {
           command: launchPlan.command,
           args: launchPlan.args,
@@ -254,33 +377,84 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
           cols: safeCols,
           rows: safeRows,
         })
+        assertCurrentLaunch()
+        // Após o spawn: o flush da sessão antiga cai fora da janela
+        // 'connecting' — saída velha nunca é atribuída à saúde do launch novo.
+        markConnecting(prepared)
         if (launchPlan.metadata) {
           if (!hasTerminal(id)) {
-            rollbackAiMemoryLaunch(id)
+            rollbackAiMemoryLaunch(id, prepared.mcp.launchId)
           } else {
             registerActiveAiMemorySession(launchPlan.metadata)
           }
         }
+        // The process and ai-memory registration are now established. Let a
+        // newer start proceed while this MCP waits for its own handshake.
+        unlockLaunch()
+        // A successful ai-memory spawn does not prove the MCP loaded.  A
+        // controlled early exit is recovered by a direct launch below.
+        if (bridgeHealth) {
+          await bridgeHealth.waitConnected(id)
+          assertCurrentLaunch()
+        }
       } catch (error) {
-        rollbackAiMemoryLaunch(id)
-        console.warn('[DevOrbit] Falha ao iniciar Codex com wrapper ai-memory; fallback direto:', error)
+        // Stop/reopen or a newer launch owns this id now. Never stop its PTY
+        // and never fallback from the older wrapper.
+        if (!isCurrentLaunch()) {
+          unlockLaunch()
+          throw error
+        }
+        if (!releaseLaunchLock) releaseLaunchLock = await acquireCodexLaunchLock(id)
+        assertCurrentLaunch()
+        rollbackAiMemoryLaunch(id, prepared.mcp.launchId)
+        stopTerminal(id)
+        // A launch id is single-use; late handshakes from the failed wrapper
+        // must never mark the direct retry as connected.
+        prepared = prepareLaunch()
+        configureHealth(prepared)
+        console.warn('[DevOrbit] Wrapper ai-memory do Codex falhou antes do MCP; usando execução direta.')
+        try {
+          const fallback = runtimeArgs(prepared)
+          result = await startTerminal(id, safePath, {
+            command: fallback.command,
+            args: fallback.args,
+            env: prepared.env,
+            cols: safeCols,
+            rows: safeRows,
+          })
+          assertCurrentLaunch()
+          markConnecting(prepared)
+          unlockLaunch()
+        } catch (fallbackError) {
+          if (isCurrentLaunch()) markStartFailure(prepared)
+          throw fallbackError
+        }
+      }
+    } else {
+      try {
         result = await startTerminal(id, safePath, {
-          command,
-          args,
-          env: initialEnv,
+          command: direct.command,
+          args: direct.args,
+          env: prepared.env,
           cols: safeCols,
           rows: safeRows,
         })
+        assertCurrentLaunch()
+        // Após o spawn: flush da sessão antiga fora da janela 'connecting'.
+        markConnecting(prepared)
+        if (launchPlan.metadata) {
+          if (!hasTerminal(id)) rollbackAiMemoryLaunch(id, prepared.mcp.launchId)
+          else registerActiveAiMemorySession(launchPlan.metadata)
+        }
+        unlockLaunch()
+      } catch (error) {
+        releaseAiMemoryReservation(id, prepared.mcp.launchId)
+        if (isCurrentLaunch()) markStartFailure(prepared)
+        throw error
       }
-    } else {
-      result = await startTerminal(id, safePath, {
-        command,
-        args,
-        env: initialEnv,
-        cols: safeCols,
-        rows: safeRows,
-      })
     }
+    assertCurrentLaunch()
+    unlockLaunch()
     registerCompanionTerminal(id, { projectPath: safePath })
     dependencies.registerBridgeAgent(id, {
       provider: 'codex',
@@ -294,8 +468,19 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
       ...result,
       account: safeAccount,
       fallback: false,
-      message: 'Codex conectado no terminal interno (' + accountLabel + ').',
+      bridgeHealth: bridgeHealth?.get(id),
+      message: usedWrapper && bridgeHealth?.get(id)?.state === 'connected'
+        ? 'Codex conectado no terminal interno (' + accountLabel + ').'
+        : 'Codex iniciado no terminal interno (' + accountLabel + '); aguardando MCP DevOrbit.',
     }
+    } finally {
+      unlockLaunch()
+    }
+  })
+
+  register('devorbit:getCodexBridgeHealth', (_event, id: unknown) => {
+    assertTerminalId(id)
+    return dependencies.codexBridgeHealth?.get(id)
   })
 
   register('devorbit:startAgentTerminal', async (
@@ -308,7 +493,6 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
     task?: unknown,
   ) => {
     assertTerminalId(id)
-    const generation = dependencies.getTerminalLifecycleGeneration()
     const safeProvider = validateAgentProvider(provider)
     if (safeProvider === 'codex') {
       return {
@@ -319,10 +503,15 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
     }
     const safeTask = task === undefined || task === null ? undefined : String(task).slice(0, TURN_MAX_PROMPT_CHARS)
     if (task !== undefined && task !== null && typeof task !== 'string') throw new Error('Tarefa do turno inválida.')
+    const generation = dependencies.getTerminalLifecycleGeneration()
+    const attempt = beginTerminalLaunch(id)
+    const assertCurrentAgentLaunch = (): void => assertCurrentTerminalLaunch(id, attempt, generation)
     const safePath = await validateProjectPath(projectPath)
+    assertCurrentAgentLaunch()
     const config = await loadConfig()
-    dependencies.assertTerminalLifecycle(generation)
+    assertCurrentAgentLaunch()
     const turn = await resolveAgentTurn(config, safeProvider, safeTask)
+    assertCurrentAgentLaunch()
     if (!turn.available) {
       return {
         success: false,
@@ -336,14 +525,18 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
     const safeRows = rows === undefined ? 32 : validateFiniteNumber(rows, 'Linhas do terminal', { minimum: TERMINAL_MIN_ROWS, maximum: TERMINAL_MAX_ROWS, integer: true })
     beginCompanionTerminalStart(id)
     const execution = await executeExplicitAgentTurn(turn.provider, async (candidate) => {
+      assertCurrentAgentLaunch()
       const spawned = await spawnAgentProviderTerminal(
         {
           resolveWithFallback: resolveAgentProviderWithFallback,
-          startTerminal: (spawnId, options) => startTerminal(spawnId, options.cwd ?? safePath, {
-            ...options,
-            env: { ...options.env, ...dependencies.bridgeEnv() },
-          }),
-          assertLive: () => dependencies.assertTerminalLifecycle(generation),
+          startTerminal: (spawnId, options) => {
+            assertCurrentAgentLaunch()
+            return startTerminal(spawnId, options.cwd ?? safePath, {
+              ...options,
+              env: { ...options.env, ...dependencies.bridgeEnv() },
+            })
+          },
+          assertLive: assertCurrentAgentLaunch,
           hasTerminal,
         },
         {
@@ -358,8 +551,10 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
         },
         config
       )
+      assertCurrentAgentLaunch()
       return { started: spawned.started, provider: spawned.provider, command: spawned.command }
     })
+    assertCurrentAgentLaunch()
     registerCompanionTerminal(id, { projectPath: safePath })
     const effectiveProvider = execution.result.provider ?? execution.provider
     dependencies.registerBridgeAgent(id, {
@@ -399,10 +594,12 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
 
   register('devorbit:stopTerminal', (_event, id: unknown) => {
     assertTerminalId(id)
+    terminalLaunchAttempts.delete(id)
     // O stop mata o PTY antes do onExit registrar (sessions.delete precede o
     // kill), então fechamos a sessão de uso aqui para não perder a duração.
     dependencies.usage?.endUsageSession(id)
     stopTerminal(id)
+    dependencies.codexBridgeHealth?.stop(id)
     // Capability dinâmica morre com o PTY (exit/error também limpam; o stop
     // pode preceder o evento de exit).
     terminalPasteMode.reset(id)
@@ -438,7 +635,6 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
     if (safeProvider === 'codex') {
       throw new Error('O Codex usa o fluxo de conta do DevOrbit; use startCodexTerminal.')
     }
-    const safePath = await validateProjectPath(projectPath)
     const safePrompt = normalizeAgentTurnPrompt(prompt)
     // turnId do renderer (payload do preload): propaga para telemetria/logs de
     // orquestração; ausente → o próprio turno gera um default.
@@ -454,26 +650,51 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
       if (raw.overallMs !== undefined) overallMs = validateFiniteNumber(raw.overallMs, 'Timeout total', { minimum: 5000, maximum: 1800_000, integer: true })
     }
     const generation = dependencies.getTerminalLifecycleGeneration()
+    // Turnos são serializados por sendAgentTurn. Enfileirar o próximo turno
+    // não é um novo lançamento e não deve cancelar aquele que está rodando.
+    // Um start/reopen explícito ainda troca o token e cancela os turnos antigos.
+    const attempt = terminalLaunchAttempts.get(terminalId) ?? beginTerminalLaunch(terminalId)
+    const assertCurrentTurn = (): void => assertCurrentTerminalLaunch(terminalId, attempt, generation)
+    const safePath = await validateProjectPath(projectPath)
+    assertCurrentTurn()
     const turnStartedAt = Date.now()
     let outcome: Awaited<ReturnType<typeof sendAgentTurn>>
     try {
       outcome = await sendAgentTurn(
       {
-        getSession: (id) => dependencies.turnSessions.get(id),
-        setSession: (id, session) => dependencies.turnSessions.set(id, session),
-        clearSession: (id) => dependencies.turnSessions.delete(id),
-        hasTerminal,
+        getSession: (id) => {
+          assertCurrentTurn()
+          return dependencies.turnSessions.get(id)
+        },
+        setSession: (id, session) => {
+          assertCurrentTurn()
+          dependencies.turnSessions.set(id, session)
+        },
+        clearSession: (id) => {
+          if (isCurrentTerminalLaunch(id, attempt, generation)) dependencies.turnSessions.delete(id)
+        },
+        hasTerminal: (id) => {
+          assertCurrentTurn()
+          return hasTerminal(id)
+        },
         spawn: async (id, turn) => {
+          assertCurrentTurn()
           const turnConfig = await loadConfig()
+          assertCurrentTurn()
           beginCompanionTerminalStart(id)
           const spawned = await spawnAgentProviderTerminal(
             {
               resolveWithFallback: resolveAgentProviderWithFallback,
-              startTerminal: (spawnId, options) => startTerminal(spawnId, options.cwd ?? safePath, {
-                ...options,
-                env: { ...options.env, ...dependencies.bridgeEnv() },
-              }),
-              assertLive: () => dependencies.assertTerminalLifecycle(generation),
+              startTerminal: async (spawnId, options) => {
+                assertCurrentTurn()
+                const started = await startTerminal(spawnId, options.cwd ?? safePath, {
+                  ...options,
+                  env: { ...options.env, ...dependencies.bridgeEnv() },
+                })
+                assertCurrentTurn()
+                return started
+              },
+              assertLive: assertCurrentTurn,
             },
             {
               id,
@@ -487,6 +708,7 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
             },
             turnConfig
           )
+          assertCurrentTurn()
           registerCompanionTerminal(id, { projectPath: safePath })
           dependencies.registerBridgeAgent(id, {
             provider: spawned.provider,
@@ -495,12 +717,21 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
           })
           return { provider: spawned.provider }
         },
-        write: writeTerminal,
+        write: (id, input) => {
+          assertCurrentTurn()
+          return writeTerminal(id, input)
+        },
         sendInstruction: (input) => sendAgentInstruction(
           {
-            hasTerminal,
+            hasTerminal: (id) => {
+              assertCurrentTurn()
+              return hasTerminal(id)
+            },
             waitReady: dependencies.waitTerminalReady,
-            write: writeTerminal,
+            write: (id, content) => {
+              assertCurrentTurn()
+              return writeTerminal(id, content)
+            },
             subscribe: onTerminalEvent,
             now: () => Date.now(),
             isBracketedPasteEnabled: terminalPasteMode.isBracketedPasteEnabled,
@@ -509,16 +740,33 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
           // 'unknown'/sem hints → undefined (heurística default).
           { ...input, hints: resolveProviderInstructionHints(input.provider) }
         ),
-        waitResult: dependencies.waitTurnResult,
-        waitReady: dependencies.waitTerminalReady,
+        waitResult: (id, options) => {
+          assertCurrentTurn()
+          return dependencies.waitTurnResult(id, options)
+        },
+        waitReady: async (id, options) => {
+          assertCurrentTurn()
+          const ready = await dependencies.waitTerminalReady(id, options)
+          assertCurrentTurn()
+          return ready
+        },
         resolveTurn: async (candidate, taskPrompt) => {
+          assertCurrentTurn()
           const turnConfig = await loadConfig()
-          return resolveAgentTurn(turnConfig, candidate, taskPrompt)
+          assertCurrentTurn()
+          const resolved = await resolveAgentTurn(turnConfig, candidate, taskPrompt)
+          assertCurrentTurn()
+          return resolved
         },
         orderProviders: orderProvidersForTask,
-        readyProviders: async () => (await getAgentProviderHealth(await loadConfig()))
-          .filter((item) => item.state === 'ready')
-          .map((item) => item.id),
+        readyProviders: async () => {
+          assertCurrentTurn()
+          const turnConfig = await loadConfig()
+          assertCurrentTurn()
+          const providers = await getAgentProviderHealth(turnConfig)
+          assertCurrentTurn()
+          return providers.filter((item) => item.state === 'ready').map((item) => item.id)
+        },
       },
       {
         terminalId,
@@ -553,6 +801,10 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
   ) => {
     assertTerminalId(terminalId)
     const instruction = normalizeAgentInstructionPayload(payload)
+    // A Codex PTY is not ready merely because the process spawned.  Require
+    // the managed MCP handshake and an active Bridge registration before the
+    // first instruction reaches the terminal.
+    if (dependencies.codexBridgeHealth) await dependencies.codexBridgeHealth.waitReady(terminalId)
     const result = await sendAgentInstruction(
       {
         hasTerminal,
