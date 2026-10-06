@@ -147,10 +147,10 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
       isOpen={isOpen}
       titleId="codex-auth-dialog-title"
       onClose={handleCancel}
-      className="w-full max-w-lg max-h-[calc(100dvh-48px)] bg-[var(--color-bg-panel)] border border-[var(--color-border-subtle)] rounded-[10px] shadow-[0_18px_42px_rgba(28,25,23,0.14)] overflow-hidden flex flex-col motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95 motion-safe:duration-200"
+      className="dialog-shell dialog--md flex flex-col overflow-hidden"
     >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border-subtle)]">
+        <div className="dialog-shell__header">
           <div>
             <h2 id="codex-auth-dialog-title" className="text-base font-bold text-[var(--text-primary)]">
               Conectar OpenAI Codex
@@ -167,7 +167,7 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
         </div>
 
         {/* Body */}
-        <div className="p-6 space-y-5 overflow-y-auto min-h-0 text-sm text-[var(--text-primary)]">
+        <div className="dialog-shell__body min-h-0 overflow-y-auto text-sm text-[var(--text-primary)]">
           {/* Status: Success */}
           {status === 'success' ? (
             <div className="py-8 flex flex-col items-center justify-center text-center space-y-3">
@@ -191,9 +191,9 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
               <p className="text-xs text-[var(--color-danger)] max-w-sm">{message}</p>
               <button
                 onClick={handleStartLogin}
-                className="mt-2 flex items-center gap-2 px-4 py-2 rounded-[8px] bg-[var(--surface-muted)] hover:bg-[var(--surface-hover)] text-[var(--color-text-secondary)] text-xs font-semibold border border-[var(--color-border-subtle)] transition-[background-color,color] cursor-pointer"
+                className="btn btn--secondary mt-2"
               >
-                <RefreshCw className="w-3.5 h-3.5" />
+                <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" />
                 Tentar Novamente
               </button>
             </div>
@@ -260,10 +260,10 @@ export const CodexAuthModal: React.FC<CodexAuthModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end px-6 py-3.5 border-t border-[var(--color-border-subtle)] bg-[var(--surface-muted)] gap-2">
+        <div className="dialog-shell__footer">
           <button
             onClick={handleCancel}
-            className="px-4 py-2 rounded-[8px] text-xs font-semibold text-[var(--color-text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-hover)] transition-colors cursor-pointer"
+            className="btn btn--secondary ms-auto"
           >
             {status === 'success' ? 'Fechar' : 'Cancelar'}
           </button>

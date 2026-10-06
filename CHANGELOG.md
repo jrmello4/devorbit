@@ -2,6 +2,32 @@
 
 All notable changes to DevOrbit are documented here.
 
+## [1.0.48] - 2026-10-06
+
+### Added
+
+- Bridge workstream: bridge-turn com diagnóstico allowlistado, ciclo/takeover de agentes, identidade da bridge e orquestração com nonce gerenciado fresco por retry no devorbit-mcp.
+- Rodada de UI Grafite+Oliva: contrato compartilhado no index.css (`.btn`, `.dialog-shell`+`__header/__body/__footer`+`dialog--sm/md/lg/xl`, `.status-dot--*`), tokens `--ops-*` espelhados no CSS estático e `ConfirmDialog` temático substituindo `window.confirm`.
+- Command Palette com seções Comandos/Projetos, Home/End e abertura direta de projeto; toasts em fila top-center que não cobrem GitDock nem radial.
+
+### Changed
+
+- Switcher do workspace: Canvas|Código como views; Web e Terminal como toggles de painel (underline oliva) com toggle de Terminal visível (G+T documentado).
+- Filtro Git da biblioteca unificado nas pills de situação (contagens reais); popover mantém Tecnologia/Branch/Localização/Agrupar.
+- 8 modais padronizados no dialog-shell com larguras 448/576/672/768 e botões no sistema `.btn`; descarte de alterações do Settings via barra inline; exclusão de preset em dois passos.
+- Inspector do canvas: seção Contexto (notas conectadas por agente/squad), sombra reduzida, nasce abaixo do cluster no modo canvas; conteúdo da nota preenche o painel.
+
+### Fixed
+
+- IPC do build portable: autorização por identidade de WebContents (mainWindow/smokeWindow) + main frame + URL file: canonicalizada — fim de "Origem IPC não autorizada" com TEMP 8.3 (%7E vs ~); smoke-package parou de canonicalizar o TEMP e ganhou regressão portable-temp-8.3.
+- Rodada de QA visual: footer dos cards sem truncamento (quick-actions como overlay), radial menu legível sobre cards escuros, botão primário do Inspector renderizando transparente, dot running azul substituído pelo âmbar de atividade.
+- Falhas silenciosas com retry inline: AiMemory (recentes/briefing/handoffs), GitDock (listagem de alterações) e uso real.
+- Tests: conformance MCP deriva a versão do package.json; assertion do nonce compara estrutura.
+
+### Removed
+
+- UsageBar.tsx (243 linhas nunca montadas) e blocos CSS mortos (master-detail legado, tema claro inalcançável, view-hud/kind-badge).
+
 ## [1.0.47] - 2026-10-02
 
 ### Added

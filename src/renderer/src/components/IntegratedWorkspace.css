@@ -45,6 +45,13 @@
   -webkit-app-region: drag;
 }
 
+/* Inspector em canvas mode começa abaixo do cluster: o cluster fica no topo
+   (z-index entre irmãos vence o stacking context interno do canvas) e o
+   título do inspector não nasce escondido sob ele. */
+.integrated-workspace.is-canvas-mode .canvas-node-inspector {
+  top: 52px;
+}
+
 .canvas-focus-controls button {
   display: inline-flex;
   align-items: center;
@@ -62,6 +69,13 @@
 .canvas-focus-controls button:hover {
   background: var(--ops-surface-4, var(--surface-hover));
   color: var(--ops-text-primary, var(--text-primary));
+}
+
+/* Toggle de painel pressionado (Web/Terminal): acento oliva sobre o idioma
+   fantasma — mesmo tratamento dos toggles da toolbar do workspace. */
+.canvas-focus-controls button[aria-pressed="true"],
+.workspace-panel-toggle[aria-pressed="true"] {
+  color: var(--color-accent-strong);
 }
 
 .canvas-focus-controls button:focus-visible {
@@ -119,6 +133,15 @@
 }
 .workspace-tool-button:hover,
 .workspace-tool-button.active { background: var(--surface-selected); border-color: var(--color-border-strong); color: var(--color-accent-strong); }
+/* Painel ligado (Web/Terminal) ≠ view ativa (Canvas/Código): em vez do
+   preenchimento do segmento, indicador inferior — deixa claro que é um
+   toggle de painel ligado/desligado, não uma página corrente. */
+.workspace-tool-button.workspace-panel-toggle.active {
+  background: transparent;
+  border-color: var(--color-border-strong);
+  color: var(--color-accent-strong);
+  box-shadow: inset 0 -2px 0 var(--color-accent);
+}
 /* Fechar segue o mesmo tratamento flat dos demais botões (sem caixa própria). */
 .workspace-close-button:hover { background: var(--surface-hover); color: var(--text-primary); }
 /* Seletor segmentado de visão (Canvas · Código · Web): trilho em superfície
@@ -155,6 +178,10 @@
   color: var(--color-accent-strong);
 }
 .workspace-segment:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: 1px; }
+
+/* Toggle de painel (Web/Terminal): botão fantasma fora do trilho segmentado —
+   não é uma visão, é presença/ausência de um painel lateral/inferior. */
+.workspace-panel-toggle { flex-shrink: 0; }
 
 .workspace-workbench-slot {
   width: 100%;
@@ -475,6 +502,17 @@
 .workspace-terminal-xterm .xterm-screen { width: 100%; }
 .workspace-terminal-xterm .xterm-viewport { border-radius: var(--radius-sm, 5px); }
 .terminal-heading > div { gap: 8px; }
+/* Executor não-default do terminal docked (Smart Terminal/preset): rótulo
+   discreto truncado ao lado do ponto de status. */
+.terminal-heading-executor {
+  max-width: 180px;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font: 600 10px var(--font-ui);
+  letter-spacing: .02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .terminal-status { display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; cursor: default; }
 .terminal-status i { width: 6px; height: 6px; border-radius: 50%; background: var(--color-text-muted); }
 /* Ponto de status na cor da família do tema (--term-accent da raiz do painel,
@@ -526,7 +564,8 @@
 .browser-heading > div:first-child { min-width: 0; }
 .browser-actions { display: flex !important; align-items: center; gap: 2px !important; }
 .browser-loading-dot { width: 7px; height: 7px; flex-shrink: 0; border-radius: 50%; background: var(--color-success); }
-.browser-loading-dot.loading { background: var(--color-warning); animation: workspace-pulse 1s ease-in-out infinite; }
+/* Carregando: pulso oliva — âmbar fica reservado à atividade de orquestração. */
+.browser-loading-dot.loading { background: var(--color-accent); animation: workspace-pulse 1s ease-in-out infinite; }
 .workspace-browser-form { display: flex; gap: 5px; padding: 7px; border-bottom: 1px solid var(--workspace-border); background: var(--surface-muted); }
 .workspace-browser-form input {
   min-width: 0;

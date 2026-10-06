@@ -27,7 +27,8 @@ export interface CodexMcpLaunchRuntime {
 }
 
 export interface DevOrbitCodexMcpLaunch {
-  name: 'devorbit'
+  /** Per-launch name; never reuse the persisted legacy `devorbit` entry. */
+  name: string
   launchId: string
   command: string
   args: string[]
@@ -108,8 +109,7 @@ function validateBaseArgs(baseArgs: readonly string[], bridgeEnv: NodeJS.Process
     if (configValue !== undefined && configValue.trim() !== '') {
       const key = configValue.split('=', 1)[0].trim().replace(/\s+/gu, '').toLowerCase()
       const collides = key === 'mcp_servers'
-        || key === 'mcp_servers.devorbit'
-        || key.startsWith('mcp_servers.devorbit.')
+        || /^mcp_servers\.devorbit(?:[._]|$)/u.test(key)
       if (collides) {
         throw new Error('A configuração mcp_servers.devorbit é controlada pelo lançador gerenciado.')
       }
@@ -161,9 +161,11 @@ function validateTerminalId(terminalId: string): void {
  * Build the one managed Codex launch contract.
  *
  * The `--config` values are appended after caller arguments and caller
- * overrides for `mcp_servers.devorbit` are rejected.  The bridge values
- * themselves are copied only to `env`; the MCP receives their names through
- * `env_vars` and inherits the values from Codex.
+ * overrides for `mcp_servers.devorbit*` are rejected. The legacy fixed name is
+ * disabled for this launch, while the fresh per-launch name receives the
+ * complete stdio definition. The bridge values themselves are copied only to
+ * `env`; the MCP receives their names through `env_vars` and inherits the
+ * values from Codex.
  */
 export function prepareDevOrbitCodexLaunch(
   input: PrepareDevOrbitCodexLaunchInput,
@@ -173,10 +175,14 @@ export function prepareDevOrbitCodexLaunch(
   validateBaseArgs(baseArgs, input.bridgeEnv)
   const runtime = resolveRuntime(input.runtime)
   const launchId = randomUUID()
+  // The suffix is an opaque nonce, not a credential. Keeping only lowercase
+  // hex makes the name valid as a TOML bare key and safe for Codex's MCP name
+  // parser while retaining the full UUID's collision resistance.
+  const mcpName = `devorbit_runtime_${launchId.replaceAll('-', '')}`
   const mcpArgs = [runtime.scriptPath, '--terminal-id', input.terminalId, '--launch-id', launchId]
   const mcpEnv = { ELECTRON_RUN_AS_NODE: '1' as const }
   const mcp: DevOrbitCodexMcpLaunch = {
-    name: 'devorbit',
+    name: mcpName,
     launchId,
     command: runtime.executablePath,
     args: mcpArgs,
@@ -188,10 +194,12 @@ export function prepareDevOrbitCodexLaunch(
     startupTimeoutSec: 10,
   }
 
-  // A single complete table defines the managed DevOrbit namespace while
+  // A single complete table defines the fresh managed DevOrbit namespace while
   // leaving all other MCP servers untouched. The table MUST come before the
-  // leaf resets: CLI overrides collapse into one layer by insertion, and a
-  // later table would replace the whole subtree.
+  // leaf reset: CLI overrides collapse into one layer by insertion, and a
+  // later table would replace the whole subtree. The legacy fixed name is
+  // disabled separately so a persisted [mcp_servers.devorbit.env] cannot
+  // start with stale credentials.
   const configTable = [
     `command = ${tomlString(mcp.command)}`,
     `args = ${tomlArray(mcp.args)}`,
@@ -203,6 +211,22 @@ export function prepareDevOrbitCodexLaunch(
     'enabled = true',
     'startup_timeout_sec = 10',
   ].join(', ')
+  // Codex validates every configured server, including disabled entries. A
+  // persisted legacy name may contain only a stale env literal, so disabling
+  // just `enabled` would create an invalid partial server when no legacy
+  // transport exists. Supply a credential-free valid transport shape and keep
+  // it disabled; any persisted literal env remains isolated to this stopped
+  // entry and never reaches the fresh namespace.
+  const legacyConfigTable = [
+    `command = ${tomlString(mcp.command)}`,
+    'args = []',
+    `cwd = ${tomlString(mcp.cwd)}`,
+    'env_vars = []',
+    `env = ${tomlInlineTable(mcp.env)}`,
+    'required = false',
+    'enabled = false',
+    'startup_timeout_sec = 10',
+  ].join(', ')
   // Arrays replace wholesale at the leaf (source-verified merge), so an empty
   // `disabled_tools` clears stale blocks. `enabled_tools=[]` is NOT used:
   // upstream `ToolFilter::from_config` treats an empty allowlist as "enable no
@@ -211,8 +235,9 @@ export function prepareDevOrbitCodexLaunch(
   // `env_vars` (upstream deep-merge limitation, documented with CLI proofs in
   // the verification harness scratch/report).
   const configArgs = [
-    '--config', `mcp_servers.devorbit={ ${configTable} }`,
-    '--config', 'mcp_servers.devorbit.disabled_tools=[]',
+    '--config', `mcp_servers.devorbit={ ${legacyConfigTable} }`,
+    '--config', `mcp_servers.${mcpName}={ ${configTable} }`,
+    '--config', `mcp_servers.${mcpName}.disabled_tools=[]`,
   ]
 
   const env: NodeJS.ProcessEnv = {

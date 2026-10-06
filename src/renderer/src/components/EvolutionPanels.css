@@ -525,6 +525,13 @@
   background: var(--evolution-surface-muted);
 }
 
+/* Rodapé do HITL segue o padrão do app: rejeitar (secundário) à esquerda,
+   aprovar (primário) à direita, agrupados com espaço consistente. */
+.evolution-dialog--hitl .evolution-dialog__footer {
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .evolution-button {
   display: inline-flex;
   min-height: 40px;

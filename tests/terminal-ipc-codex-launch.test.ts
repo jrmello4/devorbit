@@ -161,9 +161,13 @@ describe('devorbit:startCodexTerminal managed MCP launch', () => {
     expect(launches).toHaveLength(2)
     expect(launches[0]).not.toBe(launches[1])
     const firstContext = state.prepareAiMemoryLaunch.mock.calls[0]?.[0] as { originalArgs: string[]; env: NodeJS.ProcessEnv; reservationId: string }
+    // Normaliza launch-id (UUID v4) e o nonce do servidor MCP gerenciado
+    // (`devorbit_runtime_<32 hex>`): o retry deve usar um nonce FRESCO, então
+    // o assertion compara estrutura, não o valor do nonce.
     const normalizeManagedArgs = (args: string[]) => args
       .join('\u0000')
       .replace(/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/giu, '<launch-id>')
+      .replace(/devorbit_runtime_[0-9a-f]{32}/giu, 'devorbit_runtime_<nonce>')
       .split('\u0000')
     expect(firstContext.originalArgs.at(0)).toBe('--config')
     expect(firstContext.originalArgs.at(-2)).toBe('--config')

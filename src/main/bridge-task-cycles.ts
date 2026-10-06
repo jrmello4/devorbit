@@ -1,6 +1,8 @@
 export type BridgeCycleStatus = 'completed' | 'blocked' | 'failed'
 
 export interface BridgeCycleOutcome {
+  errorCode?: import('./bridge-turn').BridgeTurnErrorCode
+  diagnostic?: import('./bridge-turn').BridgeTurnDiagnostic
   status: BridgeCycleStatus
   summary: string
 }

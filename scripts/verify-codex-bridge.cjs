@@ -14,7 +14,8 @@
  *  ROTATION   — runtime/token novos recusam credenciais antigas.
  *  REAL       — Codex CLI nativo real: workers e Coordinator por conta
  *               (.codex-conta1/.codex-conta2) + resume. Gated por
- *               DEVORBIT_CODEX_REAL_E2E=1 (default ligado; "0" desliga).
+ *               DEVORBIT_CODEX_REAL_E2E=1 (opt-in; ausente/desligado não usa
+ *               autenticação pessoal).
  *  SECURITY   — token/sessão/pipe nunca em argv, streams, config ou arquivos.
  *
  * Sem segredos em argv/logs/relatório. Não lê nem imprime auth.json.
@@ -37,7 +38,7 @@ const emitRoot = path.join(projectRoot, 'node_modules', '.cache', `devorbit-code
 const scratchRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'devorbit-codex-bridge-'))
 const projectBasePath = path.resolve(process.env.DEVORBIT_CODEX_E2E_PROJECT || 'C:\\temp\\project-without-codex')
 let projectPath = projectBasePath
-const realEnabled = process.env.DEVORBIT_CODEX_REAL_E2E !== '0'
+const realEnabled = process.env.DEVORBIT_CODEX_REAL_E2E === '1'
 const realTimeoutMs = Number(process.env.DEVORBIT_CODEX_E2E_TIMEOUT_MS || 300_000)
 const keepScratch = process.env.DEVORBIT_CODEX_E2E_KEEP === '1'
 
@@ -152,11 +153,11 @@ function runCodexCli({ exe, args, env, cwd, timeoutMs = realTimeoutMs, shell = f
 
 async function detectStaleDevOrbitEnv({ prepared, expectedEnv }) {
   if (!nativeCodex) return { stale: [], error: 'CLI nativo ausente' }
-  const table = prepared.args.find((argument) => argument.startsWith('mcp_servers.devorbit={'))
-  if (!table) return { stale: [], error: 'tabela devorbit ausente' }
+  const table = prepared.args.find((argument) => argument.startsWith(`mcp_servers.${prepared.mcp.name}={`))
+  if (!table) return { stale: [], error: `tabela ${prepared.mcp.name} ausente` }
   const result = await runCodexCli({
     exe: nativeCodex,
-    args: ['mcp', 'get', 'devorbit', '--json', '-c', table],
+    args: ['mcp', 'get', prepared.mcp.name, '--json', '-c', table],
     env: prepared.env,
     cwd: projectPath,
     timeoutMs: 30_000,
@@ -179,6 +180,27 @@ async function detectStaleDevOrbitEnv({ prepared, expectedEnv }) {
     if (typeof actual === 'string' && actual !== '' && expectedEnv[name] && actual !== expectedEnv[name]) stale.push(name)
   }
   return { stale, envKeys: Object.keys(env).sort() }
+}
+
+function parseCodexJson(output) {
+  const text = String(output || '').trim()
+  const startObject = text.indexOf('{')
+  const startArray = text.indexOf('[')
+  const starts = [startObject, startArray].filter((value) => value >= 0)
+  if (starts.length === 0) throw new Error('JSON ausente')
+  const start = Math.min(...starts)
+  const end = Math.max(text.lastIndexOf('}'), text.lastIndexOf(']'))
+  if (end <= start) throw new Error('JSON incompleto')
+  return JSON.parse(text.slice(start, end + 1))
+}
+
+function managedConfigArgs(prepared, baseArgs = []) {
+  const overrides = prepared.args.slice(baseArgs.length)
+  assert(
+    overrides.length > 0 && overrides.every((value, index) => index % 2 === 0 ? value === '--config' : typeof value === 'string'),
+    'overrides MCP gerenciados inválidos',
+  )
+  return overrides
 }
 
 function classifyCliFailure(result) {
@@ -287,11 +309,14 @@ function discoverPinnedCodex() {
   return candidates[0] || null
 }
 
-function createMcpClient({ env, terminalId, launchId, label, requestTimeoutMs = 60_000 }) {
+function createMcpClient({ env, terminalId, launchId, label, requestTimeoutMs = 60_000, unsetEnv = [] }) {
   const argv = [mcpScript, '--terminal-id', terminalId, '--launch-id', launchId]
   spawnAudit.push({ label: `mcp-${label}`, argv: [process.execPath, ...argv] })
+  const childEnv = { ...process.env, ...env }
+  for (const key of unsetEnv) delete childEnv[key]
+  childEnv.ELECTRON_RUN_AS_NODE = '1'
   const child = spawn(process.execPath, argv, {
-    env: { ...process.env, ...env, ELECTRON_RUN_AS_NODE: '1' },
+    env: childEnv,
     windowsHide: true,
     stdio: ['pipe', 'pipe', 'pipe'],
   })
@@ -734,13 +759,16 @@ async function main() {
     return { detail: `${projectPath} (sem .codex)` }
   })
 
+  // Finding the native binary is enough for the non-live namespace proof. Do
+  // not resolve account commands or inspect account auth files unless the
+  // explicitly opted-in live phase is enabled.
   nativeCodex = discoverPinnedCodex()
-  appResolvedCodex = await accountProfiles.resolveCodexCommand()
-  if (!nativeCodex && appResolvedCodex && /\.exe$/iu.test(appResolvedCodex) && fs.existsSync(appResolvedCodex)) {
+  appResolvedCodex = realEnabled ? await accountProfiles.resolveCodexCommand() : null
+  if (realEnabled && !nativeCodex && appResolvedCodex && /\.exe$/iu.test(appResolvedCodex) && fs.existsSync(appResolvedCodex)) {
     nativeCodex = appResolvedCodex
   }
   const npmCodex = process.env.APPDATA ? path.join(process.env.APPDATA, 'npm', 'codex.cmd') : null
-  if (npmCodex && fs.existsSync(npmCodex)) {
+  if (realEnabled && npmCodex && fs.existsSync(npmCodex)) {
     const version = await runCodexCli({ exe: npmCodex, args: ['--version'], env: process.env, cwd: projectRoot, timeoutMs: 20_000, shell: true })
     const combined = `${version.stdout} ${version.stderr}`.trim()
     npmCodexVersion = combined.split(/\s+/u).find((part) => /^\d+\.\d+\.\d+$/u.test(part)) || summarizeText(combined, 60)
@@ -758,10 +786,12 @@ async function main() {
   assert(accounts.account1.environment.CODEX_HOME.endsWith('.codex-conta1'), `CODEX_HOME da conta1 inesperado: ${accounts.account1.environment.CODEX_HOME}`)
   assert(accounts.account2.environment.CODEX_HOME.endsWith('.codex-conta2'), `CODEX_HOME da conta2 inesperado: ${accounts.account2.environment.CODEX_HOME}`)
   assert(accounts.account1.environment.CODEX_HOME !== accounts.account2.environment.CODEX_HOME, 'contas 1 e 2 não podem compartilhar CODEX_HOME')
-  const accountAuth = {
-    account1: await accountProfiles.hasValidCodexAuth(accounts.account1.environment.CODEX_HOME),
-    account2: await accountProfiles.hasValidCodexAuth(accounts.account2.environment.CODEX_HOME),
-  }
+  const accountAuth = realEnabled
+    ? {
+        account1: await accountProfiles.hasValidCodexAuth(accounts.account1.environment.CODEX_HOME),
+        account2: await accountProfiles.hasValidCodexAuth(accounts.account2.environment.CODEX_HOME),
+      }
+    : { account1: false, account2: false }
 
   // ---------------------------------------------------------------- TRANSPORT
   const transportHealthEvents = []
@@ -803,7 +833,13 @@ async function main() {
     delete envWithoutBridge.DEVORBIT_BRIDGE_PIPE
     delete envWithoutBridge.DEVORBIT_BRIDGE_TOKEN
     delete envWithoutBridge.DEVORBIT_SESSION_ID
-    const client = createMcpClient({ env: envWithoutBridge, terminalId: 'coordinator', launchId: launchA, label: 'env-guard' })
+    const client = createMcpClient({
+      env: envWithoutBridge,
+      unsetEnv: ['DEVORBIT_BRIDGE_PIPE', 'DEVORBIT_BRIDGE_TOKEN', 'DEVORBIT_SESSION_ID'],
+      terminalId: 'coordinator',
+      launchId: launchA,
+      label: 'env-guard',
+    })
     try {
       const response = await client.request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'verify', version: '1' } })
       assert(response.error, 'initialize sem ambiente deveria falhar')
@@ -830,7 +866,7 @@ async function main() {
     }
     const list = toolResultData(await transportMcp.request('tools/call', { name: 'agent.list', arguments: {} }))
     assert(Array.isArray(list) && list.length === 2, `agent.list inesperado: ${JSON.stringify(list)}`)
-    assert(list.every((agent) => agent.status === 'active'), 'agentes transport não estão ativos')
+    assert(list.every((agent) => agent.status === 'starting' && agent.terminalExists === true && agent.operational === false), 'agentes transport deveriam estar starting e não operacionais antes do primeiro turno')
     const ask = toolResultData(await transportMcp.request('tools/call', { name: 'agent.ask', arguments: { target: 'w1', prompt: 'tarefa transporte' } }, 60_000))
     assert(ask.status === 'completed', `agent.ask inesperado: ${JSON.stringify(ask)}`)
     assert(String(ask.summary).startsWith('TRANSPORT-FIXTURE:w1:'), `resposta não é do fixture rotulado: ${ask.summary}`)
@@ -907,18 +943,23 @@ async function main() {
     assert(prepared1.env.CODEX_HOME === accounts.account1.environment.CODEX_HOME, 'CODEX_HOME da conta1 ausente no env')
     assert(prepared2.env.CODEX_HOME === accounts.account2.environment.CODEX_HOME, 'CODEX_HOME da conta2 ausente no env')
     assert(prepared1.env.DEVORBIT_BRIDGE_TOKEN === transportService.runtime.token, 'token da bridge deve viajar só no env')
+    assert(prepared1.mcp.name !== prepared2.mcp.name, 'namespace MCP deve ser único por lançamento')
+    assert(/^devorbit_runtime_[0-9a-f]{32}$/u.test(prepared1.mcp.name), `namespace MCP inseguro: ${prepared1.mcp.name}`)
+    assert(prepared1.mcp.name !== 'devorbit', 'namespace legado não pode ser reutilizado')
     const configArgs = prepared1.args.join('\n')
     assert(!configArgs.includes(transportService.runtime.token), 'token não pode aparecer em argv/--config')
     assert(!configArgs.includes(transportService.runtime.sessionId), 'sessão não pode aparecer em argv/--config')
     assert(!configArgs.includes(transportService.runtime.pipeName), 'pipe não pode aparecer em argv/--config')
-    assert(prepared1.args.filter((argument) => argument === '--config').length === 2, 'tabela + reset de disabled_tools deveriam ser 2 pares --config')
+    assert(prepared1.args.filter((argument) => argument === '--config').length === 3, 'legado desabilitado + tabela + reset deveriam ser 3 pares --config')
     assert(!configArgs.includes('enabled_tools=[]'), 'enabled_tools=[] ocultaria todas as tools (allowlist vazia)')
     // O dono do módulo pode representar strings TOML como basic (`"..."`) ou
     // literal (`'''...'''`); o contrato é o VALOR, então aceitamos ambos.
     const quoted = (value) => [JSON.stringify(value), `'''${value}'''`]
     const hasQuoted = (prefix, value) => quoted(value).some((variant) => configArgs.includes(`${prefix}${variant}`))
-    const requiredConfigs = ['mcp_servers.devorbit={', 'env_vars = [', 'env = {', 'required = true', 'enabled = true', 'startup_timeout_sec = 10']
+    const requiredConfigs = [`mcp_servers.devorbit={`, `mcp_servers.${prepared1.mcp.name}={`, 'env_vars = [', 'env = {', 'required = true', 'enabled = true', 'startup_timeout_sec = 10']
     for (const required of requiredConfigs) assert(configArgs.includes(required), `--config ausente: ${required}`)
+    const legacyConfig = prepared1.args.find((argument) => argument.startsWith('mcp_servers.devorbit={'))
+    assert(legacyConfig && legacyConfig.includes('enabled = false'), 'entrada legada deve permanecer desabilitada')
     assert(hasQuoted('command = ', process.execPath), 'command do MCP não consta no --config')
     assert(hasQuoted('cwd = ', path.dirname(mcpScript)), 'cwd do MCP não consta no --config')
     for (const value of [mcpScript, '--terminal-id', 'codex-coordinator', '--launch-id', prepared1.mcp.launchId]) {
@@ -927,17 +968,94 @@ async function main() {
     assert(hasQuoted('ELECTRON_RUN_AS_NODE = ', '1'), 'ELECTRON_RUN_AS_NODE=1 ausente do env do MCP')
     for (const name of prepared1.mcp.envVars) assert(configArgs.includes(name), `env_var ausente no --config: ${name}`)
     assert(typeof prepared1.mcp.cwd === 'string' && prepared1.mcp.cwd === path.dirname(mcpScript), `cwd do MCP inesperado: ${prepared1.mcp.cwd}`)
-    const tableIndex = prepared1.args.findIndex((argument) => argument.startsWith('mcp_servers.devorbit={'))
+    const tableIndex = prepared1.args.findIndex((argument) => argument.startsWith(`mcp_servers.${prepared1.mcp.name}={`))
     assert(tableIndex >= 0, 'tabela devorbit ausente do --config')
     assert(
       JSON.stringify(prepared1.args.slice(tableIndex + 1)) === JSON.stringify([
-        '--config', 'mcp_servers.devorbit.disabled_tools=[]',
+        '--config', `mcp_servers.${prepared1.mcp.name}.disabled_tools=[]`,
       ]),
       `reset de disabled_tools deve vir depois da tabela: ${JSON.stringify(prepared1.args.slice(tableIndex + 1))}`,
     )
     registerSecretSource('launch-contract', JSON.stringify(prepared1.args))
     registerSecretSource('launch-contract-mcp', JSON.stringify(prepared1.mcp))
     return { detail: 'tabela TOML única + resets de arrays, credenciais só em env (3 nomes canônicos), launchId único, RUN_AS_NODE só no MCP' }
+  })
+
+  await phase('codex.namespace-isolation', 'CLI', async () => {
+    if (!nativeCodex) return { status: 'NOT_RUN', detail: 'CLI nativo ausente; prova mcp get/list não executada' }
+
+    const isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), 'devorbit-codex-namespace-'))
+    const staleEnvValue = `legacy-stale-env-${process.pid}`
+    const staleConfig = [
+      '[mcp_servers.devorbit]',
+      'command = "legacy-command"',
+      'args = ["legacy"]',
+      `env = { DEVORBIT_BRIDGE_TOKEN = "${staleEnvValue}" }`,
+      'enabled = true',
+      '',
+    ].join('\n')
+    fs.writeFileSync(path.join(isolatedHome, 'config.toml'), staleConfig, 'utf8')
+
+    try {
+      const prepared = prepareDevOrbitCodexLaunch({
+        accountEnvironment: { CODEX_HOME: isolatedHome },
+        bridgeEnv: {
+          DEVORBIT_BRIDGE_PIPE: `\\\\.\\pipe\\devorbit-proof-${process.pid}`,
+          DEVORBIT_BRIDGE_TOKEN: `bridge-proof-${process.pid}`,
+          DEVORBIT_SESSION_ID: `session-proof-${process.pid}`,
+        },
+        terminalId: 'codex-namespace-proof',
+        runtime: { executablePath: process.execPath, scriptPath: mcpScript, cwd: projectRoot },
+      })
+      const configArgs = managedConfigArgs(prepared)
+      const env = { ...prepared.env, CODEX_HOME: isolatedHome }
+      const list = await runCodexCli({
+        exe: nativeCodex,
+        args: ['mcp', 'list', '--json', ...configArgs],
+        env,
+        cwd: projectPath,
+        timeoutMs: 30_000,
+      })
+      assert(list.code === 0, `mcp list falhou: ${summarizeText(list.stderr || list.stdout, 240)}`)
+      const entries = parseCodexJson(list.stdout)
+      assert(Array.isArray(entries), 'mcp list não retornou uma lista JSON')
+      const legacy = entries.find((entry) => entry && entry.name === 'devorbit')
+      const fresh = entries.find((entry) => entry && entry.name === prepared.mcp.name)
+      assert(legacy && legacy.enabled === false, 'entrada legada devorbit não foi desabilitada por launch')
+      assert(fresh && fresh.enabled === true, `namespace fresco ${prepared.mcp.name} não ficou habilitado`)
+      assert(fresh.transport && fresh.transport.env && fresh.transport.env.DEVORBIT_BRIDGE_TOKEN === undefined, 'namespace fresco herdou env literal')
+      assert(JSON.stringify(fresh.transport.env_vars || []) === JSON.stringify(prepared.mcp.envVars), 'namespace fresco perdeu env_vars canônicos')
+      assert(legacy.transport && legacy.transport.env && legacy.transport.env.DEVORBIT_BRIDGE_TOKEN === staleEnvValue, 'fixture legado não preservou a prova de stale env')
+
+      const getLegacy = await runCodexCli({
+        exe: nativeCodex,
+        args: ['mcp', 'get', 'devorbit', '--json', ...configArgs],
+        env,
+        cwd: projectPath,
+        timeoutMs: 30_000,
+      })
+      assert(getLegacy.code === 0, `mcp get legado falhou: ${summarizeText(getLegacy.stderr || getLegacy.stdout, 240)}`)
+      const legacyRecord = parseCodexJson(getLegacy.stdout)
+      assert(legacyRecord.enabled === false, 'mcp get legado não refletiu enabled=false')
+      assert(legacyRecord.transport && legacyRecord.transport.env.DEVORBIT_BRIDGE_TOKEN === staleEnvValue, 'mcp get legado não mostrou o fixture esperado')
+
+      const getFresh = await runCodexCli({
+        exe: nativeCodex,
+        args: ['mcp', 'get', prepared.mcp.name, '--json', ...configArgs],
+        env,
+        cwd: projectPath,
+        timeoutMs: 30_000,
+      })
+      assert(getFresh.code === 0, `mcp get fresco falhou: ${summarizeText(getFresh.stderr || getFresh.stdout, 240)}`)
+      const freshRecord = parseCodexJson(getFresh.stdout)
+      assert(freshRecord.name === prepared.mcp.name && freshRecord.enabled === true, 'mcp get fresco retornou namespace incorreto')
+      assert(freshRecord.transport && freshRecord.transport.env && freshRecord.transport.env.DEVORBIT_BRIDGE_TOKEN === undefined, 'mcp get fresco revelou env legado')
+      const configText = configArgs.join('\n')
+      assert(!configText.includes('bridge-proof-') && !configText.includes('session-proof-') && !configText.includes('devorbit-proof-'), 'credencial de prova apareceu em argv/--config')
+      return { detail: `mcp list/get confirmou devorbit desabilitado e ${prepared.mcp.name} fresco com env_vars; CODEX_HOME temporário` }
+    } finally {
+      fs.rmSync(isolatedHome, { recursive: true, force: true })
+    }
   })
 
   let codexMcpEnvForwarding = null
@@ -959,6 +1077,7 @@ async function main() {
     secrets.set('session MCP env forwarding probe', sentinelSession)
     const evidencePath = requireScratch('codex-env-forwarding-evidence.json')
     const probePath = writeCodexEnvForwardingProbe(evidencePath)
+    const probeName = `devorbit_runtime_probe_${crypto.randomUUID().replaceAll('-', '')}`
     const table = [
       `command = ${JSON.stringify(process.execPath)}`,
       `args = ${JSON.stringify([probePath])}`,
@@ -969,10 +1088,13 @@ async function main() {
       'enabled = true',
       'startup_timeout_sec = 10',
     ].join(', ')
+    const legacyTable = `mcp_servers.devorbit={ command = ${JSON.stringify(process.execPath)}, args = [], cwd = ${JSON.stringify(projectRoot)}, env_vars = [], env = { ELECTRON_RUN_AS_NODE = "1" }, required = false, enabled = false, startup_timeout_sec = 10 }`
     const result = await runCodexCli({
       exe: nativeCodex,
       args: [
-        'exec', '--json', '--skip-git-repo-check', '--ephemeral', '-C', projectPath, '-c', `mcp_servers.devorbit={ ${table} }`,
+        'exec', '--json', '--skip-git-repo-check', '--ephemeral', '-C', projectPath,
+        '-c', legacyTable,
+        '-c', `mcp_servers.${probeName}={ ${table} }`,
         'Responda apenas com OK. Não execute comandos.',
       ],
       env: {
@@ -1210,7 +1332,8 @@ input.on('line', (line) => {
   if (request.id !== undefined) process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, error: { code: -32601, message: 'Method not found' } }) + '\\n')
 })
 `)
-    const table = `mcp_servers.devorbit={ command = ${JSON.stringify(process.execPath)}, args = ${JSON.stringify([probePath])}, cwd = ${JSON.stringify(path.dirname(probePath))}, env_vars = [], env = { ELECTRON_RUN_AS_NODE = "1" }, required = true, enabled = true, startup_timeout_sec = 10 }`
+    const probeName = `devorbit_runtime_probe_${crypto.randomUUID().replaceAll('-', '')}`
+    const table = `mcp_servers.${probeName}={ command = ${JSON.stringify(process.execPath)}, args = ${JSON.stringify([probePath])}, cwd = ${JSON.stringify(path.dirname(probePath))}, env_vars = [], env = { ELECTRON_RUN_AS_NODE = "1" }, required = true, enabled = true, startup_timeout_sec = 10 }`
     const result = await runCodexCli({
       exe: nativeCodex,
       args: [
@@ -1283,6 +1406,7 @@ input.on('line', (line) => {
     const record = {
       terminalId,
       account: account.id,
+      mcpName: prepared.mcp.name,
       accountHome: path.basename(account.environment.CODEX_HOME),
       threadId: analysis.threads[0] || null,
       staleOverrides: staleProbe.stale,
@@ -1327,7 +1451,7 @@ input.on('line', (line) => {
       const run = await runCoordinator({ account, terminalId: id, prompt, resume: false })
       if (run.exit !== 0) {
         if (run.staleOverrides.length > 0) {
-          throw new BlockedError(`[mcp_servers.devorbit.env] persistido sobrepõe env_vars (${run.staleOverrides.join(', ')}); limitação upstream de deep-merge documentada, não mascarada (${id})`)
+          throw new BlockedError(`[mcp_servers.${run.mcpName}.env] persistido sobrepõe env_vars (${run.staleOverrides.join(', ')}); limitação upstream de deep-merge inesperada (${id})`)
         }
         const failure = classifyCliFailure({ code: run.exit, stdout: run.stdout, stderr: run.stderr, timedOut: run.timedOut })
         throw failure.status === 'BLOCKED' ? new BlockedError(`${failure.detail} (${id})`) : new Error(`${failure.detail} (${id})`)
@@ -1363,7 +1487,7 @@ input.on('line', (line) => {
     })
     if (run.exit !== 0) {
       if (run.staleOverrides.length > 0) {
-        throw new BlockedError(`[mcp_servers.devorbit.env] persistido sobrepõe env_vars (${run.staleOverrides.join(', ')}); limitação upstream de deep-merge documentada, não mascarada (resume)`)
+        throw new BlockedError(`[mcp_servers.${run.mcpName}.env] persistido sobrepõe env_vars (${run.staleOverrides.join(', ')}); limitação upstream de deep-merge inesperada (resume)`)
       }
       const failure = classifyCliFailure({ code: run.exit, stdout: run.stdout, stderr: run.stderr, timedOut: run.timedOut })
       throw failure.status === 'BLOCKED' ? new BlockedError(`${failure.detail} (resume)`) : new Error(`${failure.detail} (resume)`)
@@ -1436,12 +1560,14 @@ input.on('line', (line) => {
       npm: npmCodexVersion,
     },
     accounts: {
-      account1: { home: path.basename(accounts.account1.environment.CODEX_HOME), auth: accountAuth.account1 },
-      account2: { home: path.basename(accounts.account2.environment.CODEX_HOME), auth: accountAuth.account2 },
+      authChecked: realEnabled,
+      account1: { home: path.basename(accounts.account1.environment.CODEX_HOME), auth: realEnabled ? accountAuth.account1 : null },
+      account2: { home: path.basename(accounts.account2.environment.CODEX_HOME), auth: realEnabled ? accountAuth.account2 : null },
     },
     mcpEnvForwardingProbe: codexMcpEnvForwarding,
     coverage: {
       proved: [
+        'Codex CLI mcp list/get em CODEX_HOME temporário: stale env legado preservado apenas na entrada desabilitada',
         'MCP stdio real via Electron RUN_AS_NODE + bridge autenticada (env/ping/handshake/list/ask)',
         'prepareDevOrbitCodexLaunch: tabela TOML única, token só em env, launchId por execução',
         'Codex CLI real iniciou MCP fake e encaminhou DEVORBIT_BRIDGE_TOKEN via env_vars sem imprimir/persistir o sentinela',
@@ -1462,15 +1588,18 @@ input.on('line', (line) => {
     failures: phases.filter((entry) => entry.status === 'FAIL'),
     execToolExposure,
     limits: [
-      'Upstream deep-merge de -c: tabelas persistidas (env/url/http_headers) não podem ser removidas via CLI; um literal antigo em [mcp_servers.devorbit.env] vence env_vars (fontes: codex-rs/config/src/merge.rs e rmcp-client/src/utils.rs; provas com fixture temp CODEX_HOME + sentinelas).',
+      'A entrada legada devorbit permanece visível com env antigo, mas recebe enabled=false por launch; o namespace fresco não herda essa tabela.',
+      'Um nome legado arbitrário além de devorbit não pode ser removido por --config sem conhecer a chave; a prova mcp list exige que o namespace gerenciado conhecido esteja desabilitado.',
+      'Upstream deep-merge de -c: tabelas persistidas (env/url/http_headers) não podem ser removidas via CLI; a entrada legada é desabilitada por launch e a definição fresca usa namespace isolado.',
       'Aliases de env por launch foram avaliados e NÃO integrados: contrato vigente exige env_vars somente com os três nomes canônicos; proposta mantida fora do código (scratch).',
       'Resets comprovados e aplicados: enabled_tools=[] e disabled_tools=[] limpam arrays persistidos (arrays substituem no leaf).',
-      'url persistido em mcp_servers.devorbit inviabiliza lançamento stdio (Codex rejeita command+url); sem remoção via CLI.',
+      'url persistido em mcp_servers.devorbit continua no registro desabilitado; o lançamento fresco usa namespace stdio separado e não edita config persistido.',
       'Cobertura ausente: UI/renderer, startCodexTerminal/terminal-ipc, IPC de saúde e restart do app.',
     ],
     coordinatorRuns: coordinatorRuns.map((run) => ({
       terminalId: run.terminalId,
       account: run.account,
+      mcpName: run.mcpName,
       accountHome: run.accountHome,
       threadId: run.threadId,
       staleOverrides: run.staleOverrides,

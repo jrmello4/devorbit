@@ -10,6 +10,9 @@ import {
 } from '../src/main/agent-bridge'
 
 const mcpScript = path.resolve(process.cwd(), 'scripts', 'devorbit-mcp.cjs')
+// Versão esperada derivada do package.json: acompanha bumps de release sem
+// edição manual (o servidor MCP reporta a versão empacotada).
+const packageVersion = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), 'package.json'), 'utf8')).version
 
 interface McpMessage {
   jsonrpc?: string
@@ -203,16 +206,16 @@ describe('devorbit-mcp conformance', () => {
     expect(response.result?.protocolVersion).toBe('2025-06-18')
     expect(response.result?.capabilities?.tools?.listChanged).toBe(false)
     expect(response.result?.serverInfo?.name).toBe('DevOrbit MCP')
-    expect(response.result?.serverInfo?.version).toBe('1.0.47')
+    expect(response.result?.serverInfo?.version).toBe(packageVersion)
   })
 
-  it('exposes a coherent preflight timeout below 10s and guaranteed version 1.0.47', () => {
+  it('exposes a coherent preflight timeout below 10s and the packaged version', () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { BRIDGE_PING_TIMEOUT_MS, getMcpVersion } = require('../scripts/devorbit-mcp.cjs')
     expect(BRIDGE_PING_TIMEOUT_MS).toBe(8_000)
     expect(BRIDGE_PING_TIMEOUT_MS).toBeLessThan(10_000)
     expect(BRIDGE_PING_TIMEOUT_MS).toBeGreaterThanOrEqual(5_000)
-    expect(getMcpVersion()).toBe('1.0.47')
+    expect(getMcpVersion()).toBe(packageVersion)
   })
 
   it('lists the four agent tools with their input schemas', async () => {
@@ -408,7 +411,16 @@ describe('devorbit-mcp conformance', () => {
     })
 
     expect(response.result?.isError).toBe(true)
-    expect(response.result?.content?.[0]?.text).toContain('initialize')
+    const structured = response.result?.structuredContent as Record<string, unknown>
+    expect(structured).toMatchObject({
+      code: 'MCP_NOT_INITIALIZED',
+      errorCode: 'MCP_NOT_INITIALIZED',
+      phase: 'request_rejected',
+      turnId: 'unknown',
+      provider: 'unknown',
+      elapsedMs: 0,
+    })
+    expect(response.result?.content?.[0]?.text).toBe(JSON.stringify(structured))
   })
 
   it('rejects initialize when the bridge environment is missing', async () => {
@@ -423,7 +435,16 @@ describe('devorbit-mcp conformance', () => {
     })
 
     expect(response.result?.isError).toBe(true)
-    expect(response.result?.content?.[0]?.text).toContain('initialize')
+    const structured = response.result?.structuredContent as Record<string, unknown>
+    expect(structured).toMatchObject({
+      code: 'MCP_NOT_INITIALIZED',
+      errorCode: 'MCP_NOT_INITIALIZED',
+      phase: 'request_rejected',
+      turnId: 'unknown',
+      provider: 'unknown',
+      elapsedMs: 0,
+    })
+    expect(response.result?.content?.[0]?.text).toBe(JSON.stringify(structured))
   })
 
   it('distinguishes a rejected token from a mismatched session during initialize', async () => {
@@ -521,6 +542,254 @@ describe('devorbit-mcp conformance', () => {
     const response = await responsePromise
     expect(response.error?.data).toMatchObject({ code: 'MCP_STARTUP_FAILED' })
     expect(response.error?.message).toBe('MCP bridge initialization failed.')
+  })
+
+  it('propagates a specific bridge validation code without echoing prompt or credentials', async () => {
+    const calls: AgentBridgeRequest[] = []
+    const bridge = await startBridge({ ask: async (request) => {
+      calls.push(request)
+      return { summary: 'must not execute', status: 'completed' }
+    } }, { token: 'validation-secret-token' })
+    const mcp = startMcp(bridgeEnv(bridge, { DEVORBIT_BRIDGE_TOKEN: 'validation-secret-token' }))
+    await initializeMcp(mcp)
+
+    const response = await mcp.request({
+      jsonrpc: '2.0',
+      id: 22,
+      method: 'tools/call',
+      params: { name: 'agent.ask', arguments: { target: 'agy', prompt: 'linha-secreta-1\nlinha-secreta-2\u0000' } },
+    })
+
+    const structured = response.result?.structuredContent as Record<string, unknown>
+    expect(calls).toHaveLength(0)
+    expect(response.result?.isError).toBe(true)
+    expect(structured).toEqual({
+      code: 'INVALID_PROMPT',
+      errorCode: 'INVALID_PROMPT',
+      phase: 'request_rejected',
+      turnId: 'unknown',
+      provider: 'unknown',
+      elapsedMs: 0,
+    })
+    expect(response.result?.content?.[0]?.text).toBe(JSON.stringify(structured))
+    const serialized = JSON.stringify(response)
+    expect(serialized).not.toContain('linha-secreta')
+    expect(serialized).not.toContain('validation-secret-token')
+    expect(serialized).not.toContain(bridge.pipeName)
+  })
+
+  it('preserves safe pre-turn readiness errors through MCP without inventing a turn id', async () => {
+    const bridge = await startBridge({ ask: async () => {
+      throw Object.assign(new Error('private detail must not pass'), {
+        code: 'AGENT_NOT_READY',
+        bridgeData: {
+          phase: 'target_validation',
+          agentId: 'agent-codex-1',
+          provider: 'codex',
+          status: 'starting',
+          operational: false,
+          turnCreated: false,
+        },
+      })
+    } })
+    const mcp = startMcp(bridgeEnv(bridge))
+    await initializeMcp(mcp)
+
+    const response = await mcp.request({
+      jsonrpc: '2.0',
+      id: 23,
+      method: 'tools/call',
+      params: { name: 'agent.ask', arguments: { target: 'agent-codex-1', prompt: 'prompt-secret' } },
+    })
+
+    const structured = response.result?.structuredContent as Record<string, unknown>
+    expect(structured).toEqual({
+      code: 'AGENT_NOT_READY',
+      errorCode: 'AGENT_NOT_READY',
+      phase: 'target_validation',
+      provider: 'codex',
+      agentId: 'agent-codex-1',
+      status: 'starting',
+      operational: false,
+      turnCreated: false,
+    })
+    expect(structured).not.toHaveProperty('turnId')
+    expect(response.result?.isError).toBe(true)
+    const serialized = JSON.stringify(response)
+    expect(serialized).not.toContain('private detail')
+    expect(serialized).not.toContain('prompt-secret')
+    expect(serialized).not.toContain(bridge.token)
+    expect(serialized).not.toContain(bridge.pipeName)
+  })
+
+  it('returns bounded failed-turn diagnostics in text JSON and structuredContent', async () => {
+    const promptSecret = 'prompt-secret-value'
+    const tokenSecret = 'token-secret-value'
+    const bridge = await startBridge(
+      {
+        ask: async () => ({
+          status: 'failed',
+          errorCode: 'RESULT_PARSE_FAILED',
+          summary: `prompt=${promptSecret} token=${tokenSecret}`,
+          diagnostic: {
+            phase: 'result_candidate',
+            turnId: 'bridge_worker_1_abc123',
+            provider: 'codex',
+            elapsedMs: 42,
+            providerState: 'busy',
+            markerState: 'seen',
+            nonceState: 'unmatched',
+            exitCode: 7,
+            prompt: promptSecret,
+            token: tokenSecret,
+            env: 'sensitive-env-value',
+          },
+        }),
+      },
+      { token: tokenSecret },
+    )
+    const mcp = startMcp(bridgeEnv(bridge))
+    await initializeMcp(mcp)
+
+    const response = await mcp.request({
+      jsonrpc: '2.0',
+      id: 23,
+      method: 'tools/call',
+      params: { name: 'agent.ask', arguments: { target: 'agy', prompt: 'safe task' } },
+    })
+
+    const structured = response.result?.structuredContent as Record<string, unknown>
+    expect(response.result?.isError).toBe(true)
+    expect(structured).toEqual({
+      code: 'RESULT_PARSE_FAILED',
+      errorCode: 'RESULT_PARSE_FAILED',
+      phase: 'result_candidate',
+      turnId: 'bridge_worker_1_abc123',
+      provider: 'codex',
+      elapsedMs: 42,
+      providerState: 'busy',
+      markerState: 'seen',
+      nonceState: 'unmatched',
+      exitCode: 7,
+    })
+    expect(response.result?.content?.[0]?.text).toBe(JSON.stringify(structured))
+    const serialized = JSON.stringify(response)
+    expect(serialized).not.toContain(promptSecret)
+    expect(serialized).not.toContain(tokenSecret)
+    expect(serialized).not.toContain('sensitive-env-value')
+  })
+
+  it('propagates only known thrown-turn diagnostics from the bridge', async () => {
+    const promptSecret = 'thrown-prompt-secret'
+    const tokenSecret = 'thrown-token-secret'
+    const bridge = await startBridge(
+      {
+        ask: async () => {
+          const failure = Object.assign(new Error(`provider output prompt=${promptSecret} token=${tokenSecret}`), {
+            code: 'PROVIDER_STARTUP_FAILED',
+            diagnostic: {
+              phase: 'provider_startup_failed',
+              turnId: 'bridge_worker_2_def456',
+              provider: 'codex',
+              elapsedMs: 17,
+              providerState: 'failed',
+              markerState: 'missing',
+              nonceState: 'unmatched',
+              exitCode: 2,
+              prompt: promptSecret,
+              token: tokenSecret,
+            },
+          })
+          throw failure
+        },
+      },
+      { token: tokenSecret },
+    )
+    const mcp = startMcp(bridgeEnv(bridge))
+    await initializeMcp(mcp)
+
+    const response = await mcp.request({
+      jsonrpc: '2.0',
+      id: 25,
+      method: 'tools/call',
+      params: { name: 'agent.ask', arguments: { target: 'agy', prompt: 'safe task' } },
+    })
+
+    const structured = response.result?.structuredContent as Record<string, unknown>
+    expect(response.result?.isError).toBe(true)
+    expect(structured).toEqual({
+      code: 'PROVIDER_STARTUP_FAILED',
+      errorCode: 'PROVIDER_STARTUP_FAILED',
+      phase: 'provider_startup_failed',
+      turnId: 'bridge_worker_2_def456',
+      provider: 'codex',
+      elapsedMs: 17,
+      providerState: 'failed',
+      markerState: 'missing',
+      nonceState: 'unmatched',
+      exitCode: 2,
+    })
+    expect(response.result?.content?.[0]?.text).toBe(JSON.stringify(structured))
+    const serialized = JSON.stringify(response)
+    expect(serialized).not.toContain(promptSecret)
+    expect(serialized).not.toContain(tokenSecret)
+  })
+
+  it('preserves the caller identity stale code without exposing bridge details', async () => {
+    const bridge = await startBridge({
+      ask: async () => {
+        throw Object.assign(new Error('stale caller token=do-not-forward'), { code: 'CALLER_IDENTITY_STALE' })
+      },
+    })
+    const mcp = startMcp(bridgeEnv(bridge))
+    await initializeMcp(mcp)
+
+    const response = await mcp.request({
+      jsonrpc: '2.0',
+      id: 26,
+      method: 'tools/call',
+      params: { name: 'agent.ask', arguments: { target: 'agy', prompt: 'safe task' } },
+    })
+
+    const structured = response.result?.structuredContent as Record<string, unknown>
+    expect(response.result?.isError).toBe(true)
+    expect(structured).toMatchObject({
+      code: 'CALLER_IDENTITY_STALE',
+      errorCode: 'CALLER_IDENTITY_STALE',
+      phase: 'request_rejected',
+      turnId: 'unknown',
+      provider: 'unknown',
+      elapsedMs: 0,
+    })
+    expect(response.result?.content?.[0]?.text).toBe(JSON.stringify(structured))
+    expect(JSON.stringify(response)).not.toContain('do-not-forward')
+  })
+
+  it('includes managed caller identity after the bridge context', async () => {
+    const calls: AgentBridgeRequest[] = []
+    const bridge = await startBridge({
+      mcpHandshake: async () => ({ connected: true }),
+      ask: async (request) => {
+        calls.push(request)
+        return { summary: 'identity-ok', status: 'completed' }
+      },
+    })
+    const mcp = startMcp(bridgeEnv(bridge), ['--terminal-id', 'coordinator', '--launch-id', 'launch-1'])
+    await initializeMcp(mcp)
+
+    const response = await mcp.request({
+      jsonrpc: '2.0',
+      id: 24,
+      method: 'tools/call',
+      params: { name: 'agent.ask', arguments: { target: 'agy', prompt: 'identity check' } },
+    })
+
+    expect(response.result?.isError).toBeUndefined()
+    expect(calls[0]).toMatchObject({
+      origin: 'coordinator',
+      originTerminalId: 'coordinator',
+      originLaunchId: 'launch-1',
+    })
   })
 
   it('defaults agent.wait timeout to the bridge default when the caller omits it', async () => {

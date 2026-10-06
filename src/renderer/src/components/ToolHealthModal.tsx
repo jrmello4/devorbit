@@ -36,26 +36,25 @@ export const ToolHealthModal: React.FC<ToolHealthModalProps> = ({ isOpen, onClos
   }, [isOpen, loadHealth])
 
   return (
-    <AccessibleDialog isOpen={isOpen} titleId="tool-health-title" onClose={onClose}>
-      <div className="w-[min(760px,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] shadow-2xl">
-        <header className="flex items-start justify-between gap-4 border-b border-[var(--color-border-subtle)] bg-[var(--surface-muted)] px-6 py-5">
-          <div>
-            <div className="mb-2 flex items-center gap-2 text-[var(--color-accent-strong)]">
-              <Wrench className="h-4 w-4" aria-hidden="true" />
-              <span className="text-[11px] font-bold uppercase tracking-[0.12em]">Saúde do workspace</span>
-            </div>
-            <h2 id="tool-health-title" className="text-lg font-bold text-[var(--text-primary)]">Diagnóstico de ferramentas</h2>
-            <p className="mt-1 max-w-xl text-xs leading-5 text-[var(--color-text-secondary)]">
-              Confira se cada programa foi encontrado. <strong>Em uso</strong> é o caminho que o DevOrbit abrirá;{' '}
-              <strong>Configurado</strong> é o valor definido em Configurações, quando houver.
-            </p>
+    <AccessibleDialog isOpen={isOpen} titleId="tool-health-title" onClose={onClose} className="dialog-shell dialog--lg flex flex-col overflow-hidden">
+      <header className="dialog-shell__header flex items-start justify-between gap-4">
+        <div>
+          <div className="mb-2 flex items-center gap-2 text-[var(--color-accent-strong)]">
+            <Wrench className="h-4 w-4" aria-hidden="true" />
+            <span className="text-[11px] font-bold uppercase tracking-[0.12em]">Saúde do workspace</span>
           </div>
-          <button type="button" onClick={onClose} className="rounded-lg p-2 text-[var(--color-text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]" aria-label="Fechar diagnóstico">
-            <X className="h-4 w-4" aria-hidden="true" />
-          </button>
-        </header>
+          <h2 id="tool-health-title" className="text-lg font-bold text-[var(--text-primary)]">Diagnóstico de ferramentas</h2>
+          <p className="mt-1 max-w-xl text-xs leading-5 text-[var(--color-text-secondary)]">
+            Confira se cada programa foi encontrado. <strong>Em uso</strong> é o caminho que o DevOrbit abrirá;{' '}
+            <strong>Configurado</strong> é o valor definido em Configurações, quando houver.
+          </p>
+        </div>
+        <button type="button" onClick={onClose} className="rounded-lg p-2 text-[var(--color-text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]" aria-label="Fechar diagnóstico">
+          <X className="h-4 w-4" aria-hidden="true" />
+        </button>
+      </header>
 
-        <div className="max-h-[min(60vh,520px)] overflow-y-auto p-5">
+      <div className="dialog-shell__body max-h-[min(60vh,520px)] overflow-y-auto">
           {error && <div role="alert" className="mb-3 flex items-start gap-2 rounded-lg border border-[color-mix(in_srgb,var(--color-danger)_35%,transparent)] bg-[color-mix(in_srgb,var(--color-danger)_12%,transparent)] px-3 py-2 text-xs text-[var(--color-danger)]"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" /><span>{error}</span></div>}
           {isLoading && !items.length ? (
             <div className="flex items-center gap-2 rounded-lg border border-[var(--color-border-subtle)] bg-[var(--surface-muted)] p-4 text-sm text-[var(--color-text-secondary)]" role="status"><RefreshCw className="h-4 w-4 animate-spin" aria-hidden="true" /> Verificando ferramentas…</div>
@@ -106,13 +105,18 @@ export const ToolHealthModal: React.FC<ToolHealthModalProps> = ({ isOpen, onClos
           )}
         </div>
 
-        <footer className="flex items-center justify-end gap-2 border-t border-[var(--color-border-subtle)] bg-[var(--surface-muted)] px-5 py-3">
-          <button type="button" onClick={() => void loadHealth()} disabled={isLoading} className="flex items-center gap-1.5 rounded-lg border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-3 py-2 text-xs font-semibold text-[var(--color-text-secondary)] hover:border-[var(--color-border-strong)] hover:text-[var(--text-primary)] disabled:opacity-50">
+        <footer className="dialog-shell__footer flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => void loadHealth()}
+            disabled={isLoading}
+            aria-busy={isLoading}
+            className="btn btn--secondary"
+          >
             <RefreshCw className={isLoading ? 'h-3.5 w-3.5 animate-spin' : 'h-3.5 w-3.5'} aria-hidden="true" /> Atualizar
           </button>
-          <button type="button" onClick={onClose} className="rounded-lg bg-[var(--color-accent-strong)] px-4 py-2 text-xs font-semibold text-[var(--color-accent-contrast)] hover:bg-[var(--color-accent-hover)]">Fechar</button>
+          <button type="button" onClick={onClose} className="btn btn--primary">Fechar</button>
         </footer>
-      </div>
     </AccessibleDialog>
   )
 }

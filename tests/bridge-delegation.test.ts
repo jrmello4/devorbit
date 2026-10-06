@@ -3,6 +3,8 @@ import net from 'node:net'
 import { serializeAgentBridgeMessage } from '../src/main/agent-bridge'
 import { createBridgeService, type BridgeServiceDependencies, type BridgeService } from '../src/main/bridge-service'
 import type { AgentBridgeEvent } from '../src/shared/agent-bridge-event'
+import { sendAgentInstruction } from '../src/main/agent-instruction'
+import type { TerminalEvent } from '../src/main/terminal-session'
 
 interface BridgeResponse {
   ok: boolean
@@ -14,6 +16,7 @@ function createDependencies(overrides: Partial<BridgeServiceDependencies> = {}):
   return {
     cliDirectory: '/cli',
     hasTerminal: (id) => id === 'agent-1' || id === 'agent-2',
+    waitAgentReady: async () => ({ timedOut: false }),
     waitTurnResult: () => {
       const promise = Promise.resolve({ result: 'CONCLUIDO: ok' }) as ReturnType<BridgeServiceDependencies['waitTurnResult']>
       promise.cancel = () => undefined
@@ -69,6 +72,64 @@ function request(socket: net.Socket, message: unknown): Promise<BridgeResponse> 
 }
 
 describe('bridge delegation — origem/destino/resultado e guardrails', () => {
+  it('roundtrip autenticado observa entrega, submit, resultado com nonce e worker pronto; eco não conclui', async () => {
+    const listeners = new Set<(event: TerminalEvent) => void>()
+    const subscribe = (listener: (event: TerminalEvent) => void) => {
+      listeners.add(listener)
+      return () => { listeners.delete(listener) }
+    }
+    const emit = (data: string) => { for (const listener of [...listeners]) listener({ id: 'agent-1', type: 'data', data }) }
+    let content = ''
+    let nonce = ''
+    const phases: string[] = []
+    const deps = createDependencies({ subscribe,
+      onDiagnostic: event => phases.push(event.phase),
+      sendInstruction: input => {
+        nonce = input.turnId
+        return sendAgentInstruction({ hasTerminal: () => true, waitReady: async () => ({ timedOut: false }),
+          subscribe, now: () => Date.now(), write: (_id, data) => {
+            if (data !== '\r') { content = data; emit(data); return true }
+            setTimeout(() => emit(`\r\n• DEVORBIT_RESULT_${nonce}: {"version":1,"outcome":"completed","summary":"DEVORBIT_BRIDGE_OK"}\r\n`), 0)
+            return true
+          } }, { ...input, provider: 'codex', echoSettleMs: 10, ackTimeoutMs: 100 })
+      },
+    })
+    const { service, close } = await startService(deps)
+    const socket = await connect(service.runtime.pipeName)
+    try {
+      expect(service.listAgents()[0]).toMatchObject({ status: 'ready', terminalExists: true, operational: true })
+      const response = await request(socket, { type: 'ask', token: service.runtime.token, sessionId: service.runtime.sessionId,
+        target: 'agent-1', prompt: 'Responda apenas DEVORBIT_BRIDGE_OK. Não altere arquivos.', timeoutMs: 2000 })
+      expect(response).toMatchObject({ ok: true, result: { status: 'completed', summary: 'DEVORBIT_BRIDGE_OK',
+        diagnostic: { turnId: nonce, terminalId: 'agent-1' } } })
+      expect(service.listAgents()[0]).toMatchObject({ status: 'ready', operational: true })
+      expect(phases).toEqual(expect.arrayContaining(['content_written', 'submit_sent', 'acked', 'result_marker_seen', 'result_parsed', 'turn_completed']))
+      expect(content).toContain(`DEVORBIT_RESULT_${nonce}:`)
+      expect(content).not.toContain('{"version"')
+    } finally { socket.destroy(); await close() }
+  })
+
+  it('fatal de modelo no startup é distinto de um terminal operacional e recusa delegação', async () => {
+    const listeners = new Set<(event: TerminalEvent) => void>()
+    const { service, close } = await startService(createDependencies({ waitAgentReady: () => new Promise(() => undefined), subscribe: listener => {
+      listeners.add(listener); return () => { listeners.delete(listener) }
+    } }))
+    const socket = await connect(service.runtime.pipeName)
+    try {
+      for (const data of ['Error: unknown mo', 'del']) {
+        for (const listener of [...listeners]) listener({ id: 'agent-1', type: 'data', data })
+      }
+      expect(service.listAgents()[0]).toMatchObject({ status: 'failed', reason: 'model_configuration_error', operational: false })
+      for (const listener of [...listeners]) listener({ id: 'agent-1', type: 'exit', code: 1 })
+      expect(service.listAgents()[0]).toMatchObject({ status: 'stopped', failureCode: 'AGENT_STARTUP_CONFIGURATION_INVALID' })
+      const response = await request(socket, { type: 'ask', token: service.runtime.token, sessionId: service.runtime.sessionId,
+        target: 'agent-1', prompt: 'não executar' })
+      expect(response).toMatchObject({ ok: false, error: { code: 'AGENT_STARTUP_FAILED', data: {
+        phase: 'target_validation', status: 'stopped', turnCreated: false,
+        failureCode: 'AGENT_STARTUP_CONFIGURATION_INVALID',
+      } } })
+    } finally { socket.destroy(); await close() }
+  })
   it('propaga origem, destino e resultado estruturado na resposta', async () => {
     const { service, close } = await startService(createDependencies())
     const socket = await connect(service.runtime.pipeName)

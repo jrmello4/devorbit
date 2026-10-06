@@ -1,7 +1,7 @@
-/* eslint-disable @typescript-eslint/no-require-imports, no-undef */
+/* eslint-disable @typescript-eslint/no-require-imports, no-undef, no-control-regex */
 'use strict'
 
-const { spawn } = require('node:child_process')
+const { spawn, spawnSync } = require('node:child_process')
 const crypto = require('node:crypto')
 const fs = require('node:fs')
 const os = require('node:os')
@@ -14,27 +14,20 @@ const MARKER_KIND = 'devorbit-packaged-smoke'
 
 const tempRoot = (() => {
   const candidates = [process.env.RUNNER_TEMP, os.tmpdir(), process.env.TEMP, process.env.TMP]
-  // `realpathSync.native` expande aliases 8.3 (ex.: ADENIL~1.J); o realpath JS
-  // não. Caminhos curtos fariam a URL do frame (`%7E`) divergir da URL de
-  // produção do app, derrubando o IPC do smoke.
-  const canonicalize = (candidate) => {
-    for (const resolve of [
-      () => fs.realpathSync.native(candidate),
-      () => fs.realpathSync(candidate),
-    ]) {
-      try {
-        const real = resolve()
-        if (fs.statSync(real).isDirectory()) return real
-      } catch {
-        // try the next resolution
-      }
-    }
-    return null
-  }
+  // O app agora canonicaliza URLs file:// sozinho (alias 8.3 do TEMP incluído),
+  // então o smoke precisa exercitar a forma REAL de TEMP do usuário — sem
+  // realpath que esconderia o caminho curto.
   for (const candidate of candidates) {
     if (!candidate) continue
-    const real = canonicalize(candidate)
-    if (real) return real
+    // O caminho vira string de comando no cmd.exe (passo 8.3); aspas e
+    // caracteres de controle são ilegais em paths do Windows e só poderiam
+    // vir de um ambiente hostil — descarta em vez de interpolar.
+    if (/["\r\n\t\u0000-\u001f]/.test(candidate)) continue
+    try {
+      if (fs.statSync(candidate).isDirectory()) return candidate
+    } catch {
+      // tenta o próximo candidato
+    }
   }
   return os.tmpdir()
 })()
@@ -350,9 +343,9 @@ async function verifyBridgeResources() {
   }
 }
 
-function runProcess(exePath, args, timeoutMs) {
+function runProcess(exePath, args, timeoutMs, env = process.env) {
   return new Promise((resolve) => {
-    const child = spawn(exePath, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn(exePath, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env })
     let stdout = ''
     let stderr = ''
     let settled = false
@@ -411,12 +404,13 @@ function checkMarker(marker, expected) {
   return { ok: true, detail: 'marcador validado' }
 }
 
-async function smokeExecutable(label, exePath, version) {
+async function smokeExecutable(label, exePath, version, options = {}) {
+  const { baseDir = tempRoot, prefix = 'devorbit-smoke-run-', env = process.env, overrideTemp = false } = options
   if (!fs.existsSync(exePath)) {
     return { label, ok: false, detail: `executÃ¡vel nÃ£o encontrado: ${exePath}` }
   }
 
-  const base = fs.mkdtempSync(path.join(tempRoot, 'devorbit-smoke-run-'))
+  const base = fs.mkdtempSync(path.join(baseDir, prefix))
   const userDataDir = path.join(base, 'user-data')
   const resultFile = path.join(base, 'result.json')
   const token = crypto.randomBytes(16).toString('hex')
@@ -434,6 +428,9 @@ async function smokeExecutable(label, exePath, version) {
 
   let outcome
   try {
+    // O extrator portable grava em %TEMP%: o override força a extração sob o
+    // diretório desta execução (incluindo a variante 8.3) e o cleanup cobre.
+    const childEnv = overrideTemp ? { ...env, TEMP: base, TMP: base } : env
     const run = await runProcess(
       exePath,
       [
@@ -445,7 +442,8 @@ async function smokeExecutable(label, exePath, version) {
         `--devorbit-smoke-result=${resultFile}`,
         `--user-data-dir=${userDataDir}`,
       ],
-      90_000
+      90_000,
+      childEnv
     )
 
     if (run.timedOut) {
@@ -470,6 +468,59 @@ async function smokeExecutable(label, exePath, version) {
     return { label, ok: false, detail: `${outcome.detail}; resÃ­duo temporÃ¡rio permaneceu` }
   }
   return outcome
+}
+
+function samePathValue(a, b) {
+  return path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase()
+}
+
+function getWindowsShortPath(dir) {
+  if (process.platform !== 'win32') return null
+  try {
+    // Verbatim é obrigatório: o quote automático do Node quebra o parse do
+    // `for` do cmd (aspas embutidas do caminho).
+    const result = spawnSync('cmd.exe', ['/d', '/c', `for %I in ("${dir}") do @echo %~sI`], {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 15_000,
+      windowsVerbatimArguments: true,
+    })
+    if (result.error || result.status !== 0) return null
+    const line = String(result.stdout || '')
+      .split(/\r?\n/)
+      .map((item) => item.trim())
+      .filter(Boolean)[0]
+    return line || null
+  } catch {
+    return null
+  }
+}
+
+// Regressão do bug P0: portable extraído em TEMP na forma 8.3 (ADENIL~1.J)
+// derrubava todo o IPC por divergência de URL (til literal vs %7E).
+async function smokePortableTemp83(version) {
+  const label = 'portable-temp-8.3'
+  const portableExe = path.join(releaseDir, `DevOrbit-${version}-portable.exe`)
+  if (!fs.existsSync(portableExe)) {
+    return { label, ok: false, detail: `executável portable não encontrado: ${portableExe}` }
+  }
+  if (process.platform !== 'win32') {
+    return { label, ok: true, skip: true, detail: 'pulado: regressão 8.3 exige Windows' }
+  }
+  const shortForm = getWindowsShortPath(tempRoot)
+  if (!shortForm) {
+    console.log(`[aviso] ${label}: forma 8.3 de ${tempRoot} indisponível (8.3 desabilitado?); etapa pulada`)
+    return { label, ok: true, skip: true, detail: `pulado: forma 8.3 de ${tempRoot} indisponível` }
+  }
+  if (samePathValue(shortForm, tempRoot)) {
+    console.log(`[aviso] ${label}: TEMP (${tempRoot}) não possui alias 8.3 distinto; etapa pulada`)
+    return { label, ok: true, skip: true, detail: `pulado: TEMP sem alias 8.3 distinto (${shortForm})` }
+  }
+  return await smokeExecutable(label, portableExe, version, {
+    baseDir: shortForm,
+    prefix: 'devorbit-smoke-83-',
+    overrideTemp: true,
+  })
 }
 
 async function silentInstallSmoke(label, installerPath, version) {
@@ -542,6 +593,7 @@ async function main() {
     results.push(
       await smokeExecutable('portable', path.join(releaseDir, `DevOrbit-${version}-portable.exe`), version)
     )
+    results.push(await smokePortableTemp83(version))
   }
   if (targets.includes('nsis')) {
     results.push(
@@ -556,12 +608,18 @@ async function main() {
   }
 
   let failed = false
+  let skipped = 0
   for (const result of results) {
+    if (result.skip) {
+      skipped += 1
+      console.log(`SKIP [${result.label}] ${result.detail}`)
+      continue
+    }
     console.log(`${result.ok ? 'PASS' : 'FAIL'} [${result.label}] ${result.detail}`)
     if (!result.ok) failed = true
   }
-  const passed = results.filter((result) => result.ok).length
-  console.log(`Package smoke ${failed ? 'failed' : 'passed'}: ${passed}/${results.length}`)
+  const passed = results.filter((result) => result.ok && !result.skip).length
+  console.log(`Package smoke ${failed ? 'failed' : 'passed'}: ${passed}/${results.length - skipped}${skipped ? ` (${skipped} pulada(s))` : ''}`)
   process.exitCode = failed ? 1 : 0
 }
 

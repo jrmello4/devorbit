@@ -111,6 +111,9 @@ export const GitDock: React.FC<GitDockProps> = ({
   const [changedFiles, setChangedFiles] = useState<GitChange[]>([])
   const [selectedPaths, setSelectedPaths] = useState<string[]>([])
   const [isLoadingFiles, setIsLoadingFiles] = useState(false)
+  // Falha ao listar alterações deve ser explícita: sem isto, um erro de IPC
+  // parecia "nenhuma alteração a commitar" (estado vazio silencioso).
+  const [changesError, setChangesError] = useState('')
   const [isPushing, setIsPushing] = useState(false)
   const [selectedDiffPath, setSelectedDiffPath] = useState<string | null>(null)
   const [fileDiff, setFileDiff] = useState<GitFileDiff | null>(null)
@@ -180,6 +183,7 @@ export const GitDock: React.FC<GitDockProps> = ({
       return
     }
     setIsLoadingFiles(true)
+    setChangesError('')
     try {
       const files = await window.devorbit?.getGitChanges(project.path)
       setChangedFiles(files || [])
@@ -188,11 +192,12 @@ export const GitDock: React.FC<GitDockProps> = ({
         if (current && (files || []).some((file) => file.path === current)) return current
         return (files || [])[0]?.path || null
       })
-    } catch {
+    } catch (error: unknown) {
       setChangedFiles([])
       setSelectedPaths([])
       setSelectedDiffPath(null)
       setFileDiff(null)
+      setChangesError(error instanceof Error ? error.message : String(error))
     } finally {
       setIsLoadingFiles(false)
     }
@@ -276,10 +281,12 @@ export const GitDock: React.FC<GitDockProps> = ({
     }
   }, [initCommit])
 
-  if (!isOpen) return null
-
+  // Hooks antes do early return: useMemo após `if (!isOpen) return null` é
+  // hook condicional — só funcionava porque o App monta o GitDock sob condição.
   const localBranches = useMemo(() => branches.filter((branch) => !branch.isRemote), [branches])
   const remoteBranches = useMemo(() => branches.filter((branch) => branch.isRemote), [branches])
+
+  if (!isOpen) return null
 
   const handleSwitch = async (branch: GitBranchInfo) => {
     if (!project || branch.isCurrent || switchingBranch) return
@@ -543,6 +550,11 @@ export const GitDock: React.FC<GitDockProps> = ({
                         <div className="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-[var(--color-border-subtle)] bg-[var(--surface-muted)] p-2 font-mono text-xs">
                           {isLoadingFiles ? (
                             <p className="py-2 text-center text-[var(--color-text-muted)]">Listando alterações…</p>
+                          ) : changesError ? (
+                            <p className="flex flex-wrap items-center justify-center gap-2 py-2 text-center text-xs text-[var(--color-danger)]">
+                              <span>Não foi possível listar as alterações: {changesError}.</span>
+                              <button type="button" className="btn btn--secondary btn--sm" onClick={() => void loadChanges()}>Tentar novamente</button>
+                            </p>
                           ) : changedFiles.length === 0 ? (
                             <p className="py-2 text-center text-[var(--color-text-muted)]">Nenhum arquivo listado.</p>
                           ) : (

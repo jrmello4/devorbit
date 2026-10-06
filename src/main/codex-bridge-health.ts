@@ -87,10 +87,18 @@ export class CodexBridgeHealthStore {
     return true
   }
 
-  registryChanged(agentCount: number): void {
+  registryChanged(agentCount: number): void
+  registryChanged(readyAgentIds: readonly string[]): void
+  registryChanged(callerTerminalId: string, readyAgentIds: readonly string[]): void
+  registryChanged(agentCountOrReadyIds: number | string | readonly string[], readyAgentIds?: readonly string[]): void {
+    const callerTerminalId = typeof agentCountOrReadyIds === 'string' ? agentCountOrReadyIds : undefined
+    const numericCount = typeof agentCountOrReadyIds === 'number' ? Math.max(0, agentCountOrReadyIds) : undefined
+    const readyIds = typeof agentCountOrReadyIds === 'number' ? undefined :
+      (typeof agentCountOrReadyIds === 'string' ? readyAgentIds : agentCountOrReadyIds)
     for (const launch of this.launches.values()) {
+      if (callerTerminalId !== undefined && launch.view.terminalId !== callerTerminalId) continue
       if (launch.view.state !== 'connected' && launch.view.state !== 'agents_available') continue
-      const count = Math.max(0, agentCount)
+      const count = numericCount ?? (readyIds?.filter((id) => id !== launch.view.terminalId).length ?? 0)
       if (launch.view.agentCount === count && launch.view.state === (count ? 'agents_available' : 'connected') && (count > 0 || launch.view.code === 'NO_AGENTS_REGISTERED')) continue
       launch.view.agentCount = count
       launch.view.state = count ? 'agents_available' : 'connected'
@@ -141,6 +149,12 @@ export class CodexBridgeHealthStore {
   get(terminalId: string): CodexBridgeHealth | undefined {
     const view = this.launches.get(terminalId)?.view
     return view ? { ...view } : undefined
+  }
+
+  /** True only for the currently accepted, live launch of this terminal. */
+  isCurrentLaunch(terminalId: string, launchId: string): boolean {
+    const view = this.launches.get(terminalId)?.view
+    return view?.launchId === launchId && (view.state === 'connected' || view.state === 'agents_available')
   }
 
   assertReady(terminalId: string): void {

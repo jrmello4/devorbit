@@ -211,3 +211,25 @@
     transition: none;
   }
 }
+
+/* Conteúdo da Nota: seção principal do inspector de nota — cresce para
+   preencher o corpo em vez de deixar meio painel vazio. */
+.canvas-node-inspector .canvas-inspector-section:has(#note-content-editor) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.canvas-node-inspector .canvas-inspector-section:has(#note-content-editor) .canvas-inspector-field {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.canvas-node-inspector #note-content-editor {
+  flex: 1;
+  min-height: 220px;
+  resize: none;
+}

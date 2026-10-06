@@ -4,7 +4,6 @@ import {
   Braces,
   ChevronDown,
   ChevronUp,
-  Circle,
   GitCompare,
   ListTree,
   FileText,
@@ -240,6 +239,14 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
     if (!activeTab) return -1
     return searchResults.matches.findIndex((match) => match.start === activeTab.selectionStart)
   }, [activeTab, searchResults.matches])
+
+  // Realce de sintaxe memoizado: highlightCode rodava a cada render (uma vez
+  // por tecla digitada, inclusive em renders de seleção/scroll); agora só quando
+  // o conteúdo da aba ativa muda de fato.
+  const highlightedHtml = useMemo(
+    () => highlightCode(activeTab?.content || ''),
+    [activeTab?.content],
+  )
 
   const syncHighlightScroll = useCallback(() => {
     if (!highlightRef.current || !editorRef.current) return
@@ -790,7 +797,7 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
                     >
                       <FileText size={13} aria-hidden="true" />
                       <span>{fileName(tab.path)}</span>
-                      {isDirty && <Circle size={6} fill="currentColor" aria-label="Não salvo" />}
+                      {isDirty && <span className="editor-dirty" role="status" aria-label="Não salvo" title="Não salvo"><i aria-hidden="true" /></span>}
                     </button>
                     <button
                       type="button"
@@ -807,10 +814,9 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
             </div>
           )}
           <div className="editor-actions">
-            {/* Estado "Não salvo" como ponto âmbar com tooltip: mantém a
-                informação (harness consulta .editor-dirty) sem texto competindo
-                com os ícones da linha de 32px. */}
-            {activeIsDirty && <span className="editor-dirty" role="status" aria-label="Não salvo" title="Não salvo"><i aria-hidden="true" /></span>}
+            {/* Indicador "Não salvo" vive UMA vez, na aba do arquivo (ponto
+                âmbar com tooltip — harness consulta .editor-dirty). O duplicado
+                do cabeçalho foi removido (menos ruído na linha de 32px). */}
             <button
               type="button"
               className={'workspace-icon-button' + (isSearchOpen ? ' active' : '')}
@@ -937,7 +943,7 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
               ref={highlightRef}
               className="workspace-editor-highlight"
               aria-hidden="true"
-              dangerouslySetInnerHTML={{ __html: highlightCode(activeTab?.content || '') }}
+              dangerouslySetInnerHTML={{ __html: highlightedHtml }}
             />
             <textarea
               ref={editorRef}

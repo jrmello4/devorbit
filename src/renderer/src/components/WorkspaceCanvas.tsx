@@ -361,6 +361,71 @@ const connectionPath = (
     return `M ${x1} ${y1} C ${x1 + curve} ${y1}, ${toX - curve} ${toY}, ${toX} ${toY}`;
   return `M ${x1} ${y1} C ${x1 + curve} ${y1}, ${toX + curve} ${toY}, ${toX} ${toY}`;
 };
+
+interface CanvasEdgeProps {
+  kind: string;
+  label: string | undefined;
+  displayLabel: string;
+  d: string;
+  midX: number;
+  midY: number;
+  orchestrating: boolean;
+  error: boolean;
+}
+
+/**
+ * Aresta memoizada: todas as props são primitivos derivados da conexão.
+ * Antes o map de arestas re-renderizava TODOS os <path> a cada frame de
+ * pan/drag; agora só as arestas cuja geometria/estado realmente mudou
+ * re-renderizam (React.memo + identidade estável por key = connection.id).
+ */
+const CanvasEdge = React.memo(function CanvasEdge({
+  kind,
+  label,
+  displayLabel,
+  d,
+  midX,
+  midY,
+  orchestrating,
+  error,
+}: CanvasEdgeProps) {
+  return (
+    <g
+      className={
+        "canvas-edge edge-" + kind +
+        (orchestrating ? " is-orchestrating" : "") +
+        (error ? " canvas-link--error" : "")
+      }
+      data-edge-kind={kind}
+      data-edge-label={displayLabel}
+      data-orchestrating={orchestrating ? "true" : undefined}
+    >
+      <path
+        className="canvas-edge-path"
+        d={d}
+        markerEnd={
+          orchestrating
+            ? "url(#canvas-edge-arrow-orchestrating)"
+            : kind === "visual"
+              ? undefined
+              : "url(#canvas-edge-arrow)"
+        }
+      />
+      {label && (
+        <text
+          className="canvas-edge-label"
+          x={midX}
+          y={midY - 4}
+          textAnchor="middle"
+          style={{ fontSize: 10, pointerEvents: "none" }}
+        >
+          {label}
+        </text>
+      )}
+      <title>{displayLabel}</title>
+    </g>
+  );
+});
 function closestElement(target: unknown, selector: string): Element | null {
   return target instanceof Element ? target.closest(selector) : null;
 }
@@ -2674,6 +2739,30 @@ export const WorkspaceCanvas: React.FC<{
         : [],
     [inspectorSquad, nodeMap],
   );
+  // Contexto alimentando o nó/squad inspecionado: títulos das notas conectadas
+  // (diretas ao agente, ancoradas no squad e objetivo sintético), reutilizando
+  // memberContextNotes/orchestrationContextNotes — a mesma fonte que alimenta o
+  // envio de tarefas. Somente leitura para o Inspector.
+  const inspectorContextNotes = useMemo(() => {
+    if (inspectorNode && inspectorNode.kind === "agent") {
+      return memberContextNotes(
+        {
+          nodes: canvas.nodes,
+          connections: canvas.connections,
+          squads: canvas.squads,
+        },
+        inspectorNode.id,
+      ).map((note) => ({ id: note.id, title: note.title }));
+    }
+    if (inspectorSquad) {
+      return orchestrationContextNotes(
+        { nodes: canvas.nodes, connections: canvas.connections },
+        squadAnchorId(inspectorSquad.id),
+        inspectorSquad,
+      ).map((note) => ({ id: note.id, title: note.title }));
+    }
+    return [] as Array<{ id: string; title: string }>;
+  }, [canvas.connections, canvas.nodes, canvas.squads, inspectorNode, inspectorSquad]);
   useEffect(() => {
     if (selectedSquadId && !squadById.has(selectedSquadId)) setSelectedSquadId(null);
   }, [selectedSquadId, squadById]);
@@ -2730,6 +2819,25 @@ export const WorkspaceCanvas: React.FC<{
     }
     return ids;
   }, [orchestrationActive, orchestration, canvas.connections]);
+  // Arestas de ERRO (orquestração bloqueada/falha): marca os cabos que tocam o
+  // NÓ BLOQUEADO — `orchestration.expectedAgentId` é o agente que falhou (ver
+  // markOrchestrationBlocked, que grava agentId no bloqueio). Não há aresta
+  // "donde falló" mais específica que isso no grafo; o traço vermelho estático
+  // (.canvas-link--error) convive com o estado running (is-orchestrating).
+  const orchestrationErrorEdgeIds = useMemo(() => {
+    if (!orchestration || orchestration.phase !== "blocked") return null;
+    const blockedNodeId = orchestration.expectedAgentId;
+    const ids = new Set<string>();
+    for (const connection of canvas.connections) {
+      if (
+        connection.from === blockedNodeId ||
+        connection.to === blockedNodeId
+      ) {
+        ids.add(connection.id);
+      }
+    }
+    return ids;
+  }, [orchestration, canvas.connections]);
   const orchestrationStatusText = orchestration
     ? orchestration.phase === "planning"
       ? "Coordenador preparando o plano"
@@ -3498,14 +3606,21 @@ export const WorkspaceCanvas: React.FC<{
   );
 
   // Assinatura estável dos assentos elegíveis do canvas; evita loop de sync.
-  const continuitySeatSignature = canvas.nodes
-    .filter((node) => node.kind === "agent" && node.provider)
-    .map((node) => {
-      const isCoordinator = Boolean(squadCoordinatedBy(canvas.squads, node.id));
-      return `${node.id}:${node.provider}:${continuityRoleFor(node.role, isCoordinator)}:${node.account || ""}`;
-    })
-    .sort()
-    .join("|");
+  // Memoizada: gestos (drag/resize) recriam o array de nós por frame e a
+  // assinatura seria recomputada — e re-renderizando efeitos dependentes — sem
+  // mudança real de assento.
+  const continuitySeatSignature = useMemo(
+    () =>
+      canvas.nodes
+        .filter((node) => node.kind === "agent" && node.provider)
+        .map((node) => {
+          const isCoordinator = Boolean(squadCoordinatedBy(canvas.squads, node.id));
+          return `${node.id}:${node.provider}:${continuityRoleFor(node.role, isCoordinator)}:${node.account || ""}`;
+        })
+        .sort()
+        .join("|"),
+    [canvas.nodes, canvas.squads],
+  );
 
   useEffect(() => {
     continuityRef.current = continuity;
@@ -3854,7 +3969,7 @@ export const WorkspaceCanvas: React.FC<{
         if (
           closestElement(
             target,
-            ".workspace-canvas-card, .workspace-canvas-radial, .workspace-canvas-view-hud, .workspace-canvas-minimap",
+            ".workspace-canvas-card, .workspace-canvas-radial, .workspace-canvas-minimap",
           )
         )
           return;
@@ -3942,7 +4057,7 @@ export const WorkspaceCanvas: React.FC<{
                 pointerEvents: "none",
                 ...(selectedSquadId === region.id
                   ? {
-                      outline: "2px solid var(--color-accent-strong, #3b82f6)",
+                      outline: "2px solid var(--color-accent-strong)",
                       outlineOffset: 2,
                     }
                   : {}),
@@ -4104,41 +4219,18 @@ export const WorkspaceCanvas: React.FC<{
             if (!from || !to) return null;
             const kind = defaultCanvasEdgeKind(connection.kind);
             const label = canvasEdgeLabel(kind, connection.label);
-            const midX = (from.x + from.width + to.x) / 2;
-            const midY = (from.y + from.height / 2 + to.y + to.height / 2) / 2;
-            const isOrchestratingEdge = orchestrationEdgeIds?.has(connection.id) ?? false;
             return (
-              <g
+              <CanvasEdge
                 key={connection.id}
-                className={"canvas-edge edge-" + kind + (isOrchestratingEdge ? " is-orchestrating" : "")}
-                data-edge-kind={kind}
-                data-edge-label={label}
-                data-orchestrating={isOrchestratingEdge ? "true" : undefined}
-              >
-                <path
-                  className="canvas-edge-path"
-                  d={connectionPath(from, to.x, to.y + to.height / 2)}
-                  markerEnd={
-                    isOrchestratingEdge
-                      ? "url(#canvas-edge-arrow-orchestrating)"
-                      : kind === "visual"
-                        ? undefined
-                        : "url(#canvas-edge-arrow)"
-                  }
-                />
-                {connection.label && (
-                  <text
-                    className="canvas-edge-label"
-                    x={midX}
-                    y={midY - 4}
-                    textAnchor="middle"
-                    style={{ fontSize: 10, pointerEvents: "none" }}
-                  >
-                    {connection.label}
-                  </text>
-                )}
-                <title>{label}</title>
-              </g>
+                kind={kind}
+                label={connection.label}
+                displayLabel={label}
+                d={connectionPath(from, to.x, to.y + to.height / 2)}
+                midX={(from.x + from.width + to.x) / 2}
+                midY={(from.y + from.height / 2 + to.y + to.height / 2) / 2}
+                orchestrating={orchestrationEdgeIds?.has(connection.id) ?? false}
+                error={orchestrationErrorEdgeIds?.has(connection.id) ?? false}
+              />
             );
           })}
         </svg>
@@ -4442,6 +4534,7 @@ export const WorkspaceCanvas: React.FC<{
         node={inspectorNode}
         squad={inspectorSquad}
         squadMembers={inspectorSquadMembers}
+        contextNotes={inspectorContextNotes}
         availableAgentsForSquad={canvas.nodes.filter((node) => node.kind === "agent")}
         onUpdateSquadTitle={(squadId, title) => renameSquadById(squadId, title)}
         onSetSquadObjective={(squadId, objective) => setSquadObjectiveById(squadId, objective)}

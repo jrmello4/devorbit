@@ -385,11 +385,11 @@ export function buildToggleNotifications(
 }
 
 const STATUS_TONE: Record<string, string> = {
-  running: 'bg-[var(--color-success)]',
-  starting: 'bg-[var(--color-warning)]',
-  degraded: 'bg-[var(--color-warning)]',
-  error: 'bg-[var(--color-danger)]',
-  unavailable: 'bg-[var(--color-text-muted)]',
+  running: 'status-dot--success',
+  starting: 'status-dot--pending',
+  degraded: 'status-dot--pending',
+  error: 'status-dot--danger',
+  unavailable: 'status-dot--none',
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -402,6 +402,30 @@ const STATUS_LABEL: Record<string, string> = {
 
 function unwrap<T>(res: AiMemoryIpcResult<T> | undefined): T | undefined {
   return res?.ok === true ? res.data : undefined
+}
+
+/**
+ * Linha de erro discreta por aba: nome da seção + mensagem + "Tentar
+ * novamente" que reexecuta exatamente o loader que falhou. Distinta do
+ * estado vazio (que continua mostrando a dica de sucesso-sem-dados).
+ */
+function TabLoadError({ section, message, onRetry }: {
+  section: string
+  message: string
+  onRetry: () => void
+}): React.ReactElement {
+  return (
+    <div role="alert" className="flex items-start gap-2 rounded-lg border border-[var(--color-border-subtle)] bg-[var(--surface-muted)] p-3 text-xs text-[var(--color-text-muted)]">
+      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-danger)]" aria-hidden="true" />
+      <div className="min-w-0 flex-1">
+        <span className="font-semibold text-[var(--color-text-secondary)]">{section}:</span>{' '}
+        <span>{message}</span>
+      </div>
+      <button type="button" onClick={onRetry} className="btn btn--secondary btn--sm shrink-0">
+        Tentar novamente
+      </button>
+    </div>
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -421,6 +445,7 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
 
   // Activity
   const [recentPages, setRecentPages] = useState<unknown[]>([])
+  const [recentError, setRecentError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<unknown[] | null>(null)
   const [searching, setSearching] = useState(false)
@@ -429,10 +454,12 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
   // Briefing
   const [briefing, setBriefing] = useState<unknown>(null)
   const [briefingLoading, setBriefingLoading] = useState(false)
+  const [briefingError, setBriefingError] = useState<string | null>(null)
 
   // Handoffs
   const [handoffs, setHandoffs] = useState<unknown[]>([])
   const [handoffsLoading, setHandoffsLoading] = useState(false)
+  const [handoffsError, setHandoffsError] = useState<string | null>(null)
 
   // Doctor
   const [doctorResult, setDoctorResult] = useState<{ ok: boolean; message?: string } | null>(null)
@@ -455,8 +482,11 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
     setProjStatus(null)
     setActiveTab('status')
     setRecentPages([])
+    setRecentError(null)
     setBriefing(null)
+    setBriefingError(null)
     setHandoffs([])
+    setHandoffsError(null)
     setDoctorResult(null)
     setMigrationResult(null)
     setSearchQuery('')
@@ -577,11 +607,18 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
   const loadRecent = useCallback(async () => {
     if (!project || !api) return
     setRecentLoading(true)
+    setRecentError(null)
     try {
       const res = await api.aiMemoryRecent({ projectPath: project.path, limit: 20 })
-      setRecentPages(res.ok ? extractIpcArray(res.data) : [])
-    } catch {
+      if (res.ok) {
+        setRecentPages(extractIpcArray(res.data))
+      } else {
+        setRecentPages([])
+        setRecentError(res.message || res.reason || 'Falha ao carregar páginas recentes.')
+      }
+    } catch (err: unknown) {
       setRecentPages([])
+      setRecentError(err instanceof Error ? err.message : 'Erro ao carregar páginas recentes.')
     } finally {
       setRecentLoading(false)
     }
@@ -590,16 +627,17 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
   const loadBriefing = useCallback(async () => {
     if (!project || !api) return
     setBriefingLoading(true)
+    setBriefingError(null)
     setBriefing(null)
     try {
       const res = await api.aiMemoryBriefing({ projectPath: project.path })
-      if (res.ok && res.data) {
+      if (res.ok) {
         setBriefing(res.data)
       } else {
-        setBriefing(res.message || res.reason || 'Briefing indisponível.')
+        setBriefingError(res.message || res.reason || 'Falha ao carregar briefing.')
       }
-    } catch {
-      setBriefing('Erro ao carregar briefing.')
+    } catch (err: unknown) {
+      setBriefingError(err instanceof Error ? err.message : 'Erro ao carregar briefing.')
     } finally {
       setBriefingLoading(false)
     }
@@ -608,11 +646,18 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
   const loadHandoffs = useCallback(async () => {
     if (!project || !api) return
     setHandoffsLoading(true)
+    setHandoffsError(null)
     try {
       const res = await api.aiMemoryHandoffs({ projectPath: project.path })
-      setHandoffs(res.ok ? extractIpcArray(res.data) : [])
-    } catch {
+      if (res.ok) {
+        setHandoffs(extractIpcArray(res.data))
+      } else {
+        setHandoffs([])
+        setHandoffsError(res.message || res.reason || 'Falha ao carregar handoffs.')
+      }
+    } catch (err: unknown) {
       setHandoffs([])
+      setHandoffsError(err instanceof Error ? err.message : 'Erro ao carregar handoffs.')
     } finally {
       setHandoffsLoading(false)
     }
@@ -693,10 +738,10 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
       isOpen={isOpen}
       titleId="ai-memory-dialog-title"
       onClose={onClose}
-      className="w-full max-w-3xl bg-[var(--color-bg-panel)] border border-[var(--color-border-subtle)] rounded-[10px] shadow-[0_18px_42px_rgba(28,25,23,0.14)] overflow-hidden flex flex-col max-h-[calc(100dvh-48px)]"
+      className="dialog-shell dialog--xl flex flex-col overflow-hidden"
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border-subtle)]">
+      <div className="dialog-shell__header flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <h2 id="ai-memory-dialog-title" className="text-base font-bold text-[var(--text-primary)]">
             Shared AI Memory
@@ -707,7 +752,7 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
               role="img"
               aria-label={`Status: ${STATUS_LABEL[status.state] || status.state}`}
               title={status.message || STATUS_LABEL[status.state] || status.state}
-              className={`w-2 h-2 rounded-full shrink-0 ${STATUS_TONE[status.state] || 'bg-[var(--color-text-muted)]'}`}
+              className={`status-dot shrink-0 ${STATUS_TONE[status.state] || 'status-dot--none'}`}
             >
               <span className="sr-only">Status: {STATUS_LABEL[status.state] || status.state}</span>
             </span>
@@ -757,7 +802,7 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
         role="tabpanel"
         aria-labelledby={`ai-memory-tab-${activeTab}`}
         tabIndex={0}
-        className="flex-1 overflow-y-auto p-6 min-h-[280px] focus:outline-none"
+        className="dialog-shell__body min-h-[280px] flex-1 overflow-y-auto focus:outline-none"
         aria-live="polite"
       >
         {loading ? (
@@ -782,7 +827,7 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
                   setLoading(false)
                 })
               }}
-              className="px-3 py-1.5 text-xs font-semibold rounded-[6px] bg-[var(--color-bg-toolbar)] border border-[var(--color-border-subtle)] text-[var(--color-text-secondary)] hover:bg-[var(--surface-hover)] transition-colors cursor-pointer"
+              className="btn btn--secondary"
             >
               Tentar novamente
             </button>
@@ -818,7 +863,7 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
                 {status && (
                   <div className="p-3 rounded-lg border border-[var(--color-border-subtle)]">
                     <div className="flex items-center gap-2 mb-1">
-                      <span className={`w-2 h-2 rounded-full ${STATUS_TONE[status.state] || ''}`} />
+                    <span className={`status-dot ${STATUS_TONE[status.state] || 'status-dot--none'}`} />
                       <span className="text-sm font-semibold text-[var(--text-primary)]">
                         Serviço: {STATUS_LABEL[status.state] || status.state}
                       </span>
@@ -933,14 +978,17 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
                 )}
 
                 {/* Recent pages */}
-                {searchResults === null && recentPages.length > 0 && (
+                {searchResults === null && recentError && (
+                  <TabLoadError section="Atividade" message={recentError} onRetry={() => void loadRecent()} />
+                )}
+                {searchResults === null && !recentError && recentPages.length > 0 && (
                   <div>
                     <div className="text-xs text-[var(--color-text-muted)] mb-2">Páginas recentes</div>
                     {recentPages.map((item, i) => renderPage(item, i))}
                   </div>
                 )}
 
-                {isEnabled && searchResults === null && recentPages.length === 0 && !recentLoading && (
+                {isEnabled && searchResults === null && recentPages.length === 0 && !recentLoading && !recentError && (
                   <p className="text-xs text-[var(--color-text-muted)] text-center py-4">
                     Clique em "Recentes" para carregar atividade ou busque por termo.
                   </p>
@@ -966,18 +1014,15 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
                 >
                   {briefingLoading ? 'Carregando...' : 'Gerar briefing'}
                 </button>
-                {briefing !== null && (
+                {briefingError && (
+                  <TabLoadError section="Briefing" message={briefingError} onRetry={() => void loadBriefing()} />
+                )}
+                {!briefingError && briefing !== null && (
                   <div className="p-3 rounded-lg border border-[var(--color-border-subtle)] bg-[var(--color-bg-toolbar)]">
-                    {typeof briefing === 'string' && briefing.includes('indispon') ? (
-                      <p className="text-xs text-[var(--color-warning)]">{briefing}</p>
-                    ) : typeof briefing === 'string' && briefing.includes('Erro') ? (
-                      <p className="text-xs text-[var(--color-danger)]">{briefing}</p>
-                    ) : (
-                      renderBriefingContent(briefing)
-                    )}
+                    {renderBriefingContent(briefing)}
                   </div>
                 )}
-                {isEnabled && !briefing && !briefingLoading && (
+                {isEnabled && !briefing && !briefingError && !briefingLoading && (
                   <p className="text-xs text-[var(--color-text-muted)] text-center py-4">
                     O briefing consolida estado do projeto, handoffs recentes e contexto para uma sessão nova.
                   </p>
@@ -1003,12 +1048,15 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
                 >
                   {handoffsLoading ? 'Carregando...' : 'Carregar handoffs'}
                 </button>
-                {handoffs.length > 0 && (
+                {handoffsError && (
+                  <TabLoadError section="Handoffs" message={handoffsError} onRetry={() => void loadHandoffs()} />
+                )}
+                {!handoffsError && handoffs.length > 0 && (
                   <div>
                     {handoffs.map((item, i) => renderHandoff(item, i))}
                   </div>
                 )}
-                {isEnabled && !handoffs.length && !handoffsLoading && (
+                {isEnabled && !handoffs.length && !handoffsLoading && !handoffsError && (
                   <p className="text-xs text-[var(--color-text-muted)] text-center py-4">
                     Nenhum handoff aberto para este projeto.
                   </p>
@@ -1074,7 +1122,7 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
       </div>
 
       {/* Footer */}
-      <div className="flex items-center justify-between px-6 py-3.5 border-t border-[var(--color-border-subtle)] bg-[var(--surface-muted)] text-xs">
+      <div className="dialog-shell__footer flex items-center justify-between gap-2 text-xs">
         <div className="flex items-center gap-2 text-[var(--color-text-muted)]">
           <Clock aria-hidden="true" className="w-3.5 h-3.5" />
           <span>
@@ -1082,10 +1130,7 @@ export const AiMemoryModal: React.FC<AiMemoryModalProps> = ({
           </span>
           {status?.endpoint && <span className="text-[var(--color-text-muted)]">• {status.endpoint}</span>}
         </div>
-        <button
-          onClick={onClose}
-          className="px-4 py-1.5 rounded-[6px] text-xs font-semibold text-[var(--color-text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-hover)] transition-colors cursor-pointer"
-        >
+        <button onClick={onClose} className="btn btn--secondary">
           Fechar
         </button>
       </div>

@@ -59,7 +59,7 @@ export function createTerminalReadiness(
   const waitReady = async (id: string, waitOptions?: TerminalReadyOptions): Promise<TerminalReadyResult> => {
     const effectiveQuietMs = Math.max(100, waitOptions?.quietMs ?? quietMs)
     const since = waitOptions?.since
-    if (ready.has(id)) return { timedOut: false }
+    if (ready.has(id) && !waitOptions?.requireFresh) return { timedOut: false }
     // Pronto só se o silêncio cobre o mais recente entre a última saída e a
     // âncora do turno. Sem NENHUMA evidência (sem saída registrada e sem
     // `since`), não há âncora: a espera volta a exigir a primeira saída — uma

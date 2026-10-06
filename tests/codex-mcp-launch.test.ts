@@ -21,8 +21,8 @@ vi.mock('electron', () => ({
 
 import { prepareDevOrbitCodexLaunch } from '../src/main/codex-mcp-launch'
 
-const findConfigTable = (args: string[]): string => {
-  const table = args.find((argument) => argument.startsWith('mcp_servers.devorbit={'))
+const findConfigTable = (args: string[], name: string): string => {
+  const table = args.find((argument) => argument.startsWith(`mcp_servers.${name}={`))
   if (!table) throw new Error('config table ausente')
   return table
 }
@@ -48,9 +48,12 @@ describe('prepareDevOrbitCodexLaunch', () => {
     })
 
     expect(prepared.args.slice(0, 2)).toEqual(['resume', '--last'])
-    expect(prepared.args.filter((argument) => argument === '--config')).toHaveLength(2)
-    const config = findConfigTable(prepared.args)
-    expect(config).toMatch(/^mcp_servers\.devorbit=\{ /)
+    expect(prepared.args.filter((argument) => argument === '--config')).toHaveLength(3)
+    expect(prepared.mcp.name).toMatch(/^devorbit_runtime_[0-9a-f]{32}$/u)
+    expect(prepared.mcp.name).not.toBe('devorbit')
+    expect(prepared.args.some((argument) => argument.startsWith('mcp_servers.devorbit={') && argument.includes('enabled = false'))).toBe(true)
+    const config = findConfigTable(prepared.args, prepared.mcp.name)
+    expect(config).toMatch(new RegExp(`^mcp_servers\\.${prepared.mcp.name.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}=\\{ `))
     expect(config).toContain(`command = ${JSON.stringify(runtime.executablePath)}`)
     expect(config).toContain(`args = [${JSON.stringify(runtime.scriptPath)}, ${JSON.stringify('--terminal-id')}, ${JSON.stringify('codex-a')}, ${JSON.stringify('--launch-id')},`)
     expect(config).toContain(`cwd = ${JSON.stringify(runtime.cwd)}`)
@@ -90,12 +93,12 @@ describe('prepareDevOrbitCodexLaunch', () => {
     expect(prepared.mcp.envVars).toEqual(['DEVORBIT_BRIDGE_PIPE', 'DEVORBIT_BRIDGE_TOKEN', 'DEVORBIT_SESSION_ID'])
     expect(prepared.args.join(' ')).not.toContain('secret-token')
 
-    const tableIndex = prepared.args.findIndex((argument) => argument.startsWith('mcp_servers.devorbit={'))
+    const tableIndex = prepared.args.findIndex((argument) => argument.startsWith(`mcp_servers.${prepared.mcp.name}={`))
     // Explicit full allowlist overrides any persisted project/account allowlist.
     expect(prepared.args.slice(tableIndex + 1)).toEqual([
-      '--config', 'mcp_servers.devorbit.disabled_tools=[]',
+      '--config', `mcp_servers.${prepared.mcp.name}.disabled_tools=[]`,
     ])
-    expect(findConfigTable(prepared.args)).toContain('enabled_tools = ["agent.list", "agent.send", "agent.ask", "agent.wait", "agent.run"]')
+    expect(findConfigTable(prepared.args, prepared.mcp.name)).toContain('enabled_tools = ["agent.list", "agent.send", "agent.ask", "agent.wait", "agent.run"]')
   })
 
   it('rejects caller -c/--config collisions with the managed namespace and parent', () => {
@@ -105,6 +108,7 @@ describe('prepareDevOrbitCodexLaunch', () => {
       ['-cmcp_servers.devorbit.env={}'],
       ['--config=mcp_servers.devorbit.command="x"'],
       ['--config', 'mcp_servers . devorbit . required=false'],
+      ['--config', 'mcp_servers.devorbit_runtime_old.enabled=true'],
       ['-c', 'mcp_servers = { other = {} }'],
       ['-c', 'mcp_servers'],
     ]
@@ -147,6 +151,7 @@ describe('prepareDevOrbitCodexLaunch', () => {
     })
 
     expect(first.mcp.launchId).not.toBe(second.mcp.launchId)
+    expect(first.mcp.name).not.toBe(second.mcp.name)
     expect(first.env.CODEX_HOME).toContain('.codex-conta1')
     expect(second.env.CODEX_HOME).toContain('.codex-conta2')
     expect(first.args.join(' ')).not.toContain('token')
@@ -163,7 +168,7 @@ describe('prepareDevOrbitCodexLaunch', () => {
       },
     })
 
-    const config = findConfigTable(prepared.args)
+    const config = findConfigTable(prepared.args, prepared.mcp.name)
     expect(config).toContain(`command = ${JSON.stringify("C:\\Program Files\\D'evOrbit\\DevOrbit.exe")}`)
     expect(config).toContain(`args = [${JSON.stringify("C:\\Program Files\\D'evOrbit\\scripts\\devorbit-mcp.cjs")},`)
     expect(config).toContain(`cwd = ${JSON.stringify("C:\\Program Files\\D'evOrbit")}`)
@@ -187,7 +192,7 @@ describe('prepareDevOrbitCodexLaunch', () => {
     const output: string[] = []
     const child = pty.spawn(
       process.env.ComSpec || 'cmd.exe',
-      ['/d', '/q', '/c', 'call', 'codex.cmd', 'mcp', 'get', 'devorbit', '--json', '--config', findConfigTable(prepared.args)],
+      ['/d', '/q', '/c', 'call', 'codex.cmd', 'mcp', 'get', prepared.mcp.name, '--json', ...prepared.args],
       {
         name: 'xterm-256color',
         cols: 120,

@@ -67,7 +67,7 @@ describe('provider catalog completeness', () => {
 })
 
 describe('instruction hints (adapter por provider)', () => {
-  it('catálogo inicia SEM hints: nenhum provider tem ackPatterns/bracketedPaste catalogados', () => {
+  it('Codex espera o paste estabilizar; não presume padrões de ACK não observados', () => {
     // Guarda evidência-primeiro: preencher `instruction` de um provider exige
     // padrão/comportamento REAL observado no CLI — e a atualização deste teste
     // junto (o comentário do catálogo em agent-providers.ts documenta a forma).
@@ -75,7 +75,8 @@ describe('instruction hints (adapter por provider)', () => {
       // Acesso tipado pela interface: o literal `as const` não declara a
       // propriedade opcional nas entries que não a usam.
       const definition: AgentCliDefinition = AGENT_CLI_PROVIDERS[id]
-      expect(definition.instruction).toBeUndefined()
+      if (id === 'codex') expect(definition.instruction).toEqual({ pasteSettleMs: 250 })
+      else expect(definition.instruction).toBeUndefined()
     }
   })
 

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { createPortal } from 'react-dom'
 import {
   AlertCircle, ArrowLeft, ArrowRight, Check, Code2, Frame, Globe, GripVertical,
-  LayoutDashboard, RefreshCw, Send, X,
+  LayoutDashboard, PanelBottom, RefreshCw, Send, X,
 } from 'lucide-react'
 import type { AgentBridgeEvent } from '../../../shared/agent-bridge-event'
 import type { AgentProvider, AgentProviderId, AutomationConfig, CodexAccountStatus, Project, ToolHealth, WebPanelEvent } from '../types'
@@ -661,12 +661,14 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
           <div><strong>{project.name}</strong><span title={project.path}>{project.path}</span></div>
         </div>
         <div className="integrated-toolbar-actions">
-          {/* Seletor segmentado de visão: Canvas (nós), Código (visão de
-              grid/editor de hoje) e Web (painel de pesquisa) no lugar dos três
-              botões-toggle. Semântica de estado preservada: Canvas/Código
-              controlam isCanvas; Web alterna layout.webVisible. Os nomes
-              acessíveis "Abrir canvas" e "Mostrar ou ocultar navegador" são
-              consultados pelo harness (scripts/verify-ui.cjs) — não renomear. */}
+          {/* Hierarquia de navegação: o seletor segmentado carrega SÓ visões
+              (Canvas = nós · Código = grid/editor). Web é um PAINEL lateral e
+              vira um toggle fantasma ao lado (Globe); Terminal ganha o seu
+              toggle equivalente (antes só via G+T). Semântica de estado
+              preservada: Canvas/Código controlam isCanvas; Web alterna
+              layout.webVisible; Terminal alterna layout.terminalVisible. Os
+              nomes acessíveis "Abrir canvas" e "Mostrar ou ocultar navegador"
+              são consultados pelo harness (scripts/verify-ui.cjs) — não renomear. */}
           <div className="workspace-view-switch" role="group" aria-label="Visão do ambiente">
             <button
               type="button"
@@ -688,21 +690,33 @@ export const IntegratedWorkspace: React.FC<IntegratedWorkspaceProps> = ({
             >
               <Code2 size={13} aria-hidden="true" /><span>Código</span>
             </button>
-            <button
-              type="button"
-              className={'workspace-segment' + (layout.webVisible ? ' active' : '')}
-              onClick={() => setLayout((current) => ({ ...current, webVisible: !current.webVisible }))}
-              aria-pressed={layout.webVisible}
-              aria-label="Mostrar ou ocultar navegador"
-              title="Mostrar ou ocultar navegador"
-            >
-              <Globe size={13} aria-hidden="true" /><span>Web</span>
-            </button>
           </div>
-          <button type="button" className="workspace-tool-button" onClick={() => void sendContextToTerminal()} disabled={!editorContext?.path} title="Enviar arquivo e pesquisa web ao terminal">
+          {/* Toggles de painel (não são visões): mesmo idioma fantasma dos
+              botões de ação da toolbar, com aria-pressed + estado ativo. */}
+          <button
+            type="button"
+            className={'workspace-tool-button workspace-panel-toggle' + (layout.webVisible ? ' active' : '')}
+            onClick={() => setLayout((current) => ({ ...current, webVisible: !current.webVisible }))}
+            aria-pressed={layout.webVisible}
+            aria-label="Mostrar ou ocultar navegador"
+            title="Mostrar ou ocultar navegador"
+          >
+            <Globe size={14} aria-hidden="true" /><span>Web</span>
+          </button>
+          <button
+            type="button"
+            className={'workspace-tool-button workspace-panel-toggle' + (layout.terminalVisible ? ' active' : '')}
+            onClick={() => setLayout((current) => ({ ...current, terminalVisible: !current.terminalVisible }))}
+            aria-pressed={layout.terminalVisible}
+            aria-label="Mostrar ou ocultar terminal"
+            title="Mostrar ou ocultar terminal (G+T)"
+          >
+            <PanelBottom size={14} aria-hidden="true" /><span>Terminal</span>
+          </button>
+          <button type="button" className="workspace-tool-button" onClick={() => void sendContextToTerminal()} disabled={!editorContext?.path} aria-label="Enviar contexto ao agente" title="Enviar contexto ao agente">
             <Send size={14} aria-hidden="true" /><span>Enviar contexto</span>
           </button>
-          <button type="button" className="workspace-close-button" onClick={closeWorkspace} title="Fechar ambiente integrado">
+          <button type="button" className="workspace-close-button" onClick={closeWorkspace} aria-label="Fechar ambiente integrado" title="Fechar ambiente integrado">
             <X size={16} aria-hidden="true" /><span>Fechar</span>
           </button>
         </div>

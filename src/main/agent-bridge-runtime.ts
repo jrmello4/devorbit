@@ -166,7 +166,10 @@ export function createAgentBridgeRuntime(options: AgentBridgeRuntimeOptions): Ag
     handlers[type] = async (request, context) => {
       const requestId = requestIdFor(request)
       const destination = eventTargetFor(request)
-      const requestedOrigin = normalizeEventId(request.origin, 'devorbit')
+      // A managed MCP supplies the verified terminal identity alongside the
+      // request. The legacy free-form origin remains a compatibility fallback
+      // for callers that predate launch identity.
+      const requestedOrigin = normalizeEventId(request.originTerminalId ?? request.origin, 'devorbit')
       // O contrato de evento proíbe origem == destino; um self-delegate cai
       // para um rótulo neutro em vez de invalidar o evento.
       const source = requestedOrigin === destination ? 'bridge-origin' : requestedOrigin

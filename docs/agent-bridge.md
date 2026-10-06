@@ -3,10 +3,13 @@
 ## Codex gerenciado: MCP por execução (2026-10-01)
 
 O Agent Bridge MCP é uma capacidade do DevOrbit. Cada lançamento Codex do
-terminal interno injeta `mcp_servers.devorbit.*` por `--config`, com sintaxe
+terminal interno injeta um namespace `mcp_servers.devorbit_<launchId>` novo por
+execução por `--config`, com sintaxe
 TOML, caminhos absolutos, `enabled=true`, `required=true` e timeout limitado.
 Não é necessário instalar o MCP em cada projeto, confiar na configuração
-local `.codex` ou editar a configuração global. Os demais MCPs, modelos,
+local `.codex` ou editar a configuração global. O servidor legado `devorbit`
+é desabilitado somente nesse lançamento, impedindo que seu `env` persistido
+substitua as credenciais atuais. Os demais MCPs, modelos,
 profiles, sandbox e políticas do usuário continuam nas suas camadas originais.
 
 `prepareDevOrbitCodexLaunch` combina o `CODEX_HOME` da conta selecionada com
@@ -33,7 +36,9 @@ spawn e registro. Após `notifications/initialized`, o MCP confirma terminal,
 identificador único de lançamento e PID à Bridge autenticada. A UI distingue
 `configuring`, `connecting`, `connected`, `agents_available`, `failed` e
 `stopped`; nascer um PTY não comprova comunicação. O envio automático ao Codex
-aguarda esse handshake e um registro de agentes disponível.
+aguarda esse handshake. Uma prova explícita de bootstrap pode atingir um worker
+`starting`; um resultado validado estabelece `ready`. A disponibilidade para
+delegação considera somente outros agentes `ready`, excluindo o próprio caller.
 
 O botão **Codex CLI externo** abre uma sessão independente, sem PTY registrado
 e sem coordenação pela Bridge. Codex Desktop e login OAuth também são fluxos
@@ -48,6 +53,55 @@ As seções abaixo registram a arquitetura e os critérios anteriores da Bridge.
 **Contexto:** problema identificado ao tentar orquestrar o Antigravity (`agy`) de dentro de um terminal do DevOrbit.
 
 ---
+
+## Delegação instrumentada (bootstrap P0)
+
+O caminho de produção `agent.send`/`agent.ask` captura o resultado com um
+prefixo `DEVORBIT_RESULT_<turnId>:` exclusivo por execução. Somente um objeto
+JSON válido desse turno pode concluir a tarefa, depois de submit e ACK.
+O contrato de transporte vem depois da tarefa; pedidos como "responda apenas
+X" devem devolver X em `summary`, preservando o envelope. A captura trata ANSI,
+fragmentação e quebra visual de linha e descarta fragmentos de eco normalizados.
+O scanner legado da orquestração continua separado do caminho gerenciado.
+
+`agent.list` distingue `starting`, `ready`, `busy`, `failed` e `stopped`.
+`terminalExists` indica somente a presença do PTY. `operational` é verdadeiro
+quando um turno com resultado validado comprovou prontidão; silêncio de uma
+TUI não comprova funcionamento. Um registro `starting` pode receber uma prova
+explícita de bootstrap. Falhas fatais de modelo conhecidas são marcadas com
+`reason=model_configuration_error`, sem copiar a mensagem do provider.
+
+Eventos `bridge.turn` em `observability.jsonl` contêm somente identidade do
+turno/terminal/provider, fase, tempo, tentativa, tamanho e códigos fixos.
+Não contêm prompt, saída bruta, token ou environment. Timeout, saída do
+terminal, marcador ausente, parse inválido, eco, falha de entrega, falta de
+ACK, erro do provider e cancelamento têm códigos distintos. Respostas e cache
+preservam os metadados de diagnóstico. Cancelamento não persiste como resultado.
+
+O MCP transmite códigos específicos também no texto JSON do erro, além de
+`structuredContent`: código, fase, turno, provider, tempo e estados seguros de
+marker/nonce, quando disponíveis. Mensagens são fixas; exceções arbitrárias e
+conteúdo bruto do provider não são repassados. Prompts podem conter CR/LF/TAB;
+outros controles, incluindo ESC, continuam rejeitados.
+
+Chamadas gerenciadas levam a identidade de terminal e lançamento confirmada no
+handshake. A lista marca `self=true` e `delegable=false` para o caller e o backend
+recusa self-delegation com `SELF_DELEGATION_NOT_ALLOWED`, inclusive por alias de
+provider. Um lançamento antigo não pode assumir a identidade do atual.
+
+`verify:codex-bridge` executa transporte e contratos sem contas por padrão. Os
+cenários com provider real exigem `DEVORBIT_CODEX_REAL_E2E=1` e permanecem fora
+do CI. A prova do CLI para configuração legada usa um `CODEX_HOME` temporário
+com valores sintéticos, sem autenticação ou quota pessoal.
+
+O adapter Codex espera quietude fresca após o paste antes de enviar Enter,
+para atravessar a janela de supressão de Enter documentada no
+[PasteBurst do Codex](https://github.com/openai/codex/blob/main/codex-rs/tui/src/bottom_pane/paste_burst.rs).
+ACK de redraw não é prova de execução; a resposta com nonce validado é a prova.
+
+`verify:bridge:e2e` verifica o transporte com um worker simulado. Não comprova
+autenticação externa, TUI real nem delegação no canvas atual. Essa prova precisa
+ser repetida no aplicativo carregado com o build corrigido.
 
 ## 1. Problema
 

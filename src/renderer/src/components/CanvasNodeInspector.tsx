@@ -46,6 +46,8 @@ export interface CanvasNodeInspectorProps {
   // Contrato EXATO OpenCode TASK-03C
   squad?: CanvasSquad | null
   squadMembers?: CanvasNode[]
+  /** Notas conectadas que alimentam o nó/squad (títulos, somente leitura). */
+  contextNotes?: ReadonlyArray<{ id: string; title: string }>
   availableAgentsForSquad?: CanvasNode[]
   onUpdateSquadTitle?: (squadId: string, title: string) => void
   onSetSquadCoordinator?: (squadId: string, nodeId: string | null) => void
@@ -110,6 +112,7 @@ export const CanvasNodeInspector: React.FC<CanvasNodeInspectorProps> = ({
   node,
   squad,
   squadMembers = [],
+  contextNotes = [],
   availableAgentsForSquad = [],
   onUpdateSquadTitle,
   onRenameSquad,
@@ -251,6 +254,27 @@ export const CanvasNodeInspector: React.FC<CanvasNodeInspectorProps> = ({
     }
     setEditingTitle(false)
   }
+
+  // Seção compacta de contexto (somente leitura): títulos das notas conectadas
+  // que alimentam o agente/squad — a mesma fonte usada no envio de tarefas.
+  const renderContextSection = (headingId: string) => (
+    <section className="canvas-inspector-section canvas-inspector-context" aria-labelledby={headingId}>
+      <h4 id={headingId} className="canvas-inspector-section-title">
+        Contexto
+      </h4>
+      {contextNotes.length > 0 ? (
+        <ul className="canvas-inspector-context-list">
+          {contextNotes.map((note) => (
+            <li key={note.id} title={note.title}>
+              {note.title}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="canvas-inspector-empty-hint">Nenhuma nota conectada</p>
+      )}
+    </section>
+  )
 
   // ==========================================
   // RENDERIZAÇÃO DO INSPECTOR DE SQUAD
@@ -443,6 +467,9 @@ export const CanvasNodeInspector: React.FC<CanvasNodeInspectorProps> = ({
             </select>
           </div>
 
+          {/* Contexto: notas que alimentam a squad (antes das ações de membros) */}
+          {renderContextSection('inspector-squad-context')}
+
           {/* Membros + adicionar (uma única superfície, um título) */}
           <section className="canvas-inspector-section" aria-labelledby="inspector-squad-members">
             <h4 id="inspector-squad-members" className="canvas-inspector-section-title">
@@ -598,7 +625,7 @@ export const CanvasNodeInspector: React.FC<CanvasNodeInspectorProps> = ({
             )}
 
             {squad.memberNodeIds.length > 0 && onSurvivorTakeover && (
-              <div className="canvas-inspector-field" style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid var(--ops-border, #333)' }}>
+              <div className="canvas-inspector-field" style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid var(--color-border-subtle)' }}>
                 <label htmlFor="squad-survivor-select">Sincronização de Sobrevivente (Takeover)</label>
                 <p className="canvas-inspector-empty-hint">
                   Sincroniza um agente sobrevivente com o estado durável do squad, decisões e Git atual via ai-memory.
@@ -933,6 +960,9 @@ export const CanvasNodeInspector: React.FC<CanvasNodeInspectorProps> = ({
                 <span className="canvas-inspector-status-label">{progress.label}</span>
               </div>
             )}
+
+            {/* Contexto: notas conectadas que alimentam este agente (leitura) */}
+            {renderContextSection('inspector-agent-context')}
 
             {/* Ações Especiais de Agente */}
             <div className="canvas-inspector-agent-actions">

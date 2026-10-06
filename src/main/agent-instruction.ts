@@ -58,6 +58,8 @@ export interface AgentInstructionDeps {
 }
 
 export interface AgentInstructionInput {
+  onPhase?: (event: AgentInstructionEvent) => void
+  isResultReady?: () => boolean
   terminalId: string
   turnId: string
   /** Conteúdo enviado VERBATIM numa única escrita (multiline sem transformar \n). */
@@ -98,6 +100,7 @@ export interface AgentInstructionInput {
 }
 
 export interface AgentInstructionResult {
+  errorCode?: import('./bridge-turn').BridgeTurnErrorCode
   acked: boolean
   attempts: number
   error?: string
@@ -211,12 +214,14 @@ function emitInstructionLog(event: AgentInstructionEvent): void {
 interface AckOutcome {
   acked: boolean
   ackPattern?: number
+  errorCode?: 'TERMINAL_EXITED' | 'PROVIDER_STARTUP_FAILED'
 }
 
 /**
  * Observador de ack pós-submit. Primeiro a janela de settle: toda saída é
- * descartada (o redraw do prompt gerado pelo Enter não é resposta). Só depois
- * do settle o subscribe é registrado e o teto `ackTimeoutMs` começa a contar.
+ * de dados é descartada (o redraw do prompt gerado pelo Enter não é resposta).
+ * Exit/error encerram a espera desde o início. Só depois do settle os dados
+ * podem confirmar ACK e o teto `ackTimeoutMs` começa a contar.
  * A espera total por tentativa é `echoSettleMs + ackTimeoutMs`; resolver por
  * timeout NÃO é ack.
  *
@@ -231,9 +236,8 @@ interface AckOutcome {
  * a cada re-submissão, junto com o observador). Regex com flag 'g' têm
  * lastIndex resetado antes de cada teste para que o acúmulo seja determinístico.
  *
- * Não há corrida entre settle e subscribe: o callback do settle registra o
- * listener sincronamente no mesmo tick, então nenhum evento do barramento
- * escapa entre o fim do settle e o armado do observador.
+ * O listener já está registrado quando o settle termina; a ativação da
+ * captura de dados é síncrona no callback do timer.
  */
 function waitForAck(
   deps: AgentInstructionDeps,
@@ -245,40 +249,45 @@ function waitForAck(
 ): Promise<AckOutcome> {
   return new Promise<AckOutcome>((resolveAck) => {
     let ackTimer: ReturnType<typeof setTimeout> | undefined
+    const settleTimer: { current: ReturnType<typeof setTimeout> | undefined } = { current: undefined }
     let unsubscribeAck: () => void = () => undefined
     let removeAbort: () => void = () => undefined
+    let settled = false
+    let acceptingData = false
     if (signal?.aborted) {
       // Nada foi armado ainda (nem settle, nem observador): termina aqui.
       resolveAck({ acked: false })
       return
     }
-    const settleTimer = setTimeout(() => {
-      ackTimer = setTimeout(() => finish({ acked: false }), ackTimeoutMs)
-      let buffer = ''
-      unsubscribeAck = deps.subscribe((event: TerminalEvent) => {
-        if (event.id !== terminalId) return
-        if (event.type !== 'data') return
-        if (!ackPatterns || ackPatterns.length === 0) {
-          finish({ acked: true })
-          return
-        }
-        buffer = (buffer + event.data).slice(-MAX_ACK_BUFFER_CHARS)
-        for (const [index, pattern] of ackPatterns.entries()) {
-          if (pattern.flags.includes('g')) pattern.lastIndex = 0
-          if (pattern.test(buffer)) {
-            finish({ acked: true, ackPattern: index })
-            return
-          }
-        }
-      })
-    }, echoSettleMs)
     const finish = (outcome: AckOutcome): void => {
+      if (settled) return
+      settled = true
       removeAbort()
       if (ackTimer !== undefined) clearTimeout(ackTimer)
-      clearTimeout(settleTimer)
+      clearTimeout(settleTimer.current)
       unsubscribeAck()
       resolveAck(outcome)
     }
+    // Fatal terminal events are relevant even during echo settle. Data from
+    // that window remains ignored; an exit must never trigger an Enter retry.
+    let buffer = ''
+    unsubscribeAck = deps.subscribe((event: TerminalEvent) => {
+      if (event.id !== terminalId) return
+      if (event.type === 'exit') { finish({ acked: false, errorCode: 'TERMINAL_EXITED' }); return }
+      if (event.type === 'error') { finish({ acked: false, errorCode: 'PROVIDER_STARTUP_FAILED' }); return }
+      if (event.type !== 'data' || !acceptingData) return
+      if (!ackPatterns || ackPatterns.length === 0) { finish({ acked: true }); return }
+      buffer = (buffer + event.data).slice(-MAX_ACK_BUFFER_CHARS)
+      for (const [index, pattern] of ackPatterns.entries()) {
+        if (pattern.flags.includes('g')) pattern.lastIndex = 0
+        if (pattern.test(buffer)) { finish({ acked: true, ackPattern: index }); return }
+      }
+    })
+    if (settled) { unsubscribeAck(); return }
+    settleTimer.current = setTimeout(() => {
+      acceptingData = true
+      ackTimer = setTimeout(() => finish({ acked: false }), ackTimeoutMs)
+    }, echoSettleMs)
     const onAbort = (): void => finish({ acked: false })
     if (signal) {
       // Executor síncrono: entre o armado do settle e deste listener não há
@@ -335,7 +344,7 @@ export async function sendAgentInstruction(
     error?: string,
     detail?: Pick<AgentInstructionEvent, 'paste' | 'length' | 'ackPattern'>
   ): void => {
-    emitInstructionLog({
+    const event: AgentInstructionEvent = {
       kind: 'instruction',
       terminalId: input.terminalId,
       turnId: input.turnId,
@@ -345,7 +354,9 @@ export async function sendAgentInstruction(
       attempt,
       ...(error !== undefined ? { error } : {}),
       ...(detail ?? {}),
-    })
+    }
+    emitInstructionLog(event)
+    try { input.onPhase?.(event) } catch { /* Observers never break submission. */ }
   }
 
   // Tentativa em progresso, para o resultado `cancelled` refletir quantos
@@ -358,7 +369,7 @@ export async function sendAgentInstruction(
     if (!deps.hasTerminal(input.terminalId)) {
       const error = `O terminal ${input.terminalId} não existe mais; a tarefa não foi enviada.`
       emit('failed', 0, error)
-      return { acked: false, attempts: 0, error }
+      return { acked: false, attempts: 0, error, errorCode: 'AGENT_NOT_READY' }
     }
 
     emit('waiting_ready', 0)
@@ -371,7 +382,7 @@ export async function sendAgentInstruction(
       // é exatamente a corrida que este módulo existe para eliminar.
       const error = 'A interface do agente não ficou pronta; nada foi escrito no terminal.'
       emit('failed', 0, error)
-      return { acked: false, attempts: 0, error }
+      return { acked: false, attempts: 0, error, errorCode: 'AGENT_NOT_READY' }
     }
 
     for (let attempt = 1; attempt <= maxSubmitAttempts; attempt += 1) {
@@ -399,12 +410,28 @@ export async function sendAgentInstruction(
         if (input.content.length > 0 && !deps.write(input.terminalId, payload)) {
           const error = 'O terminal recusou o conteúdo da tarefa.'
           emit('failed', attempt, error)
-          return { acked: false, attempts: attempt, error }
+          return { acked: false, attempts: attempt, error, errorCode: 'INSTRUCTION_DELIVERY_FAILED' }
         }
         emit('content_written', attempt, undefined, {
           paste: bracketedPaste ? 'bracketed' : 'plain',
           length: input.content.length,
         })
+        const pasteSettleMs = input.hints?.pasteSettleMs
+        if (pasteSettleMs !== undefined && pasteSettleMs > 0) {
+          // The CLI can reinterpret immediate Enter as another pasted newline.
+          // Wait on the existing readiness adapter, bounded and abortable.
+          const pasted = await abortable(deps.waitReady(input.terminalId, {
+            requireFresh: true,
+            quietMs: Math.min(5000, pasteSettleMs), timeoutMs: input.timeoutMs ?? TURN_READY_TIMEOUT_MS,
+            since: deps.now(),
+          }), signal, disposers)
+          throwIfAborted()
+          if (pasted.timedOut) {
+            const error = 'O input do provider não estabilizou; nenhum Enter foi enviado.'
+            emit('failed', attempt, error)
+            return { acked: false, attempts: attempt, error, errorCode: 'AGENT_NOT_READY' }
+          }
+        }
       } else {
         // CHECKPOINT (pós-espera de ack / antes de cada retry_submit): cancelar
         // aqui para o retry ANTES de emitir a fase e sem re-enviar o Enter.
@@ -419,7 +446,7 @@ export async function sendAgentInstruction(
       if (!deps.write(input.terminalId, AGENT_SUBMIT_SEQUENCE)) {
         const error = 'O terminal recusou o Enter de submissão.'
         emit('failed', attempt, error)
-        return { acked: false, attempts: attempt, error }
+        return { acked: false, attempts: attempt, error, errorCode: 'INSTRUCTION_DELIVERY_FAILED' }
       }
       emit('submit_sent', attempt)
       emit('awaiting_ack', attempt)
@@ -430,7 +457,13 @@ export async function sendAgentInstruction(
         signal,
         disposers
       )
-      if (ack.acked) {
+      throwIfAborted()
+      if (ack.errorCode) {
+        const error = ack.errorCode === 'TERMINAL_EXITED' ? 'O terminal encerrou durante a confirmação.' : 'O provider falhou durante a confirmação.'
+        emit('failed', attempt, error)
+        return { acked: false, attempts: attempt, errorCode: ack.errorCode, error }
+      }
+      if (ack.acked || input.isResultReady?.()) {
         // Ack por padrão loga SÓ o índice (`ack=pattern[i]`): o trecho casado da
         // saída do terminal nunca vai ao log.
         emit('acked', attempt, undefined, ack.ackPattern !== undefined ? { ackPattern: ack.ackPattern } : undefined)
@@ -443,7 +476,7 @@ export async function sendAgentInstruction(
 
     const error = `O terminal não confirmou o recebimento da tarefa após ${maxSubmitAttempts} tentativa(s) de Enter.`
     emit('failed', maxSubmitAttempts, error)
-    return { acked: false, attempts: maxSubmitAttempts, error }
+    return { acked: false, attempts: maxSubmitAttempts, error, errorCode: 'INSTRUCTION_ACK_TIMEOUT' }
   } catch (error) {
     if (isInstructionCancelledError(error)) {
       // Estado consistente: fase `cancelled` (NÃO `failed`) — o envio foi
@@ -456,6 +489,7 @@ export async function sendAgentInstruction(
         acked: false,
         attempts: currentAttempt,
         cancelled: true,
+        errorCode: 'CANCELLED',
         error: message,
       }
     }

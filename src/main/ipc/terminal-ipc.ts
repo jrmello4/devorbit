@@ -802,9 +802,10 @@ export function registerTerminalIpc(register: IpcRegistrar, dependencies: Termin
     assertTerminalId(terminalId)
     const instruction = normalizeAgentInstructionPayload(payload)
     // A Codex PTY is not ready merely because the process spawned.  Require
-    // the managed MCP handshake and an active Bridge registration before the
-    // first instruction reaches the terminal.
-    if (dependencies.codexBridgeHealth) await dependencies.codexBridgeHealth.waitReady(terminalId)
+    // the managed MCP handshake before the first instruction reaches the
+    // terminal. Requiring a previously completed worker turn here would
+    // prevent the bootstrap probe that establishes operational readiness.
+    if (dependencies.codexBridgeHealth) await dependencies.codexBridgeHealth.waitConnected(terminalId)
     const result = await sendAgentInstruction(
       {
         hasTerminal,

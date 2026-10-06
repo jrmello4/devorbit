@@ -6,9 +6,9 @@ import { SettingsModal } from './components/SettingsModal'
 import { CodexAuthModal } from './components/CodexAuthModal'
 import { AiUsagebarProviderPanel } from './components/AiUsagebarProviderPanel'
 import { UsageSharePanel } from './components/UsageSharePanel'
-// Estilos da view de uso (usage-panel/usage-scroll/usage-shell). O único outro
-// importador é UsageBar.tsx, que não é montado em lugar nenhum — sem este
-// import a view fica sem overflow e o conteúdo é cortado sem scroll.
+// Estilos da view de uso (usage-panel/usage-scroll/usage-shell). Importados
+// direto pelo App porque a view de uso vive aqui — sem este import a view
+// fica sem overflow e o conteúdo é cortado sem scroll.
 import './components/UsagePanel.css'
 import { AiMemoryModal } from './components/AiMemoryModal'
 import { GitDock, type GitDockTab } from './components/GitDock'
@@ -33,12 +33,25 @@ import type {
   UpdateState,
   HitlRequestView,
 } from './types'
-import { CheckCircle2, AlertCircle, Info, X, FolderKanban, ChartNoAxesCombined, ShieldCheck, Settings, ArrowRightLeft, GitPullRequest, PanelLeftClose, PanelLeftOpen, Wrench, LayoutDashboard, RefreshCw, Orbit } from 'lucide-react'
+import { CheckCircle2, AlertCircle, Info, X, FolderKanban, ChartNoAxesCombined, ShieldCheck, Settings, ArrowRightLeft, GitPullRequest, PanelLeftClose, PanelLeftOpen, Wrench, LayoutDashboard, RefreshCw } from 'lucide-react'
 import { resolveRestorableProjectId } from './components/workspace-restore'
 import type { AiUsagebarApiKeyChange, AiUsagebarProviderChange, AiUsagebarSnapshot } from '../../shared/ai-usagebar-contract'
 import type { AiUsagebarIpcResult } from '../../shared/ai-usagebar-ipc-contract'
 
 const IntegratedWorkspace = React.lazy(() => import('./components/IntegratedWorkspace').then((module) => ({ default: module.IntegratedWorkspace })))
+
+/** Notificação enfileirada: espelho imutável do pedido de notify() com chave
+ * estável (timers de auto-dismiss são por chave; hover pausa/rearma o timer). */
+interface QueuedNotification {
+  key: number
+  message: string
+  type: 'success' | 'error' | 'info'
+  actions?: Array<{ id: string; label: string }>
+  onAction?: (id: string) => void
+}
+
+/** Máximo de toasts simultâneos empilhados (política anti-spam). */
+const MAX_STACKED_NOTIFICATIONS = 3
 
 function toHitlApprovalRequest(request: HitlRequestView): HitlApprovalRequest {
   const metadataEvidence = Object.entries(request.metadata || {}).map(([label, value]) => ({ label, value: String(value) }))
@@ -138,14 +151,35 @@ export const App: React.FC = () => {
   const [isUpdateDismissed, setIsUpdateDismissed] = useState(false)
   const accountSwitchInFlightRef = useRef(false)
   const commandPaletteOriginRef = useRef<HTMLElement | null>(null)
-  const [notification, setNotification] = useState<{
-    message: string
-    type: 'success' | 'error' | 'info'
-    actions?: Array<{ id: string; label: string }>
-  } | null>(null)
-  const notificationTimerRef = useRef<number | null>(null)
-  const notificationActionRef = useRef<((id: string) => void) | null>(null)
+  // Fila de notificações (máx. 3 empilhadas): antes, um notify novo SUBSTITUÍA o
+  // anterior — mensagens curtas se perdiam. Mesma política de auto-dismiss do
+  // notification-helpers (erros/ações nunca auto-fecham) com pausa no hover.
+  const [notifications, setNotifications] = useState<QueuedNotification[]>([])
+  const notificationTimersRef = useRef(new Map<number, number>())
+  const notificationKeyRef = useRef(0)
   const hitlRequest = hitlRequests[0] || null
+
+  const clearNotificationTimer = useCallback((key: number) => {
+    const timer = notificationTimersRef.current.get(key)
+    if (timer !== undefined) {
+      window.clearTimeout(timer)
+      notificationTimersRef.current.delete(key)
+    }
+  }, [])
+
+  const dismissNotification = useCallback((key: number) => {
+    clearNotificationTimer(key)
+    setNotifications((current) => current.filter((item) => item.key !== key))
+  }, [clearNotificationTimer])
+
+  const armNotificationTimer = useCallback((item: QueuedNotification) => {
+    clearNotificationTimer(item.key)
+    if (!shouldAutoDismissNotification(item.type, item.actions)) return
+    notificationTimersRef.current.set(
+      item.key,
+      window.setTimeout(() => dismissNotification(item.key), 4000),
+    )
+  }, [clearNotificationTimer, dismissNotification])
 
   const notify = useCallback(
     (
@@ -153,20 +187,25 @@ export const App: React.FC = () => {
       type: 'success' | 'error' | 'info' = 'info',
       options?: { actions?: Array<{ id: string; label: string }>; onAction?: (id: string) => void },
     ) => {
-      if (notificationTimerRef.current) {
-        window.clearTimeout(notificationTimerRef.current)
-        notificationTimerRef.current = null
+      const key = ++notificationKeyRef.current
+      const item: QueuedNotification = {
+        key,
+        message,
+        type,
+        ...(options?.actions ? { actions: options.actions } : {}),
+        ...(options?.onAction ? { onAction: options.onAction } : {}),
       }
-      notificationActionRef.current = options?.onAction || null
-      setNotification({ message, type, ...(options?.actions ? { actions: options.actions } : {}) })
-      if (shouldAutoDismissNotification(type, options?.actions)) {
-        notificationTimerRef.current = window.setTimeout(() => {
-          setNotification((current) => current?.message === message && current.type === type ? null : current)
-          notificationTimerRef.current = null
-        }, 4000)
-      }
+      setNotifications((current) => {
+        // Máximo empilhado: descarta a mais antiga (o timer dela, se houver,
+        // dispara depois e filtra no-op — sem vazamento de estado).
+        const next = current.length >= MAX_STACKED_NOTIFICATIONS
+          ? current.slice(current.length - (MAX_STACKED_NOTIFICATIONS - 1))
+          : current
+        return [...next, item]
+      })
+      armNotificationTimer(item)
     },
-    [],
+    [armNotificationTimer],
   )
 
   const loadAudit = useCallback(async (project: Project | null) => {
@@ -277,7 +316,8 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     return () => {
-      if (notificationTimerRef.current) window.clearTimeout(notificationTimerRef.current)
+      for (const timer of notificationTimersRef.current.values()) window.clearTimeout(timer)
+      notificationTimersRef.current.clear()
     }
   }, [])
 
@@ -331,16 +371,22 @@ export const App: React.FC = () => {
     return false
   }, [])
 
+  // Falha silenciosa de uso real vira estado degradado consumido pela view de
+  // uso (banner discreto com retry) — antes era console-only e a view ficava
+  // muda. Sem toast: a banner é o único aviso (política anti-spam).
+  const [usageError, setUsageError] = useState('')
   const loadRealUsage = useCallback(async (force = false): Promise<boolean> => {
     try {
       if (window.devorbit) {
         // Shadow-read only during staged migration; usage and the new sidecar
         // are serialized in main because both may rotate the Codex refresh token.
         await window.devorbit.getRealUsage(force)
+        setUsageError('')
         return true
       }
     } catch (err: any) {
       console.error('Falha ao carregar uso real da OpenAI:', err)
+      setUsageError(err instanceof Error ? err.message : String(err))
     }
     return false
   }, [])
@@ -833,7 +879,6 @@ export const App: React.FC = () => {
             if (owner) openIntegratedWorkspace(owner)
             else setWorkspaceView('workspace')
           }
-          setNotification(null)
         },
       })
     })
@@ -911,6 +956,21 @@ export const App: React.FC = () => {
       else notify('Selecione um projeto para abrir a memória.', 'info')
     } else if (action === 'nav-settings') setIsSettingsOpen(true)
   }, [activeWorkspaceProject, notify, openGitDock, projects])
+
+  // Command Palette → abrir o workspace do projeto escolhido no resultado da
+  // busca (mesmo fluxo do ⋯ da biblioteca / CTA do card). Passada de forma
+  // defensiva via spread: a prop opcional `onOpenProject` está sendo publicada
+  // no CommandPalette (worker 3); enquanto não existir lá, o spread é inócuo —
+  // quando existir, este handler passa a valer sem nova edição aqui.
+  const handlePaletteOpenProject = useCallback((projectPath: string) => {
+    const target = projects.find((project) => project.path === projectPath)
+    if (target) {
+      openIntegratedWorkspace(target)
+      closeCommandPalette()
+    } else {
+      notify('Projeto não encontrado nesta sessão: ' + projectPath, 'error')
+    }
+  }, [closeCommandPalette, notify, openIntegratedWorkspace, projects])
 
   // C+N/C+T usam fila pendente consumida após a montagem do canvas: no
   // primeiro uso a partir de Projetos não há WorkspaceCanvas montado, então
@@ -1110,14 +1170,18 @@ export const App: React.FC = () => {
       <div className="app-body">
       <aside className="workspace-sidebar" aria-label="Navegação principal">
         <div className="sidebar-heading">
-          <div className="sidebar-brand" title="DevOrbit"><Orbit size={19} strokeWidth={1.8} aria-hidden="true"/><strong>DevOrbit</strong></div>
+          {/* Marca única: o título vive na titlebar (.app-brand do Header);
+              a sidebar começa direto no controle de recolher. */}
           <button type="button" className="icon-button sidebar-collapse-button" onClick={() => setSidebarCollapsed(!sidebarCollapsed)} aria-label={sidebarCollapsed ? 'Expandir navegação' : 'Recolher navegação'} title={sidebarCollapsed ? 'Expandir navegação' : 'Recolher navegação'}>{sidebarCollapsed ? <PanelLeftOpen size={15} aria-hidden="true"/> : <PanelLeftClose size={15} aria-hidden="true"/>}</button>
         </div>
         <nav aria-label="Seções">
           <button type="button" className={`nav-item ${workspaceView === 'projects' || workspaceView === 'project' ? 'active' : ''}`} aria-label={`Projetos, ${projects.length}`} aria-current={workspaceView === 'projects' || workspaceView === 'project' ? 'page' : undefined} title="Projetos" onClick={() => setWorkspaceView('projects')}><FolderKanban size={18} aria-hidden="true"/><span>Projetos</span><small>{projects.length}</small></button>
           <button type="button" className={`nav-item ${workspaceView === 'usage' ? 'active' : ''}`} aria-label="Contas e uso" aria-current={workspaceView === 'usage' ? 'page' : undefined} title="Contas e uso" onClick={() => setWorkspaceView('usage')}><ChartNoAxesCombined size={18} aria-hidden="true"/><span>Contas e uso</span></button>
           <button type="button" className={`nav-item ${workspaceView === 'audit' ? 'active' : ''}`} aria-label="Auditoria" aria-current={workspaceView === 'audit' ? 'page' : undefined} title="Auditoria" onClick={() => setWorkspaceView('audit')}><ShieldCheck size={18} aria-hidden="true"/><span>Auditoria</span></button>
-          {activeWorkspaceProject && <button type="button" className={`nav-item ${workspaceView === 'workspace' ? 'active' : ''}`} aria-label="Ambiente integrado" aria-current={workspaceView === 'workspace' ? 'page' : undefined} title={`Ambiente integrado de ${activeWorkspaceProject.name}`} onClick={() => setWorkspaceView('workspace')}><LayoutDashboard size={18} aria-hidden="true"/><span>Ambiente</span></button>}
+          {/* "Ambiente" é persistente: desabilitado (com tooltip explicando)
+              enquanto nenhum projeto estiver aberto — antes o item aparecia e
+              sumia, quebrando o modelo mental da navegação. */}
+          <button type="button" className={`nav-item ${workspaceView === 'workspace' ? 'active' : ''}`} aria-label="Ambiente integrado" aria-current={workspaceView === 'workspace' ? 'page' : undefined} title={activeWorkspaceProject ? `Ambiente integrado de ${activeWorkspaceProject.name}` : 'Abra um projeto para ativar o ambiente'} onClick={() => { if (activeWorkspaceProject) setWorkspaceView('workspace') }} disabled={!activeWorkspaceProject}><LayoutDashboard size={18} aria-hidden="true"/><span>Ambiente</span></button>
         </nav>
         <div className="sidebar-tools"><span className="sidebar-label">Workspace</span><button type="button" className="nav-item" aria-label="Sincronizar todos os repositórios" title="Sincronizar todos os repositórios" onClick={handleSyncAll} disabled={isSyncingAll}><GitPullRequest size={18} aria-hidden="true"/><span>{isSyncingAll ? 'Sincronizando…' : 'Sincronizar Git'}</span></button><button type="button" className="nav-item" aria-label="Configurações" title="Configurações" onClick={() => setIsSettingsOpen(true)}><Settings size={18} aria-hidden="true"/><span>Configurações</span></button><button type="button" className="nav-item" aria-label="Diagnóstico" title="Diagnosticar ferramentas instaladas" onClick={() => setIsToolHealthOpen(true)}><Wrench size={18} aria-hidden="true"/><span>Diagnóstico</span></button></div>
         <div className="sidebar-bottom" ref={accountMenuRef}>
@@ -1196,6 +1260,20 @@ export const App: React.FC = () => {
       <div className="view-panel" hidden={workspaceView !== 'usage'}>
         <div className="usage-panel usage-scroll">
           <div className="usage-shell">
+            {/* Uso real degradado: banner silencioso com retry (sem toast). */}
+            {usageError && (
+              <div role="status" className="mb-3 flex items-center gap-2 rounded-lg border border-[color-mix(in_srgb,var(--color-warning)_35%,transparent)] bg-[var(--color-bg-panel)] px-3 py-2 text-xs text-[var(--color-text-secondary)]">
+                <AlertCircle size={14} aria-hidden="true" className="shrink-0 text-[var(--color-warning)]" />
+                <span className="min-w-0 flex-1 overflow-hidden text-pretty">Não foi possível carregar o uso real{usageError ? `: ${usageError}` : ''}.</span>
+                <button
+                  type="button"
+                  onClick={() => { void loadRealUsage(true) }}
+                  className="ms-2 inline-flex min-h-7 shrink-0 items-center rounded-md border border-[var(--color-border-subtle)] px-2.5 text-[11px] font-semibold text-[var(--color-text-secondary)] transition-[background-color] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+                >
+                  Tentar novamente
+                </button>
+              </div>
+            )}
             <AiUsagebarProviderPanel
               snapshot={aiUsagebarSnapshot}
               loading={isAiUsagebarLoading}
@@ -1362,6 +1440,10 @@ export const App: React.FC = () => {
         focusedNode={focusedCanvasNode}
         onNavigate={handlePaletteNavigate}
         onCreate={handlePaletteCreate}
+        /* Prop defensiva (worker 3): spreads não passam por checagem de
+           propriedades excedentes; quando o CommandPalette declarar a opcional
+           `onOpenProject(projectPath)`, este handler ativa sem nova edição. */
+        {...({ onOpenProject: handlePaletteOpenProject } as Record<string, unknown>)}
         onRunEvolutionCommand={(command) => {
           setWorkspaceView('audit')
           if (command !== 'audit') notify('/' + command + ' aberto no painel de evolução.', 'info')
@@ -1432,86 +1514,73 @@ export const App: React.FC = () => {
         />
       )}
 
-      {/* Toast Notification */}
-      <div className="sr-only" aria-live="polite" aria-atomic="true">
-        {notification?.type !== 'error' ? notification?.message ?? '' : ''}
+      {/* Toast Notifications — fila empilhada (máx. 3) no TOPO-CENTRO, abaixo
+          do header/toolbar: nunca cobre o GitDock (dock direita), o Inspector
+          do canvas nem o menu radial (rodapé-centro). Pausa no hover/foco. */}
+      <div className="sr-only" aria-live="polite">
+        {notifications.filter((item) => item.type !== 'error').map((item) => (
+          <p key={item.key} className="m-0">{item.message}</p>
+        ))}
       </div>
-      <div className="sr-only" role="alert" aria-atomic="true">
-        {notification?.type === 'error' ? notification.message : ''}
+      <div className="sr-only" role="alert">
+        {notifications.filter((item) => item.type === 'error').map((item) => (
+          <p key={item.key} className="m-0">{item.message}</p>
+        ))}
       </div>
-      {notification && (
-        <div
-          className={`app-toast fixed bottom-10 end-5 z-50 flex max-w-[min(28rem,calc(100vw-2rem))] items-center gap-2.5 rounded-lg border px-4 py-3 text-sm shadow-lg ${
-            notification.type === 'success'
-              ? 'border-[color-mix(in_srgb,var(--color-success)_35%,transparent)] bg-[var(--color-bg-panel)]'
-              : notification.type === 'error'
-                ? 'border-[color-mix(in_srgb,var(--color-danger)_35%,transparent)] bg-[var(--color-bg-panel)]'
-                : 'border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)]'
-          }`}
-          role="group"
-          aria-label="Notificação"
-          onMouseEnter={() => {
-            if (notificationTimerRef.current) {
-              window.clearTimeout(notificationTimerRef.current)
-              notificationTimerRef.current = null
-            }
-          }}
-          onMouseLeave={() => {
-            if (notification && notification.type !== 'error' && (!notification.actions || notification.actions.length === 0)) {
-              if (notificationTimerRef.current) window.clearTimeout(notificationTimerRef.current)
-              notificationTimerRef.current = window.setTimeout(() => {
-                setNotification(null)
-                notificationTimerRef.current = null
-              }, 4000)
-            }
-          }}
-          onFocusCapture={() => {
-            if (notificationTimerRef.current) {
-              window.clearTimeout(notificationTimerRef.current)
-              notificationTimerRef.current = null
-            }
-          }}
-          onBlurCapture={(e) => {
-            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
-              if (notification && notification.type !== 'error' && (!notification.actions || notification.actions.length === 0)) {
-                if (notificationTimerRef.current) window.clearTimeout(notificationTimerRef.current)
-                notificationTimerRef.current = window.setTimeout(() => {
-                  setNotification(null)
-                  notificationTimerRef.current = null
-                }, 4000)
-              }
-            }
-          }}
-        >
-          {notification.type === 'success' && (
-            <CheckCircle2 aria-hidden="true" className="w-4 h-4 text-[var(--color-success)] shrink-0" />
-          )}
-          {notification.type === 'error' && (
-            <AlertCircle aria-hidden="true" className="w-4 h-4 text-[var(--color-danger)] shrink-0" />
-          )}
-          {notification.type === 'info' && (
-            <Info aria-hidden="true" className="w-4 h-4 text-[var(--color-text-secondary)] shrink-0" />
-          )}
-          <span className="text-pretty font-medium text-[var(--text-primary)]">{notification.message}</span>
-          {notification.actions?.map((action) => (
-            <button
-              key={action.id}
-              onClick={() => {
-                notificationActionRef.current?.(action.id)
-                setNotification(null)
+      {notifications.length > 0 && (
+        <div className="app-toast-stack pointer-events-none fixed left-1/2 top-[68px] z-50 flex max-w-[min(30rem,calc(100vw-2rem))] -translate-x-1/2 flex-col items-center gap-2">
+          {notifications.map((item) => (
+            <div
+              key={item.key}
+              className={`app-toast pointer-events-auto flex w-full max-w-[min(28rem,calc(100vw-2rem))] items-center gap-2.5 rounded-lg border px-4 py-3 text-sm shadow-lg ${
+                item.type === 'success'
+                  ? 'border-[color-mix(in_srgb,var(--color-success)_35%,transparent)] bg-[var(--color-bg-panel)]'
+                  : item.type === 'error'
+                    ? 'border-[color-mix(in_srgb,var(--color-danger)_35%,transparent)] bg-[var(--color-bg-panel)]'
+                    : 'border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)]'
+              }`}
+              role="group"
+              aria-label="Notificação"
+              onMouseEnter={() => clearNotificationTimer(item.key)}
+              onMouseLeave={() => armNotificationTimer(item)}
+              onFocusCapture={() => clearNotificationTimer(item.key)}
+              onBlurCapture={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                  armNotificationTimer(item)
+                }
               }}
-              className="ms-1 inline-flex min-h-8 items-center justify-center rounded-lg bg-[var(--color-accent-strong)] px-3 text-xs font-semibold text-[var(--color-accent-contrast)] transition-[background-color] hover:bg-[var(--color-accent-hover)]"
             >
-              {action.label}
-            </button>
+              {item.type === 'success' && (
+                <CheckCircle2 aria-hidden="true" className="w-4 h-4 text-[var(--color-success)] shrink-0" />
+              )}
+              {item.type === 'error' && (
+                <AlertCircle aria-hidden="true" className="w-4 h-4 text-[var(--color-danger)] shrink-0" />
+              )}
+              {item.type === 'info' && (
+                <Info aria-hidden="true" className="w-4 h-4 text-[var(--color-text-secondary)] shrink-0" />
+              )}
+              <span className="text-pretty font-medium text-[var(--text-primary)]">{item.message}</span>
+              {item.actions?.map((action) => (
+                <button
+                  key={action.id}
+                  onClick={() => {
+                    item.onAction?.(action.id)
+                    dismissNotification(item.key)
+                  }}
+                  className="ms-1 inline-flex min-h-8 items-center justify-center rounded-lg bg-[var(--color-accent-strong)] px-3 text-xs font-semibold text-[var(--color-accent-contrast)] transition-[background-color] hover:bg-[var(--color-accent-hover)]"
+                >
+                  {action.label}
+                </button>
+              ))}
+              <button
+                onClick={() => dismissNotification(item.key)}
+                aria-label="Fechar notificação"
+                className="ms-2 inline-flex min-h-8 min-w-8 items-center justify-center rounded-lg text-[var(--color-text-secondary)] transition-[color,background-color] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+              >
+                <X aria-hidden="true" className="w-3.5 h-3.5" />
+              </button>
+            </div>
           ))}
-          <button
-            onClick={() => setNotification(null)}
-            aria-label="Fechar notificação"
-              className="ms-2 inline-flex min-h-8 min-w-8 items-center justify-center rounded-lg text-[var(--color-text-secondary)] transition-[color,background-color] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
-          >
-            <X aria-hidden="true" className="w-3.5 h-3.5" />
-          </button>
         </div>
       )}
     </div>

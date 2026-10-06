@@ -79,6 +79,13 @@ jobs:
       - name: Bridge unit suite
         run: npm run verify:bridge
 
+      - name: Codex MCP namespace verification (Windows; non-live)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          DEVORBIT_CODEX_REAL_E2E: '0'
+        run: npm run verify:codex-bridge
+
       - name: Bridge Electron E2E (Electron; xvfb no Ubuntu)
         shell: bash
         run: |

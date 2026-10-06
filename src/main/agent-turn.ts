@@ -213,6 +213,9 @@ export interface TurnOutcome {
 }
 
 export interface TurnWaiter {
+  errorCode?: import('./bridge-turn').BridgeTurnErrorCode
+  phase?: string
+  diagnostic?: import('./bridge-turn').BridgeTurnDiagnostic
   result?: string
   blocked?: string
   error?: string
@@ -234,6 +237,8 @@ export interface TurnWaiter {
 export type ResultWaitPromise = Promise<TurnWaiter> & { cancel: () => void }
 
 export interface TerminalReadyOptions {
+  /** Require quietude after a new write even when readiness was cached. */
+  requireFresh?: boolean
   quietMs?: number
   timeoutMs?: number
   /**

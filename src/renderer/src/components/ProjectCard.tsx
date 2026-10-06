@@ -23,6 +23,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import type { AppConfig, Project } from '../types'
+import { ConfirmDialog } from './ConfirmDialog'
 import './ProjectDetail.css'
 
 interface ProjectCardProps {
@@ -118,6 +119,8 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
   const [launchingTool, setLaunchingTool] = useState<LaunchTool | null>(null)
   const [isLifecycleBusy, setIsLifecycleBusy] = useState(false)
   const [isOpeningWorkspace, setIsOpeningWorkspace] = useState(false)
+  // Confirmação de finalização via ConfirmDialog (antes era window.confirm).
+  const [isFinalizeConfirmOpen, setIsFinalizeConfirmOpen] = useState(false)
   // Timers de feedback (launch/copy/open): limpos no unmount para não tocar
   // setState em componente desmontado.
   const feedbackTimersRef = useRef<number[]>([])
@@ -141,6 +144,17 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
       await onStashSync(project.path)
     } finally {
       setIsStashing(false)
+    }
+  }
+
+  const handleFinalizeConfirm = async () => {
+    if (isLifecycleBusy || !onFinalizeProject) return
+    setIsLifecycleBusy(true)
+    try {
+      await onFinalizeProject(project)
+    } finally {
+      setIsLifecycleBusy(false)
+      setIsFinalizeConfirmOpen(false)
     }
   }
 
@@ -677,14 +691,8 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                 {onFinalizeProject && (
                   <button
                     type="button"
-                    onClick={async () => {
-                      if (isLifecycleBusy) return
-                      const confirmed = window.confirm(
-                        'O DevOrbit só libera a pasta depois de confirmar que ela está limpa e sincronizada com o GitHub. A cópia local e dependências recriáveis como node_modules serão removidas; arquivos ignorados importantes bloqueiam a operação. O cadastro do projeto permanecerá. Continuar?'
-                      )
-                      if (!confirmed) return
-                      setIsLifecycleBusy(true)
-                      try { await onFinalizeProject(project) } finally { setIsLifecycleBusy(false) }
+                    onClick={() => {
+                      if (!isLifecycleBusy) setIsFinalizeConfirmOpen(true)
                     }}
                     disabled={isLifecycleBusy}
                     aria-busy={isLifecycleBusy}
@@ -768,6 +776,8 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                     LAUNCHER_IDENTITIES.agy.subtitle,
                     'Abrir no Antigravity CLI no Windows Terminal'
                   )}
+                  {/* "Abrir ambiente": abre o workspace para uso com o Gemini CLI
+                      (o CLI é externo; o botão não lança o Gemini em si). */}
                   <button
                     type="button"
                     onClick={() => {
@@ -786,8 +796,8 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                       <Bot />
                     </span>
                     <span className="work-tool-copy">
-                      <span className="work-tool-title">{LAUNCHER_IDENTITIES.gemini.label}</span>
-                      <span className="work-tool-detail">{LAUNCHER_IDENTITIES.gemini.subtitle}</span>
+                      <span className="work-tool-title">Abrir ambiente</span>
+                      <span className="work-tool-detail">Uso com Gemini CLI</span>
                     </span>
                   </button>
                   {renderToolButton(
@@ -826,6 +836,19 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
           </DetailGroup>
         </div>
       </div>
+
+      {onFinalizeProject && (
+        <ConfirmDialog
+          open={isFinalizeConfirmOpen}
+          title="Finalizar e liberar espaço?"
+          description="O DevOrbit só libera a pasta depois de confirmar que ela está limpa e sincronizada com o GitHub. A cópia local e dependências recriáveis como node_modules serão removidas; arquivos ignorados importantes bloqueiam a operação. O cadastro do projeto permanecerá. Continuar?"
+          confirmLabel="Finalizar projeto"
+          danger
+          busy={isLifecycleBusy}
+          onConfirm={() => void handleFinalizeConfirm()}
+          onCancel={() => setIsFinalizeConfirmOpen(false)}
+        />
+      )}
     </article>
   )
 }

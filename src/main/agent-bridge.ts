@@ -1,5 +1,6 @@
 import { createServer, type Server, type Socket } from 'node:net'
 import { timingSafeEqual } from 'node:crypto'
+import { AGENT_PROVIDER_ID_LIST } from '../shared/agent-provider-contract'
 
 export const MAX_AGENT_BRIDGE_PAYLOAD_BYTES = 64 * 1024
 export const MAX_AGENT_BRIDGE_PROMPT_CHARS = 16 * 1024
@@ -24,6 +25,10 @@ export interface AgentBridgeRequestBase {
   id?: string
   /** Agente/terminal que originou a delegação (default: `devorbit`). */
   origin?: string
+  /** Identidade do terminal que recebeu o handshake MCP desta sessao. */
+  originTerminalId?: string
+  /** Launch nonce correspondente ao originTerminalId. */
+  originLaunchId?: string
   depth?: number
   visited?: string[]
 }
@@ -99,6 +104,7 @@ export interface AgentBridgeErrorResponse {
   error: {
     code: string
     message: string
+    data?: Record<string, unknown>
   }
 }
 
@@ -183,8 +189,13 @@ export function validatePrompt(value: unknown): string {
   if (value.trim().length === 0 || value.length > MAX_AGENT_BRIDGE_PROMPT_CHARS) {
     return protocolError('INVALID_PROMPT', 'Prompt must be non-empty and within the size limit.')
   }
-  if (hasControlCharacters(value)) {
-    return protocolError('INVALID_PROMPT', 'Prompt contains unsupported characters.')
+  // Prompt text may span lines or contain tabs. Reject controls that can
+  // corrupt the line protocol or terminal input.
+  for (const character of value) {
+    const code = character.charCodeAt(0)
+    if ((code <= 31 && code !== 9 && code !== 10 && code !== 13) || code === 127) {
+      return protocolError('INVALID_PROMPT', 'Prompt contains unsupported characters.')
+    }
   }
   return value
 }
@@ -361,9 +372,18 @@ export function validateAgentBridgeRequest(value: unknown): AgentBridgeRequest {
   const sessionId = validateCredential(value.sessionId, 'sessionId')
   const id = value.id === undefined ? undefined : validateCredential(value.id, 'id')
   const origin = value.origin === undefined ? undefined : validateTarget(value.origin)
+  const originTerminalId = value.originTerminalId === undefined ? undefined : validateTerminalId(value.originTerminalId)
+  const originLaunchId = value.originLaunchId === undefined ? undefined : validateLaunchId(value.originLaunchId)
+  if ((originTerminalId === undefined) !== (originLaunchId === undefined)) {
+    return protocolError('INVALID_REQUEST', 'originTerminalId and originLaunchId must be provided together.')
+  }
   const depth = validateDepth(value.depth)
   const visited = validateVisited(value.visited)
-  const originField = origin === undefined ? {} : { origin }
+  const originField = {
+    ...(origin === undefined ? {} : { origin }),
+    ...(originTerminalId === undefined ? {} : { originTerminalId }),
+    ...(originLaunchId === undefined ? {} : { originLaunchId }),
+  }
 
   if (type === 'ping') return { type, token, sessionId, id, depth, visited, ...originField }
   if (type === 'mcp-handshake') {
@@ -469,8 +489,53 @@ function credentialsMatch(actual: string, expected: string): boolean {
   return actualBytes.length === expectedBytes.length && timingSafeEqual(actualBytes, expectedBytes)
 }
 
-function responseError(code: string, message: string, id?: string): AgentBridgeErrorResponse {
-  return { ok: false, ...(id === undefined ? {} : { id }), error: { code, message } }
+function responseError(code: string, message: string, id?: string, data?: Record<string, unknown>): AgentBridgeErrorResponse {
+  return { ok: false, ...(id === undefined ? {} : { id }), error: { code, message, ...(data ? { data } : {}) } }
+}
+
+function safeBridgeDiagnostic(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const source = value as Record<string, unknown>
+  const output: Record<string, unknown> = {}
+  const boundedText = (candidate: unknown, max = 256): string | undefined => {
+    if (typeof candidate !== 'string' || candidate.length === 0 || candidate.length > max || hasControlCharacters(candidate)) return undefined
+    return candidate
+  }
+  for (const field of ['agentId', 'terminalId', 'turnId', 'provider', 'phase', 'lastState', 'providerState', 'markerState', 'nonceState', 'reason']) {
+    const text = boundedText(source[field])
+    if (text !== undefined) output[field] = text
+  }
+  for (const field of ['elapsedMs', 'exitCode', 'attempt', 'contentLength']) {
+    const number = source[field]
+    if (typeof number === 'number' && Number.isSafeInteger(number) && number >= 0 && number <= MAX_AGENT_BRIDGE_PAYLOAD_BYTES * MAX_AGENT_BRIDGE_PAYLOAD_BYTES) {
+      output[field] = number
+    }
+  }
+  return Object.keys(output).length > 0 ? output : undefined
+}
+
+function safeBridgeTargetValidation(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const source = value as Record<string, unknown>
+  const output: Record<string, unknown> = {}
+  const textField = (field: string, allowed?: readonly string[]): void => {
+    const candidate = source[field]
+    if (typeof candidate !== 'string' || candidate.length === 0 || candidate.length > 128 || hasControlCharacters(candidate)) return
+    if (allowed && !allowed.includes(candidate)) return
+    output[field] = candidate
+  }
+  textField('phase', ['target_validation'])
+  textField('requestId')
+  textField('agentId')
+  textField('provider', [...AGENT_PROVIDER_ID_LIST, 'unknown'])
+  textField('status', ['starting', 'ready', 'busy', 'failed', 'stopped'])
+  textField('failureCode', [
+    'AGENT_STARTUP_TIMEOUT', 'AGENT_STARTUP_PROVIDER_ERROR', 'AGENT_STARTUP_CONFIGURATION_INVALID',
+    'AGENT_STARTUP_AUTH_FAILED', 'AGENT_STARTUP_CLI_NOT_FOUND',
+  ])
+  if (source.operational === false) output.operational = false
+  if (source.turnCreated === false) output.turnCreated = false
+  return Object.keys(output).length > 0 ? output : undefined
 }
 
 async function dispatchRequest(
@@ -488,7 +553,25 @@ async function dispatchRequest(
   try {
     const result = await handler(request as never, { signal })
     return { ok: true, ...(request.id === undefined ? {} : { id: request.id }), result }
-  } catch {
+  } catch (cause) {
+    // Preserve only known codes. Arbitrary provider exceptions can contain
+    // credentials/output; never forward their messages to MCP or telemetry.
+    const safeCodes = new Set(['AGENT_NOT_READY', 'AGENT_STARTUP_FAILED', 'PROVIDER_STARTUP_FAILED', 'INSTRUCTION_DELIVERY_FAILED',
+      'INSTRUCTION_ACK_TIMEOUT', 'RESULT_TIMEOUT', 'TERMINAL_EXITED', 'RESULT_MARKER_MISSING',
+      'RESULT_PARSE_FAILED', 'ECHO_ONLY', 'CANCELLED', 'AGENT_REPORTED_FAILURE',
+      'SELF_DELEGATION_NOT_ALLOWED', 'CALLER_IDENTITY_STALE'])
+    const code = cause && typeof cause === 'object' && 'code' in cause ? cause.code : undefined
+    if (typeof code === 'string' && safeCodes.has(code)) {
+      const diagnostic = safeBridgeDiagnostic(cause && typeof cause === 'object' ? (cause as Record<string, unknown>).diagnostic : undefined)
+      const targetValidation = code === 'AGENT_NOT_READY' || code === 'AGENT_STARTUP_FAILED'
+        ? safeBridgeTargetValidation(cause && typeof cause === 'object' ? (cause as Record<string, unknown>).bridgeData : undefined)
+        : undefined
+      return responseError(code, 'The agent turn failed.', request.id, {
+        errorCode: code,
+        ...(targetValidation ? { ...targetValidation, errorCode: code } : {}),
+        ...(diagnostic ? { diagnostic } : {}),
+      })
+    }
     return responseError('HANDLER_ERROR', 'The bridge operation failed.', request.id)
   }
 }

@@ -42,6 +42,8 @@ interface CommandPaletteProps {
   onNavigate?: (action: NavigateActionId) => void
   onCreate?: (action: CreateActionId) => void
   onRunEvolutionCommand?: (command: 'audit' | 'debt' | 'review' | 'fix') => void
+  /** Quando fornecido, abrir um resultado de projeto chama o handler com o caminho. */
+  onOpenProject?: (projectPath: string) => void
 }
 
 interface PaletteItem {
@@ -77,6 +79,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   onNavigate,
   onCreate,
   onRunEvolutionCommand,
+  onOpenProject,
 }) => {
   const [query, setQuery] = useState(search)
   const [highlightedIndex, setHighlightedIndex] = useState(0)
@@ -100,7 +103,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     return true
   }
 
-  const items = useMemo<PaletteItem[]>(() => {
+  const items = useMemo<{ commands: PaletteItem[]; projects: PaletteItem[] }>(() => {
     const normalizedQuery = query.trim().toLowerCase()
     const commands: PaletteItem[] = [
       {
@@ -172,11 +175,18 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         label: project.name,
         description: project.path,
         icon: FolderSearch,
-        onSelect: () => onSearchChange(project.name),
+        onSelect: () => {
+          if (onOpenProject) onOpenProject(project.path)
+          else onSearchChange(project.name)
+        },
       }))
 
-    const ranked = rankWithFocusedContext([...commandMatches, ...projectMatches], query, focusedNode)
-    return ranked
+    // O ranking por contexto focado é aplicado dentro de cada seção para
+    // priorizar resultados relevantes sem quebrar a ordem "Comandos → Projetos".
+    return {
+      commands: rankWithFocusedContext(commandMatches, query, focusedNode),
+      projects: rankWithFocusedContext(projectMatches, query, focusedNode),
+    }
   }, [
     activeAccountLabel,
     focusedNode,
@@ -184,6 +194,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     isSyncingAll,
     isSwitchingAccount,
     onOpenClone,
+    onOpenProject,
     onOpenSettings,
     onRefresh,
     onRunEvolutionCommand,
@@ -211,6 +222,14 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     setHighlightedIndex(0)
   }
 
+  // Lista plana que preserva a ordem visual das seções: setas ↑↓ percorrem
+  // comandos e projetos como um único fluxo contínuo de teclado.
+  const flatItems = useMemo<PaletteItem[]>(
+    () => [...items.commands, ...items.projects],
+    [items],
+  )
+  const highlightedItem = flatItems[Math.min(highlightedIndex, Math.max(flatItems.length - 1, 0))]
+
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (pendingPrefix && event.key.length === 1) {
       if (runTwoStroke(pendingPrefix, event.key)) {
@@ -225,20 +244,31 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     }
     if (event.key === 'ArrowDown') {
       event.preventDefault()
-      setHighlightedIndex((current) => (current + 1) % Math.max(items.length, 1))
+      setHighlightedIndex((current) => (current + 1) % Math.max(flatItems.length, 1))
       return
     }
 
     if (event.key === 'ArrowUp') {
       event.preventDefault()
-      setHighlightedIndex((current) => (current - 1 + Math.max(items.length, 1)) % Math.max(items.length, 1))
+      setHighlightedIndex((current) => (current - 1 + Math.max(flatItems.length, 1)) % Math.max(flatItems.length, 1))
+      return
+    }
+
+    if (event.key === 'Home') {
+      event.preventDefault()
+      setHighlightedIndex(0)
+      return
+    }
+
+    if (event.key === 'End') {
+      event.preventDefault()
+      setHighlightedIndex(Math.max(flatItems.length - 1, 0))
       return
     }
 
     if (event.key === 'Enter') {
       event.preventDefault()
-      const item = items[highlightedIndex]
-      if (item) void item.onSelect()
+      if (highlightedItem) void highlightedItem.onSelect()
       onClose()
     }
   }
@@ -278,11 +308,11 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
             value={query}
             onChange={(event) => handleQueryChange(event.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Pesquisar comandos e projetos... (G + tecla navega, C + tecla cria)"
+            placeholder="Pesquisar comandos e projetos…"
             role="combobox"
             aria-controls="command-palette-list"
             aria-expanded="true"
-            aria-activedescendant={items[highlightedIndex] ? `command-item-${items[highlightedIndex].id}` : undefined}
+            aria-activedescendant={highlightedItem ? `command-item-${highlightedItem.id}` : undefined}
             className="w-full bg-transparent py-4 ps-11 pe-4 text-base text-[var(--text-primary)] outline-none placeholder:text-[var(--color-text-muted)] sm:text-sm"
           />
         </div>
@@ -290,7 +320,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         {(pendingPrefix || focusedNode) && (
           <div className="flex flex-wrap items-center gap-2 border-b border-[var(--color-border-subtle)]/55 bg-[var(--surface-muted)] px-4 py-2 text-[11px] text-[var(--color-text-muted)]" aria-live="polite">
             {pendingPrefix === 'g' && <span>Aguardando segunda tecla de navegação: P · C · T · G · M · S</span>}
-            {pendingPrefix === 'c' && <span>Aguardando segunda tecla de criação: T · N · B · P</span>}
+            {pendingPrefix === 'c' && <span>Aguardando segunda tecla de criação: T · N · B · P · D · S</span>}
             {!pendingPrefix && focusedNode && <span>Contexto do canvas: {focusedNode.title} ({focusedNode.kind}) — resultados priorizados</span>}
           </div>
         )}
@@ -301,46 +331,83 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
           aria-label="Comandos e projetos"
           className="max-h-[min(22rem,55vh)] overflow-y-auto p-2"
         >
-          {items.length === 0 ? (
+          {flatItems.length === 0 ? (
             <div className="px-4 py-10 text-center">
               <p className="text-sm font-semibold text-[var(--text-primary)]">Nenhum resultado</p>
               <p className="mt-1 text-xs text-[var(--color-text-muted)]">Tente outro termo ou limpe a busca.</p>
             </div>
           ) : (
             <>
-              <p className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
-                {query.trim() ? 'Resultados' : 'Sugestões'}
-              </p>
-              {items.map((item, index) => {
-                const Icon = item.icon
-                const isHighlighted = index === highlightedIndex
-                return (
-                  <button
-                    key={item.id}
-                    id={`command-item-${item.id}`}
-                    type="button"
-                    role="option"
-                    aria-selected={isHighlighted}
-                    onMouseEnter={() => setHighlightedIndex(index)}
-                    onClick={() => selectItem(item)}
-                    title={item.description}
-                    className={`flex w-full items-center gap-3 rounded-[6px] px-3 py-2.5 text-start transition-[background-color,color] ${
-                      isHighlighted ? 'bg-[var(--surface-selected)] text-[var(--text-primary)]' : 'text-[var(--color-text-secondary)] hover:bg-[var(--surface-hover)]'
-                    }`}
-                  >
-                    <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[5px] border ${isHighlighted ? 'border-[var(--color-border-strong)] bg-[var(--surface-selected)] text-[var(--color-accent-strong)]' : 'border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] text-[var(--color-text-muted)]'}`}>
-                      <Icon className="h-4 w-4" aria-hidden="true" />
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-semibold">{item.label}</span>
-                      <span className="mt-0.5 block truncate text-xs text-[var(--color-text-muted)]">{item.description}</span>
-                    </span>
-                    {item.shortcut && (
-                      <kbd className="hidden shrink-0 rounded-[4px] border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-2 py-1 text-[10px] font-semibold text-[var(--color-text-muted)] sm:inline-flex">{item.shortcut}</kbd>
-                    )}
-                  </button>
-                )
-              })}
+              <div role="group" aria-label="Comandos">
+                <p className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+                  Comandos
+                </p>
+                {items.commands.map((item, index) => {
+                  const Icon = item.icon
+                  const isHighlighted = index === highlightedIndex
+                  return (
+                    <button
+                      key={item.id}
+                      id={`command-item-${item.id}`}
+                      type="button"
+                      role="option"
+                      aria-selected={isHighlighted}
+                      onMouseEnter={() => setHighlightedIndex(index)}
+                      onClick={() => selectItem(item)}
+                      title={item.description}
+                      className={`flex w-full items-center gap-3 rounded-[6px] px-3 py-2.5 text-start transition-[background-color,color] ${
+                        isHighlighted ? 'bg-[var(--surface-selected)] text-[var(--text-primary)]' : 'text-[var(--color-text-secondary)] hover:bg-[var(--surface-hover)]'
+                      }`}
+                    >
+                      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[5px] border ${isHighlighted ? 'border-[var(--color-border-strong)] bg-[var(--surface-selected)] text-[var(--color-accent-strong)]' : 'border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] text-[var(--color-text-muted)]'}`}>
+                        <Icon className="h-4 w-4" aria-hidden="true" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-semibold">{item.label}</span>
+                        <span className="mt-0.5 block truncate text-xs text-[var(--color-text-muted)]">{item.description}</span>
+                      </span>
+                      {item.shortcut && (
+                        <kbd className="hidden shrink-0 rounded-[4px] border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-2 py-1 text-[10px] font-semibold text-[var(--color-text-muted)] sm:inline-flex">{item.shortcut}</kbd>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+              {items.projects.length > 0 && (
+                <div role="group" aria-label="Projetos" className="mt-1">
+                  <p className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+                    Projetos
+                  </p>
+                  {items.projects.map((item, index) => {
+                    const Icon = item.icon
+                    const globalIndex = items.commands.length + index
+                    const isHighlighted = globalIndex === highlightedIndex
+                    return (
+                      <button
+                        key={item.id}
+                        id={`command-item-${item.id}`}
+                        type="button"
+                        role="option"
+                        aria-selected={isHighlighted}
+                        onMouseEnter={() => setHighlightedIndex(globalIndex)}
+                        onClick={() => selectItem(item)}
+                        title={item.description}
+                        className={`flex w-full items-center gap-3 rounded-[6px] px-3 py-2.5 text-start transition-[background-color,color] ${
+                          isHighlighted ? 'bg-[var(--surface-selected)] text-[var(--text-primary)]' : 'text-[var(--color-text-secondary)] hover:bg-[var(--surface-hover)]'
+                        }`}
+                      >
+                        <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[5px] border ${isHighlighted ? 'border-[var(--color-border-strong)] bg-[var(--surface-selected)] text-[var(--color-accent-strong)]' : 'border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] text-[var(--color-text-muted)]'}`}>
+                          <Icon className="h-4 w-4" aria-hidden="true" />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-semibold">{item.label}</span>
+                          <span className="mt-0.5 block truncate text-xs text-[var(--color-text-muted)]">{item.description}</span>
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
             </>
           )}
         </div>

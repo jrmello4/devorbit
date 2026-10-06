@@ -86,7 +86,7 @@ async function main() {
   assert(fs.existsSync(bridgeCli), `CLI do bridge ausente em ${bridgeCli}`)
 
   const { createBridgeService } = compileBridgeService()
-  const waiters = new Map()
+  const terminalListeners = new Set()
   const written = []
   const events = []
   const reflections = []
@@ -94,37 +94,31 @@ async function main() {
   const guards = []
   let started = 0
 
-  const createWaiter = () => {
-    let resolveOutcome = () => undefined
-    const promise = new Promise((resolve) => {
-      resolveOutcome = resolve
-    })
-    promise.cancel = () => resolveOutcome({ error: 'cancelada' })
-    return { promise, resolve: resolveOutcome }
-  }
-
   const service = createBridgeService({
     cliDirectory: projectRoot,
     hasTerminal: (id) => id === 't1' || id === 't2',
-    writeTerminal: (id, input) => {
-      const prompt = input.replace(/\r$/u, '')
+    subscribe: (listener) => {
+      terminalListeners.add(listener)
+      return () => terminalListeners.delete(listener)
+    },
+    sendInstruction: async (input) => {
+      const id = input.terminalId
+      const prompt = input.content.split('\n\n')[0]
       written.push({ id, prompt })
-      const waiter = waiters.get(id)
+      for (const phase of ['content_written', 'submit_sent', 'acked']) {
+        input.onPhase({ kind: 'instruction', terminalId: id, turnId: input.turnId,
+          provider: input.provider, phase, at: Date.now(), attempt: 1 })
+      }
       setImmediate(() => {
-        if (!waiter) return
-        if (prompt.startsWith('block:')) waiter.resolve({ blocked: `bloqueado:${prompt.slice(6)}` })
-        else if (prompt.startsWith('fail:')) waiter.resolve({ error: `falhou:${prompt.slice(5)}` })
-        else waiter.resolve({ result: `resultado:${prompt}` })
+        const outcome = prompt.startsWith('block:') ? 'blocked' : prompt.startsWith('fail:') ? 'failed' : 'completed'
+        const summary = outcome === 'blocked' ? `bloqueado:${prompt.slice(6)}`
+          : outcome === 'failed' ? `falhou:${prompt.slice(5)}` : `resultado:${prompt}`
+        const data = `DEVORBIT_RESULT_${input.turnId}: ${JSON.stringify({ version: 1, outcome, summary })}\r\n`
+        for (const listener of [...terminalListeners]) listener({ id, type: 'data', data })
       })
-      return true
+      return { acked: true, attempts: 1 }
     },
-    waitTurnResult: (id) => {
-      const waiter = createWaiter()
-      waiters.set(id, waiter)
-      return waiter.promise
-    },
-    // Fixture sempre pronta: o E2E valida o fluxo send/wait/ask, não a TUI.
-    waitTerminalReady: async () => undefined,
+    waitTurnResult: () => { throw new Error('managed turns must use the nonce-bound waiter') },
     onEvent: (event) => {
       events.push(event)
     },
@@ -158,7 +152,7 @@ async function main() {
   const listed = await runBridgeCli(['agent', 'list', '--json'], bridgeEnv)
   assert(listed.code === 0, `list falhou: ${listed.stderr.trim()}`)
   const listPayload = JSON.parse(listed.stdout.trim())
-  assert(Array.isArray(listPayload) && listPayload[0]?.id === 't1' && listPayload[0]?.status === 'active', `payload de list inesperado: ${listed.stdout.trim()}`)
+  assert(Array.isArray(listPayload) && listPayload[0]?.id === 't1' && listPayload[0]?.status === 'starting', 'payload de list inesperado')
   pass('CLI real listou o agente ativo pelo transporte do bridge')
 
   const send = await runBridgeCli(['agent', 'send', 't1', 'tarefa A'], bridgeEnv)

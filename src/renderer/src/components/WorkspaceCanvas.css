@@ -74,6 +74,13 @@
 .canvas-edge-arrowhead-orchestrating {
   fill: var(--color-orchestrating, #d9a441);
 }
+/* Orquestração BLOQUEADA/falha: traço vermelho tracejado ESTÁTICO (sem
+   animação: erro é estado de repouso, não de atividade). */
+.workspace-canvas-connections .canvas-link--error .canvas-edge-path {
+  stroke: var(--color-danger, var(--ops-danger));
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+}
 @keyframes canvas-link-flow {
   to {
     stroke-dashoffset: -24px;
@@ -88,9 +95,7 @@
 /* Durante o gesto, o blur de fundo seria recomputado a cada frame; desligá-lo
    só no gesto mantém a estética em repouso intacta. */
 .workspace-canvas.is-panning .workspace-canvas-radial-option,
-.workspace-canvas.is-panning .workspace-canvas-view-hud,
-.workspace-canvas.is-dragging .workspace-canvas-radial-option,
-.workspace-canvas.is-dragging .workspace-canvas-view-hud {
+.workspace-canvas.is-dragging .workspace-canvas-radial-option {
   backdrop-filter: none;
 }
 .canvas-squad-region {
@@ -148,10 +153,11 @@
   border-left: 3px solid var(--color-accent, var(--ops-focus));
   background: var(--ops-surface-2);
 }
-/* Espinha de tipo — Nota: borda âmbar; fundo permanece na família neutra
+/* Espinha de tipo — Nota: neutra (grafite); o âmbar fica reservado à
+   atividade/execução (orquestração). Fundo permanece na família neutra
    (asserção do harness: 1 único fundo entre cards do canvas). */
 .workspace-canvas-card.canvas-note {
-  border-left: 3px solid var(--color-orchestrating, var(--ops-warning));
+  border-left: 3px solid var(--color-border-strong, var(--ops-border-strong));
 }
 .workspace-canvas-card.canvas-terminal {
   border-top: 2px solid var(--term-accent, var(--ops-border-subtle));
@@ -190,7 +196,7 @@
   border-color: var(--color-accent, var(--ops-focus));
   outline: 2px solid var(--color-accent, var(--ops-focus));
   outline-offset: 2px;
-  box-shadow: 0 0 0 3px var(--ops-selection, rgba(59, 130, 246, 0.28));
+  box-shadow: 0 0 0 3px var(--ops-selection, rgba(166, 191, 138, 0.28));
 }
 .workspace-canvas-card.is-connect-mode:focus-visible,
 .workspace-canvas-card.is-connect-source:focus-visible {
@@ -520,6 +526,10 @@
 .workspace-canvas-radial-arc[data-open="true"] .workspace-canvas-radial-option {
   opacity: 1;
   pointer-events: auto;
+  /* Sobre cards escuros o overlay translúcido desaparecia: aberto, o item
+     ganha superfície quase opaca e borda forte para se destacar do card. */
+  background: color-mix(in srgb, var(--ops-overlay) 55%, var(--ops-surface-3));
+  border-color: var(--color-border-strong);
 }
 .workspace-canvas-radial-option:hover,
 .workspace-canvas-radial-option[data-live="true"] {
@@ -585,52 +595,6 @@
 }
 .workspace-canvas-radial-core[data-open="true"]:active {
   transform: rotate(135deg) scale(0.94);
-}
-.workspace-canvas-view-hud {
-  position: absolute;
-  z-index: 100;
-  top: var(--space-3);
-  left: 50%;
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding: var(--space-1);
-  transform: translateX(-50%);
-  border: 1px solid var(--ops-border-subtle);
-  border-radius: var(--radius-node);
-  background: var(--ops-overlay);
-  box-shadow: 0 12px 30px var(--ops-shadow-node);
-  backdrop-filter: blur(10px);
-}
-.workspace-canvas-view-hud button {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  height: 30px;
-  padding: 0 var(--space-2);
-  border: 0;
-  border-radius: var(--radius-control);
-  color: var(--ops-text-secondary);
-  background: transparent;
-  font: 600 var(--text-size-meta, 11px) var(--font-ui);
-  white-space: nowrap;
-  cursor: pointer;
-}
-.workspace-canvas-view-hud button:hover:not(:disabled) {
-  background: var(--ops-surface-3);
-  color: var(--ops-text-primary);
-}
-.workspace-canvas-view-hud button:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-.workspace-canvas-view-hud .workspace-canvas-zoom-value {
-  min-width: 44px;
-  justify-content: center;
-  padding: 0 var(--space-1);
-  color: var(--ops-text-muted);
-  font: 650 10px var(--font-mono);
-  font-variant-numeric: tabular-nums;
 }
 /* Ajuda de navegação: botão redondo "?" no canto inferior esquerdo; o popover
    carrega o mesmo texto do antigo hint fixo e abre sob demanda. */
@@ -704,23 +668,8 @@
   outline-offset: 1px;
 }
 
-/* ==========================================================================
-   Toast de notificação com o canvas aberto
-   ==========================================================================
-   O toast é renderizado no App (canto inferior direito) — exatamente onde o
-   Inspector do canvas trabalha. Com um canvas na árvore, reposiciona para o
-   topo-centro, abaixo da toolbar (fora do caminho do Inspector). Escopo via
-   :has(): telas sem canvas mantêm o comportamento atual. */
-body:has(.workspace-canvas) .app-toast {
-  top: 56px !important;
-  right: auto !important;
-  bottom: auto !important;
-  left: 50% !important;
-  inset-inline-end: auto !important;
-  transform: translateX(-50%);
-  border-radius: 11px;
-  box-shadow: 0 14px 30px var(--ops-shadow-node);
-}
+/* (O toast do App agora nasce no topo-centro padrão em qualquer visão —
+   fora do caminho do GitDock, do Inspector e do menu radial do canvas.) */
 .workspace-canvas-connection-status {
   position: absolute;
   z-index: 101;
@@ -731,7 +680,7 @@ body:has(.workspace-canvas) .app-toast {
   gap: var(--space-2);
   max-width: min(440px, calc(100% - var(--space-6)));
   padding: var(--space-2) var(--space-3);
-  border: 1px solid rgba(199, 154, 89, .45);
+  border: 1px solid color-mix(in srgb, var(--ops-warning) 45%, transparent);
   border-radius: var(--radius-control);
   color: var(--ops-warning);
   background: var(--ops-overlay);
@@ -772,12 +721,12 @@ body:has(.workspace-canvas) .app-toast {
 }
 .workspace-canvas-orchestration-status small { color: var(--ops-text-muted); font-size: 9px; }
 .workspace-canvas-orchestration-status.orchestration-complete {
-  border-color: rgba(105, 169, 134, .45);
+  border-color: color-mix(in srgb, var(--ops-success) 45%, transparent);
   color: var(--ops-success);
 }
 .workspace-canvas-orchestration-status.orchestration-complete small { color: var(--ops-success); opacity: .85; }
 .workspace-canvas-orchestration-status.orchestration-blocked {
-  border-color: rgba(181, 110, 118, .5);
+  border-color: color-mix(in srgb, var(--ops-danger) 50%, transparent);
   color: var(--ops-danger);
 }
 .workspace-canvas-orchestration-status.orchestration-blocked small { color: var(--ops-danger); opacity: .85; }
@@ -803,9 +752,6 @@ body:has(.workspace-canvas) .app-toast {
   touch-action: none;
 }
 .minimap-node { fill: var(--ops-border-strong); stroke: var(--ops-border-strong); stroke-width: 14px; }
-.minimap-node.agent { fill: var(--ops-connection); stroke: var(--ops-connection); }
-.minimap-node.note { fill: var(--ops-border-subtle); stroke: var(--ops-border-subtle); }
-.minimap-node.terminal { fill: var(--ops-success); stroke: var(--ops-success); }
 
 /* Smart Terminals: painel de configuração do nó terminal (reusa o chrome do
  * painel de agente; adiciona inputs, rádios, checkboxes e salvar-preset). */
@@ -976,7 +922,7 @@ body:has(.workspace-canvas) .app-toast {
   gap: var(--space-2);
   height: 30px;
   padding: 0 var(--space-3);
-  border: 1px solid rgba(181, 110, 118, .5);
+  border: 1px solid color-mix(in srgb, var(--ops-danger) 50%, transparent);
   border-radius: var(--radius-control);
   color: var(--ops-danger);
   background: var(--ops-overlay);
@@ -999,7 +945,7 @@ body:has(.workspace-canvas) .app-toast {
   background: transparent;
   cursor: pointer;
 }
-.canvas-delete-node:hover { border-color: rgba(181, 110, 118, .5); background: var(--ops-surface-4); color: var(--ops-danger); }
+.canvas-delete-node:hover { border-color: color-mix(in srgb, var(--ops-danger) 50%, transparent); background: var(--ops-surface-4); color: var(--ops-danger); }
 @media (max-width: 760px) {
   .canvas-hint-popover {
     max-width: calc(100vw - 40px);
@@ -1052,7 +998,9 @@ body:has(.workspace-canvas) .app-toast {
    TASK-03B: Estilos Visuais dos Cards Compactos, Toolbar, Inspector e Focus
    ========================================================================== */
 
-/* Ícone dourado para coordenadores */
+/* Ícone dourado para coordenadores: literal dourado deliberado (identidade de
+   papel), propositalmente distinto do âmbar de --color-orchestrating, que fica
+   reservado para atividade/execução. Sem token dourado no tema. */
 .canvas-icon-gold {
   color: #f59e0b !important;
 }
@@ -1135,28 +1083,30 @@ body:has(.workspace-canvas) .app-toast {
   height: 7px;
   border-radius: 50%;
   flex-shrink: 0;
-  background: var(--ops-text-muted, #71717a);
+  background: var(--color-text-muted, var(--ops-text-muted));
 }
 
+/* Em execução = âmbar de orquestração (cor reservada a atividade). Sem glow:
+   hierarquia por cor, não por halo. */
 .canvas-status-dot.status-running {
-  background: var(--ops-accent, #3b82f6);
-  box-shadow: 0 0 6px rgba(59, 130, 246, 0.6);
+  background: var(--color-orchestrating, var(--ops-warning));
 }
 
 .canvas-status-dot.status-completed {
-  background: var(--ops-success, #10b981);
+  background: var(--color-success, var(--ops-success));
 }
 
 .canvas-status-dot.status-blocked {
-  background: var(--ops-danger, #ef4444);
+  background: var(--color-danger, var(--ops-danger));
 }
 
+/* Na fila: neutro — ainda não é execução (o âmbar só acende em running). */
 .canvas-status-dot.status-queued {
-  background: var(--ops-warning, #f59e0b);
+  background: var(--color-text-muted, var(--ops-text-muted));
 }
 
 .canvas-status-dot.status-idle {
-  background: var(--ops-text-muted, #71717a);
+  background: var(--color-text-muted, var(--ops-text-muted));
 }
 
 .canvas-summary-provider-badge {
@@ -1203,7 +1153,7 @@ body:has(.workspace-canvas) .app-toast {
 .canvas-summary-task-mono {
   font-family: var(--font-mono, monospace);
   font-size: 10.5px;
-  color: var(--ops-accent-light, #93c5fd);
+  color: var(--color-accent, var(--ops-focus));
 }
 
 .canvas-summary-actions {
@@ -1354,9 +1304,9 @@ body:has(.workspace-canvas) .app-toast {
 }
 
 .canvas-toolbar-btn-danger:hover:not(:disabled) {
-  border-color: rgba(239, 68, 68, 0.4);
-  background: rgba(239, 68, 68, 0.12);
-  color: #ef4444;
+  border-color: color-mix(in srgb, var(--color-danger) 40%, transparent);
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+  color: var(--color-danger);
 }
 
 .canvas-toolbar-zoom-label {
@@ -1457,7 +1407,7 @@ body:has(.workspace-canvas) .app-toast {
   border: 1px solid var(--ops-border-strong);
   border-radius: var(--radius-panel, 8px);
   background: var(--ops-surface-1);
-  box-shadow: 0 16px 40px var(--ops-shadow-node);
+  box-shadow: var(--shadow-overlay, 0 16px 40px var(--ops-shadow-node));
   color: var(--ops-text-primary);
   user-select: text;
   overflow: hidden;
@@ -1487,21 +1437,6 @@ body:has(.workspace-canvas) .app-toast {
   gap: 8px;
   min-width: 0;
   flex: 1;
-}
-
-.canvas-inspector-kind-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 6px;
-  border-radius: var(--radius-icon, 4px);
-  border: 1px solid var(--ops-border-strong);
-  background: var(--ops-surface-3);
-  color: var(--ops-text-secondary);
-  font: 650 9px/1 var(--font-ui);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  flex-shrink: 0;
 }
 
 .canvas-inspector-title {
@@ -1655,8 +1590,8 @@ body:has(.workspace-canvas) .app-toast {
   gap: 6px;
   padding: 6px 10px;
   border-radius: 4px;
-  border: 1px solid rgba(34, 197, 94, 0.3);
-  background: rgba(34, 197, 94, 0.08);
+  border: 1px solid color-mix(in srgb, var(--color-success) 30%, transparent);
+  background: color-mix(in srgb, var(--color-success) 8%, transparent);
   color: var(--ops-success);
   font: 500 11px var(--font-ui);
 }
@@ -1731,14 +1666,22 @@ body:has(.workspace-canvas) .app-toast {
   background: var(--ops-surface-4);
 }
 
+/* Definição ÚNICA do botão primário do Inspector (a duplicata legada que usava
+   --ops-accent-strong/--ops-accent-contrast — tokens inexistentes — foi
+   mesclada aqui). Contrato Grafite+Oliva: accent forte + contraste do tema. */
 .canvas-inspector-btn-primary {
-  background: var(--ops-focus);
-  color: #fff;
-  border-color: var(--ops-focus);
+  background: var(--color-accent-strong, var(--ops-focus));
+  color: var(--color-accent-contrast, #fff);
+  border-color: var(--color-accent-strong, var(--ops-focus));
 }
 
-.canvas-inspector-btn-primary:hover {
+.canvas-inspector-btn-primary:hover:not(:disabled) {
   opacity: 0.9;
+}
+
+.canvas-inspector-btn-primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .canvas-inspector-auth-link {
@@ -1798,15 +1741,15 @@ body:has(.workspace-canvas) .app-toast {
 .canvas-inspector-action-btn-danger {
   padding: 2px 6px;
   font-size: 10px;
-  border: 1px solid rgba(239, 68, 68, 0.3);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 30%, transparent);
   border-radius: 3px;
   background: transparent;
-  color: #ef4444;
+  color: var(--color-danger);
   cursor: pointer;
 }
 
 .canvas-inspector-action-btn-danger:hover {
-  background: rgba(239, 68, 68, 0.1);
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
 }
 
 .canvas-inspector-footer {
@@ -1840,12 +1783,12 @@ body:has(.workspace-canvas) .app-toast {
 
 .canvas-inspector-footer-btn-danger {
   color: var(--ops-danger);
-  border-color: rgba(239, 68, 68, 0.4);
+  border-color: color-mix(in srgb, var(--color-danger) 40%, transparent);
 }
 
 .canvas-inspector-footer-btn-danger:hover {
-  background: rgba(239, 68, 68, 0.12);
-  color: #ef4444;
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+  color: var(--color-danger);
 }
 
 /* Squad Inspector Styling */
@@ -1929,9 +1872,11 @@ body:has(.workspace-canvas) .app-toast {
   transition: border-color 0.15s ease;
 }
 
+/* Coordenador: tons de --color-orchestrating (âmbar = liderança ativa da
+   orquestração), substituindo os literais amarelos da paleta Tailwind. */
 .canvas-inspector-squad-member-item.is-coordinator {
-  border-color: rgba(234, 179, 8, 0.4);
-  background: rgba(234, 179, 8, 0.05);
+  border-color: color-mix(in srgb, var(--color-orchestrating) 40%, transparent);
+  background: color-mix(in srgb, var(--color-orchestrating) 5%, transparent);
 }
 
 .canvas-inspector-squad-member-info {
@@ -1967,9 +1912,9 @@ body:has(.workspace-canvas) .app-toast {
   gap: 3px;
   padding: 1px 6px;
   border-radius: 3px;
-  background: rgba(234, 179, 8, 0.2);
-  border: 1px solid rgba(234, 179, 8, 0.4);
-  color: #facc15;
+  background: color-mix(in srgb, var(--color-orchestrating) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-orchestrating) 40%, transparent);
+  color: var(--color-orchestrating);
   font: 700 9px var(--font-ui);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -2002,9 +1947,9 @@ body:has(.workspace-canvas) .app-toast {
 }
 
 .canvas-inspector-btn-action-danger:hover:not(:disabled) {
-  background: rgba(239, 68, 68, 0.15);
-  border-color: rgba(239, 68, 68, 0.3);
-  color: #f87171;
+  background: color-mix(in srgb, var(--color-danger) 15%, transparent);
+  border-color: color-mix(in srgb, var(--color-danger) 30%, transparent);
+  color: var(--color-danger);
 }
 
 .canvas-inspector-btn-action:disabled {
@@ -2018,35 +1963,28 @@ body:has(.workspace-canvas) .app-toast {
   gap: 6px;
 }
 
-.canvas-inspector-btn-primary {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 30px;
-  padding: 0 10px;
-  border-radius: 4px;
-  border: 0;
-  background: var(--ops-accent-strong);
-  color: var(--ops-accent-contrast);
-  font: 600 11px var(--font-ui);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: opacity 0.15s ease;
-}
-
-.canvas-inspector-btn-primary:hover:not(:disabled) {
-  opacity: 0.9;
-}
-
-.canvas-inspector-btn-primary:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
 .canvas-inspector-empty-hint {
   margin: 0;
   font: 500 11px/1.4 var(--font-ui);
   color: var(--ops-text-muted);
+}
+
+/* Contexto do nó/squad: lista compacta somente-leitura das notas conectadas. */
+.canvas-inspector-context-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.canvas-inspector-context-list li {
+  overflow: hidden;
+  color: var(--ops-text-secondary);
+  font: 500 11px/1.4 var(--font-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Swatches de tema do terminal no Inspector */

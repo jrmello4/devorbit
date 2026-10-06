@@ -1,7 +1,9 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import fs from 'node:fs/promises'
+import { realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { AgentProviderId } from '../shared/agent-provider-contract'
 import type { AppConfig, ManagedProject } from '../shared/app-config'
 import { AGENT_PROVIDER_ID_LIST } from '../shared/agent-provider-contract'
@@ -80,7 +82,16 @@ export interface GitPushRequest {
 
 export interface IpcSenderLike {
   senderFrame?: { url?: string } | null
-  sender?: { getURL?: () => string }
+  sender?: {
+    id?: number
+    getURL?: () => string
+    mainFrame?: unknown
+  } | null
+}
+
+export interface TrustedIpcContext {
+  getTrustedWebContents?: () => { id: number } | null | undefined
+  productionUrl?: string
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -576,6 +587,85 @@ export async function validateConfigUpdates(value: unknown): Promise<Partial<App
   return updates
 }
 
+export interface LocalFileUrlComparisonDeps {
+  /** Resolve o caminho real no filesystem; null quando não resolvível. */
+  resolveRealPath?: (p: string) => string | null
+}
+
+/**
+ * Resolve o caminho físico real. Caminhos virtuais (ex.: `app.asar\dist\...`)
+ * sobem componente a componente até o ancestral físico existente (o asar é um
+ * arquivo real), aplicam realpath nele e recompõem o sufixo virtual.
+ */
+function defaultResolveRealPath(input: string): string | null {
+  try {
+    return realpathSync.native(input)
+  } catch {
+    // Caminho total pode ser virtual; sobe um nível por iteração abaixo.
+  }
+  const suffix: string[] = []
+  let current = input
+  for (;;) {
+    const parent = path.dirname(current)
+    if (parent === current) break
+    suffix.unshift(path.basename(current))
+    current = parent
+    try {
+      statSync(current)
+      return path.join(realpathSync.native(current), ...suffix)
+    } catch {
+      // Continua subindo.
+    }
+  }
+  try {
+    statSync(current)
+    return path.join(realpathSync.native(current), ...suffix)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Compara duas URLs `file:` pelo local físico real. Aliases 8.3 do Windows
+ * (TEMP do portable: `ADENIL~1.J` vs `adenilson.j`) e a diferença de
+ * codificação (`~` literal vs `%7E` do pathToFileURL) colapsam no mesmo
+ * caminho canônico. Sem canonicalização dos dois lados → false (fail-closed).
+ */
+export function isSameLocalFileUrl(
+  actualUrl: string,
+  expectedUrl: string,
+  deps?: LocalFileUrlComparisonDeps
+): boolean {
+  let actual: URL
+  let expected: URL
+  try {
+    actual = new URL(actualUrl)
+    expected = new URL(expectedUrl)
+  } catch {
+    return false
+  }
+  if (actual.protocol !== 'file:' || expected.protocol !== 'file:') return false
+  if (actual.host !== expected.host) return false
+
+  let actualPath: string
+  let expectedPath: string
+  try {
+    actualPath = fileURLToPath(actual)
+    expectedPath = fileURLToPath(expected)
+  } catch {
+    return false
+  }
+
+  const resolveRealPath = deps?.resolveRealPath ?? defaultResolveRealPath
+  const actualReal = resolveRealPath(actualPath)
+  const expectedReal = resolveRealPath(expectedPath)
+  if (actualReal === null || expectedReal === null) return false
+  if (process.platform === 'win32') {
+    return actualReal.toLowerCase() === expectedReal.toLowerCase()
+  }
+  return actualReal === expectedReal
+}
+
 export function isTrustedRendererUrl(value: unknown, productionUrl?: string): boolean {
   if (typeof value !== 'string') return false
 
@@ -586,15 +676,44 @@ export function isTrustedRendererUrl(value: unknown, productionUrl?: string): bo
       return actual.origin === new URL(devServerUrl).origin
     }
     if (!productionUrl) return false
-    return actual.href === new URL(productionUrl).href
+    const expected = new URL(productionUrl)
+    if (actual.protocol === 'file:' && expected.protocol === 'file:') {
+      return isSameLocalFileUrl(actual.href, expected.href)
+    }
+    return actual.href === expected.href
   } catch {
     return false
   }
 }
 
-export function assertTrustedIpcSender(event: IpcSenderLike, productionUrl?: string): void {
+export function assertTrustedIpcSender(event: IpcSenderLike, context?: string | TrustedIpcContext): void {
+  if (typeof context === 'object' && context !== null && typeof context.getTrustedWebContents === 'function') {
+    assertTrustedIpcSenderStrict(event, context)
+    return
+  }
+  const productionUrl = typeof context === 'string' ? context : undefined
   const url = event.senderFrame?.url || event.sender?.getURL?.() || ''
   if (!isTrustedRendererUrl(url, productionUrl)) {
+    throw new Error('Origem IPC não autorizada.')
+  }
+}
+
+/**
+ * Modo estrito: além da URL, o remetente DEVE ser a webContents confiável
+ * (janela principal ou smoke empacotado) e o frame DEVE ser o main frame —
+ * subframes e senderFrame nulo são rejeitados.
+ */
+function assertTrustedIpcSenderStrict(event: IpcSenderLike, context: TrustedIpcContext): void {
+  const trusted = context.getTrustedWebContents?.()
+  const sender = event.sender
+  if (!trusted || sender?.id === undefined || sender.id !== trusted.id) {
+    throw new Error('Origem IPC não autorizada.')
+  }
+  if (event.senderFrame == null || sender.mainFrame === undefined || event.senderFrame !== sender.mainFrame) {
+    throw new Error('Origem IPC não autorizada.')
+  }
+  const url = event.senderFrame.url || sender.getURL?.() || ''
+  if (!isTrustedRendererUrl(url, context.productionUrl)) {
     throw new Error('Origem IPC não autorizada.')
   }
 }

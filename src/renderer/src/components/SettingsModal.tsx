@@ -102,10 +102,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [terminalPresets, setTerminalPresets] = useState<CustomTerminalPreset[]>([])
   const [editingPresetId, setEditingPresetId] = useState<string | null>(null)
   const [editingPresetName, setEditingPresetName] = useState('')
+  const [armedDeleteId, setArmedDeleteId] = useState<string | null>(null)
+  const [showDiscardBar, setShowDiscardBar] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [testingTool, setTestingTool] = useState<string | null>(null)
   const [isDirty, setIsDirty] = useState(false)
   const initializedConfigRef = useRef<AppConfig | null>(null)
+  const disarmTimerRef = useRef<number | null>(null)
+
+  const clearDisarmTimer = () => {
+    if (disarmTimerRef.current !== null) {
+      window.clearTimeout(disarmTimerRef.current)
+      disarmTimerRef.current = null
+    }
+  }
+
+  // Desarma a confirmação de exclusão pendente ao desmontar o modal.
+  React.useEffect(() => () => clearDisarmTimer(), [])
 
   React.useEffect(() => {
     if (!isOpen) {
@@ -117,6 +130,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setTerminalPresets([])
       setEditingPresetId(null)
       setEditingPresetName('')
+      setArmedDeleteId(null)
+      setShowDiscardBar(false)
+      clearDisarmTimer()
       return
     }
 
@@ -132,6 +148,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setTerminalPresets(config.terminalPresets ?? [])
       setEditingPresetId(null)
       setEditingPresetName('')
+      setArmedDeleteId(null)
+      setShowDiscardBar(false)
+      clearDisarmTimer()
       setIsDirty(false)
       initializedConfigRef.current = config
     }
@@ -139,11 +158,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   if (!isOpen || !config) return null
 
+  // Nenhum window.confirm: com alterações não salvas, o pedido de fechar
+  // (Esc/X/Cancelar) revela a barra inline "Descartar?" no rodapé. Um novo
+  // Esc apenas recolhe a barra — nunca descarta em silêncio.
   const handleClose = () => {
-    if (isDirty && !isSaving) {
-      const shouldDiscard = window.confirm('Descartar as alterações não salvas?')
-      if (!shouldDiscard) return
+    if (isSaving) return
+    if (!isDirty) {
+      onClose()
+      return
     }
+    setShowDiscardBar((visible) => !visible)
+  }
+
+  const discardChanges = () => {
+    clearDisarmTimer()
+    setArmedDeleteId(null)
+    setShowDiscardBar(false)
     onClose()
   }
 
@@ -287,13 +317,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     onNotify(`Preset renomeado para "${res.updated?.name}".`, 'success')
   }
 
+  // Exclusão em dois passos, sem window.confirm: o primeiro clique arma o
+  // botão ("Confirmar exclusão?") por 4s; o segundo confirma. Armar outro
+  // preset reinicia o tempo.
   const handleDeletePreset = (preset: CustomTerminalPreset) => {
     if (!isCustomTerminalPresetId(preset.id)) {
       onNotify('Presets nativos do sistema não podem ser excluídos.', 'error')
       return
     }
-    const confirmed = window.confirm(`Tem certeza que deseja excluir o preset "${preset.name}"?`)
-    if (!confirmed) return
+    if (armedDeleteId !== preset.id) {
+      clearDisarmTimer()
+      setArmedDeleteId(preset.id)
+      disarmTimerRef.current = window.setTimeout(() => {
+        disarmTimerRef.current = null
+        setArmedDeleteId(null)
+      }, 4000)
+      return
+    }
+    clearDisarmTimer()
+    setArmedDeleteId(null)
     const res = deleteCustomTerminalPreset(terminalPresets, preset.id)
     if (res.error) {
       onNotify(res.error, 'error')
@@ -349,11 +391,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       isOpen={isOpen && !suspended}
       titleId="settings-dialog-title"
       onClose={handleClose}
-      className="w-full max-w-2xl bg-[var(--color-bg-panel)] border border-[var(--color-border-subtle)] rounded-[10px] shadow-[0_18px_42px_rgba(28,25,23,0.14)] overflow-hidden flex flex-col max-h-[calc(100dvh-48px)]"
+      className="dialog-shell dialog--lg flex flex-col overflow-hidden"
     >
       {/* Cabeçalho único */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border-subtle)]">
-        <h2 id="settings-dialog-title" className="text-base font-bold text-[var(--text-primary)]">Configurações do DevOrbit</h2>
+      <div className="dialog-shell__header flex items-start justify-between gap-2">
+        <div>
+          <h2 id="settings-dialog-title" className="text-base font-bold text-[var(--text-primary)]">Configurações do DevOrbit</h2>
+          <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">Preferências do DevOrbit — pastas, contas, ferramentas e automação.</p>
+        </div>
         <button
           onClick={handleClose}
           aria-label="Fechar configurações"
@@ -364,7 +409,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       </div>
 
       {/* Corpo: seções separadas por espaço + divisória 1px */}
-      <div className="p-6 overflow-y-auto space-y-6 flex-1 text-sm text-[var(--text-primary)]">
+      <div className="dialog-shell__body flex-1 space-y-6 overflow-y-auto text-sm text-[var(--text-primary)]">
         {/* Pastas de projetos */}
         <section>
           <div className="flex items-center justify-between mb-2">
@@ -447,7 +492,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       title={status?.connected ? 'Autenticada e pronta para uso' : 'Não autenticada'}
                       aria-label={status?.connected ? 'Autenticada e pronta para uso' : 'Não autenticada'}
                       role="img"
-                      className={`w-2.5 h-2.5 rounded-full shrink-0 ${status?.connected ? 'bg-[var(--color-success)]' : 'bg-[var(--color-warning)] motion-safe:animate-pulse'}`}
+                      className={`status-dot shrink-0 ${status?.connected ? 'status-dot--success' : 'status-dot--pending motion-safe:animate-pulse'}`}
                     />
                     <div className="min-w-0">
                       <div className="text-xs font-semibold truncate">
@@ -804,15 +849,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       >
                         <Edit2 className="inline h-3 w-3" aria-hidden="true" />
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDeletePreset(preset)}
-                        aria-label={`Excluir preset ${preset.name}`}
-                        title="Excluir preset"
-                        className="p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-danger)] hover:bg-[var(--surface-hover)] rounded opacity-0 group-hover:opacity-100 focus-visible:opacity-100 motion-safe:transition-opacity cursor-pointer"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                      {armedDeleteId === preset.id ? (
+                        <button
+                          type="button"
+                          onClick={() => handleDeletePreset(preset)}
+                          className="btn btn--danger btn--sm"
+                          aria-label={`Confirmar exclusão do preset ${preset.name}`}
+                        >
+                          Confirmar exclusão?
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleDeletePreset(preset)}
+                          aria-label={`Excluir preset ${preset.name}`}
+                          title="Excluir preset"
+                          className="p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-danger)] hover:bg-[var(--surface-hover)] rounded opacity-0 group-hover:opacity-100 focus-visible:opacity-100 motion-safe:transition-opacity cursor-pointer"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 )
@@ -823,33 +879,49 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       </div>
 
       {/* Rodapé */}
-      <div className="flex items-center justify-end gap-2 px-6 py-3 border-t border-[var(--color-border-subtle)]">
+      <div className="dialog-shell__footer flex flex-wrap items-center justify-end gap-2">
+        {showDiscardBar && isDirty && (
+          <div
+            role="alertdialog"
+            aria-label="Descartar alterações não salvas"
+            className="flex w-full flex-wrap items-center gap-2 rounded-md border border-[color-mix(in_srgb,var(--color-warning)_35%,transparent)] bg-[color-mix(in_srgb,var(--color-warning)_8%,transparent)] px-2.5 py-1.5 text-xs text-[var(--color-text-secondary)]"
+          >
+            <span className="me-auto">Alterações não salvas — Descartar?</span>
+            <button type="button" className="btn btn--ghost btn--sm" onClick={() => setShowDiscardBar(false)}>
+              Manter
+            </button>
+            <button type="button" className="btn btn--danger btn--sm" onClick={discardChanges}>
+              Descartar
+            </button>
+          </div>
+        )}
         <span className="me-auto flex items-center gap-2">
           <button
             type="button"
             onClick={handleExport}
-            className="px-3 py-1.5 rounded-md text-xs font-semibold text-[var(--color-text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-hover)] motion-safe:transition-colors"
+            className="btn btn--ghost btn--sm"
           >
             Exportar
           </button>
           <button
             type="button"
             onClick={handleImport}
-            className="px-3 py-1.5 rounded-md text-xs font-semibold text-[var(--color-text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-hover)] motion-safe:transition-colors"
+            className="btn btn--ghost btn--sm"
           >
             Importar
           </button>
         </span>
         <button
           onClick={handleClose}
-          className="px-4 py-1.5 rounded-md text-xs font-semibold text-[var(--color-text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-hover)] motion-safe:transition-colors"
+          className="btn btn--secondary"
         >
           Cancelar
         </button>
         <button
           onClick={handleSave}
           disabled={isSaving}
-          className="flex items-center gap-1.5 px-4 py-1.5 rounded-md text-xs font-semibold bg-[var(--color-accent-strong)] text-[var(--color-accent-contrast)] hover:bg-[var(--color-accent-hover)] motion-safe:transition-colors cursor-pointer"
+          aria-busy={isSaving}
+          className="btn btn--primary"
         >
           <Check className="w-3.5 h-3.5" />
           <span>{isSaving ? 'Salvando...' : 'Salvar Alterações'}</span>

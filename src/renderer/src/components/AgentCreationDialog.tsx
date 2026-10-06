@@ -240,15 +240,20 @@ export const AgentCreationDialog: React.FC<AgentCreationDialogProps> = ({
       isOpen={isOpen}
       titleId="agent-creation-dialog-title"
       onClose={onClose}
-      className="w-full max-w-xl overflow-hidden rounded-xl border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] shadow-xl"
+      className="dialog-shell dialog--md flex flex-col overflow-hidden"
     >
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-[var(--color-border-subtle)] bg-[var(--surface-muted)] px-5 py-4">
-        <div className="flex items-center gap-2">
-          {mode === 'squad' ? <Users size={18} aria-hidden="true" /> : <Bot size={18} aria-hidden="true" />}
-          <h2 id="agent-creation-dialog-title" className="text-base font-bold text-[var(--text-primary)]">
-            {mode === 'agent' ? 'Configurar Agente' : 'Configurar Squad de Agentes'}
-          </h2>
+      <div className="dialog-shell__header flex items-center justify-between gap-2">
+        <div>
+          <div className="flex items-center gap-2">
+            {mode === 'squad' ? <Users size={18} aria-hidden="true" /> : <Bot size={18} aria-hidden="true" />}
+            <h2 id="agent-creation-dialog-title" className="text-base font-bold text-[var(--text-primary)]">
+              {mode === 'agent' ? 'Configurar Agente' : 'Configurar Squad de Agentes'}
+            </h2>
+          </div>
+          <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">
+            {mode === 'agent' ? 'Configure o novo agente antes de criar.' : 'Configure a nova squad antes de criar.'}
+          </p>
         </div>
         <button
           type="button"
@@ -261,7 +266,7 @@ export const AgentCreationDialog: React.FC<AgentCreationDialogProps> = ({
       </div>
 
       {/* Body */}
-      <div className="max-h-[calc(100dvh-220px)] space-y-4 overflow-y-auto p-5">
+      <div className="dialog-shell__body max-h-[calc(100dvh-220px)] space-y-4 overflow-y-auto">
         {/* Título / Nome */}
         <label className="block text-xs font-semibold text-[var(--color-text-secondary)]">
           {mode === 'squad' ? 'Nome da Squad' : 'Título do Agente'}
@@ -340,7 +345,7 @@ export const AgentCreationDialog: React.FC<AgentCreationDialogProps> = ({
                   onClick={() => applySquadTemplate('trio')}
                   className="rounded-md border border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] px-2.5 py-1 text-xs font-medium text-[var(--text-primary)] hover:border-[var(--color-accent-strong)]"
                 >
-                  <Sparkles size={11} className="mr-1 inline text-amber-400" />
+                  <Sparkles size={11} className="mr-1 inline text-[var(--color-accent)]" />
                   Trio Ágil (Coord + Dev + Testes)
                 </button>
                 <button
@@ -381,7 +386,7 @@ export const AgentCreationDialog: React.FC<AgentCreationDialogProps> = ({
                     key={p.id}
                     className={`flex cursor-pointer items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs ${
                       coordinatorIndex === idx
-                        ? 'border-amber-500/50 bg-amber-500/10 text-amber-300 font-semibold'
+                        ? 'border-[color-mix(in_srgb,var(--color-accent)_45%,transparent)] bg-[color-mix(in_srgb,var(--color-accent)_12%,transparent)] text-[var(--color-accent)] font-semibold'
                         : 'border-[var(--color-border-subtle)] bg-[var(--color-bg-panel)] text-[var(--text-primary)]'
                     }`}
                   >
@@ -392,7 +397,7 @@ export const AgentCreationDialog: React.FC<AgentCreationDialogProps> = ({
                       onChange={() => setCoordinatorIndex(idx)}
                     />
                     <span>
-                      {coordinatorIndex === idx && <Crown size={11} className="mr-1 inline text-amber-400" />}
+                      {coordinatorIndex === idx && <Crown size={11} className="mr-1 inline text-[var(--color-accent)]" />}
                       Membro #{idx + 1} ({p.role || 'Especialista'})
                     </span>
                   </label>
@@ -423,7 +428,7 @@ export const AgentCreationDialog: React.FC<AgentCreationDialogProps> = ({
                     key={participant.id}
                     className={`space-y-2.5 rounded-lg border p-3 ${
                       isCoordinator
-                        ? 'border-amber-500/40 bg-[var(--surface-muted)]'
+                        ? 'border-[color-mix(in_srgb,var(--color-accent)_40%,transparent)] bg-[var(--surface-muted)]'
                         : 'border-[var(--color-border-subtle)] bg-[var(--surface-muted)]'
                     }`}
                   >
@@ -431,7 +436,7 @@ export const AgentCreationDialog: React.FC<AgentCreationDialogProps> = ({
                       <div className="flex items-center gap-2">
                         {isCoordinator && (
                           <span
-                            className="inline-flex items-center gap-1 rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold text-amber-400"
+                            className="inline-flex items-center gap-1 rounded-full bg-[color-mix(in_srgb,var(--color-accent)_18%,transparent)] px-2 py-0.5 text-[10px] font-bold text-[var(--color-accent)]"
                             title="Designado como coordenador da squad"
                           >
                             <Crown size={11} aria-hidden="true" /> COORDENADOR
@@ -446,7 +451,7 @@ export const AgentCreationDialog: React.FC<AgentCreationDialogProps> = ({
                         <button
                           type="button"
                           onClick={() => removeParticipant(index)}
-                          className="rounded p-1 text-[var(--color-text-muted)] hover:text-red-400"
+                          className="rounded p-1 text-[var(--color-text-muted)] hover:text-[var(--color-danger)]"
                           aria-label={`Remover participante ${index + 1}`}
                           title="Remover participante"
                         >
@@ -506,11 +511,11 @@ export const AgentCreationDialog: React.FC<AgentCreationDialogProps> = ({
       </div>
 
       {/* Footer */}
-      <div className="flex justify-end gap-2 border-t border-[var(--color-border-subtle)] bg-[var(--surface-muted)] px-5 py-3">
+      <div className="dialog-shell__footer flex justify-end gap-2">
         <button
           type="button"
           onClick={onClose}
-          className="rounded-md border border-[var(--color-border-subtle)] px-3 py-2 text-xs font-semibold text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-panel)]"
+          className="btn btn--secondary"
         >
           Cancelar
         </button>
@@ -518,7 +523,7 @@ export const AgentCreationDialog: React.FC<AgentCreationDialogProps> = ({
           type="button"
           onClick={handleSubmit}
           disabled={mode === 'agent' ? !validAgent : !validSquad}
-          className="inline-flex items-center gap-1.5 rounded-md bg-[var(--color-accent-strong)] px-3 py-2 text-xs font-semibold text-[var(--color-accent-contrast)] hover:bg-[var(--color-accent-hover)] disabled:cursor-not-allowed disabled:opacity-45"
+          className="btn btn--primary"
         >
           <Check size={14} aria-hidden="true" />
           {mode === 'agent' ? 'Criar Agente' : 'Criar Squad'}

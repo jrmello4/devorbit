@@ -82,8 +82,16 @@ process.env.VITE_PUBLIC = process.env.VITE_DEV_SERVER_URL
   : RENDERER_DIST
 
 let mainWindow: BrowserWindowType | null = null
+let activeSmokeWindow: BrowserWindowType | null = null
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL)
 const SMOKE_FLAG = '--devorbit-smoke'
+
+// Fonte única da webContents privilegiada: janela principal ou smoke empacotado.
+function getTrustedWebContents() {
+  const window = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
+  const smoke = activeSmokeWindow && !activeSmokeWindow.isDestroyed() ? activeSmokeWindow : null
+  return (window ?? smoke)?.webContents ?? null
+}
 
 function getCliArgValue(name: string): string | undefined {
   const prefix = `${name}=`
@@ -491,11 +499,21 @@ const bridgeService = createBridgeService({
   onMcpHandshake: (handshake) => {
     const accepted = codexBridgeHealth.handshake(handshake)
     if (accepted) {
-      codexBridgeHealth.registryChanged(bridgeService.listAgents().filter((agent) => agent.status === 'active').length)
+      codexBridgeHealth.registryChanged(bridgeService.listAgents().filter((agent) => agent.operational).map((agent) => agent.id))
     }
     return accepted
   },
-  onRegistryChanged: () => codexBridgeHealth.registryChanged(bridgeService.listAgents().filter((agent) => agent.status === 'active').length),
+  isCurrentLaunch: (terminalId, launchId) => codexBridgeHealth.isCurrentLaunch(terminalId, launchId),
+  onRegistryChanged: () => codexBridgeHealth.registryChanged(bridgeService.listAgents().filter((agent) => agent.operational).map((agent) => agent.id)),
+  subscribe: onTerminalEvent,
+  // Bootstrap readiness and instruction submission share the same PTY-backed
+  // detector, so the Bridge registry cannot remain independently `starting`.
+  waitAgentReady: (id, options) => terminalReadiness.waitReady(id, options),
+  onDiagnostic: (event) => {
+    // Strict metadata allowlist defined by BridgeTurnDiagnostic: no prompt,
+    // output, credential or environment is serialized here.
+    void observabilityLedger.append({ type: 'bridge.turn', ...event }).catch(() => undefined)
+  },
   cliDirectory: app.isPackaged ? process.resourcesPath : (process.env.APP_ROOT || path.resolve(__dirname, '../..')),
   hasTerminal,
   waitTurnResult,
@@ -510,7 +528,7 @@ const bridgeService = createBridgeService({
     // códigos fixos — nunca token, pipe ou saída crua do CLI.
     const health = codexBridgeHealth.get(input.terminalId)
     if (health && health.state !== 'stopped') {
-      await codexBridgeHealth.waitReady(input.terminalId)
+      await codexBridgeHealth.waitConnected(input.terminalId)
     }
     return sendAgentInstruction(
       {
@@ -525,6 +543,8 @@ const bridgeService = createBridgeService({
         terminalId: input.terminalId,
         turnId: input.turnId,
         content: input.content,
+        onPhase: input.onPhase,
+        isResultReady: input.isResultReady,
         // Provider é só para logs de orquestração; sem sessão conhecida, 'unknown'.
         provider: input.provider ?? 'unknown',
         // Hints do provider da sessão quando conhecido ('unknown'/desconhecido
@@ -582,7 +602,9 @@ onTerminalEvent((event) => {
         codexBridgeHealth.stop(event.id)
       }
     }
-    bridgeService.unregisterAgent(event.id)
+    // Keep the last lifecycle state visible to agent.list. The Bridge event
+    // subscriber records failed/stopped; explicit user stop still unregisters
+    // through cancelBridgeTarget.
   } else if (event.type === 'data' && codexBridgeHealth.get(event.id)?.state === 'connecting') {
     // Only recognize our fixed error identifiers; raw CLI output never enters health/UI.
     const code = Object.keys(CODEX_BRIDGE_MESSAGES).find((candidate) =>
@@ -820,6 +842,7 @@ async function runPackagedSmokeTest(): Promise<void> {
         nodeIntegration: false,
       },
     })
+    activeSmokeWindow = smokeWindow
 
     const timedOut = new Promise<never>((_resolve, reject) => {
       timeoutHandle = setTimeout(
@@ -834,6 +857,7 @@ async function runPackagedSmokeTest(): Promise<void> {
     return await emit(false, `smoke falhou: ${error?.message || error}`)
   } finally {
     if (timeoutHandle) clearTimeout(timeoutHandle)
+    if (activeSmokeWindow === smokeWindow) activeSmokeWindow = null
     if (smokeWindow && !smokeWindow.isDestroyed()) smokeWindow.destroy()
   }
 }
@@ -984,7 +1008,10 @@ function registerIpcHandler(
   handler: (event: IpcSenderLike, ...args: any[]) => unknown,
 ): void {
   ipcMain.handle(channel, async (event, ...args) => {
-    assertTrustedIpcSender(event, PRODUCTION_RENDERER_URL)
+    assertTrustedIpcSender(event, {
+      getTrustedWebContents,
+      productionUrl: PRODUCTION_RENDERER_URL,
+    })
     const span = telemetry.startSpan(`ipc.${channel}`, { channel })
     try {
       const result = await handler(event, ...args)
@@ -1003,7 +1030,10 @@ function registerIpcListener(
 ): void {
   ipcMain.on(channel, (event, ...args) => {
     try {
-      assertTrustedIpcSender(event, PRODUCTION_RENDERER_URL)
+      assertTrustedIpcSender(event, {
+        getTrustedWebContents,
+        productionUrl: PRODUCTION_RENDERER_URL,
+      })
       void handler(event, ...args)
     } catch (error) {
       console.warn(`IPC bloqueado no canal ${channel}:`, error)

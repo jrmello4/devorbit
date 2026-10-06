@@ -87,6 +87,37 @@ function createCountingSignal(): {
 const waitMs = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 describe('sendAgentInstruction (submissão centralizada)', () => {
+  it.each(['exit', 'error'] as const)('stops ACK and avoids retry on terminal %s during echo settle', async (type) => {
+    const harness = createInstructionHarness()
+    const pending = sendAgentInstruction(harness.deps, { terminalId: 't1', turnId: 'fatal-ack',
+      content: 'task', provider: 'codex', echoSettleMs: 1000, ackTimeoutMs: 5000 })
+    await vi.waitFor(() => expect(harness.listeners.size).toBe(1))
+    harness.emit({ id: 't1', type, ...(type === 'exit' ? { code: 7 } : { error: 'sensitive provider message' }) })
+    expect(await pending).toMatchObject({ acked: false, attempts: 1,
+      errorCode: type === 'exit' ? 'TERMINAL_EXITED' : 'PROVIDER_STARTUP_FAILED' })
+    expect(harness.writes).toHaveLength(2)
+    expect(harness.listeners.size).toBe(0)
+  })
+
+  it('aguarda o paste drenar antes de enviar Enter e mantém fases observáveis', async () => {
+    const harness = createInstructionHarness()
+    let releasePaste: (() => void) | undefined
+    const phases: string[] = []
+    harness.deps.waitReady = vi.fn().mockResolvedValueOnce({ timedOut: false })
+      .mockImplementationOnce(() => new Promise(resolve => { releasePaste = () => resolve({ timedOut: false }) }))
+    const pending = sendAgentInstruction(harness.deps, { terminalId: 't1', turnId: 'paste-turn',
+      content: 'tarefa\ncontrato', provider: 'codex', hints: { pasteSettleMs: 250 },
+      isResultReady: () => true, echoSettleMs: 0, ackTimeoutMs: 100,
+      onPhase: event => phases.push(event.phase),
+    })
+    await vi.waitFor(() => expect(harness.writes).toHaveLength(1))
+    expect(harness.deps.waitReady).toHaveBeenLastCalledWith('t1', expect.objectContaining({ requireFresh: true, quietMs: 250 }))
+    expect(phases).not.toContain('submit_sent')
+    releasePaste?.()
+    expect(await pending).toMatchObject({ acked: true, attempts: 1 })
+    expect(harness.writes).toHaveLength(2)
+    expect(phases).toEqual(expect.arrayContaining(['content_written', 'submit_sent', 'acked']))
+  })
   it('C1: escreve o conteúdo e UMA sequência de submit, nessa ordem; saída APÓS o settle confirma', async () => {
     const harness = createInstructionHarness()
     const pending = sendAgentInstruction(harness.deps, {

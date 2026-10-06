@@ -27,6 +27,8 @@ export type AgentProviderId = (typeof AGENT_PROVIDER_ID_LIST)[number]
  * Hints por provider para a submissão central (agent-instruction).
  */
 export interface AgentInstructionHints {
+  /** Allow a CLI's paste buffer to settle before submitting (milliseconds). */
+  pasteSettleMs?: number
   /**
    * Fontes de regex (string) casadas contra a saída CRU pós-settle: a primeira
    * que casar confirma o ack. Vazio/ausente = heurística default (qualquer

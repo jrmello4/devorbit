@@ -89,6 +89,11 @@ export const AGENT_CLI_PROVIDERS = {
     label: 'Codex CLI',
     aliases: ['codex', 'codex.cmd', 'codex.exe'],
     defaultCommand: 'codex.cmd',
+    // Codex PasteBurst suppresses Enter for 120ms after the last input
+    // character (upstream tui/bottom_pane/paste_burst.rs). ConPTY writes
+    // can return before the TUI has drained input: wait for output quietude
+    // as well as crossing that interval. No persistent Codex config changes.
+    instruction: { pasteSettleMs: 250 },
   },
   opencode: {
     id: 'opencode',

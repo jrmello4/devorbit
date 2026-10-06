@@ -1301,10 +1301,10 @@ async function inspectProjectInteractions(window, viewport) {
   await setInputValue(window, '#project-search', '')
   await waitFor(window, `document.querySelectorAll('.project-list .project-row').length >= 30`, `${viewport.label} limpeza da busca`)
   await evaluate(window, 'document.querySelector("[data-testid=project-filter-toggle]")?.click()')
-  await setSelectValue(window, '[data-testid="filter-git-select"]', 'modified')
+  await evaluate(window, 'document.querySelector("[data-testid=situation-filter-pending]")?.click()')
   await waitFor(window, 'document.querySelectorAll(".project-list .project-row").length > 0 && Array.from(document.querySelectorAll(".project-list .project-row")).every((row) => row.querySelector(".project-status-dot.warning"))', viewport.label + ' Git filter')
   recordPass(viewport.label, 'Git status filter shows only local-change fixtures')
-  await setSelectValue(window, '[data-testid="filter-git-select"]', 'all')
+  await evaluate(window, 'document.querySelector("[data-testid=situation-filter-all]")?.click()')
   await waitFor(window, 'document.querySelectorAll(".project-list .project-row").length >= 30', viewport.label + ' reset do filtro')
   const openProjectTabFromLibrary = await evaluate(window, `(() => {
     const row = document.querySelector('.project-list .project-row')

@@ -51,6 +51,7 @@ function createDependencies(overrides: Partial<BridgeServiceDependencies> = {}):
   const dependencies: BridgeServiceDependencies = {
     cliDirectory: process.cwd(),
     hasTerminal: (id) => id === 'agent-1',
+    waitAgentReady: async () => ({ timedOut: false }),
     waitTurnResult: () => {
       order.push('waiter')
       const promise = Promise.resolve({ result: 'CONCLUIDO: ok' }) as ReturnType<BridgeServiceDependencies['waitTurnResult']>
@@ -138,7 +139,7 @@ describe('bridge instruction path — send/ask via sendInstruction (sendAgentIns
       expect(order).toEqual(['waiter', 'instruction'])
       expect(instructions[0]).toMatchObject({
         terminalId: 'agent-1',
-        turnId: 'bridge_agent-1_1',
+        turnId: expect.stringMatching(/^bridge_agent-1_1_[a-f0-9]{32}$/),
         provider: 'opencode',
       })
       // Contrato DEVORBIT_RESULT instruído; a tarefa permanece íntegra.
@@ -175,7 +176,7 @@ describe('bridge instruction path — send/ask via sendInstruction (sendAgentIns
       })
       clearInterval(booting)
       expect(response.ok).toBe(false)
-      expect(response.error?.code).toBe('HANDLER_ERROR')
+      expect(response.error?.code).toBe('AGENT_NOT_READY')
       expect(logs.some((args) => args.join(' ').includes('não ficou pronta'))).toBe(true)
       // Prontidão por timeout NÃO autoriza escrita: nem conteúdo nem Enter.
       expect(stack.writes).toEqual([])
@@ -496,7 +497,7 @@ describe('bridge instruction path — send/ask via sendInstruction (sendAgentIns
       // O cancelamento é erro na resposta (o fio mantém o HANDLER_ERROR genérico
       // do runtime; o code `cancelled` vive no erro lançado dentro do serviço).
       expect(response.ok).toBe(false)
-      expect(response.error?.code).toBe('HANDLER_ERROR')
+      expect(response.error?.code).toBe('CANCELLED')
       // O signal da requisição chegou à instrução e o waiter foi cancelado.
       expect(seenSignal).toBeInstanceOf(AbortSignal)
       expect(seenSignal?.aborted).toBe(false)

@@ -192,6 +192,26 @@ describe('terminal readiness cache', () => {
     }
   })
 
+  it('paste exige quietude fresca mesmo quando o terminal já estava em cache', async () => {
+    vi.useFakeTimers()
+    try {
+      const bus = createBus()
+      bus.emit({ id: 'paste', type: 'data', data: 'boot' })
+      await vi.advanceTimersByTimeAsync(1500)
+      await bus.readiness.waitReady('paste')
+      let settled = false
+      const pending = bus.readiness.waitReady('paste', { since: Date.now(), requireFresh: true, quietMs: 250 })
+        .then(result => { settled = true; return result })
+      await vi.advanceTimersByTimeAsync(200)
+      expect(settled).toBe(false)
+      bus.emit({ id: 'paste', type: 'data', data: 'redraw do paste' })
+      await vi.advanceTimersByTimeAsync(200)
+      expect(settled).toBe(false)
+      await vi.advanceTimersByTimeAsync(100)
+      expect(await pending).toEqual({ timedOut: false })
+    } finally { vi.useRealTimers() }
+  })
+
   it('TUI ocupada (streaming após since) espera o silêncio real', async () => {
     vi.useFakeTimers()
     try {

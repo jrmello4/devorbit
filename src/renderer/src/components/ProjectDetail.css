@@ -1,13 +1,19 @@
 .detail-workspace {
-  --detail-page: var(--color-bg-page, #f4f5f7);
-  --detail-panel: var(--color-bg-panel, #ffffff);
-  --detail-border: var(--color-border-subtle, #d8dbe1);
-  --detail-muted: var(--color-text-muted, #646b78);
-  --detail-accent: var(--color-accent, #5b6b86);
-  --detail-accent-strong: var(--color-accent-strong, #46536b);
-  --detail-text: var(--text-primary, #20242b);
+  /* Fallbacks escuros (espelho do tema dark "Grafite + Oliva"): o runtime é
+     dark-only, então nunca mais caia em literais claros/azuis. */
+  --detail-page: var(--color-bg-page, #0f1116);
+  --detail-panel: var(--color-bg-panel, #171b24);
+  --detail-border: var(--color-border-subtle, rgba(232, 236, 243, 0.08));
+  --detail-muted: var(--color-text-muted, #7c8598);
+  --detail-accent: var(--color-accent, #a6bf8a);
+  --detail-accent-strong: var(--color-accent-strong, #4a6038);
+  --detail-text: var(--text-primary, #e8ecf3);
   --detail-accent-soft: color-mix(in srgb, var(--detail-accent) 10%, var(--detail-panel));
   --detail-accent-border: color-mix(in srgb, var(--detail-accent) 38%, var(--detail-border));
+  /* Tons de Git alinhados à espinha de situação da biblioteca. */
+  --detail-git-clean: var(--color-git-clean, #69a986);
+  --detail-git-pending: var(--color-git-pending, #d0a05a);
+  --detail-git-ahead: var(--color-git-ahead, #b29dd6);
 
   display: flex;
   width: 100%;
@@ -76,7 +82,7 @@
   margin: 0;
   overflow: hidden;
   color: var(--detail-text);
-  font-size: clamp(1.05rem, 1.4vw, 1.3rem);
+  font-size: clamp(17px, 1.4vw, 21px);
   font-weight: 700;
   letter-spacing: -0.02em;
   line-height: 1.25;
@@ -92,7 +98,7 @@
   border-radius: 999px;
   background: var(--detail-page);
   color: var(--detail-muted);
-  font-size: 0.68rem;
+  font-size: var(--text-size-meta, 11px);
   font-weight: 600;
   line-height: 1;
   padding: 5px 8px;
@@ -105,7 +111,7 @@
   margin: 5px 0 0;
   overflow: hidden;
   color: var(--detail-muted);
-  font-size: 0.76rem;
+  font-size: 12px;
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -126,7 +132,7 @@
   border-radius: 6px;
   background: var(--detail-accent-soft);
   color: var(--detail-accent-strong);
-  font-size: 0.67rem;
+  font-size: var(--text-size-meta, 11px);
   font-weight: 700;
   line-height: 1;
   padding: 5px 8px;
@@ -207,7 +213,7 @@
 
 .detail-branch-caption {
   color: var(--detail-muted);
-  font-size: 0.62rem;
+  font-size: var(--text-size-meta, 11px);
   font-weight: 600;
   line-height: 1;
   text-transform: uppercase;
@@ -218,7 +224,7 @@
   max-width: 180px;
   overflow: hidden;
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 0.75rem;
+  font-size: 12px;
   font-weight: 650;
   line-height: 1.35;
   text-overflow: ellipsis;
@@ -243,7 +249,7 @@
   border-radius: 6px;
   background: var(--detail-panel);
   color: var(--detail-muted);
-  font-size: 0.68rem;
+  font-size: var(--text-size-meta, 11px);
   font-weight: 700;
   line-height: 1;
   padding: 5px 8px;
@@ -255,17 +261,24 @@
   height: 13px;
 }
 
+/* Variantes alinhadas aos tokens de situação Git da biblioteca
+   (--color-git-*): pendente (atrás/alterações), à frente e sincronizado. */
 .detail-status-pill-warning,
-.detail-status-pill-ahead,
 .detail-status-pill-changes {
-  border-color: var(--detail-accent-border);
-  background: var(--detail-accent-soft);
-  color: var(--detail-accent-strong);
+  border-color: color-mix(in srgb, var(--detail-git-pending) 38%, var(--detail-border));
+  background: color-mix(in srgb, var(--detail-git-pending) 10%, var(--detail-panel));
+  color: var(--detail-git-pending);
+}
+
+.detail-status-pill-ahead {
+  border-color: color-mix(in srgb, var(--detail-git-ahead) 38%, var(--detail-border));
+  background: color-mix(in srgb, var(--detail-git-ahead) 10%, var(--detail-panel));
+  color: var(--detail-git-ahead);
 }
 
 .detail-status-pill-ok {
-  border-color: var(--detail-accent-border);
-  color: var(--detail-accent-strong);
+  border-color: color-mix(in srgb, var(--detail-git-clean) 38%, var(--detail-border));
+  color: var(--detail-git-clean);
 }
 
 .detail-status-pill-neutral {
@@ -277,7 +290,7 @@
   margin: 0 0 0 auto;
   overflow: hidden;
   color: var(--detail-muted);
-  font-size: 0.72rem;
+  font-size: 12px;
   line-height: 1.35;
   text-align: right;
   text-overflow: ellipsis;
@@ -344,7 +357,7 @@
 .detail-group-title {
   min-width: 0;
   flex: 1 1 auto;
-  font-size: 0.82rem;
+  font-size: var(--text-size-body, 13px);
   font-weight: 700;
   letter-spacing: -0.01em;
 }
@@ -425,7 +438,7 @@
 
 .detail-next-eyebrow {
   color: var(--detail-muted);
-  font-size: 0.68rem;
+  font-size: var(--text-size-meta, 11px);
   font-weight: 700;
   letter-spacing: 0.08em;
   line-height: 1;
@@ -437,7 +450,7 @@
   margin: 0;
   overflow: hidden;
   color: var(--detail-text);
-  font-size: clamp(1rem, 1.15vw, 1.18rem);
+  font-size: clamp(16px, 1.15vw, 19px);
   font-weight: 750;
   letter-spacing: -0.02em;
   line-height: 1.25;
@@ -453,7 +466,7 @@
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   color: var(--detail-muted);
-  font-size: 0.76rem;
+  font-size: 12px;
   line-height: 1.45;
 }
 
@@ -478,7 +491,7 @@
   background: var(--detail-accent-strong);
   color: var(--color-accent-contrast);
   padding: 8px 14px;
-  font-size: 0.78rem;
+  font-size: var(--text-size-body, 13px);
   font-weight: 700;
   transition: border-color 160ms ease, background-color 160ms ease;
 }
@@ -532,7 +545,7 @@
 
 .detail-next-fact dt {
   color: var(--detail-muted);
-  font-size: 0.68rem;
+  font-size: var(--text-size-meta, 11px);
   font-weight: 700;
   letter-spacing: 0.06em;
   line-height: 1;
@@ -544,7 +557,7 @@
   margin: 0;
   overflow: hidden;
   color: var(--detail-text);
-  font-size: 0.78rem;
+  font-size: var(--text-size-body, 13px);
   font-weight: 650;
   line-height: 1.3;
   text-overflow: ellipsis;
@@ -574,7 +587,7 @@
   min-width: 0;
   margin: 0;
   color: var(--detail-text);
-  font-size: 0.82rem;
+  font-size: var(--text-size-body, 13px);
   font-weight: 750;
   letter-spacing: -0.01em;
 }
@@ -583,7 +596,7 @@
   min-width: 0;
   overflow: hidden;
   color: var(--detail-muted);
-  font-size: 0.65rem;
+  font-size: var(--text-size-meta, 11px);
   line-height: 1.25;
   text-align: right;
   text-overflow: ellipsis;
@@ -652,7 +665,7 @@
 
 .work-action-copy strong {
   overflow: hidden;
-  font-size: 0.76rem;
+  font-size: 12px;
   font-weight: 750;
   line-height: 1.25;
   text-overflow: ellipsis;
@@ -662,7 +675,7 @@
 .work-action-copy small {
   overflow: hidden;
   color: var(--detail-muted);
-  font-size: 0.64rem;
+  font-size: var(--text-size-meta, 11px);
   line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -695,7 +708,7 @@
   background: var(--detail-page);
   color: var(--detail-text);
   padding: 7px 9px;
-  font-size: 0.7rem;
+  font-size: var(--text-size-meta, 11px);
   font-weight: 650;
   line-height: 1.2;
   transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease;
@@ -730,7 +743,7 @@
   margin: 9px 1px 0;
   overflow: hidden;
   color: var(--detail-muted);
-  font-size: 0.68rem;
+  font-size: var(--text-size-meta, 11px);
   line-height: 1.45;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -790,7 +803,7 @@
 
 .work-tool-title {
   overflow: hidden;
-  font-size: 0.69rem;
+  font-size: var(--text-size-meta, 11px);
   font-weight: 750;
   line-height: 1.2;
   text-overflow: ellipsis;
@@ -800,7 +813,7 @@
 .work-tool-detail {
   overflow: hidden;
   color: var(--detail-muted);
-  font-size: 0.61rem;
+  font-size: var(--text-size-meta, 11px);
   line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -846,7 +859,7 @@
   gap: 5px 8px;
   margin-top: 8px;
   color: var(--detail-muted);
-  font-size: 0.65rem;
+  font-size: var(--text-size-meta, 11px);
 }
 
 .detail-project-meta code,
@@ -856,7 +869,7 @@
   background: var(--detail-page);
   color: var(--detail-muted);
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 0.62rem;
+  font-size: var(--text-size-meta, 11px);
   padding: 3px 5px;
 }
 .workspace-open-all {
@@ -869,7 +882,7 @@
   align-items: center;
   gap: 6px;
   color: var(--detail-muted);
-  font-size: 0.68rem;
+  font-size: var(--text-size-meta, 11px);
   font-weight: 650;
 }
 
@@ -880,7 +893,7 @@
   border-radius: 7px;
   background: var(--detail-panel);
   color: var(--detail-text);
-  font-size: 0.68rem;
+  font-size: var(--text-size-meta, 11px);
   font-weight: 650;
   padding: 5px 7px;
 }

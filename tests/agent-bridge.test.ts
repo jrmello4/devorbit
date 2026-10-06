@@ -51,7 +51,24 @@ describe('agent bridge protocol', () => {
     expect(() => parseAgentBridgeLine('{bad}')).toThrowError(AgentBridgeProtocolError)
     expect(() => validateTarget('')).toThrowError(/Target/)
     expect(() => validatePrompt('   ')).toThrowError(/Prompt/)
+    expect(validatePrompt('linha um\n\tlinha dois\r')).toBe('linha um\n\tlinha dois\r')
+    expect(() => validatePrompt('texto\u0000invalido')).toThrowError(/Prompt/)
+    expect(() => validatePrompt('texto\u001binvalido')).toThrowError(/Prompt/)
     expect(() => parseAgentBridgeLine('x'.repeat(65 * 1024))).toThrowError(/payload/i)
+  })
+
+  it('validates caller terminal and launch identity as a pair', () => {
+    expect(validateAgentBridgeRequest({
+      type: 'list',
+      ...credentials,
+      originTerminalId: 'coordinator',
+      originLaunchId: 'launch-1',
+    })).toMatchObject({ originTerminalId: 'coordinator', originLaunchId: 'launch-1' })
+    expect(() => validateAgentBridgeRequest({
+      type: 'list',
+      ...credentials,
+      originTerminalId: 'coordinator',
+    })).toThrowError(/originTerminalId and originLaunchId/)
   })
 
   it('blocks cycles by visited targets and depth', () => {

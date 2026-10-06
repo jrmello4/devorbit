@@ -209,7 +209,7 @@ describe('thread-through dos hints de instrução (terminal-ipc → sendAgentIns
       turnId: 'task-hints-codex',
       provider: 'codex',
     })
-    // 'codex' não é o sentinel → helper real → undefined (catálogo vazio hoje).
-    expect(lastInstructionInput().hints).toBeUndefined()
+    // Codex uses the source-verified paste settling adapter.
+    expect(lastInstructionInput().hints).toEqual({ pasteSettleMs: 250 })
   })
 })
